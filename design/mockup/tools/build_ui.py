@@ -21,9 +21,17 @@ def photo(name):
 
 
 def lens(fid, name, w, h, scale=46):
+    """Преломление по карте смещения. Три канала цвета смещаются чуть по-разному:
+    на краях появляется тонкая радужная кромка, как у настоящего стекла."""
+    def ch(res, k, keep):
+        m = {'r': '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0', 'g': '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0', 'b': '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0'}[keep]
+        return (f'<feDisplacementMap in="SourceGraphic" in2="map" scale="{scale * k:.0f}" xChannelSelector="R" yChannelSelector="G" result="{res}d"/>'
+                f'<feColorMatrix in="{res}d" type="matrix" values="{m}" result="{res}"/>')
     return (f'<filter id="{fid}" x="0" y="0" width="{w}" height="{h}" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">'
             f'<feImage href="{A(name + ".png")}" x="0" y="0" width="{w}" height="{h}" preserveAspectRatio="none" result="map"/>'
-            f'<feDisplacementMap in="SourceGraphic" in2="map" scale="{scale}" xChannelSelector="R" yChannelSelector="G"/></filter>')
+            f'{ch("r", 1.0, "r")}{ch("g", 1.12, "g")}{ch("b", 1.26, "b")}'
+            f'<feComposite in="r" in2="g" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="rg"/>'
+            f'<feComposite in="rg" in2="b" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/></filter>')
 
 
 ICON = {
@@ -41,7 +49,7 @@ def icon(k, size=22, sw=1.7):
 
 
 def css(glass):
-    tint = 'rgba(30,40,58,0.34)' if glass else 'rgba(26,36,54,0.52)'
+    tint = 'rgba(30,40,58,0.26)' if glass else 'rgba(34,46,68,0.66)'
     shadow = ('0 22px 56px rgba(8,12,24,0.38), inset 0 0 0 1px rgba(255,255,255,0.12)' if glass else
               '0 18px 44px rgba(8,12,24,0.34), inset 0 0 0 1px rgba(255,255,255,0.16), inset 0 1px 0 rgba(255,255,255,0.26)')
     photos = '\n'.join(f'.p-{n}{{background-image:url({photo(n)})}}' for n in
@@ -54,6 +62,7 @@ input::placeholder{{color:rgba(255,255,255,0.62)}}
 {photos}
 .pic{{background-size:cover;background-position:center;background-repeat:no-repeat}}
 .glass{{position:absolute;color:#f6f8fb;background:{tint};box-shadow:{shadow}}}
+.glass.lq::before{{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(170deg,rgba(255,255,255,.20) 0%,rgba(255,255,255,.04) 34%,transparent 60%)}}
 .rim{{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-repeat:no-repeat;background-size:100% 100%}}
 .blob{{position:absolute;border-radius:50%;will-change:transform}}
 @keyframes d1{{0%{{transform:translate(0,0) scale(1)}}50%{{transform:translate(140px,-90px) scale(1.18)}}100%{{transform:translate(-70px,70px) scale(1.04)}}}}
@@ -116,6 +125,8 @@ input::placeholder{{color:rgba(255,255,255,0.62)}}
 
 
 def page(title, filters, body, glass, anim=True):
+    if glass:
+        body = body.replace('class="glass ', 'class="glass lq ')
     return f'''<!doctype html>
 <html lang="ru">
 <head>
@@ -154,7 +165,7 @@ def surface(glass, name, blur, scale=None):
     if glass:
         f = f'blur({blur}px) url(#lg{name}) saturate(1.4)'
     else:
-        f = f'blur({max(blur * 2, 16)}px) saturate(1.3)'
+        f = 'blur(26px) saturate(1.15)'
     return f'-webkit-backdrop-filter:{f};backdrop-filter:{f}'
 
 
@@ -181,22 +192,27 @@ GRID = [
     ('dacia', 'Honda Civic EK9', '1.6 · 88 МБ', None, 'size:210%;pos:80% 100%'),
     ('truck', 'Subaru Impreza 22B', '1.3 · 97 МБ', None, 'size:210%;pos:20% 100%'),
     ('lambo', 'Toyota AE86 Trueno', '2.1 · 74 МБ', None, 'size:210%;pos:50% 100%'),
+    ('coupe', 'Mini Cooper S 1275', '1.1 · 52 МБ', None, 'size:210%;pos:60% 100%'),
     ('dacia', 'Dacia Sandero Stepway', '1.0 → 1.5', 'update', ''),
     ('mustang', 'Ford Mustang Shelby GT500', '1.2 · 120 МБ', 'lost', ''),
     ('tractor', 'New Holland T7', '2.3 · 96 МБ', None, ''),
+    ('lebedka', 'Rally Stage Pack', '0.8 · 410 МБ', 'maybe', 'size:150%;pos:20% 30%'),
     ('truck', 'Kenworth T610 с цистерной', '1.4b → 1.5', 'update', ''),
-    ('traffic', 'Traffic Reborn', '3.1 · 54 МБ', 'maybe', ''),
+    ('traffic', 'Traffic Reborn', '3.1 · 54 МБ', None, ''),
     ('station', 'Заправка Diesel', '1.0 · 12 МБ', 'off', ''),
+    ('coupe', 'Coastal Highway', '1.1 · 640 МБ', None, 'size:170%;pos:80% 20%'),
     ('lambo', 'Lamborghini Huracán EVO', '1.6 · 88 МБ', None, ''),
     ('lebedka', 'Lebedka Tow', '1.1 · 8 МБ', None, ''),
     ('coupe', 'Falcon RS Coupe', '2.0 · 140 МБ', None, ''),
+    ('mustang', 'Skyline R34 GT-R', '1.8 · 110 МБ', None, 'size:190%;pos:30% 60%'),
     ('tractor', 'Mazda RX-7 FD', '1.0 · 83 МБ', None, 'size:200%;pos:30% 40%'),
-    ('mustang', 'Skyline R34 GT-R', '1.8 · 110 МБ', None, 'size:200%;pos:70% 50%'),
-    ('coupe', 'Mini Cooper S 1275', '1.1 · 52 МБ', None, 'size:200%;pos:40% 60%'),
+    ('mustang', 'Alpine Pass', '2.0 · 512 МБ', None, 'size:200%;pos:70% 50%'),
+    ('lambo', 'Volga 24 Classic', '1.0 · 64 МБ', None, 'size:190%;pos:20% 70%'),
+    ('dacia', 'Nordschleife', '4.2 · 1,2 ГБ', None, 'size:190%;pos:60% 60%'),
 ]
 
 
-def tile(x, y, w, pos, img, n, sub, status, crop, sel):
+def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
     ph = int(w * 0.58)
     extra = ''
     if crop:
@@ -217,8 +233,8 @@ def tile(x, y, w, pos, img, n, sub, status, crop, sel):
         line2 = 'Выключен'
     return (f'<article class="card" style="position:absolute;left:{x}px;top:{y}px;width:{w}px;animation-delay:{60 + pos * 45}ms">'
             f'<div class="ph pic p-{img}{" sel" if sel else ""}" style="height:{ph}px;border-radius:20px;{grey}{extra}box-shadow:0 4px 18px rgba(6,10,22,.35), inset 0 0 0 1px rgba(255,255,255,.14)">{badge}</div>'
-            f'<div style="padding:10px 4px 0"><div style="font-size:15px;font-weight:620;letter-spacing:-0.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff">{n}</div>'
-            f'<div style="margin-top:1px;font-size:12.5px;color:rgba(255,255,255,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{line2}</div></div></article>\n')
+            + (f'<div style="padding:10px 4px 0"><div style="font-size:15px;font-weight:620;letter-spacing:-0.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff">{n}</div>'
+            f'<div style="margin-top:1px;font-size:12.5px;color:rgba(255,255,255,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{line2}</div></div>' if cap else '') + '</article>\n')
 
 
 def navitem(k, label, on, badge=None):
@@ -248,13 +264,13 @@ def info_rows(items):
 
 
 def garage(glass):
-    filters = (lens('lgRail', 'rail', 84, 212, 34) + lens('lgGear', 'gear', 56, 56, 26) + lens('lgBar', 'bar', 964, 52) + lens('lgInsp', 'insp', 328, 928)) if glass else ''
+    filters = (lens('lgRail', 'rail', 84, 212, 70) + lens('lgGear', 'gear', 56, 56, 56) + lens('lgBar', 'bar', 964, 52, 80) + lens('lgInsp', 'insp', 328, 928, 96)) if glass else ''
     body = ''
     cw = 308
     rowh = int(cw * 0.58) + 62
     for pos, t in enumerate(GRID):
-        col, row = pos % 3, pos // 3
-        body += tile(116 + col * (cw + 20), -96 + row * (rowh + 20), cw, pos, *t[:5], sel=(t[3] == 'update' and t[0] == 'dacia' and pos == 3))
+        col, row = pos % 4, pos // 4
+        body += tile(116 + col * (cw + 20), -96 + row * (rowh + 20), cw, pos, *t[:5], sel=(pos == 4), cap=(col < 3))
     body += flies() + chrome(glass, 'garage')
     segs = ''.join(f'<label class="seg"><input type="radio" name="f" {"checked" if i == 0 else ""}><span>{t}{(" <b style=\"opacity:.7;font-weight:600\">" + c + "</b>") if c else ""}</span></label>'
                    for i, (t, c) in enumerate([('Все', None), ('Включённые', None), ('Нужно обновить', '3'), ('Не проверяются', '12')]))
@@ -272,7 +288,7 @@ def garage(glass):
                      for i, (w, nn) in enumerate([('12 августа, 21:40', 'Версия 1.0, 142 МБ'), ('3 июня, 09:12', 'Версия 0.9, 138 МБ')]))
     box = 'display:flex;flex-direction:column;border-radius:16px;background:rgba(255,255,255,0.09);overflow:hidden'
     cap = 'font-size:13px;font-weight:600;color:rgba(255,255,255,0.66);padding:0 4px 8px'
-    body += (f'<aside class="glass insp" aria-label="Выбранный мод" style="left:1096px;top:16px;width:328px;height:928px;border-radius:32px;{surface(glass, "Insp", 14)}">{rim(glass, "insp")}'
+    body += (f'<aside class="glass insp" aria-label="Выбранный мод" style="left:1096px;top:16px;width:328px;height:928px;border-radius:32px;{'background:rgba(24,34,52,.44);' if glass else ''}{surface(glass, "Insp", 14)}">{rim(glass, "insp")}'
              f'<div style="position:relative;display:flex;flex-direction:column;gap:18px;padding:22px 22px 24px;height:100%;box-sizing:border-box">'
              f'<div class="pic p-dacia" style="height:150px;border-radius:20px;box-shadow:0 10px 30px rgba(6,10,22,0.4), 0 0 40px rgba(150,195,255,.22), inset 0 0 0 1px rgba(255,255,255,0.2)"></div>'
              f'<div><div style="font-size:24px;font-weight:700;letter-spacing:-0.02em;line-height:1.15">Dacia Sandero Stepway</div><div style="margin-top:3px;color:rgba(255,255,255,0.7)">kuro_garage</div></div>'
@@ -301,8 +317,8 @@ def toggle(tid, checked, title, text):
 def preview(glass_on):
     """Мини-превью: стеклянная панель над карточкой. Показывает, чем отличаются режимы."""
     def bar(on):
-        f = f'blur(7px) url(#lgPv) saturate(1.4)' if on else 'blur(16px) saturate(1.3)'
-        tint = 'rgba(30,40,58,0.34)' if on else 'rgba(26,36,54,0.52)'
+        f = f'blur(5px) url(#lgPv) saturate(1.4)' if on else 'blur(26px) saturate(1.15)'
+        tint = 'rgba(30,40,58,0.26)' if on else 'rgba(34,46,68,0.66)'
         sh = 'inset 0 0 0 1px rgba(255,255,255,0.12)' if on else 'inset 0 0 0 1px rgba(255,255,255,0.16), inset 0 1px 0 rgba(255,255,255,0.26)'
         r = f'<div class="rim" style="background-image:url({A("pv_rim.png")})"></div>' if on else ''
         return (f'<div style="position:absolute;left:24px;top:22px;width:420px;height:56px;border-radius:28px;background:{tint};box-shadow:{sh};-webkit-backdrop-filter:{f};backdrop-filter:{f};overflow:visible">{r}'
@@ -320,13 +336,13 @@ def preview(glass_on):
 
 
 def settings():
-    filters = lens('lgRail', 'rail', 84, 212, 34) + lens('lgGear', 'gear', 56, 56, 26) + lens('lgSet', 'set', 1308, 640) + lens('lgPv', 'pv', 420, 56, 30)
+    filters = lens('lgRail', 'rail', 84, 212, 70) + lens('lgGear', 'gear', 56, 56, 56) + lens('lgSet', 'set', 1308, 640, 96) + lens('lgPv', 'pv', 420, 56, 80)
     nav = ''.join(
         f'<a class="nv" href="#" style="display:flex;align-items:center;height:42px;padding:0 16px;border-radius:21px;color:{"#fff" if i == 0 else "rgba(255,255,255,.76)"};text-decoration:none;font-size:14.5px;font-weight:{650 if i == 0 else 500};'
         f'background:{"rgba(255,255,255,.20);box-shadow:0 0 22px rgba(170,205,255,.3)" if i == 0 else "transparent"}">{t}</a>'
         for i, t in enumerate(['Внешний вид', 'Загрузка модов', 'Папки', 'Обновления', 'Сайты']))
     body = flies() + chrome(True, 'settings')
-    body += (f'<section class="glass top" aria-label="Настройки" style="left:116px;top:16px;width:1308px;height:640px;border-radius:32px;{surface(True, "Set", 14)}">{rim(True, "set")}'
+    body += (f'<section class="glass top" aria-label="Настройки" style="left:116px;top:16px;width:1308px;height:640px;border-radius:32px;background:rgba(24,34,52,.44);{surface(True, "Set", 14)}">{rim(True, "set")}'
              f'<div style="position:relative;display:flex;height:100%;padding:36px 44px 36px 36px;box-sizing:border-box;gap:44px">'
              f'<div style="flex:0 0 230px"><div style="font-size:28px;font-weight:700;letter-spacing:-0.02em;margin:0 0 24px 16px">Настройки</div><nav style="display:flex;flex-direction:column;gap:4px" aria-label="Разделы настроек">{nav}</nav></div>'
              f'<div style="flex:1;min-width:0;max-width:760px"><div style="font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:6px 0 20px">Внешний вид</div>'
