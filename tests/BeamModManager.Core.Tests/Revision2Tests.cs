@@ -81,16 +81,24 @@ public static class Revision2Tests
     private sealed class Fake100 : IModSource
     {
         public readonly HashSet<string> NewVersionFor = new();
-        public int CardCalls;
+        public int CardCalls, FeedCalls;
+        public Action<int>? OnCard;               // вызывается с номером карточки (для хода часов)
+        public int FailAfter = int.MaxValue;     // после стольких карточек сайт «падает»
         public Fake100(string id) { Id = id; DisplayName = id; }
         public string Id { get; }
         public string DisplayName { get; }
         public bool SupportsSearch => false;
-        public Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<Listing>>(page == 1 ? new[] { new Listing(Id, new Uri("https://stmods.test/other"), "other", "other") { ModVersion = "9.9" } } : Array.Empty<Listing>());
+        public Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref FeedCalls);
+            return Task.FromResult<IReadOnlyList<Listing>>(page == 1 ? new[] { new Listing(Id, new Uri("https://stmods.test/other"), "other", "other") { ModVersion = "9.9" } } : Array.Empty<Listing>());
+        }
         public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default)
         {
-            Interlocked.Increment(ref CardCalls);
+            var n = Interlocked.Increment(ref CardCalls);
+            ct.ThrowIfCancellationRequested();
+            if (n > FailAfter) throw new SourceException(SourceStatus.Unavailable, "сайт упал");
+            OnCard?.Invoke(n);
             var id = url.AbsolutePath.Trim('/');
             return Task.FromResult<Listing?>(new Listing(Id, url, id, id) { ModVersion = NewVersionFor.Contains(id) ? "2.0" : "1.0" });
         }
@@ -439,6 +447,83 @@ public static class Revision2Tests
             Assert.Eq("m77", r.Findings[0].ModId);
             Assert.Eq(0, r.Sources[0].Postponed);
             Assert.True(r.Complete, "проверено всё");
+        });
+
+        t.Group("Ревизия 2: одно нажатие — вся работа");
+
+        // 400 модов на сайте без дат; каждая карточка «занимает» 3 секунды по часам, на заход отведено 5 минут (~100 карточек).
+        (InMemoryLibraryStore Store, Fake100 Site, UpdateCoordinator Coord, Func<DateTimeOffset> Clock) Setup(int mods = 400)
+        {
+            var now = Now;
+            var site = new Fake100("stmods");
+            var store = new InMemoryLibraryStore();
+            for (var i = 0; i < mods; i++)
+            {
+                var when = Now.AddDays(-30);
+                store.UpsertMod(new InstalledMod($"m{i}", $"m{i}", $"m{i}.zip", "1.0", null, when.AddDays(-50)));
+                store.UpsertBinding(new ModBinding($"m{i}", "stmods", $"s{i}", new Uri($"https://stmods.test/s{i}"), true));
+                store.SaveCheck(new CheckState($"m{i}", "stmods", when, when.AddDays(-50), "1.0", null));
+            }
+            Func<DateTimeOffset> clock = () => now;
+            site.OnCard = _ => now += TimeSpan.FromSeconds(3);
+            var coord = new UpdateCoordinator(store, () => new IModSource[] { site }, clock);
+            return (store, site, coord, clock);
+        }
+
+        t.Run("после долгого перерыва одно нажатие проверяет все моды несколькими частями, ничего не проверяя дважды", async () =>
+        {
+            var (store, site, coord, _) = Setup();
+            site.NewVersionFor.Add("s399"); site.NewVersionFor.Add("s5");
+            var r = await coord.CheckAsync();
+            Assert.Eq(400, site.CardCalls);                       // каждая карточка ровно один раз
+            Assert.True(site.FeedCalls >= 8, $"частей было несколько: {site.FeedCalls / 2}");
+            Assert.Eq(2, r.Findings.Count);
+            Assert.Eq(0, r.Sources[0].Postponed);
+            Assert.True(r.Complete && !r.StoppedByTime, "проверено всё");
+            Assert.Eq(400, store.Checks().Count(c => c.LastCheckedUtc > Now.AddDays(-1)));
+        });
+
+        t.Run("сразу после полной проверки второе нажатие не открывает ни одной карточки (накопления нет)", async () =>
+        {
+            var (_, site, coord, _) = Setup(150);
+            await coord.CheckAsync();
+            var calls = site.CardCalls;
+            var r = await coord.CheckAsync();
+            Assert.Eq(calls, site.CardCalls);
+            Assert.Eq(150, r.FreshSkipped);
+        });
+
+        t.Run("сайт упал на середине: части не крутятся впустую, сделанное сохранено, остальное подхватит следующая проверка", async () =>
+        {
+            var (store, site, coord, clock) = Setup(300);
+            site.FailAfter = 120;
+            var r = await coord.CheckAsync();
+            Assert.True(site.CardCalls <= 121, $"обращений после отказа нет: {site.CardCalls}");
+            Assert.True(r.Sources[0].Status == SourceStatus.Unavailable, "отказ виден в отчёте");
+            Assert.Eq(120, store.Checks().Count(c => c.LastCheckedUtc > Now.AddDays(-1)));
+            Assert.False(r.Complete, "не всё проверено");
+            // нажали ещё раз сразу: упавший сайт не долбим (пауза после сбоя)
+            var afterFail = site.CardCalls;
+            site.FailAfter = int.MaxValue;
+            var again = await coord.CheckAsync(force: false);
+            Assert.Eq(afterFail, site.CardCalls);
+            Assert.True(again.Sources[0].Status == SourceStatus.Unavailable, "сайт всё ещё на паузе");
+        });
+
+        t.Run("отмена посреди долгой проверки: сделанное сохранено, следующая начинает с непроверенных", async () =>
+        {
+            var (store, site, coord, _) = Setup(300);
+            site.OnCard += n => { if (n == 90) coord.Cancel(); };
+            var r = await coord.CheckAsync();
+            Assert.True(r.Cancelled, "отменена");
+            var done = store.Checks().Count(c => c.LastCheckedUtc > Now.AddDays(-1));
+            Assert.True(done >= 85 && done <= 91, $"сохранено {done}");
+            site.OnCard = null;
+            var before = site.CardCalls;
+            var r2 = await coord.CheckAsync();
+            Assert.False(r2.Cancelled, "новая не отменена");
+            Assert.True(site.CardCalls - before <= 300 - done + 1, $"повторных: {site.CardCalls - before}");
+            Assert.Eq(300, store.Checks().Count(c => c.LastCheckedUtc > Now.AddDays(-1)));
         });
 
         t.Group("Ревизия 2: большая библиотека");
