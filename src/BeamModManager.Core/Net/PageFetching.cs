@@ -105,6 +105,9 @@ public sealed class PoliteFetcher
         }
     }
 
+    /// <summary>Сбрасывает кэш страниц (для «проверить заново», чтобы не получить копию получасовой давности).</summary>
+    public void ClearCache() { lock (_lock) _cache.Clear(); }
+
     /// <summary>Вызывать после того, как пользователь прошёл проверку в окне браузера.</summary>
     public void ResetHost(string host)
     {

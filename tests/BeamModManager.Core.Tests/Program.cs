@@ -19,6 +19,7 @@ SearchTests.Register(t);
 AdapterTests.Register(t);
         PackTests.Register(t);
         UpdateRunnerTests.Register(t);
+        UpdateCoordinatorTests.Register(t);
 LibraryTests.Register(t);
 
 

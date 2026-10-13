@@ -13,21 +13,25 @@ public static class UpdateRunnerTests
     {
         public Dictionary<string, Listing> Cards = new();
         public List<Listing> Feed = new();
-        public SourceException? FeedFails, CardFails;
+        public Exception? FeedFails, CardFails;
+        public Action? OnCard;
+        public Task? FeedGate;
         public int FeedCalls, CardCalls;
         public Site(string id) { Id = id; DisplayName = id; }
         public string Id { get; }
         public string DisplayName { get; }
         public bool SupportsSearch => false;
-        public Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
+        public async Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
         {
-            FeedCalls++;
+            Interlocked.Increment(ref FeedCalls);
+            if (FeedGate is not null) await FeedGate;
             if (FeedFails is not null) throw FeedFails;
-            return Task.FromResult<IReadOnlyList<Listing>>(page == 1 ? Feed : Array.Empty<Listing>());
+            return page == 1 ? Feed : Array.Empty<Listing>();
         }
         public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default)
         {
             CardCalls++;
+            OnCard?.Invoke();
             if (CardFails is not null) throw CardFails;
             return Task.FromResult(Cards.GetValueOrDefault(url.AbsoluteUri));
         }
@@ -169,16 +173,150 @@ public static class UpdateRunnerTests
             Assert.True(r.Sources.Single().Note!.Contains("адаптер"), "пометка");
         });
 
-        t.Run("отмена прерывает проверку", async () =>
+        t.Run("отмена: возвращается то, что успели, исключения нет, сделанное сохранено", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            for (var i = 0; i < 4; i++) Add(s, $"m{i}", "x", $"m{i}", "1.0", "1.0", Now.AddDays(-5));
+            using var cts = new CancellationTokenSource();
+            var site = new Site("x") { OnCard = () => cts.Cancel() };
+            for (var i = 0; i < 4; i++) site.Cards[U("x", $"m{i}")] = L("x", $"m{i}", "2.0");
+            var r = await UpdateRunner.RunAsync(s, new[] { site }, Now, ct: cts.Token);
+            Assert.True(r.Cancelled, "помечено как прерванное");
+            Assert.False(r.Complete, "неполная");
+            Assert.Eq(1, site.CardCalls); // после отмены дальше не идём
+            Assert.Eq(1, r.Findings.Count); // первый мод проверен и сохранён
+        });
+
+        t.Run("исключение адаптера не из нашей иерархии (сеть, разбор): сайт помечается, остальные работают", async () =>
         {
             var s = new InMemoryLibraryStore();
             Add(s, "a", "x", "a", "1.0", "1.0", old);
-            using var cts = new CancellationTokenSource();
-            cts.Cancel();
-            var threw = false;
-            try { await UpdateRunner.RunAsync(s, new[] { new Site("x") }, Now, ct: cts.Token); }
-            catch (OperationCanceledException) { threw = true; }
-            Assert.True(threw, "ожидалась отмена");
+            Add(s, "b", "y", "b", "1.0", "1.0", old);
+            var x = new Site("x") { FeedFails = new HttpRequestException("reset") };
+            var y = new Site("y") { Feed = { L("y", "b", "2.0") } };
+            y.Cards[U("y", "b")] = L("y", "b", "2.0");
+            var r = await UpdateRunner.RunAsync(s, new IModSource[] { x, y }, Now);
+            Assert.Eq(SourceStatus.Unavailable, r.Sources.Single(z => z.Source == "x").Status);
+            Assert.Eq("b", r.Findings.Single().ModId);
+        });
+
+        t.Run("таймаут (TaskCanceledException без нашей отмены) — сбой сайта, а не отмена всей проверки", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            Add(s, "a", "x", "a", "1.0", "1.0", Now.AddDays(-5));
+            var x = new Site("x") { CardFails = new TaskCanceledException("timeout") };
+            var r = await UpdateRunner.RunAsync(s, new[] { x }, Now);
+            Assert.False(r.Cancelled, "это не отмена пользователя");
+            Assert.Eq(SourceStatus.Unavailable, r.Sources.Single().Status);
+        });
+
+        t.Run("мод удалили во время проверки: без исключения и без «призрачного» состояния", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            Add(s, "a", "x", "a", "1.0", "1.0", Now.AddDays(-5));
+            var x = new Site("x") { OnCard = () => s.RemoveMod("a") };
+            x.Cards[U("x", "a")] = L("x", "a", "2.0");
+            var r = await UpdateRunner.RunAsync(s, new[] { x }, Now);
+            Assert.Eq(0, r.Findings.Count);
+            Assert.Eq(0, s.Checks().Count);
+        });
+
+        t.Run("версия на карточке не разобралась (null): известная прежняя не затирается", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            Add(s, "a", "x", "a", "1.0", "1.5", Now.AddDays(-5));
+            var x = new Site("x");
+            x.Cards[U("x", "a")] = L("x", "a", null);
+            var r = await UpdateRunner.RunAsync(s, new[] { x }, Now);
+            Assert.Eq("1.5", s.GetCheck("a", "x")!.LastVersion);
+            Assert.Eq("1.5", r.Findings.Single().LatestVersion);
+        });
+
+        t.Run("часы переведены назад: «проверено в будущем» не блокирует проверку навсегда", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            Add(s, "a", "x", "a", "1.0", "1.0", Now.AddDays(3));
+            var x = new Site("x") { Feed = { L("x", "a", "1.0") } };
+            await UpdateRunner.RunAsync(s, new[] { x }, Now);
+            Assert.True(x.FeedCalls > 0, "проверка состоялась");
+        });
+
+        t.Run("пустая лента: пометка про вёрстку, карточки открываются запасным путём", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            Add(s, "a", "x", "a", "1.0", "1.0", Now.AddDays(-5));
+            var x = new Site("x");
+            x.Cards[U("x", "a")] = L("x", "a", "1.0");
+            var r = await UpdateRunner.RunAsync(s, new[] { x }, Now);
+            Assert.True(r.Sources.Single().Note!.Contains("лента пуста"), "пометка");
+            Assert.False(r.Complete, "неполная");
+            Assert.Eq(1, x.CardCalls);
+        });
+
+        t.Run("карточки не нашлись у многих сразу: пометка «вёрстка или адреса», а не «всё удалили»", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            for (var i = 0; i < 4; i++) Add(s, $"m{i}", "x", $"m{i}", "1.0", "1.0", Now.AddDays(-5));
+            var r = await UpdateRunner.RunAsync(s, new[] { new Site("x") }, Now);
+            Assert.True(r.Sources.Single().Note!.Contains("изменились адреса"), "пометка");
+        });
+
+        t.Run("первая проверка 200 модов: версия берётся из ленты, карточки не открываются", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            var x = new Site("x");
+            for (var i = 0; i < 200; i++)
+            {
+                s.UpsertMod(new InstalledMod($"m{i}", $"m{i}", $"m{i}.zip", "1.0", null, Now.AddDays(-60)));
+                s.UpsertBinding(new ModBinding($"m{i}", "x", $"m{i}", new Uri(U("x", $"m{i}")), true));
+                x.Feed.Add(L("x", $"m{i}", i == 7 ? "2.0" : "1.0"));
+            }
+            var r = await UpdateRunner.RunAsync(s, new[] { x }, Now);
+            Assert.Eq(0, x.CardCalls);
+            Assert.Eq("m7", r.Findings.Single().ModId);
+            Assert.True(r.Complete, "полная проверка за один запуск");
+        });
+
+        t.Run("лимит времени: проверка останавливается, остаток помечен, повтор продолжает", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            var x = new Site("x");
+            for (var i = 0; i < 6; i++) { Add(s, $"m{i}", "x", $"m{i}", "1.0", "1.0", Now.AddDays(-5)); x.Cards[U("x", $"m{i}")] = L("x", $"m{i}", "1.0"); }
+            var tick = Now;
+            x.OnCard = () => tick = tick.AddMinutes(4);
+            var opts = new UpdateCheckOptions { MaxDuration = TimeSpan.FromMinutes(10) };
+            var r = await UpdateRunner.RunAsync(s, new[] { x }, Now, opts, clock: () => tick);
+            Assert.True(r.StoppedByTime, "остановлено по времени");
+            Assert.False(r.Complete, "неполная");
+            Assert.True(x.CardCalls is > 0 and < 6, $"карточек {x.CardCalls}");
+            var r2 = await UpdateRunner.RunAsync(s, new[] { x }, Now.AddMinutes(1), opts, clock: () => Now.AddMinutes(1));
+            Assert.Eq(6, s.Checks().Count(c => c.LastCheckedUtc >= Now));
+        });
+
+        t.Run("два адаптера с одним идентификатором не роняют проверку", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            Add(s, "a", "x", "a", "1.0", "1.0", old);
+            var r = await UpdateRunner.RunAsync(s, new IModSource[] { new Site("x") { Feed = { L("x", "a", "1.0") } }, new Site("x") }, Now);
+            Assert.Eq(1, r.UpToDate);
+        });
+
+        t.Run("повторные нажатия: «новые» обновления отличаются от уже показанных, свежие посчитаны", async () =>
+        {
+            var s = new InMemoryLibraryStore();
+            Add(s, "a", "x", "a", "1.0", "1.0", old);
+            Add(s, "b", "x", "b", "1.0", "1.0", old);
+            var x = new Site("x") { Feed = { L("x", "a", "1.5"), L("x", "b", "1.0") } };
+            x.Cards[U("x", "a")] = L("x", "a", "1.5");
+            var r1 = await UpdateRunner.RunAsync(s, new[] { x }, Now);
+            Assert.Eq(1, r1.NewFindings.Count);
+            var r2 = await UpdateRunner.RunAsync(s, new[] { x }, Now.AddHours(7));
+            Assert.Eq(0, r2.NewFindings.Count); // a уже показывали
+            x.Feed[1] = L("x", "b", "3.0"); x.Cards[U("x", "b")] = L("x", "b", "3.0");
+            var r3 = await UpdateRunner.RunAsync(s, new[] { x }, Now.AddHours(14));
+            Assert.True(r3.NewFindings.Select(f => f.ModId).SequenceEqual(new[] { "b" }), "новое только b");
+            var r4 = await UpdateRunner.RunAsync(s, new[] { x }, Now.AddHours(14).AddMinutes(1));
+            Assert.Eq(2, r4.FreshSkipped);
         });
     }
 }

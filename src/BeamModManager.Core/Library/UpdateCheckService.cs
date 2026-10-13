@@ -43,13 +43,26 @@ public static class UpdateCheckService
     public static void ApplyCard(ILibraryStore store, TrackedBinding b, Listing current, DateTimeOffset now)
     {
         var prev = store.GetCheck(b.ModId, b.Source);
-        var changed = prev is null || prev.LastVersion != current.ModVersion
+        // Не разобранная версия (null) не затирает уже известную: сбой разбора не должен «забывать» данные.
+        var version = current.ModVersion ?? prev?.LastVersion;
+        var changed = prev is null
+                      || (current.ModVersion is not null && prev.LastVersion != current.ModVersion)
                       || (prev.LastSize is not null && current.SizeBytes is not null && prev.LastSize != current.SizeBytes);
         store.SaveCheck(new CheckState(
             b.ModId, b.Source, now,
             changed ? now : prev!.LastChangedUtc,
-            current.ModVersion,
+            version,
             current.SizeBytes ?? prev?.LastSize));
+    }
+
+    /// <summary>
+    /// Первое знакомство: версия известна из ленты, открывать карточку ради неё не нужно.
+    /// Так первая проверка 200 модов обходится несколькими страницами ленты, а не 200 карточками.
+    /// </summary>
+    public static void ApplyFeedBaseline(ILibraryStore store, TrackedBinding b, FeedEntry entry, DateTimeOffset now)
+    {
+        var prev = store.GetCheck(b.ModId, b.Source);
+        store.SaveCheck(new CheckState(b.ModId, b.Source, now, now, entry.Version, entry.SizeBytes ?? prev?.LastSize));
     }
 
     /// <summary>Список обновлений. Считается при чтении, поэтому установка новой версии убирает пункт сама.</summary>
