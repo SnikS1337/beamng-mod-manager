@@ -29,7 +29,13 @@ public sealed class HttpPageFetcher : IPageFetcher
 
     public HttpPageFetcher(HttpClient? http = null)
     {
-        _http = http ?? new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }) { Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = 16 * 1024 * 1024 };
+        _http = http ?? new HttpClient(new SocketsHttpHandler
+        {
+            AutomaticDecompression = DecompressionMethods.All,
+            // Приложение живёт долго: без этого соединение держалось бы вечно и не заметило бы смену адреса сайта (DNS).
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            ConnectTimeout = TimeSpan.FromSeconds(15),
+        }) { Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = 16 * 1024 * 1024 };
         if (_http.DefaultRequestHeaders.UserAgent.Count == 0)
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("BeamModManager/0.1 (personal use; update checks)");
     }
