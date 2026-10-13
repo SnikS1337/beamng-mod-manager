@@ -51,11 +51,22 @@ public static class ModlandParser
                 SizeBytes = ParseSize(Tags.Replace(body, " ")),
                 ModVersion = parsed.ModVersion,
                 GameVersion = parsed.GameVersion,
-                Price = PaidDetector.Detect(title, null, null),
+                // Сайт сам ставит значок «$» (Paid content) рядом с названием: это главный признак, метка в тексте не нужна.
+                Price = HasPaidBadge(tl.Groups["t"].Value) ? PriceStatus.Paid : PaidDetector.Detect(title, null, null),
             });
         }
         return result;
     }
+
+    private static readonly Regex H1Title = new(@"<h1[^>]*class=""[^""]*post-title[^""]*""[^>]*>(?<b>.*?)</h1>", RegexOptions.Singleline | RegexOptions.Compiled);
+
+    /// <summary>Значок платного контента рядом с названием (в ленте и на странице мода).</summary>
+    public static bool HasPaidBadge(string titleHtml) =>
+        titleHtml.Contains("title=\"Paid content\"", StringComparison.OrdinalIgnoreCase);
+
+    private static string TitleBlock(string html) => H1Title.Match(html) is { Success: true } m ? m.Groups["b"].Value : "";
+
+    private static readonly Regex ExternalTitle = new("title=\"External Download - (?<u>https?://[^\"\\s]+)\"", RegexOptions.Compiled);
 
     /// <summary>Дополняет запись данными со страницы мода: версия, цена, ссылки.</summary>
     public static Listing ParseDetail(string html, Listing basis)
@@ -63,9 +74,15 @@ public static class ModlandParser
         var offers = new List<Offer>();
         var downloadUrls = new List<Uri>();
         var sawExternalBlock = html.Contains("External Download Links", StringComparison.OrdinalIgnoreCase);
-        foreach (Match a in Anchor.Matches(html))
+        // Внешние ссылки Modland открывает через окно-подтверждение: адрес лежит в title="External Download - URL",
+        // а href у такой ссылки нет. Берём их вместе с обычными ссылками.
+        var hrefs = Anchor.Matches(html).Select(a => WebUtility.HtmlDecode(a.Groups["h"].Value))
+            .Concat(sawExternalBlock
+                ? ExternalTitle.Matches(html).Select(m => WebUtility.HtmlDecode(m.Groups["u"].Value))
+                : Enumerable.Empty<string>())
+            .Distinct();
+        foreach (var href in hrefs)
         {
-            var href = WebUtility.HtmlDecode(a.Groups["h"].Value);
             if (!Uri.TryCreate(href, UriKind.Absolute, out var u)) continue;
             var host = u.Host.StartsWith("www.") ? u.Host[4..] : u.Host;
             if (sawExternalBlock && Hosts.HostLinkParser.PaidHosts.Any(p => host.EndsWith(p, StringComparison.OrdinalIgnoreCase)))
@@ -83,7 +100,7 @@ public static class ModlandParser
         var text = WebUtility.HtmlDecode(Tags.Replace(html, " "));
         var latest = Regex.Match(text, @"Latest Version\s+(?<v>\d+(?:\.\d+)*)");
         var gv = Regex.Match(text, @"Game Version\s*:?\s*(?<v>\d+(?:\.\d+)*(?:\.x)?)");
-        var price = PaidDetector.Detect(basis.Title, null, downloadUrls);
+        var price = HasPaidBadge(TitleBlock(html)) ? PriceStatus.Paid : PaidDetector.Detect(basis.Title, null, downloadUrls);
 
         return basis with
         {
