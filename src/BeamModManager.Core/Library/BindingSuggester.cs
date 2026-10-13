@@ -75,11 +75,16 @@ public static class BindingSuggester
     }
 
     /// <summary>Ищет кандидатов через общий поиск и ранжирует. Поиск идёт по названию, угаданному из имени файла.</summary>
+    public static string QueryFor(InstalledMod mod)
+    {
+        var query = FromFileName(mod.FileName).Name;
+        return string.IsNullOrWhiteSpace(query) ? mod.Name : query;
+    }
+
     public static async Task<IReadOnlyList<BindingSuggestion>> FindAsync(
         InstalledMod mod, SearchService search, CancellationToken ct = default)
     {
-        var query = FromFileName(mod.FileName).Name;
-        if (string.IsNullOrWhiteSpace(query)) query = mod.Name;
+        var query = QueryFor(mod);
         var response = await search.SearchAsync(query, ct).ConfigureAwait(false);
         return Suggest(mod, response.Cards.SelectMany(c => c.Listings));
     }

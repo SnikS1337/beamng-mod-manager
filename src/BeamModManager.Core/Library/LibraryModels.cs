@@ -27,7 +27,9 @@ public sealed record CheckState(
     DateTimeOffset LastCheckedUtc,
     DateTimeOffset? LastChangedUtc,
     string? LastVersion,
-    long? LastSize);
+    long? LastSize,
+    /// <summary>Сколько проверок подряд страница мода не нашлась (0 — страница есть). От <see cref="Updates.UpdateCheckPlanner.DeadAfterMisses"/> привязка считается потерянной.</summary>
+    int MissCount = 0);
 
 /// <summary>
 /// Хранилище библиотеки. Сейчас есть версия в памяти (для тестов и разработки без Windows);
