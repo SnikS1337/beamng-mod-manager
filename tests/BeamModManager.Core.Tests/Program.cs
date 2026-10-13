@@ -28,6 +28,7 @@ RepairTests.Register(t);
 TimeTests.Register(t);
 ScenarioTests.Register(t);
 SyncTests.Register(t);
+DownloadPolicyTests.Register(t);
 LibraryTests.Register(t);
 
 

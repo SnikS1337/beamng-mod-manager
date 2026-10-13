@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using BeamModManager.Core.Install;
 using BeamModManager.Core.Library;
+using BeamModManager.Core.Models;
+using BeamModManager.Core.Settings;
 
 namespace BeamModManager.Core.Tests;
 
@@ -360,5 +362,52 @@ public static class SyncTests
             Inst = new ModInstaller(layout);
         }
         public void Dispose() { try { Directory.Delete(Root, true); } catch { } }
+    }
+}
+
+public static class DownloadPolicyTests
+{
+    private static Listing L(PriceStatus p = PriceStatus.Free, string src = "modland") =>
+        new(src, new Uri("https://www.modland.net/x"), "x", "Audi") { Price = p };
+    private static Offer O(string url, OfferKind k = OfferKind.ExternalHost) => new(k, new Uri(url).Host, new Uri(url));
+    private static AppSettings On => new() { AllowDownloads = true };
+
+    public static void Register(TestRunner t)
+    {
+        t.Group("Политика загрузки");
+
+        t.Run("настройка выключена (по умолчанию): всегда отказ, даже для бесплатного на известном хосте", () =>
+            Assert.False(DownloadPolicy.Evaluate(new AppSettings(), L(), O("https://modsfire.com/abc")).Allowed, "отказ"));
+
+        t.Run("включена, бесплатный, известный хост: разрешено без вопросов", () =>
+        {
+            var d = DownloadPolicy.Evaluate(On, L(), O("https://modsfire.com/abc"));
+            Assert.True(d.Allowed && !d.NeedsConfirmation, "разрешено");
+        });
+
+        t.Run("цена неизвестна: разрешено, но с подтверждением", () =>
+        {
+            var d = DownloadPolicy.Evaluate(On, L(PriceStatus.Unknown), O("https://www.mediafire.com/file/abc"));
+            Assert.True(d.Allowed && d.NeedsConfirmation, "нужно подтверждение");
+        });
+
+        t.Run("платный: отказ по цене, по типу ссылки и по хосту", () =>
+        {
+            Assert.False(DownloadPolicy.Evaluate(On, L(PriceStatus.Paid), O("https://modsfire.com/a")).Allowed, "по цене");
+            Assert.False(DownloadPolicy.Evaluate(On, L(), O("https://modsfire.com/a", OfferKind.PaidLink)).Allowed, "по типу");
+            Assert.False(DownloadPolicy.Evaluate(On, L(), O("https://www.patreon.com/x")).Allowed, "по хосту");
+        });
+
+        t.Run("чужой хост, http и похожие на известные домены: отказ", () =>
+        {
+            foreach (var u in new[] { "https://evil.example/a", "http://modsfire.com/a", "https://modsfire.com.evil.example/a", "https://notmodsfire.com/a", "https://evilmega.nz/a" })
+                Assert.False(DownloadPolicy.Evaluate(On, L(), O(u)).Allowed, u);
+        });
+
+        t.Run("поддомен известного хоста разрешён; сайт-источник отключён: отказ", () =>
+        {
+            Assert.True(DownloadPolicy.Evaluate(On, L(), O("https://www.mediafire.com/file/a")).Allowed, "поддомен");
+            Assert.False(DownloadPolicy.Evaluate(On with { DisabledSources = new[] { "modland" } }, L(), O("https://modsfire.com/a")).Allowed, "сайт отключён");
+        });
     }
 }
