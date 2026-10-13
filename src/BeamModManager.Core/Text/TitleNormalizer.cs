@@ -20,7 +20,7 @@ public static class TitleNormalizer
     private static readonly Regex LeadingMod = new(@"^\s*(?:мод|mod)\b", Opt);
     private static readonly Regex ForBeam = new(@"\b(?:для|for)\s+beamng(?:\s*\.?\s*drive)?\b", Opt);
     private static readonly Regex BareBeam = new(@"\bbeamng(?:\s*\.?\s*drive)?\b", Opt);
-    private static readonly Regex UpdateWord = new(@"\bupdate\s*\d*\b|\bfix(?:ed)?\b", Opt);
+    private static readonly Regex UpdateWord = new(@"\bupdate\s*\d*\b|\bfix(?:ed)?\b|\b(?:версия|version)\b", Opt);
     private static readonly Regex DottedVersion = new(@"\bv?\d+(?:\.\d+)+(?:\.x)?\b", Opt);
     private static readonly Regex ShortVersion = new(@"\bv\d+\b", Opt);
     private static readonly Regex NonWord = new(@"[^\p{L}\p{Nd}]+", Opt);

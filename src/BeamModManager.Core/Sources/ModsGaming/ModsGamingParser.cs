@@ -1,0 +1,87 @@
+using System.Globalization;
+using System.Net;
+using System.Text.RegularExpressions;
+using BeamModManager.Core.Models;
+using BeamModManager.Core.Text;
+
+namespace BeamModManager.Core.Sources.ModsGaming;
+
+/// <summary>
+/// Разбор ModsGaming (uCoz). Ссылка «СКАЧАТЬ» ведёт на внутренний адрес /load/0-0-1-{id}-20,
+/// который сайт сам перенаправляет на файлообменник; лаунчер её не открывает и не обходит,
+/// она нужна только как признак «скачивание существует».
+/// </summary>
+public static class ModsGamingParser
+{
+    public const string SourceId = "modsgaming";
+    public static readonly Uri Base = new("https://modsgaming.ru/");
+
+    private static readonly Regex Entry = new(@"<div[^>]*\bid=""entryID(?<id>\d+)""[^>]*>(?<b>.*?)(?=<div[^>]*\bid=""entryID\d+""|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex TitleLink = new(@"<a[^>]*class=""[^""]*vidmattit[^""]*""[^>]*href=""(?<h>[^""]+)""[^>]*>(?<t>.*?)</a>", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex Tags = new("<[^>]+>", RegexOptions.Compiled);
+    private static readonly Regex Comment = new("<!--.*?-->", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex Author = new(@"АВТОР\s+МОДА\s*:\s*(?<a>[^\r\n<]+?)\s*(?:<|\r|\n|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex DownloadLink = new(@"<a[^>]*class=""[^""]*filedowl-a[^""]*""[^>]*href=""(?<h>[^""]+)""[^>]*>[^<]*</a>\s*(?<size>[\d.,]+\s*(?:KB|MB|GB))?", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex SizeRx = new(@"(?<n>\d+(?:[.,]\d+)?)\s*(?<u>KB|MB|GB)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public static IReadOnlyList<Listing> ParseList(string html)
+    {
+        var result = new List<Listing>();
+        foreach (Match m in Entry.Matches(html))
+        {
+            var tl = TitleLink.Match(m.Groups["b"].Value);
+            if (!tl.Success || !Uri.TryCreate(Base, WebUtility.HtmlDecode(tl.Groups["h"].Value), out var url)) continue;
+            var title = Clean(tl.Groups["t"].Value);
+            if (title.Length == 0) continue;
+            var p = TitleParser.Parse(title);
+            result.Add(new Listing(SourceId, url, m.Groups["id"].Value, title)
+            {
+                ModVersion = p.ModVersion,
+                GameVersion = p.GameVersion,
+                Category = CategoryOf(url),
+                // Платный контент в этом разделе не наблюдался, но «бесплатно» без доказательств не ставим.
+                Price = p.HasPaidMarker ? PriceStatus.Paid : PriceStatus.Unknown,
+            });
+        }
+        return result;
+    }
+
+    public static Listing ParseDetail(string html, Listing basis)
+    {
+        var withoutComments = Comment.Replace(html, "");
+        var a = Author.Match(Tags.Replace(withoutComments, "\n"));
+        var d = DownloadLink.Match(withoutComments);
+        var offers = new List<Offer>();
+        long? size = basis.SizeBytes;
+        if (d.Success)
+        {
+            if (d.Groups["size"].Success) size = ParseSize(d.Groups["size"].Value);
+            if (Uri.TryCreate(Base, WebUtility.HtmlDecode(d.Groups["h"].Value), out var u))
+                offers.Add(new Offer(OfferKind.Direct, "modsgaming", u, SizeBytes: size));
+        }
+        return basis with
+        {
+            Author = a.Success ? WebUtility.HtmlDecode(a.Groups["a"].Value).Trim() : basis.Author,
+            SizeBytes = size,
+            Offers = offers,
+        };
+    }
+
+    public static long? ParseSize(string text)
+    {
+        var m = SizeRx.Match(text);
+        if (!m.Success) return null;
+        var n = double.Parse(m.Groups["n"].Value.Replace(',', '.'), CultureInfo.InvariantCulture);
+        var mult = m.Groups["u"].Value.ToUpperInvariant() switch { "KB" => 1024d, "MB" => 1024d * 1024, _ => 1024d * 1024 * 1024 };
+        return (long)(n * mult);
+    }
+
+    private static string? CategoryOf(Uri url)
+    {
+        var parts = url.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 3 && parts[0] == "load" ? parts[2] : null;
+    }
+
+    private static string Clean(string s) =>
+        Regex.Replace(WebUtility.HtmlDecode(Tags.Replace(Comment.Replace(s, ""), " ")), @"\s+", " ").Trim();
+}
