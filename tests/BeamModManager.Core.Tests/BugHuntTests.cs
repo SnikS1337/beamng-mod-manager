@@ -1,4 +1,9 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using BeamModManager.Core.Hosts;
+using BeamModManager.Core.Net;
+using BeamModManager.Core.Sources;
 using BeamModManager.Core.Text;
 using BeamModManager.Core.Versioning;
 
@@ -8,6 +13,36 @@ namespace BeamModManager.Core.Tests;
 public static class BugHuntTests
 {
     private const long MB = 1024 * 1024;
+
+    private sealed class Handler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>> _f;
+        public Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> f) { _f = f; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) => _f(r);
+    }
+
+    private sealed class Throwing : IPageFetcher
+    {
+        public int Calls;
+        public Task<RawResponse> GetAsync(Uri url, CancellationToken ct)
+        {
+            Calls++;
+            throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout");
+        }
+    }
+
+    private sealed class CancelOnCall : IPageFetcher
+    {
+        private readonly CancellationTokenSource _cts;
+        public CancelOnCall(CancellationTokenSource cts) { _cts = cts; }
+        public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) { _cts.Cancel(); ct.ThrowIfCancellationRequested(); return Task.FromResult(new RawResponse(200, "x")); }
+    }
+
+    private sealed class Echo : IPageFetcher
+    {
+        public int Calls;
+        public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) { Calls++; return Task.FromResult(new RawResponse(200, "<html>" + url + "</html>")); }
+    }
 
     public static void Register(TestRunner t)
     {
@@ -67,6 +102,59 @@ public static class BugHuntTests
             Assert.Eq("9nDwN00BJ04Ef55", a?.FileId);
             Assert.Eq("9nDwN00BJ04Ef55", b?.FileId);
             Assert.Eq(c?.FileId, a?.FileId);
+        });
+
+        t.Group("Ревизия: сетевой слой");
+
+        t.Run("страница в windows-1251 читается правильно", async () =>
+        {
+            var bytes = Encoding.GetEncoding(1251).GetBytes("<html><title>Тойота Сиенна</title></html>");
+            var http = new HttpClient(new Handler(_ =>
+            {
+                var resp = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+                resp.Content.Headers.ContentType = new MediaTypeHeaderValue("text/html") { CharSet = "windows-1251" };
+                return Task.FromResult(resp);
+            }));
+            var r = await new HttpPageFetcher(http).GetAsync(new Uri("https://x.test/"), CancellationToken.None);
+            Assert.True(r.Body.Contains("Тойота Сиенна"), r.Body);
+        });
+
+        t.Run("таймаут HttpClient: повторы с паузой, потом отказ сайта (не исключение и не отмена)", async () =>
+        {
+            var inner = new Throwing();
+            var now = new DateTimeOffset(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
+            var f = new PoliteFetcher(inner, new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero, MaxRetries = 2 },
+                () => now, (d, _) => { now += d; return Task.CompletedTask; });
+            var r = await f.GetAsync(new Uri("https://slow.test/a"));
+            Assert.Eq(SourceStatus.Unavailable, r.Source);
+            Assert.Eq(3, inner.Calls);
+            Assert.True(r.Note!.Contains("не ответил"), r.Note);
+        });
+
+        t.Run("настоящая отмена пользователя по-прежнему отменяет, а не превращается в отказ сайта", async () =>
+        {
+            var cts = new CancellationTokenSource();
+            var inner = new CancelOnCall(cts);
+            var f = new PoliteFetcher(inner, new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero }, delay: (_, _) => Task.CompletedTask);
+            var threw = false;
+            try { await f.GetAsync(new Uri("https://x.test/a"), cts.Token); }
+            catch (OperationCanceledException) { threw = true; }
+            Assert.True(threw, "отмена дошла наверх");
+        });
+
+        t.Run("кэш страниц не растёт бесконечно", async () =>
+        {
+            var inner = new Echo();
+            var now = new DateTimeOffset(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
+            var f = new PoliteFetcher(inner, new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero, MaxCacheEntries = 10 },
+                () => now = now.AddSeconds(1), (_, _) => Task.CompletedTask);
+            for (var i = 0; i < 100; i++) await f.GetAsync(new Uri($"https://x.test/{i}"));
+            // Самые старые вытеснены: страница 0 запрашивается снова, свежая 99 берётся из кэша.
+            var before = inner.Calls;
+            await f.GetAsync(new Uri("https://x.test/99"));
+            Assert.Eq(before, inner.Calls);
+            await f.GetAsync(new Uri("https://x.test/0"));
+            Assert.Eq(before + 1, inner.Calls);
         });
     }
 }

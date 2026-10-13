@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using BeamModManager.Core.Sources;
 
 namespace BeamModManager.Core.Net;
@@ -19,6 +20,12 @@ public interface IPageFetcher
 public sealed class HttpPageFetcher : IPageFetcher
 {
     private readonly HttpClient _http;
+
+    static HttpPageFetcher()
+    {
+        // Часть сайтов отдаёт страницы в windows-1251; без этого провайдера такая страница читалась бы как UTF-8 (кракозябры).
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
 
     public HttpPageFetcher(HttpClient? http = null)
     {
@@ -56,6 +63,7 @@ public sealed class PoliteFetchOptions
     public TimeSpan DefaultBackoff { get; init; } = TimeSpan.FromSeconds(5);
     public TimeSpan MaxBackoff { get; init; } = TimeSpan.FromSeconds(60);
     public TimeSpan CacheTtl { get; init; } = TimeSpan.FromMinutes(30);
+    public int MaxCacheEntries { get; init; } = 64;
     /// <summary>Подряд идущих сбоев, после которых сайт на время отключается.</summary>
     public int FailuresBeforeCooldown { get; init; } = 3;
     public TimeSpan Cooldown { get; init; } = TimeSpan.FromMinutes(10);
@@ -152,11 +160,12 @@ public sealed class PoliteFetcher
                 {
                     raw = await _inner.GetAsync(url, ct).ConfigureAwait(false);
                 }
-                catch (HttpRequestException ex)
+                catch (Exception ex) when (ex is HttpRequestException or IOException
+                                           || (ex is OperationCanceledException && !ct.IsCancellationRequested)) // таймаут HttpClient, а не отмена пользователя
                 {
                     st.LastRequest = _now();
                     if (attempt < _o.MaxRetries) { await _delay(Backoff(attempt, null), ct).ConfigureAwait(false); continue; }
-                    return Failure(st, null, ex.Message);
+                    return Failure(st, null, ex is OperationCanceledException ? "сайт не ответил вовремя" : ex.Message);
                 }
                 st.LastRequest = _now();
 
@@ -182,13 +191,27 @@ public sealed class PoliteFetcher
 
                 st.Failures = 0;
                 var ok = new FetchResult(raw.Status, raw.Body, SourceStatus.Ok);
-                lock (_lock) _cache[url] = (_now(), ok);
+                lock (_lock) Remember(url, ok);
                 return ok;
             }
         }
         finally
         {
             st.Gate.Release();
+        }
+    }
+
+    /// <summary>Кэш ограничен: просроченное убирается, при переполнении уходят самые старые (страницы по сотни килобайт).</summary>
+    private void Remember(Uri url, FetchResult result)
+    {
+        var now = _now();
+        _cache[url] = (now, result);
+        if (_cache.Count <= _o.MaxCacheEntries) return;
+        foreach (var k in _cache.Where(kv => now - kv.Value.At >= _o.CacheTtl).Select(kv => kv.Key).ToList()) _cache.Remove(k);
+        while (_cache.Count > _o.MaxCacheEntries)
+        {
+            var oldest = _cache.MinBy(kv => kv.Value.At).Key;
+            _cache.Remove(oldest);
         }
     }
 
