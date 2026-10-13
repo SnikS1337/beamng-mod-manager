@@ -19,10 +19,12 @@ public static class ProfileService
     public static ProfilePlan Plan(ModProfile profile, IReadOnlyList<(string FileName, bool Enabled)> installed)
     {
         var wanted = new HashSet<string>(profile.EnabledFiles, StringComparer.OrdinalIgnoreCase);
-        var have = installed.ToDictionary(x => x.FileName, x => x.Enabled, StringComparer.OrdinalIgnoreCase);
+        // Одно имя могло оказаться в списке дважды (разный регистр, копия во включённых и отключённых): без падения.
+        var have = installed.GroupBy(x => x.FileName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Any(x => x.Enabled), StringComparer.OrdinalIgnoreCase);
 
-        var enable = installed.Where(x => !x.Enabled && wanted.Contains(x.FileName)).Select(x => x.FileName).ToList();
-        var disable = installed.Where(x => x.Enabled && !wanted.Contains(x.FileName)).Select(x => x.FileName).ToList();
+        var enable = installed.Where(x => !x.Enabled && wanted.Contains(x.FileName) && !have[x.FileName]).Select(x => x.FileName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var disable = installed.Where(x => x.Enabled && !wanted.Contains(x.FileName)).Select(x => x.FileName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var missing = wanted.Where(w => !have.ContainsKey(w)).OrderBy(w => w, StringComparer.OrdinalIgnoreCase).ToList();
         return new ProfilePlan(enable, disable, missing);
     }

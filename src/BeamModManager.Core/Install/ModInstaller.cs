@@ -24,9 +24,11 @@ public sealed class InstallOptions
     /// <summary>Заменить уже установленный файл с таким именем (обновление). Старый уйдёт в резервную копию.</summary>
     public bool ReplaceExisting { get; init; }
     public ArchiveLimits Limits { get; init; } = new();
+    /// <summary>Предел размера самого ZIP: слишком большой ответ прерываем, не заполняя диск.</summary>
+    public long MaxArchiveBytes { get; init; } = 8L * 1024 * 1024 * 1024;
 }
 
-public enum InstallError { None, BadName, Blocked, HasWarnings, AlreadyExists, Io }
+public enum InstallError { None, BadName, Blocked, HasWarnings, AlreadyExists, Io, InUse, TooLarge }
 
 public sealed record InstallResult(
     bool Success, InstallError Error, string? Message, string? Path, string? Sha256, InspectionResult? Inspection)
@@ -49,13 +51,25 @@ public sealed class ModInstaller
         _keepBackups = keepBackups;
     }
 
+    private static readonly HashSet<string> ReservedNames = new(StringComparer.Ordinal)
+    {
+        "CON", "PRN", "AUX", "NUL", "CLOCK$",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
     public static string? SafeFileName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         var n = name.Replace('\\', '/');
         n = n[(n.LastIndexOf('/') + 1)..].Trim();
-        if (n.Length == 0 || n.StartsWith('.') || n.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return null;
+        if (n.Length == 0 || n.Length > 150 || n.StartsWith('.') || n.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return null;
+        if (n.Any(c => c < 32 || c is '\u202E' or '\u200E' or '\u200F')) return null; // управляющие символы и перестановка направления текста
         if (!n.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return null;
+        var stem = n[..^4];
+        if (stem.Length == 0 || stem.EndsWith(' ') || stem.EndsWith('.')) return null; // Windows тихо обрезает такие имена
+        var device = stem.Split('.')[0].TrimEnd().ToUpperInvariant();
+        if (ReservedNames.Contains(device)) return null; // CON, NUL, COM1 и т.п. — особые имена Windows
         return n;
     }
 
@@ -66,15 +80,32 @@ public sealed class ModInstaller
         if (name is null) return InstallResult.Fail(InstallError.BadName, "Недопустимое имя файла (нужен .zip без путей).");
 
         Directory.CreateDirectory(_layout.ModsDir);
-        var target = Path.Combine(_layout.ModsDir, name);
+        // Если мод сейчас отключён, обновление заменяет отключённую копию и мод остаётся отключённым:
+        // иначе получились бы два файла с одним именем, и включить мод обратно было бы нельзя.
+        var disabledCopy = Path.Combine(_layout.DisabledDir, name);
+        var replacingDisabled = File.Exists(disabledCopy);
+        var target = replacingDisabled ? disabledCopy : Path.Combine(_layout.ModsDir, name);
         if (File.Exists(target) && !options.ReplaceExisting)
             return InstallResult.Fail(InstallError.AlreadyExists, "Такой файл уже установлен.");
+        if (replacingDisabled && File.Exists(Path.Combine(_layout.ModsDir, name)))
+            return InstallResult.Fail(InstallError.AlreadyExists, "Файл с таким именем есть и среди включённых, и среди отключённых; уберите лишнюю копию.");
 
         var temp = Path.Combine(_layout.ModsDir, $".{Guid.NewGuid():N}.part");
         try
         {
             using (var fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write))
-                archive.CopyTo(fs);
+            {
+                var buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = archive.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += read;
+                    if (total > options.MaxArchiveBytes)
+                        return InstallResult.Fail(InstallError.TooLarge, "Файл больше допустимого размера, загрузка прервана.");
+                    fs.Write(buffer, 0, read);
+                }
+            }
 
             InspectionResult inspection;
             using (var fs = File.OpenRead(temp))
@@ -90,12 +121,15 @@ public sealed class ModInstaller
                 hash = Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
 
             if (File.Exists(target)) BackupFile(target, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Move(temp, target, overwrite: true);
             return new InstallResult(true, InstallError.None, null, target, hash, inspection);
         }
         catch (IOException ex)
         {
-            return InstallResult.Fail(InstallError.Io, ex.Message);
+            return IsSharingViolation(ex)
+                ? InstallResult.Fail(InstallError.InUse, "Файл занят другой программой (возможно, запущена игра). Закройте игру и повторите.")
+                : InstallResult.Fail(InstallError.Io, ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -106,6 +140,9 @@ public sealed class ModInstaller
             if (File.Exists(temp)) File.Delete(temp);
         }
     }
+
+    /// <summary>Windows: ERROR_SHARING_VIOLATION (32) и ERROR_LOCK_VIOLATION (33) — файл открыт другой программой.</summary>
+    private static bool IsSharingViolation(IOException e) => (e.HResult & 0xFFFF) is 32 or 33;
 
     public OpResult Disable(string fileName) => Move(fileName, _layout.ModsDir, _layout.DisabledDir, "отключён");
     public OpResult Enable(string fileName) => Move(fileName, _layout.DisabledDir, _layout.ModsDir, "включён");
@@ -119,8 +156,15 @@ public sealed class ModInstaller
         {
             var p = Path.Combine(dir, name);
             if (!File.Exists(p)) continue;
-            var backup = BackupFile(p, name, move: true);
-            return new OpResult(true, "Удалён, копия в резервных.", backup);
+            try
+            {
+                var backup = BackupFile(p, name, move: true);
+                return new OpResult(true, "Удалён, копия в резервных.", backup);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return new OpResult(false, IoMessage(e));
+            }
         }
         return new OpResult(false, "Файл не найден.");
     }
@@ -151,10 +195,17 @@ public sealed class ModInstaller
         var last = Backups(name).LastOrDefault();
         if (last is null) return new OpResult(false, "Резервных копий нет.");
         var target = Path.Combine(_layout.ModsDir, name);
-        if (File.Exists(target)) BackupFile(target, name);
-        Directory.CreateDirectory(_layout.ModsDir);
-        File.Move(last, target, overwrite: true);
-        return new OpResult(true, "Восстановлено.", target);
+        try
+        {
+            if (File.Exists(target)) BackupFile(target, name);
+            Directory.CreateDirectory(_layout.ModsDir);
+            File.Move(last, target, overwrite: true);
+            return new OpResult(true, "Восстановлено.", target);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new OpResult(false, IoMessage(e));
+        }
     }
 
     private OpResult Move(string fileName, string from, string to, string verb)
@@ -165,10 +216,22 @@ public sealed class ModInstaller
         var dst = Path.Combine(to, name);
         if (!File.Exists(src)) return new OpResult(false, "Файл не найден.");
         if (File.Exists(dst)) return new OpResult(false, "В целевой папке уже есть файл с таким именем.");
-        Directory.CreateDirectory(to);
-        File.Move(src, dst);
-        return new OpResult(true, $"Мод {verb}.", dst);
+        try
+        {
+            Directory.CreateDirectory(to);
+            File.Move(src, dst);
+            return new OpResult(true, $"Мод {verb}.", dst);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new OpResult(false, IoMessage(e));
+        }
     }
+
+    private static string IoMessage(Exception e) =>
+        e is IOException io && IsSharingViolation(io)
+            ? "Файл занят другой программой (возможно, запущена игра). Закройте игру и повторите."
+            : $"Не удалось выполнить операцию с файлом: {e.Message}";
 
     private string BackupFolderFor(string name) => Path.Combine(_layout.BackupDir, name);
 
@@ -177,9 +240,11 @@ public sealed class ModInstaller
         var dir = BackupFolderFor(name);
         Directory.CreateDirectory(dir);
         var stamp = _now().UtcDateTime.ToString("yyyyMMdd-HHmmss-fff");
-        var dst = Path.Combine(dir, $"{stamp}_{name}");
-        var i = 1;
-        while (File.Exists(dst)) dst = Path.Combine(dir, $"{stamp}-{i++}_{name}");
+        // Счётчик есть всегда и с нулями слева: порядок имён по возрастанию совпадает с порядком создания
+        // даже при двух копиях в одну миллисекунду (иначе «-1_» сортировалось бы раньше «_»).
+        var n = 0;
+        string dst;
+        do { dst = Path.Combine(dir, $"{stamp}-{n++:D3}_{name}"); } while (File.Exists(dst));
         if (move) File.Move(path, dst); else File.Copy(path, dst);
 
         var all = Directory.EnumerateFiles(dir).OrderBy(f => f, StringComparer.Ordinal).ToList();
