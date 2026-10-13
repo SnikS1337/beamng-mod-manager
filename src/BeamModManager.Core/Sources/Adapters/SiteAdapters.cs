@@ -33,6 +33,18 @@ public abstract class SiteAdapter : IModSource
     protected abstract Uri FeedUrl(int page);
     protected abstract Uri? SearchUrl(string query);
     protected abstract string SlugOf(Uri url);
+    /// <summary>Главная страница сайта: по ней проверяем, что адрес карточки действительно принадлежит этому сайту.</summary>
+    protected abstract Uri SiteRoot { get; }
+
+    /// <summary>Адрес привязки вводит пользователь; чужой сайт, другая схема или «file://» этим адаптером не открываются.</summary>
+    protected bool BelongsToSite(Uri url)
+    {
+        if (url.Scheme != Uri.UriSchemeHttps && url.Scheme != Uri.UriSchemeHttp) return false;
+        static string Bare(string h) => h.ToLowerInvariant().StartsWith("www.") ? h.ToLowerInvariant()[4..] : h.ToLowerInvariant();
+        var site = Bare(SiteRoot.Host);
+        var host = Bare(url.Host);
+        return host == site || host.EndsWith("." + site);
+    }
 
     /// <summary>
     /// Разбор страницы с защитой от неожиданностей: слишком сложная страница (таймаут регулярного выражения)
@@ -73,6 +85,7 @@ public abstract class SiteAdapter : IModSource
 
     public async Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default)
     {
+        if (!BelongsToSite(url)) return null; // страницы «нет»: сообщим как ненайденную, чужой сайт не опрашиваем
         var html = await LoadAsync(url, ct).ConfigureAwait(false);
         if (html is null) return null;
         var basis = Safe(() => new Listing(Id, url, SlugOf(url), PageTitle(html)), "карточка");
@@ -114,8 +127,10 @@ public sealed class ModlandSource : SiteAdapter
     protected override IReadOnlyList<Listing> ParseList(string html) => ModlandParser.ParseList(html);
     protected override Listing ParseDetail(string html, Listing basis) => ModlandParser.ParseDetail(html, basis);
     protected override string SlugOf(Uri url) => ModlandParser.SlugOf(url);
+    protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "beamng.drive-mods" : $"beamng.drive-mods/page/{page}");
-    protected override Uri? SearchUrl(string q) => new(Root, "search/" + Uri.EscapeDataString(q));
+    // Запрос из одних точек («..») превратился бы в переход вверх по адресу.
+    protected override Uri? SearchUrl(string q) => q.Trim('.', ' ').Length == 0 ? null : new(Root, "search/" + Uri.EscapeDataString(q));
 }
 
 public sealed class StModsSource : SiteAdapter
@@ -128,6 +143,7 @@ public sealed class StModsSource : SiteAdapter
     protected override IReadOnlyList<Listing> ParseList(string html) => StModsParser.ParseList(html);
     protected override Listing ParseDetail(string html, Listing basis) => StModsParser.ParseDetail(html, basis);
     protected override string SlugOf(Uri url) => StModsParser.SlugOf(url);
+    protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "beamng_drive/" : $"beamng_drive/?page={page}");
     protected override Uri? SearchUrl(string q) => new(Root, "search.php?search_request=" + Uri.EscapeDataString(q));
 }
@@ -144,6 +160,7 @@ public sealed class ModsGamingSource : SiteAdapter
     protected override IReadOnlyList<Listing> ParseSearch(string html) => ModsGamingParser.ParseSearch(html);
     protected override Listing ParseDetail(string html, Listing basis) => ModsGamingParser.ParseDetail(html, basis);
     protected override string SlugOf(Uri url) => Slug(url);
+    protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "load/beamng_drive/mashiny/38" : $"load/beamng_drive/mashiny/38-{page}");
     protected override Uri? SearchUrl(string q) => new(Root, "search/?q=" + Uri.EscapeDataString(q) + "&t=0");
 
@@ -170,6 +187,7 @@ public sealed class BeamNgRepoSource : SiteAdapter
     protected override IReadOnlyList<Listing> ParseList(string html) => BeamNgRepoParser.ParseList(html);
     protected override Listing ParseDetail(string html, Listing basis) => BeamNgRepoParser.ParseDetail(html, basis);
     protected override string SlugOf(Uri url) => BeamNgRepoParser.SlugOf(url);
+    protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "resources/" : $"resources/?page={page}");
     protected override Uri? SearchUrl(string q) => null;
 }

@@ -1,6 +1,9 @@
 using System.IO.Compression;
 using BeamModManager.Core.Install;
 using BeamModManager.Core.Library;
+using BeamModManager.Core.Net;
+using BeamModManager.Core.Settings;
+using BeamModManager.Core.Sources;
 using BeamModManager.Core.Text;
 
 namespace BeamModManager.Core.Tests;
@@ -18,6 +21,12 @@ public static class Revision2Tests
         }
         ms.Position = 0;
         return ms;
+    }
+
+    private sealed class Recording : IPageFetcher
+    {
+        public readonly List<Uri> Requested = new();
+        public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) { Requested.Add(url); return Task.FromResult(new RawResponse(200, "<html><h1>x</h1></html>")); }
     }
 
     private sealed class Box : IDisposable
@@ -147,6 +156,61 @@ public static class Revision2Tests
         {
             var l = ModLayout.Beside("/");
             Assert.True(l.DisabledDir.Contains("BeamModManager"), "путь построен");
+        });
+
+        t.Group("Ревизия 2: папка игры");
+
+        string Tmp() { var d = Path.Combine(Path.GetTempPath(), "bmm-gf-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(d); return d; }
+
+        t.Run("новая раскладка игры (0.37+): BeamNG.drive\\current\\mods находится из любой из трёх папок", () =>
+        {
+            var root = Tmp();
+            var mods = Path.Combine(root, "BeamNG", "BeamNG.drive", "current", "mods");
+            Directory.CreateDirectory(mods);
+            Assert.Eq(mods, GameFolders.Resolve(Path.Combine(root, "BeamNG", "BeamNG.drive")).ModsDir);
+            Assert.Eq(mods, GameFolders.Resolve(Path.Combine(root, "BeamNG", "BeamNG.drive", "current")).ModsDir);
+            Assert.Eq(mods, GameFolders.Resolve(Path.Combine(root, "BeamNG")).ModsDir);
+        });
+
+        t.Run("путь в кавычках (как копирует проводник), с переменной окружения; относительный путь отклоняется", () =>
+        {
+            var d = Tmp(); var mods = Path.Combine(d, "mods"); Directory.CreateDirectory(mods);
+            Assert.True(GameFolders.Resolve("\"" + mods + "\"").Ok, "кавычки");
+            Environment.SetEnvironmentVariable("BMM_TEST_DIR", d);
+            Assert.True(GameFolders.Resolve(Path.Combine("%BMM_TEST_DIR%", "mods")).Ok, "переменная");
+            Assert.False(GameFolders.Resolve("mods").Ok, "относительный путь");
+            Assert.Eq(FolderProblem.Empty, GameFolders.Resolve("\"\"").Problem);
+        });
+
+        t.Run("служебные папки в папке менеджера: у разных mods разные, внутри mods ничего нет", () =>
+        {
+            var a = ModLayout.InAppFolder("/g/a/mods", "/app");
+            var b = ModLayout.InAppFolder("/g/b/mods", "/app");
+            Assert.True(a.DisabledDir != b.DisabledDir, "разные папки");
+            Assert.True(a.DisabledDir.StartsWith("/app") && a.BackupDir.StartsWith("/app"), "в папке менеджера");
+            Assert.Eq(a.DisabledDir, ModLayout.InAppFolder("/g/a/mods/", "/app").DisabledDir);
+        });
+
+        t.Group("Ревизия 2: адаптеры");
+
+        t.Run("карточка по адресу чужого сайта или не http: сайт не опрашивается, ответ «страницы нет»", async () =>
+        {
+            var rec = new Recording();
+            var src = new ModlandSource(new PoliteFetcher(rec, new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero }));
+            foreach (var u in new[] { "https://evil.example/x", "https://modland.net.evil.example/x", "http://127.0.0.1/admin", "file:///etc/passwd", "ftp://www.modland.net/x" })
+                Assert.Null(await src.GetListingAsync(new Uri(u)));
+            Assert.Eq(0, rec.Requested.Count);
+            await src.GetListingAsync(new Uri("https://www.modland.net/some-mod"));
+            await src.GetListingAsync(new Uri("https://modland.net/other-mod"));
+            Assert.Eq(2, rec.Requested.Count);
+        });
+
+        t.Run("поисковый запрос из одних точек не превращается в переход по адресу", async () =>
+        {
+            var rec = new Recording();
+            var src = new ModlandSource(new PoliteFetcher(rec, new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero }));
+            Assert.Eq(0, (await src.SearchAsync("..")).Count);
+            Assert.Eq(0, rec.Requested.Count);
         });
 
         t.Group("Ревизия 2: архивы");

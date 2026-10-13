@@ -79,8 +79,16 @@ public sealed class SettingsStore
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(settings.Normalize(), new JsonSerializerOptions { WriteIndented = true });
             var tmp = _path + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, _path, overwrite: true);
+            try
+            {
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, _path, overwrite: true);
+            }
+            catch
+            {
+                try { File.Delete(tmp); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                throw;
+            }
         }
     }
 

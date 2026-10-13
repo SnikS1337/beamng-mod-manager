@@ -69,6 +69,23 @@ public static class UpdateCoordinatorTests
             Assert.False(c.IsRunning, "завершена");
         });
 
+        t.Run("отмена и сразу новое нажатие: старая прервана, новая проверка выполнена целиком", async () =>
+        {
+            var gate = new TaskCompletionSource();
+            var site = new Site("x") { Gate = gate.Task, Feed = { L("m0", "1.0") } };
+            var c = new UpdateCoordinator(Store(1), () => new IModSource[] { site }, () => T0);
+            var a = c.CheckAsync();
+            c.Cancel();
+            var b = c.CheckAsync();
+            Assert.False(ReferenceEquals(a, b), "это новая проверка, а не прерванная");
+            gate.SetResult();
+            Assert.True((await a).Cancelled, "старая прервана");
+            var rb = await b;
+            Assert.False(rb.Cancelled, "новая не прервана");
+            Assert.Eq(1, rb.UpToDate);
+            Assert.False(c.IsRunning, "всё завершено");
+        });
+
         t.Run("«принудительно» во время обычной проверки тоже присоединяется, а не запускает вторую", async () =>
         {
             var gate = new TaskCompletionSource();
