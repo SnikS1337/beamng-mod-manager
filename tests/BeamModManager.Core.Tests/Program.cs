@@ -8,5 +8,6 @@ VersionTests.Register(t);
 HostLinkTests.Register(t);
 MatcherTests.Register(t);
 ArchiveTests.Register(t);
+ModlandTests.Register(t);
 
 return t.Summary();
