@@ -10,6 +10,11 @@ public sealed class UpdateCoordinatorOptions
     public TimeSpan FailureBackoff { get; init; } = TimeSpan.FromMinutes(5);
     /// <summary>«Проверить заново» чаще этого срока возвращает прошлый отчёт, а не идёт на сайты.</summary>
     public TimeSpan MinForceInterval { get; init; } = TimeSpan.FromMinutes(1);
+    /// <summary>
+    /// Одна кнопка проверяет всё: если за один заход (ограниченный по времени) не успели, координатор сам продолжает следующей частью.
+    /// Это предел числа частей, чтобы не крутиться вечно (5 минут × 12 = час).
+    /// </summary>
+    public int MaxBatches { get; init; } = 12;
 }
 
 /// <summary>
@@ -89,31 +94,69 @@ public sealed class UpdateCoordinator
     {
         try
         {
-            var now = _clock();
             if (force) _clearCache?.Invoke(); // иначе «заново» вернёт копию из кэша
-            Dictionary<string, string> hold;
-            lock (_gate)
-            {
-                // Принудительная проверка отменяет паузу после сбоя: пользователь настаивает, а частоту ограничивает MinForceInterval.
-                if (force) _retryAfter.Clear();
-                hold = _retryAfter.Where(kv => kv.Value > now)
-                    .ToDictionary(kv => kv.Key, kv => $"сайт недавно не отвечал, повторим после {kv.Value.ToLocalTime():HH:mm}");
-            }
+            var before = UpdateCheckService.Pending(_store).Select(f => (f.ModId, f.LatestVersion)).ToHashSet();
 
-            var report = await UpdateRunner.RunAsync(_store, _sources(), now, _o.Check.With(force), progress, ct, _clock, hold)
-                .ConfigureAwait(false);
+            UpdateRunReport? first = null, last = null;
+            var requests = 0;
+            var upToDate = 0;
 
-            lock (_gate)
+            // Одно нажатие — вся работа. Заход ограничен по времени, поэтому после долгого перерыва проверка идёт несколькими частями
+            // подряд; человеку не нужно нажимать кнопку снова. Продолжаем, только пока это идёт на пользу: часть что-то проверила
+            // (число моделей «к проверке» уменьшилось) и ещё есть отложенное.
+            for (var batch = 0; ; batch++)
             {
-                foreach (var s in report.Sources)
+                var now = _clock();
+                var batchForce = force && batch == 0;
+                var options = _o.Check.With(batchForce);
+                var dueBefore = UpdateCheckService.PlanFeeds(_store, now, options).Due.Count;
+
+                Dictionary<string, string> hold;
+                lock (_gate)
                 {
-                    if (s.Status == SourceStatus.Unavailable && !hold.ContainsKey(s.Source)) _retryAfter[s.Source] = now + _o.FailureBackoff;
-                    else if (s.Status == SourceStatus.Ok && s.Note is null) _retryAfter.Remove(s.Source);
+                    // Принудительная проверка отменяет паузу после сбоя: пользователь настаивает, а частоту ограничивает MinForceInterval.
+                    if (batchForce) _retryAfter.Clear();
+                    hold = _retryAfter.Where(kv => kv.Value > now)
+                        .ToDictionary(kv => kv.Key, kv => $"сайт недавно не отвечал, повторим после {kv.Value.ToLocalTime():HH:mm}");
                 }
-                LastReport = report;
-                if (!report.Cancelled) _lastFinished = _clock();
+
+                var report = await UpdateRunner.RunAsync(_store, _sources(), now, options, progress, ct, _clock, hold)
+                    .ConfigureAwait(false);
+                first ??= report;
+                last = report;
+                requests += report.Requests;
+                upToDate += report.UpToDate;
+
+                lock (_gate)
+                {
+                    foreach (var s in report.Sources)
+                    {
+                        if (s.Status == SourceStatus.Unavailable && !hold.ContainsKey(s.Source)) _retryAfter[s.Source] = now + _o.FailureBackoff;
+                        else if (s.Status == SourceStatus.Ok && s.Note is null) _retryAfter.Remove(s.Source);
+                    }
+                }
+
+                var unfinished = report.StoppedByTime || report.Sources.Any(s => s.Postponed > 0);
+                if (report.Cancelled || !unfinished || batch + 1 >= _o.MaxBatches) break;
+                var dueAfter = UpdateCheckService.PlanFeeds(_store, _clock(), _o.Check.With(false)).Due.Count;
+                if (dueAfter >= dueBefore) break; // ничего не продвинулось (сайты отказывают): не крутимся впустую
             }
-            return report;
+
+            var final = last!;
+            var result = new UpdateRunReport(final.Findings, final.Sources, requests, upToDate)
+            {
+                NewFindings = final.Findings.Where(f => !before.Contains((f.ModId, f.LatestVersion))).ToList(),
+                FreshSkipped = first!.FreshSkipped,
+                Cancelled = final.Cancelled,
+                StoppedByTime = final.StoppedByTime,
+            };
+
+            lock (_gate)
+            {
+                LastReport = result;
+                if (!result.Cancelled) _lastFinished = _clock();
+            }
+            return result;
         }
         finally
         {
