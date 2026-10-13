@@ -61,6 +61,9 @@ public sealed class SearchService
 
     private async Task<(SourceReport Report, IReadOnlyList<Listing> Listings)> RunOne(IModSource s, string query, CancellationToken ct)
     {
+        if (!s.SupportsSearch)
+            return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Ok, 0, "поиск на этом сайте пока не поддерживается"), Array.Empty<Listing>());
+
         var st = _status(s.Id);
         if (st != SourceStatus.Ok)
             return (new SourceReport(s.Id, s.DisplayName, st, 0, st == SourceStatus.NeedsHumanCheck ? "нужно пройти проверку на сайте" : "сайт недоступен"), Array.Empty<Listing>());
@@ -76,6 +79,10 @@ public sealed class SearchService
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Unavailable, 0, "сайт не ответил вовремя"), Array.Empty<Listing>());
+        }
+        catch (SourceException ex)
+        {
+            return (new SourceReport(s.Id, s.DisplayName, ex.Status, 0, ex.Message), Array.Empty<Listing>());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

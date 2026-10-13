@@ -16,6 +16,7 @@ UpdatePlannerTests.Register(t);
 NetTests.Register(t);
 InstallTests.Register(t);
 SearchTests.Register(t);
+AdapterTests.Register(t);
 LibraryTests.Register(t);
 
 
