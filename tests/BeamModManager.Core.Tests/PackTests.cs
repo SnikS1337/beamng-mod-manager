@@ -57,6 +57,19 @@ public static class PackTests
         t.Run("запись пустой папки vehicles/name/ даёт машину", () =>
             Assert.True(C("vehicles/empty/").Vehicles.Contains("empty"), "папка"));
 
+        t.Run("название: пак распознаётся по слову, а не по подстроке", () =>
+        {
+            foreach (var y in new[] { "BMW 3-Series/M3 Pack (Update 2!)", "Mack Anthem / Pinnacle [PACK]", "German Cars Pack", "Сборка машин", "1997-2004 Volkswagen Golf 4 BeamNG Pack Mod" })
+                Assert.True(PackTitleHint.Looks(y), y);
+            foreach (var n in new[] { "Toyota Sienna 2017", "Backpack Trailer", "Packard Clipper", "Impact Hammer" })
+                Assert.False(PackTitleHint.Looks(n), n);
+        });
+        t.Run("название: пак колёс отличается от пака машин", () =>
+        {
+            Assert.True(PackTitleHint.LooksLikePartsPack("Biggest Stylish Wheelpack"), "колёса");
+            Assert.False(PackTitleHint.LooksLikePartsPack("BMW G20 PACK (LCI UPDATE!)"), "машины");
+        });
+
         var pack = C("vehicles/a/i.json", "vehicles/b/i.json", "vehicles/c/i.json");
         var singleA = C("vehicles/a/i.json");
         var singleB = C("vehicles/b/i.json");

@@ -28,6 +28,18 @@ public static class RealPageTests
             Assert.Eq("Motorcycles", l.Last().Category);
             Assert.True(l.Count(x => x.SizeBytes is > 0) >= 6, "размеры читаются");
         });
+        t.Run("Modland, лента: значок «Paid content» даёт Paid, остальные не трогаются", () =>
+        {
+            var l = ModlandParser.ParseList(Fx("modland/list-real.html"));
+            Assert.Eq(1, l.Count(x => x.Price == PriceStatus.Paid));
+            Assert.True(l.Single(x => x.Price == PriceStatus.Paid).Title.StartsWith("Beach House"), "тот самый мод");
+        });
+        t.Run("Modland, значок платного учитывается на странице, даже если ссылок нет", () =>
+        {
+            var html = "<h1 class=\"post-title mb-0\"><span title=\"Paid content\"></span>Some Mod</h1><p>Latest Version 1.0</p>";
+            var d = ModlandParser.ParseDetail(html, new Listing("modland", new Uri("https://www.modland.net/x.html"), "x", "Some Mod"));
+            Assert.Eq(PriceStatus.Paid, d.Price);
+        });
         t.Run("Modland, платный мод: Patreon-ссылка, версии", () =>
         {
             var b = new Listing("modland", new Uri("https://www.modland.net/x/a.html"), "a", "[PAID] Duskport");
@@ -127,6 +139,21 @@ public static class RealPageTests
             Assert.Eq(6, l.Count);
             Assert.True(l.All(x => x.Title.Contains("sienna", StringComparison.OrdinalIgnoreCase)), string.Join("|", l.Select(x => x.Title)));
         });
+
+        foreach (var (file, host, title) in new[]
+        {
+            ("pack-wheels-boosty-real.html", "boosty.to", "Biggest Stylish Wheelpack"),
+            ("pack-golf-kofi-real.html", "ko-fi.com", "1997-2004 Volkswagen Golf 4 Pack"),
+            ("pack-bmw-kofi-discord-real.html", "ko-fi.com", "BMW 3-Series/M3 Pack (Update 2!)"),
+        })
+            t.Run($"Modland, пак без метки PAID ({host}): платный по ссылке, файла нет", () =>
+            {
+                var b = new Listing("modland", new Uri("https://www.modland.net/x/p.html"), "p", title);
+                var d = ModlandParser.ParseDetail(Fx("modland/" + file), b);
+                Assert.Eq(PriceStatus.Paid, d.Price);
+                Assert.True(d.Offers.Any(o => o.Kind == OfferKind.PaidLink && o.Host.Contains(host)), "ссылка на страницу автора");
+                Assert.False(d.Offers.Any(o => o.Kind != OfferKind.PaidLink), "скачиваемых ссылок нет");
+            });
 
         t.Run("в сохранённых страницах нет IP и токенов", () =>
         {
