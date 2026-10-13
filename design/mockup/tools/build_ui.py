@@ -257,7 +257,7 @@ def chrome(glass, active):
     ring = 'box-shadow:0 0 0 2px rgba(255,255,255,.9), 0 0 26px rgba(170,205,255,.45);' if s_on else ''
     return (f'<nav class="glass lft" aria-label="Разделы" style="left:16px;top:16px;width:84px;height:212px;border-radius:36px;{surface(glass, "Rail", 7)}">'
             f'{rim(glass, "rail")}<div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 0">'
-            f'{navitem("grid", "Гараж", active == "garage")}{navitem("upd", "Обновления", False, "3")}{navitem("search", "Поиск", False)}</div></nav>\n'
+            f'{navitem("grid", "Гараж", active == "garage")}{navitem("upd", "Обновления", active == "updates", "3")}{navitem("search", "Поиск", active == "search")}</div></nav>\n'
             f'<a class="glass lft nv tip" data-tip="Настройки" href="#" aria-label="Настройки" style="left:30px;top:888px;width:56px;height:56px;border-radius:28px;display:flex;align-items:center;'
             f'justify-content:center;color:{"#fff" if s_on else "rgba(255,255,255,.86)"};text-decoration:none;{ring}{surface(glass, "Gear", 7)}">'
             f'{rim(glass, "gear")}<span style="position:relative">{icon("gear", 25, 1.6)}</span></a>\n')
