@@ -40,14 +40,35 @@ docs/
 Ядро не зависит от Windows: его можно разрабатывать и тестировать на Mac и Linux на
 фальшивой папке `mods`. Интерфейс и окно загрузки собираются и запускаются только на Windows.
 
-## Первые шаги (когда появится .NET 8 SDK)
+## Что уже есть в ядре
 
-```powershell
-dotnet new sln -n BeamModManager
-dotnet new classlib -n BeamModManager.Core -o src/BeamModManager.Core
-dotnet new xunit -n BeamModManager.Core.Tests -o tests/BeamModManager.Core.Tests
-dotnet sln add src/BeamModManager.Core tests/BeamModManager.Core.Tests
-dotnet add tests/BeamModManager.Core.Tests reference src/BeamModManager.Core
+Чистая логика без внешних пакетов (всё проверено тестами):
+
+| Модуль | Что делает |
+| --- | --- |
+| `Text/TitleNormalizer`, `TitleParser` | Название, версия мода и версия игры из заголовков сайтов («МОД … ДЛЯ BEAMNG.DRIVE» и др.) |
+| `Pricing/PaidDetector` | `Paid` / `Free` / `Unknown`; «бесплатно» только при положительных признаках |
+| `Hosts/HostLinkParser` | Идентификатор файла на ModsFire и MediaFire (одинаковый ID = один файл) |
+| `Matching/DuplicateMatcher` | Один ли это мод на разных сайтах; по одному названию автоматически не склеивает |
+| `Versioning/*` | Сравнение версий и решение «есть обновление» (`Likely` / `Possible` / `None`) |
+| `Safety/ArchiveInspector` | Проверка ZIP: zip-slip, исполняемые файлы, архивные бомбы, структура мода |
+| `Sources/IModSource` | Контракт адаптера сайта (реализаций пока нет, нужны образцы реальных страниц) |
+
+## Сборка и тесты
+
+Нужен .NET 8 SDK.
+
+```
+dotnet run --project tests/BeamModManager.Core.Tests
+```
+
+Тесты написаны на собственном мини-раннере без внешних пакетов (`tests/.../TestRunner.cs`),
+потому что в среде разработки был закрыт NuGet. Когда доступ появится, их можно перенести на xunit
+почти без изменений. Если NuGet недоступен, восстановите проекты с пустым списком источников:
+
+```
+dotnet restore --configfile <файл-конфиг-с-пустыми-источниками>
+dotnet build --no-restore
 ```
 
 Проект `BeamModManager.App` (WPF) создаётся позже, на Windows.
