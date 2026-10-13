@@ -10,5 +10,7 @@ MatcherTests.Register(t);
 ArchiveTests.Register(t);
 ModlandTests.Register(t);
 ModsGamingTests.Register(t);
+RealPageTests.Register(t);
+
 
 return t.Summary();

@@ -36,7 +36,10 @@ public static class ModlandParser
             {
                 var href = a.Groups["h"].Value;
                 if (author is null && href.Contains("/user/")) author = Clean(a.Groups["t"].Value);
-                else if (href.StartsWith("/beamng.drive-mods/") && !href.Contains(".html") && !href.Contains("/page/"))
+                else if (category is null && Uri.TryCreate(Base, WebUtility.HtmlDecode(href), out var au)
+                         && au.Host.EndsWith("modland.net")
+                         && au.AbsolutePath.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: 2 } seg
+                         && seg[0] == "beamng.drive-mods" && !seg[1].EndsWith(".html") && seg[1] != "page")
                     category = Clean(a.Groups["t"].Value);
             }
 
