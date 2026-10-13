@@ -1,0 +1,40 @@
+# Сборка
+bin/
+obj/
+out/
+publish/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.DotSettings.user
+
+# Тесты и покрытие
+TestResults/
+coverage/
+*.trx
+
+# Пакеты
+*.nupkg
+packages/
+
+# Локальные данные разработки (база, кэш, скачанные моды)
+*.db
+*.db-shm
+*.db-wal
+.cache/
+local/
+downloads/
+
+# Секреты и локальные настройки
+.env
+*.secrets.json
+appsettings.Local.json
+
+# ОС
+.DS_Store
+Thumbs.db
