@@ -27,6 +27,20 @@ public static class SettingsTests
             Assert.Eq(6, r.Settings.CheckTtlHours);
         });
 
+        t.Run("проверка при запуске включена по умолчанию, но загрузка остаётся выключенной; явное false сохраняется", () =>
+        {
+            var d = new AppSettings();
+            Assert.True(d.AutoCheckOnStart, "проверка при запуске");
+            Assert.False(d.AllowDownloads, "загрузка выключена");
+            var p = Path.Combine(Path.GetTempPath(), "bmm-set-" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                File.WriteAllText(p, "{ \"AutoCheckOnStart\": false }");
+                Assert.False(new SettingsStore(p).Load().Settings.AutoCheckOnStart, "явное false");
+            }
+            finally { try { File.Delete(p); } catch { } }
+        });
+
         t.Run("сохранение и чтение возвращают то же самое", () =>
         {
             var p = Path.Combine(Tmp(), "sub", "settings.json");
