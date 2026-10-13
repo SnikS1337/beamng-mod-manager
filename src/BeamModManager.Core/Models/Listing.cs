@@ -23,6 +23,8 @@ public sealed record Listing(string Source, Uri Url, string SourceId, string Tit
 
     public PriceStatus Price { get; init; } = PriceStatus.Unknown;
     public IReadOnlyList<Offer> Offers { get; init; } = Array.Empty<Offer>();
+    /// <summary>Дата публикации на сайте, если она видна в выдаче.</summary>
+    public DateTimeOffset? PublishedAt { get; init; }
     public DateTimeOffset? FirstSeen { get; init; }
     public DateTimeOffset? LastSeen { get; init; }
 }

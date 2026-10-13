@@ -50,25 +50,28 @@ public static class AdapterTests
             var list = Fx("modland/list-real.html");
             var pages = new Pages(new()
             {
-                ["https://www.modland.net/search/sienna"] = (200, list),
+                ["https://www.modland.net/search/sienna"] = (200, Fx("modland/search-real.html")),
                 ["https://www.modland.net/beamng.drive-mods"] = (200, list),
                 ["https://www.modland.net/beamng.drive-mods/page/3"] = (200, list),
             });
             var src = new ModlandSource(Polite(pages));
-            Assert.Eq(7, (await src.SearchAsync("sienna")).Count);
+            Assert.Eq(6, (await src.SearchAsync("sienna")).Count);
             Assert.Eq(7, (await src.FeedPageAsync(1)).Count);
             Assert.Eq(7, (await src.FeedPageAsync(3)).Count);
         });
 
-        t.Run("ModsGaming: поиск отключён и в общий поиск не попадает, лента работает", async () =>
+        t.Run("ModsGaming: лента и поиск идут по адресам, которые мы видели", async () =>
         {
-            var pages = new Pages(new() { ["https://modsgaming.ru/load/beamng_drive/mashiny/38-2"] = (200, Fx("modsgaming/list-real.html")) });
+            var pages = new Pages(new()
+            {
+                ["https://modsgaming.ru/load/beamng_drive/mashiny/38-2"] = (200, Fx("modsgaming/list-real.html")),
+                ["https://modsgaming.ru/search/?q=sienna&t=0"] = (200, Fx("modsgaming/search-real.html")),
+            });
             var src = new ModsGamingSource(Polite(pages));
-            Assert.False(src.SupportsSearch);
+            Assert.True(src.SupportsSearch, "поиск включён");
             Assert.Eq(10, (await src.FeedPageAsync(2)).Count);
-            var resp = await new SearchService(new IModSource[] { src }).SearchAsync("bmw");
-            Assert.Eq(0, pages.Requested.Count - 1);
-            Assert.True(resp.Sources.Single().Note!.Contains("не поддерживается"), "пометка в отчёте");
+            var resp = await new SearchService(new IModSource[] { src }).SearchAsync("sienna");
+            Assert.Eq(9, resp.Cards.Count);
         });
 
         t.Run("карточка STMods: заголовок из h1, размер и хост", async () =>
