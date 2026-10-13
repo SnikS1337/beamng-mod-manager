@@ -29,6 +29,26 @@ public static class ProfileService
         return new ProfilePlan(enable, disable, missing);
     }
 
+    /// <summary>
+    /// Профиль хранит имена файлов, а имя меняется при обновлении («audi_v1.0.zip» → «audi_v1.5.zip»). Без переноса профиль
+    /// счёл бы старый файл «пропавшим», а новый отключил бы. Переименования берутся из сверки библиотеки или из обновления.
+    /// </summary>
+    public static ModProfile ApplyRenames(ModProfile profile, IEnumerable<(string From, string To)> renames)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (from, to) in renames) map[from] = to;
+        if (map.Count == 0) return profile;
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in profile.EnabledFiles)
+        {
+            // Цепочка a→b→c за один вызов тоже сворачивается; зацикливание ограничено числом шагов.
+            var cur = f;
+            for (var i = 0; i < map.Count && map.TryGetValue(cur, out var next) && !string.Equals(next, cur, StringComparison.OrdinalIgnoreCase); i++) cur = next;
+            files.Add(cur);
+        }
+        return profile with { EnabledFiles = files };
+    }
+
     /// <summary>Применяет план; сбой одного файла не останавливает остальные.</summary>
     public static ProfileApplyResult Apply(ModInstaller installer, ProfilePlan plan)
     {

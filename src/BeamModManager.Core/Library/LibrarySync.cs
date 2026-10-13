@@ -123,12 +123,19 @@ public static class LibrarySync
     /// Менеджер поставил файл: запись обновляется сразу. Версия берётся из того, что менеджер знает (страница сайта),
     /// иначе из имени файла, иначе неизвестна: старую версию не оставляем, она была бы неверной.
     /// </summary>
-    public static InstalledMod RecordInstalled(ILibraryStore store, string fileName, long sizeBytes, string? version, bool enabled, DateTimeOffset now)
+    public static InstalledMod RecordInstalled(ILibraryStore store, string fileName, long sizeBytes, string? version, bool enabled, DateTimeOffset now,
+        string? replacesFileName = null)
     {
         lock (Gate)
         {
             var key = KeyOf(fileName);
             var existing = store.Mods().FirstOrDefault(m => KeyOf(m.FileName) == key);
+            // Обновление под новым именем файла: это тот же мод, привязки и «пропущенное» остаются у него.
+            if (existing is null && replacesFileName is not null)
+            {
+                var oldKey = KeyOf(replacesFileName);
+                existing = store.Mods().FirstOrDefault(m => KeyOf(m.FileName) == oldKey);
+            }
             var guessed = BindingSuggester.FromFileName(fileName);
             var v = !string.IsNullOrWhiteSpace(version) ? version : guessed.Version;
             var mod = existing is null
@@ -168,20 +175,11 @@ public static class LibrarySync
         return new InstalledMod(final, name, d.FileName, g.Version, d.SizeBytes, now ?? DateTimeOffset.UtcNow, d.Enabled);
     }
 
+    /// <summary>Файл переименован (обычно вручную поставили новую версию): запись остаётся та же, меняется имя файла, размер, версия.</summary>
     private static void MigrateMod(ILibraryStore store, InstalledMod old, DiskMod nw)
     {
-        var created = NewMod(store, nw, id: null);
-        // Время установки и имя, которое пользователь мог поправить, сохраняем.
-        var mod = created with { Name = old.Name, InstalledAtUtc = old.InstalledAtUtc };
-        store.UpsertMod(mod);
-        foreach (var b in store.Bindings().Where(x => x.ModId == old.Id))
-        {
-            store.UpsertBinding(b with { ModId = mod.Id });
-            var c = store.GetCheck(old.Id, b.Source);
-            if (c is not null) store.SaveCheck(c with { ModId = mod.Id });
-        }
-        var dismissed = store.GetDismissedUpdate(old.Id);
-        if (dismissed is not null) store.SetDismissedUpdate(mod.Id, dismissed);
-        store.RemoveMod(old.Id);
+        var g = BindingSuggester.FromFileName(nw.FileName);
+        // Название, которое пользователь мог поправить, и время установки сохраняем; привязки остаются: Id тот же.
+        store.UpsertMod(old with { FileName = nw.FileName, Version = g.Version, SizeBytes = nw.SizeBytes, Enabled = nw.Enabled });
     }
 }
