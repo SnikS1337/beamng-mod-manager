@@ -5,6 +5,7 @@ namespace BeamModManager.Core.Tests;
 
 public static class SettingsTests
 {
+    private const long MB = 1024 * 1024;
     private static string Tmp()
     {
         var d = Path.Combine(Path.GetTempPath(), "bmm-settings-" + Guid.NewGuid().ToString("N"));
@@ -236,13 +237,13 @@ public static class SettingsTests
         t.Run("версия без номера (изменился только размер): пропуск работает по размеру", () =>
         {
             var s = new InMemoryLibraryStore();
-            s.UpsertMod(new InstalledMod("a", "A", "a.zip", null, 100, T0));
+            s.UpsertMod(new InstalledMod("a", "A", "a.zip", null, 100 * MB, T0));
             s.UpsertBinding(new ModBinding("a", "x", "a", new Uri("https://x.test/a"), true));
-            s.SaveCheck(new CheckState("a", "x", T0, T0, null, 200));
+            s.SaveCheck(new CheckState("a", "x", T0, T0, null, 200 * MB));
             var f = UpdateCheckService.Pending(s).Single();
             UpdateCheckService.Dismiss(s, f);
             Assert.Eq(0, UpdateCheckService.Pending(s).Count);
-            s.SaveCheck(new CheckState("a", "x", T0, T0, null, 300));
+            s.SaveCheck(new CheckState("a", "x", T0, T0, null, 300 * MB));
             Assert.Eq(1, UpdateCheckService.Pending(s).Count);
         });
 

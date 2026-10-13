@@ -123,7 +123,7 @@ public static class UpdateCheckPlanner
                 {
                     // Сравниваем с тем, что видели раньше. Без прошлых данных уверенности нет, открываем карточку.
                     var same = b.LastVersion is not null && entry.Version == b.LastVersion
-                               && (entry.SizeBytes is null || b.LastSize is null || entry.SizeBytes == b.LastSize);
+                               && !Versioning.SizeComparer.Differs(entry.SizeBytes, b.LastSize);
                     if (same) unchanged.Add(b); else changed.Add(b);
                     continue;
                 }

@@ -57,7 +57,7 @@ public static class UpdateCheckService
         var version = current.ModVersion ?? prev?.LastVersion;
         var changed = prev is null
                       || (current.ModVersion is not null && prev.LastVersion != current.ModVersion)
-                      || (prev.LastSize is not null && current.SizeBytes is not null && prev.LastSize != current.SizeBytes);
+                      || Versioning.SizeComparer.Differs(prev.LastSize, current.SizeBytes);
         store.SaveCheck(new CheckState(
             b.ModId, b.Source, now,
             changed ? now : prev!.LastChangedUtc,
