@@ -51,6 +51,9 @@ public sealed record InstallResult(
     public static InstallResult Fail(InstallError e, string msg, InspectionResult? ins = null) => new(false, e, msg, null, null, ins);
 }
 
+/// <summary>Архив мода на диске.</summary>
+public sealed record DiskMod(string FileName, bool Enabled, long SizeBytes);
+
 public sealed record OpResult(bool Success, string? Message = null, string? Path = null);
 
 public sealed class ModInstaller
@@ -252,6 +255,28 @@ public sealed class ModInstaller
                     .Select(f => (f!, on)));
         return list.OrderBy(x => x.Item1, StringComparer.OrdinalIgnoreCase).ToList();
     }
+
+    /// <summary>Установленные архивы с размером. Снимок делается под общей блокировкой: установка в этот момент не разорвёт картину.</summary>
+    public IReadOnlyList<DiskMod> ScanDetailed()
+    {
+        lock (Gate)
+        {
+            var result = new List<DiskMod>();
+            foreach (var (name, on) in Scan())
+            {
+                try
+                {
+                    var fi = new FileInfo(Path.Combine(on ? _layout.ModsDir : _layout.DisabledDir, name));
+                    if (fi.Exists) result.Add(new DiskMod(name, on, fi.Length));
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* файл исчез или занят: в этот раз пропускаем */ }
+            }
+            return result;
+        }
+    }
+
+    /// <summary>Папка модов существует (иначе пустой снимок означает «диск недоступен», а не «модов нет»).</summary>
+    public bool ModsFolderAvailable => Directory.Exists(_layout.ModsDir);
 
     public IReadOnlyList<string> Backups(string fileName)
     {
