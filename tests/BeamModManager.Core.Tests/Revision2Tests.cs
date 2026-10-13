@@ -5,6 +5,7 @@ using BeamModManager.Core.Net;
 using BeamModManager.Core.Settings;
 using BeamModManager.Core.Sources;
 using BeamModManager.Core.Text;
+using BeamModManager.Core.Versioning;
 
 namespace BeamModManager.Core.Tests;
 
@@ -235,6 +236,41 @@ public static class Revision2Tests
             Assert.True(BeamModManager.Core.Safety.ArchiveInspector.Inspect(One("vehicles/.../x")).IsBlocked, "«...»");
             var c = BeamModManager.Core.Packs.PackContentReader.Read(One("./vehicles/car/a.jbeam"));
             Assert.True(c.Vehicles.Contains("car"), "машина найдена");
+        });
+
+        t.Group("Ревизия 2: большая библиотека");
+
+        t.Run("5000 модов: список обновлений и план проверки считаются быстро", () =>
+        {
+            var T0 = new DateTimeOffset(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
+            var store = new InMemoryLibraryStore();
+            for (var i = 0; i < 5000; i++)
+            {
+                store.UpsertMod(new InstalledMod($"m{i}", $"mod {i}", $"m{i}.zip", "1.0", 1000 + i, T0));
+                store.UpsertBinding(new ModBinding($"m{i}", i % 2 == 0 ? "a" : "b", $"s{i}", new Uri($"https://x.test/{i}"), true));
+                store.SaveCheck(new CheckState($"m{i}", i % 2 == 0 ? "a" : "b", T0.AddDays(-3), T0.AddDays(-3), i % 10 == 0 ? "1.1" : "1.0", 1000 + i));
+            }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var pending = UpdateCheckService.Pending(store);
+            var plan = UpdateCheckService.PlanFeeds(store, T0, new BeamModManager.Core.Updates.UpdateCheckOptions());
+            Assert.Eq(500, pending.Count);
+            Assert.Eq(5000, plan.Due.Count);
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"заняло {sw.Elapsed.TotalSeconds:0.0} с");
+        });
+
+        t.Group("Ревизия 2: версии");
+
+        t.Run("буква вплотную («1.2b») — исправленная версия, а не бета: обновление не пропускается", () =>
+        {
+            Assert.Eq(VersionOrder.Newer, VersionComparer.Compare("1.2", "1.2b"));
+            Assert.Eq(VersionOrder.Newer, VersionComparer.Compare("1.2a", "1.2b"));
+            Assert.Eq(VersionOrder.Older, VersionComparer.Compare("1.2b", "1.2"));
+            Assert.Eq(VersionOrder.Same, VersionComparer.Compare("1.2b", "v1.2B"));
+            Assert.Eq(VersionOrder.Newer, VersionComparer.Compare("1.2b", "1.3"));
+            // с номером или словом — по-прежнему пред-релиз
+            Assert.Eq(VersionOrder.Newer, VersionComparer.Compare("1.0b2", "1.0"));
+            Assert.Eq(VersionOrder.Newer, VersionComparer.Compare("1.0-beta", "1.0"));
+            Assert.Eq(VersionOrder.Newer, VersionComparer.Compare("1.0b1", "1.0b2"));
         });
 
         t.Group("Ревизия 2: разбор имён");
