@@ -23,6 +23,7 @@ AdapterTests.Register(t);
         SettingsTests.Register(t);
         BugHuntTests.Register(t);
         if (Environment.GetEnvironmentVariable("BMM_SKIP_FUZZ") != "1") FuzzTests.Register(t); // долгий набор: BMM_SKIP_FUZZ=1 пропускает
+Revision2Tests.Register(t);
 LibraryTests.Register(t);
 
 
