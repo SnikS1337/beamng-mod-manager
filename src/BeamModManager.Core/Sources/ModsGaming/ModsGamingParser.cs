@@ -49,6 +49,44 @@ public static class ModsGamingParser
         return result;
     }
 
+    private static readonly Regex SearchLink = new(@"<td[^>]*class=""search-td-1""[^>]*>\s*<a[^>]*\bhref=""(?<h>[^""]+)""[^>]*>(?<t>.*?)</a>", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex SearchDate = new(@"class=""search-span-2""[^>]*>.*?(?<d>\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}:\d{2})?)", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex EntryId = new(@"-(?<id>\d+)$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Страница поиска: каждый результат — своя таблица со ссылкой, датой и фрагментом описания
+    /// (размера и автора там нет, их даёт карточка). Берём только раздел BeamNG; подсветка найденных слов (&lt;b&gt;) снимается.
+    /// </summary>
+    public static IReadOnlyList<Listing> ParseSearch(string html)
+    {
+        var result = new List<Listing>();
+        var seen = new HashSet<string>();
+        var links = SearchLink.Matches(html);
+        for (var i = 0; i < links.Count; i++)
+        {
+            var m = links[i];
+            if (!Uri.TryCreate(Base, WebUtility.HtmlDecode(m.Groups["h"].Value), out var url)) continue;
+            if (!url.AbsolutePath.StartsWith("/load/beamng_drive/", StringComparison.Ordinal)) continue;
+            var idm = EntryId.Match(url.AbsolutePath.TrimEnd('/'));
+            if (!idm.Success || !seen.Add(idm.Groups["id"].Value)) continue;
+            var title = Clean(m.Groups["t"].Value);
+            if (title.Length == 0) continue;
+            // Дата лежит в той же таблице, до следующего результата.
+            var end = i + 1 < links.Count ? links[i + 1].Index : html.Length;
+            var d = SearchDate.Match(html.Substring(m.Index, end - m.Index));
+            var p = TitleParser.Parse(title);
+            result.Add(new Listing(SourceId, url, idm.Groups["id"].Value, title)
+            {
+                ModVersion = p.ModVersion,
+                GameVersion = p.GameVersion,
+                Category = CategoryOf(url),
+                PublishedAt = d.Success && DateTimeOffset.TryParse(d.Groups["d"].Value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var when) ? when : null,
+                Price = p.HasPaidMarker ? PriceStatus.Paid : PriceStatus.Unknown,
+            });
+        }
+        return result;
+    }
+
     public static Listing ParseDetail(string html, Listing basis)
     {
         var withoutComments = Comment.Replace(html, "");

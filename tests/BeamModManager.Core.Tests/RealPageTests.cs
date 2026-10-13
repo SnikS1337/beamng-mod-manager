@@ -93,6 +93,41 @@ public static class RealPageTests
         });
         t.Run("ModsFire: чужая страница даёт null", () => Assert.Null(ModsFireParser.ParseFirstStep("<html>нет</html>")));
 
+        t.Run("ModsFire, второй шаг: распознан, файл тот же, идентификатор из /d/", () =>
+        {
+            var first = Fx("modsfire/first-step-real.html");
+            var second = Fx("modsfire/second-step-real.html");
+            Assert.Eq(ModsFireStep.First, ModsFireParser.DetectStep(first));
+            Assert.Eq(ModsFireStep.Second, ModsFireParser.DetectStep(second));
+            Assert.Eq(ModsFireStep.Unknown, ModsFireParser.DetectStep("<html></html>"));
+            var f = ModsFireParser.ParseFile(second);
+            Assert.True(f is not null, "второй шаг разобран");
+            Assert.Eq("mercedes_g_wagon-1_0.zip", f!.FileName);
+            Assert.Eq((long)(517.85 * 1024 * 1024), f.SizeBytes);
+            Assert.Eq("9nDwN00BJ04Ef55", f.FileId);
+        });
+
+        t.Run("ModsGaming, поиск: 9 результатов с идентификаторами и датами", () =>
+        {
+            var l = ModsGamingParser.ParseSearch(Fx("modsgaming/search-real.html"));
+            Assert.Eq(9, l.Count);
+            var ids = l.Select(x => x.SourceId).ToHashSet();
+            foreach (var id in new[] { "133899", "141677", "160200", "142469", "134101", "128066", "148563", "118383", "130575" })
+                Assert.True(ids.Contains(id), id);
+            Assert.True(l.All(x => !x.Title.Contains('<') && x.Title.Contains("Sienna", StringComparison.OrdinalIgnoreCase)), "подсветка снята");
+            var newest = l.Single(x => x.SourceId == "160200");
+            Assert.Eq("2.2", newest.ModVersion);
+            Assert.Eq("0.39.x", newest.GameVersion);
+            Assert.Eq(2026, newest.PublishedAt?.Year);
+        });
+
+        t.Run("Modland, поиск: карточки читаются обычным разбором ленты", () =>
+        {
+            var l = ModlandParser.ParseList(Fx("modland/search-real.html"));
+            Assert.Eq(6, l.Count);
+            Assert.True(l.All(x => x.Title.Contains("sienna", StringComparison.OrdinalIgnoreCase)), string.Join("|", l.Select(x => x.Title)));
+        });
+
         t.Run("в сохранённых страницах нет IP и токенов", () =>
         {
             foreach (var f in Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "fixtures"), "*-real.html", SearchOption.AllDirectories))

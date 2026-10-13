@@ -26,6 +26,8 @@ public abstract class SiteAdapter : IModSource
     public abstract bool SupportsSearch { get; }
 
     protected abstract IReadOnlyList<Listing> ParseList(string html);
+    /// <summary>Страница результатов поиска; по умолчанию устроена как лента.</summary>
+    protected virtual IReadOnlyList<Listing> ParseSearch(string html) => ParseList(html);
     protected abstract Listing ParseDetail(string html, Listing basis);
     protected abstract Uri FeedUrl(int page);
     protected abstract Uri? SearchUrl(string query);
@@ -45,7 +47,7 @@ public abstract class SiteAdapter : IModSource
         var url = SearchUrl(query);
         if (url is null) return Array.Empty<Listing>();
         var html = await LoadAsync(url, ct).ConfigureAwait(false);
-        return html is null ? Array.Empty<Listing>() : ParseList(html);
+        return html is null ? Array.Empty<Listing>() : ParseSearch(html);
     }
 
     public async Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
@@ -117,19 +119,20 @@ public sealed class StModsSource : SiteAdapter
     protected override Uri? SearchUrl(string q) => new(Root, "search.php?search_request=" + Uri.EscapeDataString(q));
 }
 
-/// <summary>Поиск ModsGaming не включён: образца страницы с результатами у нас нет. Лента и карточки работают.</summary>
+/// <summary>ModsGaming: лента раздела «BeamNG Машины», карточки и поиск (результаты — таблицы, а не карточки).</summary>
 public sealed class ModsGamingSource : SiteAdapter
 {
     private static readonly Uri Root = new("https://modsgaming.ru/");
     public ModsGamingSource(PoliteFetcher f) : base(f) { }
     public override string Id => ModsGamingParser.SourceId;
     public override string DisplayName => "ModsGaming";
-    public override bool SupportsSearch => false;
+    public override bool SupportsSearch => true;
     protected override IReadOnlyList<Listing> ParseList(string html) => ModsGamingParser.ParseList(html);
+    protected override IReadOnlyList<Listing> ParseSearch(string html) => ModsGamingParser.ParseSearch(html);
     protected override Listing ParseDetail(string html, Listing basis) => ModsGamingParser.ParseDetail(html, basis);
     protected override string SlugOf(Uri url) => Slug(url);
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "load/beamng_drive/mashiny/38" : $"load/beamng_drive/mashiny/38-{page}");
-    protected override Uri? SearchUrl(string q) => null;
+    protected override Uri? SearchUrl(string q) => new(Root, "search/?q=" + Uri.EscapeDataString(q) + "&t=0");
 
     private static string Slug(Uri url)
     {
