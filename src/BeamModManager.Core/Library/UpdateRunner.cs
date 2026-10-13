@@ -125,13 +125,20 @@ public static class UpdateRunner
                     return o;
                 }
 
-                // 1. Лента.
+                // 1. Лента. Если у записей есть даты (официальный репозиторий), читаем её ровно настолько глубоко,
+                // чтобы дойти до последней проверки самого «давнего» мода: при заходе раз в неделю или в месяц
+                // этого хватает, чтобы не открывать карточки тех, кого в ленте нет. Без дат глубина фиксирована.
                 var entries = new Dictionary<string, FeedEntry>();
-                for (var p = 1; p <= pages; p++)
+                var ordered = new List<FeedEntry>();
+                var dueHere = plan.Due.Where(b => b.Source == source).ToList();
+                DateTimeOffset? oldestChecked = dueHere.Where(b => b.LastVersion is not null && b.LastCheckedUtc is not null)
+                    .Select(b => b.LastCheckedUtc!.Value).DefaultIfEmpty().Min() is var m && m != default ? m : null;
+                var limit = pages;
+                for (var p = 1; p <= limit; p++)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (TimeUp()) { o.StoppedByTime = true; break; }
-                    Report(new UpdateProgress(source, "лента", p - 1, pages));
+                    Report(new UpdateProgress(source, "лента", p - 1, limit));
                     try
                     {
                         var page = await src.FeedPageAsync(p, ct).ConfigureAwait(false);
@@ -143,13 +150,22 @@ public static class UpdateRunner
                             break;
                         }
                         foreach (var l in page)
-                            entries.TryAdd(l.SourceId, new FeedEntry(l.SourceId, l.ModVersion, l.SizeBytes, l.UpdatedAt));
+                        {
+                            var fe = new FeedEntry(l.SourceId, l.ModVersion, l.SizeBytes, l.UpdatedAt);
+                            if (entries.TryAdd(l.SourceId, fe)) ordered.Add(fe);
+                        }
                     }
                     catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
                     {
                         o.Requests++;
                         o.Failure = FailureOf(source, e);
                         return o; // у сайта, отказавшего на ленте, карточки не открываем
+                    }
+
+                    if (!options.Force && FeedCoverage.Compute(ordered) is { } covered)
+                    {
+                        if (oldestChecked is { } oc && covered <= oc - FeedCoverage.Margin) break; // дошли до самой давней проверки
+                        if (p == limit && limit < options.MaxFeedPagesPerSource) limit++;          // датированная лента: идём глубже
                     }
                 }
 
@@ -165,7 +181,9 @@ public static class UpdateRunner
 
                 // 3. Карточки.
                 var feeds = new Dictionary<string, IReadOnlyDictionary<string, FeedEntry>> { [source] = entries };
-                var cardPlan = UpdateCheckPlanner.PlanCards(cardCandidates, feeds, now, options);
+                IReadOnlyDictionary<string, DateTimeOffset>? coverage = !options.Force && FeedCoverage.Compute(ordered) is { } cv
+                    ? new Dictionary<string, DateTimeOffset> { [source] = cv } : null;
+                var cardPlan = UpdateCheckPlanner.PlanCards(cardCandidates, feeds, now, options, coverage);
                 o.Postponed.AddRange(cardPlan.Postponed);
                 foreach (var b in cardPlan.ConfirmedUnchanged)
                 {

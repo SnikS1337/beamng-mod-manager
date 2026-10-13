@@ -35,8 +35,8 @@ public sealed record AppSettings
     /// <summary>Сколько резервных копий каждого мода хранить (1–20).</summary>
     public int KeepBackups { get; init; } = 3;
 
-    /// <summary>Сколько карточек открывать за одну проверку на сайт (5–100).</summary>
-    public int MaxCardChecksPerSource { get; init; } = 25;
+    /// <summary>Сколько карточек открывать за одну проверку на сайт (5–500).</summary>
+    public int MaxCardChecksPerSource { get; init; } = 150;
 
     /// <summary>Приводит значения к допустимым и убирает мусор. Возвращает исправленное.</summary>
     public AppSettings Normalize() => this with
@@ -47,7 +47,7 @@ public sealed record AppSettings
         CheckTtlHours = Math.Clamp(CheckTtlHours, 1, 168),
         AutoCheckEveryHours = AutoCheckEveryHours <= 0 ? 0 : Math.Clamp(AutoCheckEveryHours, 1, 168),
         KeepBackups = Math.Clamp(KeepBackups, 1, 20),
-        MaxCardChecksPerSource = Math.Clamp(MaxCardChecksPerSource, 5, 100),
+        MaxCardChecksPerSource = Math.Clamp(MaxCardChecksPerSource, 5, 500),
         DisabledSources = DisabledSources.Select(s => s?.Trim().ToLowerInvariant() ?? "")
             .Where(s => s.Length > 0).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(),
     };
@@ -59,6 +59,6 @@ public sealed record AppSettings
     public UpdateCheckOptions ToCheckOptions() => new()
     {
         Ttl = TimeSpan.FromHours(Math.Clamp(CheckTtlHours, 1, 168)),
-        MaxCardChecksPerSource = Math.Clamp(MaxCardChecksPerSource, 5, 100),
+        MaxCardChecksPerSource = Math.Clamp(MaxCardChecksPerSource, 5, 500),
     };
 }
