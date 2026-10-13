@@ -101,9 +101,11 @@ public static class ArchiveInspector
                     findings.Add(new Finding(Severity.Block, "compression-bomb",
                         "Подозрительно высокая степень сжатия.", entry.FullName));
 
-                var first = name.TrimStart('/').Split('/', 2)[0];
+                var clean = name;
+                while (clean.StartsWith("./")) clean = clean[2..];
+                var first = clean.TrimStart('/').Split('/', 2)[0];
                 if (first.Length > 0) topLevel.Add(first);
-                if (!isDirectory && !name.TrimStart('/').Contains('/')) rootHasFiles = true;
+                if (!isDirectory && !clean.TrimStart('/').Contains('/')) rootHasFiles = true;
             }
 
             if (total > limits.MaxTotalUncompressedBytes)
@@ -121,7 +123,8 @@ public static class ArchiveInspector
         if (name.Length >= 2 && name[1] == ':') return true; // C:\...
         // «файл.txt:поток» — альтернативный поток данных NTFS; управляющие символы в путях не бывают честными.
         if (name.Any(c => c == ':' || c < 32)) return true;
-        return name.Split('/').Any(seg => seg == "..");
+        // «..», а также «... » и «.. »: Windows отбрасывает точки и пробелы в конце имени сегмента.
+        return name.Split('/').Any(seg => seg == ".." || (seg.Length >= 2 && seg.All(c => c is '.' or ' ')));
     }
 
     private static void AddStructureHints(List<Finding> findings, int count, HashSet<string> topLevel, bool rootHasFiles)

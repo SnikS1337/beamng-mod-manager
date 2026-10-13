@@ -17,9 +17,13 @@ public sealed record BindingSuggestion(Listing Listing, MatchResult Match)
 public static class BindingSuggester
 {
     private static readonly Regex ByFor = new(@"[_\-\s]by[_\-\s](?<a>.+?)[_\-\s]for[_\-\s]beamng.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex SiteTag = new(@"[_\-\s]?(?:modland[_\-\s]?net|modsgaming|stmods)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex SiteTag = new(@"(?<![\p{L}\p{Nd}])[_\-\s]?(?:modland[_\-\s]?net|modsgaming|stmods)(?![\p{L}\p{Nd}])", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex TrailingVersion = new(@"\s(?:v\s*)?(?<v>\d{1,3}(?:\s\d{1,3})+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // Версия через точку в конце: «bmw_m3_v1.2», «car 2.0b».
+    private static readonly Regex DottedTrailing = new(@"\s(?:v\s*)?(?<v>\d{1,3}(?:\.\d{1,3})+[a-z]?)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex VPrefixed = new(@"\sv(?<v>\d{1,3}(?:\s\d{1,3})*)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex EngineLike = new(@"^\sv\s*(?:4|6|8|10|12|16)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Достаёт читаемое название (и, если есть, автора и версию) из имени файла.</summary>
     public static GuessedName FromFileName(string fileName)
@@ -38,8 +42,11 @@ public static class BindingSuggester
         s = Regex.Replace(s, @"[_\-]+", " ").Trim();
 
         string? version = null;
-        var v = TrailingVersion.Match(s);
+        var v = DottedTrailing.Match(s);
+        if (!v.Success) v = TrailingVersion.Match(s);
         if (!v.Success) v = VPrefixed.Match(s);
+        // «V8», «V6», «V12» — это двигатель, а не версия: оставляем в названии.
+        if (v.Success && EngineLike.IsMatch(v.Value)) v = Match.Empty;
         if (v.Success)
         {
             version = Regex.Replace(v.Groups["v"].Value, @"\s+", ".");
