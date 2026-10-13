@@ -24,6 +24,7 @@ public sealed record SearchResponse(IReadOnlyList<ModCard> Cards, IReadOnlyList<
 public sealed class SearchOptions
 {
     public TimeSpan PerSourceTimeout { get; init; } = TimeSpan.FromSeconds(20);
+    public int MaxQueryLength { get; init; } = 100;
     public int MaxPerSource { get; init; } = 30;
     public int MinQueryLength { get; init; } = 2;
 }
@@ -48,6 +49,7 @@ public sealed class SearchService
     public async Task<SearchResponse> SearchAsync(string query, CancellationToken ct = default)
     {
         query = (query ?? "").Trim();
+        if (query.Length > _o.MaxQueryLength) query = query[.._o.MaxQueryLength].TrimEnd(); // слишком длинный запрос ломает адрес (ошибка 414)
         if (query.Length < _o.MinQueryLength)
             return new SearchResponse(Array.Empty<ModCard>(), Array.Empty<SourceReport>());
 
@@ -93,6 +95,10 @@ public sealed class SearchService
     internal IReadOnlyList<ModCard> Group(IReadOnlyList<Listing> listings, string query)
     {
         var clusters = new List<List<Listing>>();
+
+        // Сайт мог вернуть одну и ту же запись дважды (разные категории, повтор на странице): оставляем первую.
+        var seen = new HashSet<(string, string)>();
+        listings = listings.Where(l => seen.Add((l.Source, l.SourceId))).ToList();
 
         foreach (var l in listings)
         {

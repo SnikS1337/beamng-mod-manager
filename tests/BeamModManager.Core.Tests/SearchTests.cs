@@ -23,6 +23,19 @@ public static class SearchTests
         public Task<IReadOnlyList<Offer>> GetOffersAsync(Listing listing, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Offer>>(Array.Empty<Offer>());
     }
 
+
+    private sealed class CaptureSource : IModSource
+    {
+        private readonly Action<string> _on;
+        public CaptureSource(Action<string> on) { _on = on; }
+        public string Id => "cap"; public string DisplayName => "CAP"; public bool SupportsSearch => true;
+        public Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
+        public Task<IReadOnlyList<Listing>> SearchAsync(string query, CancellationToken ct = default) { _on(query); return Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>()); }
+        public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default) => Task.FromResult<Listing?>(null);
+        public Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? since, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
+        public Task<IReadOnlyList<Offer>> GetOffersAsync(Listing listing, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Offer>>(Array.Empty<Offer>());
+    }
+
     private static Listing L(string source, string id, string title) =>
         new(source, new Uri($"https://{source}.test/{id}"), id, title);
 
@@ -80,6 +93,26 @@ public static class SearchTests
                 new Fake("stmods", L("stmods", "a", "Car X версия 1.0") with { Offers = o }, L("stmods", "b", "Car X версия 1.0") with { Offers = o }),
             });
             Assert.Eq(2, (await svc.SearchAsync("car")).Cards.Count);
+        });
+
+        t.Run("одна и та же запись, пришедшая дважды от сайта: одна карточка", async () =>
+        {
+            var svc = new SearchService(new IModSource[]
+            {
+                new Fake("stmods", L("stmods", "a", "Car X"), L("stmods", "a", "Car X")),
+            });
+            var r = await svc.SearchAsync("car");
+            Assert.Eq(1, r.Cards.Count);
+            Assert.Eq(1, r.Cards[0].Listings.Count);
+        });
+
+        t.Run("слишком длинный запрос обрезается до лимита", async () =>
+        {
+            string? got = null;
+            var src = new Fake("stmods", ct => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>()));
+            var capture = new CaptureSource(q => got = q);
+            await new SearchService(new IModSource[] { capture }).SearchAsync(new string('a', 5000));
+            Assert.Eq(100, got!.Length);
         });
 
         t.Run("платный на одном сайте, бесплатный на другом: итог Mixed, цена каждого источника на месте", async () =>

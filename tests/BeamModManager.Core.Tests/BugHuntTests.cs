@@ -195,5 +195,46 @@ public static class BugHuntTests
                 BeamModManager.Core.Packs.PackContentReader.Read(new MemoryStream(copy));
             }
         });
+
+        t.Group("Ревизия: текст и названия");
+
+        t.Run("случайные и странные строки не роняют разбор названий, версий, ссылок и имён файлов", () =>
+        {
+            var rng = new Random(2026);
+            const string alphabet = "abcXYZ 0123456789.-_()[]{}<>:/\\!?\"'#%&+=,;\u0000\u00A0\u202E\u2028абвГДЕ漢字😀vV";
+            var inputs = new List<string> { "", " ", ".", "..", "v", "(", ")", "[", "]", "((((", "))))", "[[[[", new string('(', 3000), new string('[', 3000), new string('9', 3000), "1." + new string('0', 3000) };
+            for (var i = 0; i < 3000; i++)
+                inputs.Add(new string(Enumerable.Range(0, rng.Next(1, 60)).Select(_ => alphabet[rng.Next(alphabet.Length)]).ToArray()));
+            foreach (var x in inputs)
+            {
+                try
+                {
+                    TitleNormalizer.Tokens(x);
+                    TitleNormalizer.Similarity(x, "Toyota Sienna 2017");
+                    TitleParser.Parse(x);
+                    VersionComparer.Compare(x, "1.0");
+                    HostLinkParser.TryParse(x);
+                    BeamModManager.Core.Library.BindingSuggester.FromFileName(x);
+                    ModInstaller_SafeName(x);
+                }
+                catch (Exception e) { Assert.True(false, $"«{(x.Length > 40 ? x[..40] + "…" : x)}»: {e.GetType().Name}: {e.Message}"); }
+            }
+        });
+
+        t.Run("сходство названий: от 0 до 1, симметрично, одинаковые = 1", () =>
+        {
+            var titles = new[] { "Toyota Sienna 2017 v1.0 (0.31.x)", "МОД Toyota Sienna 2011-2017 v2.2 ДЛЯ BEAMNG.DRIVE", "BMW E34", "[PAID] Duskport", "German Cars Pack", "x" };
+            foreach (var a in titles)
+                foreach (var b in titles)
+                {
+                    var ab = TitleNormalizer.Similarity(a, b);
+                    var ba = TitleNormalizer.Similarity(b, a);
+                    Assert.True(ab is >= 0 and <= 1, $"{a} / {b}: {ab}");
+                    Assert.True(Math.Abs(ab - ba) < 1e-9, $"симметрия {a} / {b}");
+                }
+            foreach (var a in titles) Assert.True(TitleNormalizer.Similarity(a, a) > 0.999 || TitleNormalizer.Tokens(a).Count == 0, a);
+        });
     }
+
+    private static void ModInstaller_SafeName(string x) => BeamModManager.Core.Install.ModInstaller.SafeFileName(x);
 }
