@@ -57,7 +57,9 @@ public static class UpdateRunner
         options ??= new UpdateCheckOptions();
         holdOff ??= new Dictionary<string, string>();
         var started = clock?.Invoke() ?? now;
-        bool TimeUp() => clock is not null && clock() - started > options.MaxDuration;
+        // Лимит времени меряем и по часам (их подменяют в тестах), и по секундомеру: перевод часов не должен растянуть проверку.
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        bool TimeUp() => stopwatch.Elapsed > options.MaxDuration || (clock is not null && clock() - started > options.MaxDuration);
 
         var before = UpdateCheckService.Pending(store).Select(f => (f.ModId, f.LatestVersion)).ToHashSet();
         var byId = sources.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => g.First());
