@@ -11,6 +11,8 @@ public sealed class TestRunner
 
     public void Group(string name) => Console.WriteLine($"\n{name}");
 
+    public void Run(string name, Func<Task> body) => Run(name, () => body().GetAwaiter().GetResult());
+
     public void Run(string name, Action body)
     {
         try
