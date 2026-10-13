@@ -67,7 +67,8 @@ public sealed class UpdateCoordinator
                     return _current.ContinueWith(_ => CheckAsync(force, progress), TaskScheduler.Default).Unwrap();
                 return _current; // уже идёт: присоединяемся
             }
-            if (force && _lastFinished is { } done && _clock() - done < _o.MinForceInterval && LastReport is { } last && !last.Cancelled)
+            if (force && _lastFinished is { } done && _clock() - done is { } sinceDone && sinceDone >= TimeSpan.Zero && sinceDone < _o.MinForceInterval
+                && LastReport is { } last && !last.Cancelled)
                 return Task.FromResult(last with { Reused = true });
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
@@ -116,7 +117,8 @@ public sealed class UpdateCoordinator
                 {
                     // Принудительная проверка отменяет паузу после сбоя: пользователь настаивает, а частоту ограничивает MinForceInterval.
                     if (batchForce) _retryAfter.Clear();
-                    hold = _retryAfter.Where(kv => kv.Value > now)
+                    // Пауза не может быть дольше FailureBackoff: иначе часы переводили назад, и она закончилась.
+                    hold = _retryAfter.Where(kv => kv.Value > now && kv.Value - now <= _o.FailureBackoff)
                         .ToDictionary(kv => kv.Key, kv => $"сайт недавно не отвечал, повторим после {kv.Value.ToLocalTime():HH:mm}");
                 }
 

@@ -135,7 +135,7 @@ public sealed class PoliteFetcher
     {
         var s = State(host.ToLowerInvariant());
         if (s.NeedsHumanCheck) return SourceStatus.NeedsHumanCheck;
-        if (s.CooldownUntil is { } u && _now() < u) return SourceStatus.Unavailable;
+        if (InCooldown(s)) return SourceStatus.Unavailable;
         return SourceStatus.Ok;
     }
 
@@ -143,7 +143,8 @@ public sealed class PoliteFetcher
     {
         lock (_lock)
         {
-            if (_cache.TryGetValue(url, out var c) && _now() - c.At < _o.CacheTtl)
+            // Отрицательный возраст — часы перевели назад: сколько страница лежит, неизвестно, считаем устаревшей.
+            if (_cache.TryGetValue(url, out var c) && _now() - c.At is { } age && age >= TimeSpan.Zero && age < _o.CacheTtl)
                 return c.Result with { FromCache = true };
         }
 
@@ -154,7 +155,7 @@ public sealed class PoliteFetcher
         {
             if (st.NeedsHumanCheck)
                 return new FetchResult(null, null, SourceStatus.NeedsHumanCheck, Note: "сайт ждёт, пока пользователь пройдёт проверку");
-            if (st.CooldownUntil is { } until && _now() < until)
+            if (InCooldown(st))
                 return new FetchResult(null, null, SourceStatus.Unavailable, Note: "сайт временно отключён после серии сбоев");
 
             for (var attempt = 0; ; attempt++)
@@ -221,6 +222,14 @@ public sealed class PoliteFetcher
         }
     }
 
+    /// <summary>Пауза после сбоев действует, пока не вышел срок. Срок дальше, чем длится сама пауза, значит часы перевели назад: пауза закончилась.</summary>
+    private bool InCooldown(HostState st)
+    {
+        if (st.CooldownUntil is not { } until) return false;
+        var left = until - _now();
+        return left > TimeSpan.Zero && left <= _o.Cooldown;
+    }
+
     private FetchResult Failure(HostState st, int? status, string note)
     {
         st.Failures++;
@@ -238,7 +247,9 @@ public sealed class PoliteFetcher
     {
         if (st.LastRequest is not { } last) return;
         var gap = _o.MinDelay + TimeSpan.FromTicks((long)(_o.Jitter.Ticks * _rng.NextDouble()));
-        var wait = gap - (_now() - last);
+        var elapsed = _now() - last;
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero; // часы перевели назад: ждём обычную паузу, а не часы
+        var wait = gap - elapsed;
         if (wait > TimeSpan.Zero) await _delay(wait, ct).ConfigureAwait(false);
     }
 }

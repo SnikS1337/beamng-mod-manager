@@ -326,13 +326,23 @@ public sealed class ModInstaller
         var dir = BackupFolderFor(name);
         Directory.CreateDirectory(dir);
         var stamp = _now().UtcDateTime.ToString("yyyyMMdd-HHmmss-fff");
-        // Счётчик есть всегда и с нулями слева: порядок имён по возрастанию совпадает с порядком создания
-        // даже при двух копиях в одну миллисекунду (иначе «-1_» сортировалось бы раньше «_»).
-        var n = 0;
-        string dst;
-        do { dst = Path.Combine(dir, $"{stamp}-{n++:D3}_{name}"); } while (File.Exists(dst));
+        // Порядок копий задаёт порядковый номер, а не часы: после перевода часов назад новая копия не окажется «старше» прежних
+        // (иначе восстановление взяло бы не ту, а лишние копии удалили бы самую свежую). Время в имени — для глаз.
+        var dst = Path.Combine(dir, $"{NextSequence(dir):D10}_{stamp}_{name}");
         if (move) File.Move(path, dst); else File.Copy(path, dst);
         return dst;
+    }
+
+    private static long NextSequence(string dir)
+    {
+        long max = 0;
+        foreach (var f in Directory.EnumerateFiles(dir))
+        {
+            var fn = Path.GetFileName(f);
+            var digits = fn.TakeWhile(char.IsAsciiDigit).Count();
+            if (digits > 0 && digits <= 15 && long.TryParse(fn.AsSpan(0, digits), out var n)) max = Math.Max(max, n);
+        }
+        return max + 1;
     }
 
     /// <summary>Лишние старые копии удаляются только после успешной операции: сбой не должен стоить настоящих копий.</summary>
