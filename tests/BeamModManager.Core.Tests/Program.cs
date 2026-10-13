@@ -26,6 +26,8 @@ AdapterTests.Register(t);
 Revision2Tests.Register(t);
 RepairTests.Register(t);
 TimeTests.Register(t);
+ScenarioTests.Register(t);
+SyncTests.Register(t);
 LibraryTests.Register(t);
 
 
