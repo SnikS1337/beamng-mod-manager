@@ -17,7 +17,7 @@ public static class ModlandParser
     private static readonly Regex TitleLink = new(@"post-title[^>]*>\s*<a[^>]*href=""(?<h>[^""]+)""[^>]*>(?<t>.*?)</a>", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex Tags = new("<[^>]+>", RegexOptions.Compiled);
     private static readonly Regex Size = new(@"(?<n>\d+(?:[.,]\d+)?)\s*(?<u>KB|MB|GB)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex Anchor = new(@"<a[^>]*href=""(?<h>[^""]+)""[^>]*>(?<t>.*?)</a>", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex Anchor = new(@"<a[^>]*href=""(?<h>[^""]+)""[^>]*>(?<t>(?:(?!</a>)[\s\S]){0,2000})</a>", RegexOptions.Singleline | RegexOptions.Compiled);
 
     public static IReadOnlyList<Listing> ParseList(string html)
     {

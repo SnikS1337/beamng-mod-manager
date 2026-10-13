@@ -21,6 +21,7 @@ AdapterTests.Register(t);
         UpdateRunnerTests.Register(t);
         UpdateCoordinatorTests.Register(t);
         SettingsTests.Register(t);
+        FuzzTests.Register(t);
 LibraryTests.Register(t);
 
 

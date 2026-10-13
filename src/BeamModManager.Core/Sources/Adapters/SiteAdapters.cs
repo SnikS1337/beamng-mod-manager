@@ -34,6 +34,18 @@ public abstract class SiteAdapter : IModSource
     protected abstract Uri? SearchUrl(string query);
     protected abstract string SlugOf(Uri url);
 
+    /// <summary>
+    /// Разбор страницы с защитой от неожиданностей: слишком сложная страница (таймаут регулярного выражения)
+    /// или любая ошибка разбора означает отказ только этого сайта, а не падение программы.
+    /// </summary>
+    protected T Safe<T>(Func<T> parse, string what)
+    {
+        try { return parse(); }
+        catch (RegexMatchTimeoutException) { throw new SourceException(SourceStatus.Unavailable, $"{what}: страница слишком сложная для разбора"); }
+        catch (Exception e) when (e is FormatException or ArgumentException or InvalidOperationException or IndexOutOfRangeException or OverflowException or NullReferenceException)
+        { throw new SourceException(SourceStatus.Unavailable, $"{what}: не удалось разобрать страницу ({e.GetType().Name})"); }
+    }
+
     /// <summary>Страница или null, если её нет (404). Остальные неудачи — SourceException.</summary>
     protected async Task<string?> LoadAsync(Uri url, CancellationToken ct)
     {
@@ -48,13 +60,13 @@ public abstract class SiteAdapter : IModSource
         var url = SearchUrl(query);
         if (url is null) return Array.Empty<Listing>();
         var html = await LoadAsync(url, ct).ConfigureAwait(false);
-        return html is null ? Array.Empty<Listing>() : ParseSearch(html);
+        return html is null ? Array.Empty<Listing>() : Safe(() => ParseSearch(html), "поиск");
     }
 
     public async Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
     {
         var html = await LoadAsync(FeedUrl(Math.Max(1, page)), ct).ConfigureAwait(false);
-        return html is null ? Array.Empty<Listing>() : ParseList(html);
+        return html is null ? Array.Empty<Listing>() : Safe(() => ParseList(html), "лента");
     }
 
     public Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? since, CancellationToken ct = default) => FeedPageAsync(1, ct);
@@ -63,9 +75,9 @@ public abstract class SiteAdapter : IModSource
     {
         var html = await LoadAsync(url, ct).ConfigureAwait(false);
         if (html is null) return null;
-        var basis = new Listing(Id, url, SlugOf(url), PageTitle(html));
+        var basis = Safe(() => new Listing(Id, url, SlugOf(url), PageTitle(html)), "карточка");
         var parsed = Text.TitleParser.Parse(basis.Title);
-        return ParseDetail(html, basis with { ModVersion = parsed.ModVersion, GameVersion = parsed.GameVersion });
+        return Safe(() => ParseDetail(html, basis with { ModVersion = parsed.ModVersion, GameVersion = parsed.GameVersion }), "карточка");
     }
 
     public async Task<IReadOnlyList<Offer>> GetOffersAsync(Listing listing, CancellationToken ct = default)
