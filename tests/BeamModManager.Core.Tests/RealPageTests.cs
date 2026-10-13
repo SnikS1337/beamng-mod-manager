@@ -155,6 +155,18 @@ public static class RealPageTests
                 Assert.False(d.Offers.Any(o => o.Kind != OfferKind.PaidLink), "скачиваемых ссылок нет");
             });
 
+        t.Run("STMods и ModsGaming: признака платного в образцах нет; «Бесплатно» (реклама Ava) и «платный аддон» в описании цену не задают", () =>
+        {
+            var all = StModsParser.ParseList(Fx("stmods/list-real.html"))
+                .Concat(StModsParser.ParseList(Fx("stmods/search-real.html")))
+                .Concat(ModsGamingParser.ParseList(Fx("modsgaming/list-real.html")))
+                .Concat(ModsGamingParser.ParseSearch(Fx("modsgaming/search-real.html"))).ToList();
+            Assert.True(all.Count >= 25, "образцов достаточно");
+            Assert.True(all.All(x => x.Price == PriceStatus.Unknown), "ни Paid, ни Free без доказательств");
+            var d = StModsParser.ParseDetail(Fx("stmods/mod-real.html"), new Listing("stmods", new Uri("https://stmods.org/beamng_drive/mods/x/"), "x", "BMW E34"));
+            Assert.Eq(PriceStatus.Unknown, d.Price);
+        });
+
         t.Run("в сохранённых страницах нет IP и токенов", () =>
         {
             foreach (var f in Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "fixtures"), "*-real.html", SearchOption.AllDirectories))
