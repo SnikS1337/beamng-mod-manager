@@ -228,5 +228,137 @@ public static class SyncTests
             }
             finally { try { Directory.Delete(root, true); } catch { } }
         });
+
+        t.Group("Обновление мода: смена имени файла");
+
+        t.Run("новая версия под другим именем: старая уходит в резервные, включена одна", () =>
+        {
+            using var sb = new Box();
+            sb.Inst.Install(Zip(300), "audi_v1.0.zip");
+            var u = sb.Inst.Update("audi_v1.0.zip", Zip(400), "audi_v1.5.zip");
+            Assert.True(u.Success && u.OldRemoved, "обновление удалось");
+            Assert.Eq("audi_v1.5.zip", string.Join("|", sb.Inst.Scan().Select(x => x.FileName)));
+            Assert.Eq(1, sb.Inst.Backups("audi_v1.0.zip").Count);
+        });
+
+        t.Run("отключённый мод после обновления остаётся отключённым", () =>
+        {
+            using var sb = new Box();
+            sb.Inst.Install(Zip(300), "audi_v1.0.zip");
+            sb.Inst.Disable("audi_v1.0.zip");
+            var u = sb.Inst.Update("audi_v1.0.zip", Zip(400), "audi_v1.5.zip");
+            Assert.True(u.Success && !u.WasEnabled, "обновление удалось, мод был отключён");
+            var scan = sb.Inst.Scan();
+            Assert.Eq(1, scan.Count);
+            Assert.False(scan[0].Enabled);
+            Assert.Eq("audi_v1.5.zip", scan[0].FileName);
+        });
+
+        t.Run("то же имя файла: заменяется на месте, копия старой в резервных", () =>
+        {
+            using var sb = new Box();
+            sb.Inst.Install(Zip(300), "audi.zip");
+            var u = sb.Inst.Update("audi.zip", Zip(500), "audi.zip");
+            Assert.True(u.Success, "обновление");
+            Assert.Eq(1, sb.Inst.Scan().Count);
+        });
+
+        t.Run("файл с именем новой версии уже лежит в папке: отказ, старый цел", () =>
+        {
+            using var sb = new Box();
+            sb.Inst.Install(Zip(300), "audi_v1.0.zip");
+            sb.Inst.Install(Zip(310), "audi_v1.5.zip");
+            var u = sb.Inst.Update("audi_v1.0.zip", Zip(400), "audi_v1.5.zip");
+            Assert.False(u.Success, "отказ");
+            Assert.Eq(2, sb.Inst.Scan().Count);
+        });
+
+        t.Run("плохой архив при обновлении: старая версия не тронута, новой нет", () =>
+        {
+            using var sb = new Box();
+            sb.Inst.Install(Zip(300), "audi_v1.0.zip");
+            var u = sb.Inst.Update("audi_v1.0.zip", new MemoryStream(new byte[] { 1, 2, 3, 4 }), "audi_v1.5.zip");
+            Assert.False(u.Success, "не прошёл проверку");
+            Assert.Eq("audi_v1.0.zip", string.Join("|", sb.Inst.Scan().Select(x => x.FileName)));
+        });
+
+        t.Run("старую версию убрать не удалось: новая откатывается, остаётся ровно одна", () =>
+        {
+            using var sb = new Box();
+            sb.Inst.Install(Zip(300), "audi_v1.0.zip");
+            // Резервная папка занята файлом: убрать старую версию в резервные нельзя (на Windows то же даёт файл, занятый игрой).
+            Directory.CreateDirectory(Path.GetDirectoryName(sb.BackupDir)!);
+            File.WriteAllText(sb.BackupDir, "x");
+            var u = sb.Inst.Update("audi_v1.0.zip", Zip(400), "audi_v1.5.zip");
+            Assert.False(u.Success, "обновление не удалось");
+            Assert.False(u.OldRemoved, "старая осталась");
+            Assert.Eq("audi_v1.0.zip", string.Join("|", sb.Inst.Scan().Select(x => x.FileName)));
+        });
+
+        t.Run("старого файла уже нет (удалили руками): обычная установка", () =>
+        {
+            using var sb = new Box();
+            var u = sb.Inst.Update("gone.zip", Zip(300), "audi_v1.5.zip");
+            Assert.True(u.Success, "установилось");
+            Assert.Eq(1, sb.Inst.Scan().Count);
+        });
+
+        t.Run("недопустимые имена при обновлении отклоняются", () =>
+        {
+            using var sb = new Box();
+            Assert.False(sb.Inst.Update("bad:name.zip", Zip(10), "ok.zip").Success, "старое имя");
+            Assert.False(sb.Inst.Update("ok.zip", Zip(10), "readme.txt").Success, "новое имя");
+        });
+
+        t.Run("обновление под новым именем: тот же мод в библиотеке, привязка и профиль целы, обновление исчезло", () =>
+        {
+            using var sb = new Box();
+            var s = new InMemoryLibraryStore();
+            sb.Inst.Install(Zip(300), "audi_v1.0.zip");
+            LibrarySync.Reconcile(s, sb.Inst);
+            var mod = s.Mods().Single();
+            Bind(s, mod, ver: "1.5", size: 400);
+            Assert.Eq(1, UpdateCheckService.Pending(s).Count);
+            var profile = new ModProfile("Дрифт", new HashSet<string> { "audi_v1.0.zip" });
+
+            var u = sb.Inst.Update("audi_v1.0.zip", Zip(400), "audi_v1.5.zip");
+            var size = new FileInfo(u.Install.Path!).Length;
+            LibrarySync.RecordInstalled(s, "audi_v1.5.zip", size, "1.5", true, T0, replacesFileName: "audi_v1.0.zip");
+
+            Assert.Eq(1, s.Mods().Count);
+            Assert.Eq(mod.Id, s.Mods().Single().Id);
+            Assert.Eq(1, s.Bindings().Count);
+            Assert.Eq(0, UpdateCheckService.Pending(s).Count);
+            Assert.False(LibrarySync.Reconcile(s, sb.Inst).AnyChange, "диск и библиотека совпадают");
+
+            var p2 = ProfileService.ApplyRenames(profile, new[] { ("audi_v1.0.zip", "audi_v1.5.zip") });
+            var plan = ProfileService.Plan(p2, sb.Inst.Scan());
+            Assert.True(plan.IsEmpty && plan.Missing.Count == 0, "профиль применять не нужно: всё на месте");
+            var planOld = ProfileService.Plan(profile, sb.Inst.Scan());
+            Assert.Eq(1, planOld.ToDisable.Count); // без переноса новый файл был бы отключён
+        });
+
+        t.Run("переименования в профиле: цепочки, регистр, зацикливание, пустой список", () =>
+        {
+            var p = new ModProfile("x", new HashSet<string> { "A.zip", "keep.zip" });
+            Assert.Eq(p, ProfileService.ApplyRenames(p, Array.Empty<(string, string)>()));
+            var r = ProfileService.ApplyRenames(p, new[] { ("a.zip", "b.zip"), ("b.zip", "c.zip") });
+            Assert.True(r.EnabledFiles.SetEquals(new[] { "c.zip", "keep.zip" }), "цепочка свернулась");
+            var loop = ProfileService.ApplyRenames(p, new[] { ("a.zip", "b.zip"), ("b.zip", "a.zip") });
+            Assert.Eq(2, loop.EnabledFiles.Count);
+        });
+    }
+
+    private sealed class Box : IDisposable
+    {
+        public readonly string Root = Path.Combine(Path.GetTempPath(), "bmm-upd-" + Guid.NewGuid().ToString("N"));
+        public readonly ModInstaller Inst;
+        public string BackupDir => Path.Combine(Root, "bmm", "backups");
+        public Box()
+        {
+            var layout = new ModLayout(Path.Combine(Root, "mods"), Path.Combine(Root, "bmm", "disabled"), BackupDir);
+            Inst = new ModInstaller(layout);
+        }
+        public void Dispose() { try { Directory.Delete(Root, true); } catch { } }
     }
 }

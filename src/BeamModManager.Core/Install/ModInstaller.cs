@@ -54,6 +54,12 @@ public sealed record InstallResult(
 /// <summary>Архив мода на диске.</summary>
 public sealed record DiskMod(string FileName, bool Enabled, long SizeBytes);
 
+/// <summary>Итог обновления мода: установка новой версии и судьба старого файла.</summary>
+public sealed record UpdateResult(InstallResult Install, bool OldRemoved, bool WasEnabled)
+{
+    public bool Success => Install.Success;
+}
+
 public sealed record OpResult(bool Success, string? Message = null, string? Path = null);
 
 public sealed class ModInstaller
@@ -178,6 +184,63 @@ public sealed class ModInstaller
         {
             try { if (File.Exists(temp)) File.Delete(temp); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    /// <summary>
+    /// Обновляет мод: ставит новую версию и убирает старый файл. Если у новой версии другое имя файла (так бывает почти всегда:
+    /// «audi_v1.0.zip» → «audi_v1.5.zip»), без этого в папке остались бы обе версии включёнными, и игра получила бы два
+    /// одинаковых автомобиля. Отключённый мод остаётся отключённым. Старый файл уходит в резервные копии.
+    /// Если старый файл убрать не удалось (занят игрой), новая версия откатывается, чтобы не оставить две.
+    /// </summary>
+    public UpdateResult Update(string oldFileName, Stream archive, string newFileName, InstallOptions? options = null)
+    {
+        options = new InstallOptions
+        {
+            AllowWarnings = options?.AllowWarnings ?? false,
+            Limits = options?.Limits ?? new ArchiveLimits(),
+            MaxArchiveBytes = options?.MaxArchiveBytes ?? new InstallOptions().MaxArchiveBytes,
+            ReplaceExisting = true, // обновление по определению заменяет
+        };
+        var oldName = SafeFileName(oldFileName);
+        var newName = SafeFileName(newFileName);
+        if (oldName is null || newName is null)
+            return new UpdateResult(InstallResult.Fail(InstallError.BadName, "Недопустимое имя файла (нужен .zip без путей)."), false, true);
+
+        bool wasEnabled;
+        bool oldExists;
+        lock (Gate)
+        {
+            var inMods = File.Exists(Path.Combine(_layout.ModsDir, oldName));
+            var inDisabled = File.Exists(Path.Combine(_layout.DisabledDir, oldName));
+            oldExists = inMods || inDisabled;
+            wasEnabled = !inDisabled || inMods;
+        }
+
+        var sameName = string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase);
+        // Файл с новым именем уже мог лежать в папке (не тот, что обновляем): его заменять нельзя молча.
+        if (!sameName && (File.Exists(Path.Combine(_layout.ModsDir, newName)) || File.Exists(Path.Combine(_layout.DisabledDir, newName))))
+            return new UpdateResult(InstallResult.Fail(InstallError.AlreadyExists, "Файл с именем новой версии уже есть в папке."), false, wasEnabled);
+
+        var install = Install(archive, newName, options);
+        if (!install.Success || sameName || !oldExists) return new UpdateResult(install, sameName, wasEnabled);
+
+        lock (Gate)
+        {
+            var removed = Remove(oldName);
+            if (!removed.Success)
+            {
+                // Старый не убрался: новую версию откатываем, иначе в игре окажутся обе. Файл только что создан нами, потерь нет.
+                try { File.Delete(Path.Combine(_layout.ModsDir, newName)); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                return new UpdateResult(InstallResult.Fail(InstallError.InUse, removed.Message ?? "Не удалось убрать старую версию."), false, wasEnabled);
+            }
+            if (!wasEnabled)
+            {
+                var off = Disable(newName);
+                if (!off.Success)
+                    return new UpdateResult(install with { Message = "Обновлено, но мод остался включённым: " + off.Message }, true, wasEnabled);
+            }
+        }
+        return new UpdateResult(install, true, wasEnabled);
     }
 
     /// <summary>Если мод сейчас отключён, обновление заменяет отключённую копию и мод остаётся отключённым:
