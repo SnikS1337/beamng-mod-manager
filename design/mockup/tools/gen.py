@@ -38,6 +38,6 @@ def make(name,W,H,R,B,sign=1.0):
     z=np.zeros_like(ma)
     Image.fromarray(np.dstack([z,z,z,(ma*255).round()]).astype(np.uint8),'RGBA').save(f'{name}_mask.png')
 
-specs=[('rail',84,212,36,24),('gear',56,56,28,16),('bar',964,52,26,20),('insp',328,928,32,34),('sheet',760,620,36,40)]
+specs=[('rail',84,212,36,24),('gear',56,56,28,16),('bar',964,52,26,20),('insp',328,928,32,34),('sheet',760,620,36,40),('set',1308,640,32,34),('pv',420,56,28,18)]
 for n,W,H,R,B in specs: make(n,W,H,R,B,sign=1.0)
 print('ok')
