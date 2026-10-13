@@ -25,6 +25,15 @@ public sealed class UpdateCheckOptions
     public int MaxCardChecksPerSource { get; init; } = 25;
     /// <summary>Игнорировать TTL (кнопка «проверить принудительно»).</summary>
     public bool Force { get; init; }
+    /// <summary>Общий предел времени одной проверки; остаток переносится на следующий запуск.</summary>
+    public TimeSpan MaxDuration { get; init; } = TimeSpan.FromMinutes(10);
+
+    public UpdateCheckOptions With(bool force) => new()
+    {
+        Ttl = Ttl, FeedPagesBase = FeedPagesBase, BindingsPerExtraFeedPage = BindingsPerExtraFeedPage,
+        MaxFeedPagesPerSource = MaxFeedPagesPerSource, MaxCardChecksPerSource = MaxCardChecksPerSource,
+        MaxDuration = MaxDuration, Force = force,
+    };
 }
 
 public sealed record SkippedSource(string Source, SourceStatus Status);
@@ -64,7 +73,8 @@ public static class UpdateCheckPlanner
         {
             var status = statuses.TryGetValue(b.Source, out var s) ? s : SourceStatus.Ok;
             if (status != SourceStatus.Ok) { skipped[b.Source] = status; continue; }
-            if (!options.Force && b.LastCheckedUtc is { } t && now - t < options.Ttl) continue;
+            // Время проверки «из будущего» (часы переводили назад) за свежее не считаем.
+            if (!options.Force && b.LastCheckedUtc is { } t && t <= now && now - t < options.Ttl) continue;
             due.Add(b);
         }
 
@@ -118,7 +128,7 @@ public static class UpdateCheckPlanner
                     continue;
                 }
 
-                var since = b.LastCheckedUtc is { } t ? now - t : TimeSpan.MaxValue;
+                var since = b.LastCheckedUtc is { } t && t <= now ? now - t : TimeSpan.MaxValue;
                 var interval = FallbackInterval(b, now);
                 if (options.Force || since >= interval)
                     fallback.Add((b, since == TimeSpan.MaxValue ? TimeSpan.MaxValue : since - interval));
