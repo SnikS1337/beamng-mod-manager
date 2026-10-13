@@ -11,6 +11,7 @@ ArchiveTests.Register(t);
 ModlandTests.Register(t);
 ModsGamingTests.Register(t);
 RealPageTests.Register(t);
+SourceStatusTests.Register(t);
 
 
 return t.Summary();
