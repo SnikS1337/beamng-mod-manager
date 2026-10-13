@@ -36,8 +36,9 @@ public static class UpdatePlannerTests
 
         t.Run("200 модов, лента ничего не знает: карточек не больше лимита на сайт", () =>
         {
-            var p = UpdateCheckPlanner.PlanFeeds(Mods(200), AllOk, Now);
-            var c = UpdateCheckPlanner.PlanCards(p.Due, Feed(), Now);
+            var opt = new UpdateCheckOptions { MaxCardChecksPerSource = 25 };
+            var p = UpdateCheckPlanner.PlanFeeds(Mods(200), AllOk, Now, opt);
+            var c = UpdateCheckPlanner.PlanCards(p.Due, Feed(), Now, opt);
             Assert.True(c.ToFetch.Values.All(v => v.Count <= 25), "лимит карточек на сайт");
             Assert.True(c.TotalRequests <= 75, $"карточек {c.TotalRequests}");
             Assert.Eq(200, c.TotalRequests + c.Postponed.Count + c.ConfirmedUnchanged.Count);
@@ -45,8 +46,9 @@ public static class UpdatePlannerTests
 
         t.Run("общий расход на 200 модов: ленты плюс карточки не больше 105 запросов", () =>
         {
-            var p = UpdateCheckPlanner.PlanFeeds(Mods(200), AllOk, Now);
-            var c = UpdateCheckPlanner.PlanCards(p.Due, Feed(), Now);
+            var opt = new UpdateCheckOptions { MaxCardChecksPerSource = 25 };
+            var p = UpdateCheckPlanner.PlanFeeds(Mods(200), AllOk, Now, opt);
+            var c = UpdateCheckPlanner.PlanCards(p.Due, Feed(), Now, opt);
             Assert.True(p.TotalRequests + c.TotalRequests <= 105, $"{p.TotalRequests + c.TotalRequests}");
         });
 
@@ -130,7 +132,7 @@ public static class UpdatePlannerTests
         {
             var m = Enumerable.Range(0, 30)
                 .Select(i => new TrackedBinding($"m{i}", "stmods", $"id{i}", Now.AddDays(-2 - i), Now.AddDays(-5), "1", 1)).ToList();
-            var c = UpdateCheckPlanner.PlanCards(m, Feed(), Now);
+            var c = UpdateCheckPlanner.PlanCards(m, Feed(), Now, new UpdateCheckOptions { MaxCardChecksPerSource = 25 });
             Assert.Eq(25, c.ToFetch["stmods"].Count);
             Assert.Eq("m29", c.ToFetch["stmods"][0].ModId);
             Assert.Eq(5, c.Postponed.Count);

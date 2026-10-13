@@ -6,6 +6,7 @@ using BeamModManager.Core.Net;
 using BeamModManager.Core.Settings;
 using BeamModManager.Core.Sources;
 using BeamModManager.Core.Text;
+using BeamModManager.Core.Updates;
 using BeamModManager.Core.Versioning;
 
 namespace BeamModManager.Core.Tests;
@@ -47,6 +48,52 @@ public static class Revision2Tests
             return page == 1 ? new[] { new Listing(Id, new Uri($"https://{Id}.test/m"), "m", "m") { ModVersion = "1.0" } } : Array.Empty<Listing>();
         }
         public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default) => Task.FromResult<Listing?>(null);
+        public Task<IReadOnlyList<Listing>> SearchAsync(string q, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
+        public Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? s, CancellationToken ct = default) => FeedPageAsync(1, ct);
+        public Task<IReadOnlyList<Offer>> GetOffersAsync(Listing l, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Offer>>(Array.Empty<Offer>());
+    }
+
+    /// <summary>Сайт с лентой по датам (как репозиторий BeamNG): страницы по 100, новые сверху.</summary>
+    private sealed class DatedSite : IModSource
+    {
+        public readonly List<Listing> Items = new();   // от новых к старым
+        public int FeedCalls, CardCalls;
+        public DatedSite(string id) { Id = id; DisplayName = id; }
+        public string Id { get; }
+        public string DisplayName { get; }
+        public bool SupportsSearch => false;
+        public Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref FeedCalls);
+            return Task.FromResult<IReadOnlyList<Listing>>(Items.Skip((page - 1) * 100).Take(100).ToList());
+        }
+        public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref CardCalls);
+            return Task.FromResult(Items.FirstOrDefault(l => l.Url == url));
+        }
+        public Task<IReadOnlyList<Listing>> SearchAsync(string q, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
+        public Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? s, CancellationToken ct = default) => FeedPageAsync(1, ct);
+        public Task<IReadOnlyList<Offer>> GetOffersAsync(Listing l, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Offer>>(Array.Empty<Offer>());
+    }
+
+    /// <summary>Сайт без дат в ленте: лента пуста, всё решают карточки.</summary>
+    private sealed class Fake100 : IModSource
+    {
+        public readonly HashSet<string> NewVersionFor = new();
+        public int CardCalls;
+        public Fake100(string id) { Id = id; DisplayName = id; }
+        public string Id { get; }
+        public string DisplayName { get; }
+        public bool SupportsSearch => false;
+        public Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<Listing>>(page == 1 ? new[] { new Listing(Id, new Uri("https://stmods.test/other"), "other", "other") { ModVersion = "9.9" } } : Array.Empty<Listing>());
+        public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref CardCalls);
+            var id = url.AbsolutePath.Trim('/');
+            return Task.FromResult<Listing?>(new Listing(Id, url, id, id) { ModVersion = NewVersionFor.Contains(id) ? "2.0" : "1.0" });
+        }
         public Task<IReadOnlyList<Listing>> SearchAsync(string q, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
         public Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? s, CancellationToken ct = default) => FeedPageAsync(1, ct);
         public Task<IReadOnlyList<Offer>> GetOffersAsync(Listing l, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Offer>>(Array.Empty<Offer>());
@@ -288,6 +335,110 @@ public static class Revision2Tests
             Assert.Eq(4, report.Requests); // у каждого сайта страница 1 и пустая страница 2
             Assert.Eq("1.0", store.GetCheck("ma", "a")!.LastVersion);
             Assert.Eq("1.0", store.GetCheck("mb", "b")!.LastVersion);
+        });
+
+        t.Group("Ревизия 2: заходы раз в неделю или месяц");
+
+        var Now = new DateTimeOffset(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
+
+        // 1500 записей, по ~70 обновлений в сутки: новые сверху. Мод m{i} стоит в позиции pos[i].
+        DatedSite Repo(int total = 1500)
+        {
+            var site = new DatedSite("repo");
+            for (var i = 0; i < total; i++)
+                site.Items.Add(new Listing("repo", new Uri($"https://repo.test/r{i}"), $"r{i}", $"r{i}")
+                { ModVersion = "1.0", UpdatedAt = Now.AddMinutes(-i * 20) });
+            return site;
+        }
+
+        InMemoryLibraryStore Library(int[] positions, DateTimeOffset checkedAt)
+        {
+            var store = new InMemoryLibraryStore();
+            foreach (var pos in positions)
+            {
+                store.UpsertMod(new InstalledMod($"m{pos}", $"m{pos}", $"m{pos}.zip", "1.0", null, checkedAt.AddDays(-100)));
+                store.UpsertBinding(new ModBinding($"m{pos}", "repo", $"r{pos}", new Uri($"https://repo.test/r{pos}"), true));
+                store.SaveCheck(new CheckState($"m{pos}", "repo", checkedAt, checkedAt.AddDays(-100), "1.0", null));
+            }
+            return store;
+        }
+
+        t.Run("неделя без заходов: лента читается до даты последней проверки, неизменные моды без карточек, обновление найдено", async () =>
+        {
+            var site = Repo();
+            var positions = Enumerable.Range(0, 40).Select(i => 400 + i * 25).ToArray(); // разбросаны по глубине ленты
+            var store = Library(positions, Now.AddDays(-7));
+            site.Items[510] = site.Items[510] with { ModVersion = "1.1", UpdatedAt = Now.AddDays(-2) }; // позиция 510 — не из наших
+            // у мода в позиции 450 вышла новая версия два дня назад: в ленте он поднимается наверх
+            var updated = site.Items[450] with { ModVersion = "2.0", UpdatedAt = Now.AddDays(-2) };
+            site.Items.RemoveAt(450); site.Items.Insert(3, updated);
+            // порядок «новые сверху» должен сохраниться: 
+            var sorted = site.Items.OrderByDescending(l => l.UpdatedAt).ToList(); site.Items.Clear(); site.Items.AddRange(sorted);
+
+            var r = await UpdateRunner.RunAsync(store, new IModSource[] { site }, Now);
+            Assert.Eq(1, r.Findings.Count);
+            Assert.Eq("m450", r.Findings[0].ModId);
+            Assert.Eq("2.0", r.Findings[0].LatestVersion);
+            Assert.True(site.CardCalls <= 3, $"карточек открыто: {site.CardCalls}"); // вместо 40
+            Assert.True(site.FeedCalls <= 10, $"страниц ленты: {site.FeedCalls}");
+            Assert.Eq(0, r.Sources.Sum(s => s.Postponed));
+        });
+
+        t.Run("заход каждый день: лента останавливается рано (не 10 страниц)", async () =>
+        {
+            var site = Repo();
+            var store = Library(new[] { 5, 90, 250 }, Now.AddHours(-30));
+            var r = await UpdateRunner.RunAsync(store, new IModSource[] { site }, Now);
+            Assert.True(site.FeedCalls <= 3, $"страниц ленты: {site.FeedCalls}");
+            Assert.Eq(0, site.CardCalls);
+            Assert.Eq(0, r.Findings.Count);
+        });
+
+        t.Run("полгода без заходов, лента не достаёт до даты проверки: моды из хвоста проверяются карточками", async () =>
+        {
+            var site = Repo();
+            var store = Library(new[] { 100, 1400 }, Now.AddDays(-180));
+            var r = await UpdateRunner.RunAsync(store, new IModSource[] { site }, Now);
+            Assert.True(site.FeedCalls <= 10, "не больше предела страниц");
+            Assert.True(site.CardCalls >= 1, "моды дальше ленты проверены карточками");
+        });
+
+        t.Run("лента не по порядку дат или без дат: доказательства нет, моды проверяются карточками", () =>
+        {
+            var shuffled = Enumerable.Range(0, 100).Select(i => new FeedEntry($"r{i}", "1.0", null, Now.AddDays(-(i * 7 % 50)))).ToList();
+            Assert.True(FeedCoverage.Compute(shuffled) is null, "нет покрытия");
+            var undated = Enumerable.Range(0, 100).Select(i => new FeedEntry($"r{i}", "1.0", null, null)).ToList();
+            Assert.True(FeedCoverage.Compute(undated) is null, "нет покрытия");
+            Assert.True(FeedCoverage.Compute(shuffled.Take(10).ToList()) is null, "нет покрытия");
+        });
+
+        t.Run("закреплённые записи вверху ленты порядок не ломают", () =>
+        {
+            var e = new List<FeedEntry>();
+            for (var i = 0; i < 3; i++) e.Add(new FeedEntry($"p{i}", "1", null, Now.AddYears(-3)));
+            for (var i = 0; i < 100; i++) e.Add(new FeedEntry($"r{i}", "1", null, Now.AddHours(-i)));
+            var c = FeedCoverage.Compute(e);
+            Assert.True(c is not null && c > Now.AddDays(-6), "граница по хвосту, а не по закреплённым");
+        });
+
+        t.Run("месяц без заходов, сайт без дат: все 100 модов проверяются за один заход", async () =>
+        {
+            var site = new Fake100("stmods");
+            var store = new InMemoryLibraryStore();
+            for (var i = 0; i < 100; i++)
+            {
+                var when = Now.AddDays(-30);
+                store.UpsertMod(new InstalledMod($"m{i}", $"m{i}", $"m{i}.zip", "1.0", null, when.AddDays(-50)));
+                store.UpsertBinding(new ModBinding($"m{i}", "stmods", $"s{i}", new Uri($"https://stmods.test/s{i}"), true));
+                store.SaveCheck(new CheckState($"m{i}", "stmods", when, when.AddDays(-50), "1.0", null));
+            }
+            site.NewVersionFor.Add("s77");
+            var r = await UpdateRunner.RunAsync(store, new IModSource[] { site }, Now);
+            Assert.Eq(100, site.CardCalls);
+            Assert.Eq(1, r.Findings.Count);
+            Assert.Eq("m77", r.Findings[0].ModId);
+            Assert.Eq(0, r.Sources[0].Postponed);
+            Assert.True(r.Complete, "проверено всё");
         });
 
         t.Group("Ревизия 2: большая библиотека");

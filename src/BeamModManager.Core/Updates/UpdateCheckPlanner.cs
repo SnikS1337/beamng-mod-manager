@@ -22,11 +22,15 @@ public sealed class UpdateCheckOptions
     public int FeedPagesBase { get; init; } = 3;
     public int BindingsPerExtraFeedPage { get; init; } = 50;
     public int MaxFeedPagesPerSource { get; init; } = 10;
-    public int MaxCardChecksPerSource { get; init; } = 25;
+    /// <summary>
+    /// Сколько карточек открывать на сайте за одну проверку. Сдерживают проверку не столько этот предел,
+    /// сколько паузы между запросами и <see cref="MaxDuration"/>: после месяца без заходов нужно успеть проверить все моды за один раз.
+    /// </summary>
+    public int MaxCardChecksPerSource { get; init; } = 150;
     /// <summary>Игнорировать TTL (кнопка «проверить принудительно»).</summary>
     public bool Force { get; init; }
     /// <summary>Общий предел времени одной проверки; остаток переносится на следующий запуск.</summary>
-    public TimeSpan MaxDuration { get; init; } = TimeSpan.FromMinutes(10);
+    public TimeSpan MaxDuration { get; init; } = TimeSpan.FromMinutes(5);
 
     public UpdateCheckOptions With(bool force) => new()
     {
@@ -104,7 +108,8 @@ public static class UpdateCheckPlanner
         IReadOnlyList<TrackedBinding> due,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, FeedEntry>> feedBySource,
         DateTimeOffset now,
-        UpdateCheckOptions? options = null)
+        UpdateCheckOptions? options = null,
+        IReadOnlyDictionary<string, DateTimeOffset>? coverage = null)
     {
         options ??= new UpdateCheckOptions();
         var unchanged = new List<TrackedBinding>();
@@ -125,6 +130,15 @@ public static class UpdateCheckPlanner
                     var same = b.LastVersion is not null && entry.Version == b.LastVersion
                                && !Versioning.SizeComparer.Differs(entry.SizeBytes, b.LastSize);
                     if (same) unchanged.Add(b); else changed.Add(b);
+                    continue;
+                }
+
+                // Лента датирована и дошла глубже последней проверки мода: его в ленте нет, значит, он не менялся.
+                // Принудительная проверка этого доказательства не использует — пользователь просит перепроверить.
+                if (!options.Force && coverage is not null && coverage.TryGetValue(group.Key, out var cov)
+                    && b.LastVersion is not null && FeedCoverage.Proves(cov, b.LastCheckedUtc, now))
+                {
+                    unchanged.Add(b);
                     continue;
                 }
 
