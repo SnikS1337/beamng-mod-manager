@@ -10,7 +10,8 @@ public sealed record TrackedBinding(
     DateTimeOffset? LastCheckedUtc = null,
     DateTimeOffset? LastChangedUtc = null,
     string? LastVersion = null,
-    long? LastSize = null);
+    long? LastSize = null,
+    int MissCount = 0);
 
 /// <summary>Строка из ленты «новое / обновлённое» сайта (дешёвый источник сведений).</summary>
 public sealed record FeedEntry(string SourceId, string? Version, long? SizeBytes, DateTimeOffset? Updated);
@@ -95,6 +96,12 @@ public static class UpdateCheckPlanner
     }
 
     /// <summary>Как часто нужно открывать карточку мода, про который лента молчит.</summary>
+    /// <summary>Столько проверок подряд страница мода не находится, прежде чем привязку считают потерянной.</summary>
+    public const int DeadAfterMisses = 2;
+
+    private static readonly TimeSpan FirstMissRecheck = TimeSpan.FromDays(1);
+    private static readonly TimeSpan DeadRecheck = TimeSpan.FromDays(7);
+
     public static TimeSpan FallbackInterval(TrackedBinding b, DateTimeOffset now)
     {
         if (b.LastChangedUtc is not { } changed) return TimeSpan.FromDays(1);
@@ -136,7 +143,7 @@ public static class UpdateCheckPlanner
                 // Лента датирована и дошла глубже последней проверки мода: его в ленте нет, значит, он не менялся.
                 // Принудительная проверка этого доказательства не использует — пользователь просит перепроверить.
                 if (!options.Force && coverage is not null && coverage.TryGetValue(group.Key, out var cov)
-                    && b.LastVersion is not null && FeedCoverage.Proves(cov, b.LastCheckedUtc, now))
+                    && b.LastVersion is not null && b.MissCount == 0 && FeedCoverage.Proves(cov, b.LastCheckedUtc, now))
                 {
                     unchanged.Add(b);
                     continue;
@@ -144,6 +151,9 @@ public static class UpdateCheckPlanner
 
                 var since = b.LastCheckedUtc is { } t && t <= now ? now - t : TimeSpan.MaxValue;
                 var interval = FallbackInterval(b, now);
+                // Первый промах быстро перепроверяем (сбой сайта или правда удалили?), а подтверждённо мёртвую страницу — раз в неделю.
+                if (b.MissCount == 1 && interval > FirstMissRecheck) interval = FirstMissRecheck;
+                if (b.MissCount >= DeadAfterMisses && interval < DeadRecheck) interval = DeadRecheck;
                 if (options.Force || since >= interval)
                     fallback.Add((b, since == TimeSpan.MaxValue ? TimeSpan.MaxValue : since - interval));
                 else

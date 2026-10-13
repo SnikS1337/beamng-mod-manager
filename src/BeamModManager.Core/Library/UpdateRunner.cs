@@ -194,6 +194,7 @@ public static class UpdateRunner
                 if (!cardPlan.ToFetch.TryGetValue(source, out var list)) return o;
                 var done = 0;
                 var attempted = 0;
+                var misses = new List<TrackedBinding>();
                 o.CardsDone = 0;
                 foreach (var b in list)
                 {
@@ -214,6 +215,7 @@ public static class UpdateRunner
                         {
                             // Страницы нет (убрана автором или сменила адрес): прошлое состояние не трогаем, сообщаем.
                             o.Missing.Add(store.GetMod(b.ModId)?.Name ?? b.ModId);
+                            misses.Add(b);
                             continue;
                         }
                         UpdateCheckService.ApplyCard(store, b, current, now);
@@ -227,7 +229,9 @@ public static class UpdateRunner
                 }
                 // Не нашлись сразу много карточек подряд: скорее сломались адреса или вёрстка, чем всё удалили.
                 if (attempted >= 3 && o.Missing.Count == attempted)
-                    o.Note = "карточки не найдены ни у одного мода: возможно, изменились адреса или вёрстка сайта";
+                    o.Note = "карточки не найдены ни у одного мода: возможно, изменились адреса или вёрстка сайта"; // промахи не считаем: виноват сайт, а не моды
+                else
+                    foreach (var b in misses) UpdateCheckService.ApplyMissing(store, b, now);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

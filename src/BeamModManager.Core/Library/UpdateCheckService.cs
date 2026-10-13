@@ -35,7 +35,7 @@ public static class UpdateCheckService
         store.Bindings().Where(b => b.Confirmed).Select(b =>
         {
             var c = store.GetCheck(b.ModId, b.Source);
-            return new TrackedBinding(b.ModId, b.Source, b.SourceId, c?.LastCheckedUtc, c?.LastChangedUtc, c?.LastVersion, c?.LastSize);
+            return new TrackedBinding(b.ModId, b.Source, b.SourceId, c?.LastCheckedUtc, c?.LastChangedUtc, c?.LastVersion, c?.LastSize, c?.MissCount ?? 0);
         }).ToList();
 
     public static FeedPlan PlanFeeds(ILibraryStore store, DateTimeOffset now, UpdateCheckOptions? options = null) =>
@@ -46,7 +46,19 @@ public static class UpdateCheckService
     {
         var c = store.GetCheck(b.ModId, b.Source);
         if (c is null) return; // без прошлых данных планировщик такие случаи не пропускает
-        store.SaveCheck(c with { LastCheckedUtc = now });
+        store.SaveCheck(c with { LastCheckedUtc = now, MissCount = 0 }); // раз лента его показала, страница есть
+    }
+
+    /// <summary>
+    /// Карточка не нашлась (404). Прошлые версия и размер сохраняются, время проверки обновляется (иначе страницу дёргали бы при каждом нажатии),
+    /// счётчик промахов растёт.
+    /// </summary>
+    public static void ApplyMissing(ILibraryStore store, TrackedBinding b, DateTimeOffset now)
+    {
+        var c = store.GetCheck(b.ModId, b.Source);
+        store.SaveCheck(c is null
+            ? new CheckState(b.ModId, b.Source, now, null, null, null, MissCount: 1)
+            : c with { LastCheckedUtc = now, MissCount = c.MissCount + 1 });
     }
 
     /// <summary>Результат открытия карточки: запоминаем, что сайт показывает сейчас.</summary>
