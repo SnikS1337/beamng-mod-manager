@@ -1,0 +1,136 @@
+using BeamModManager.Core.Matching;
+using BeamModManager.Core.Models;
+using BeamModManager.Core.Sources;
+using BeamModManager.Core.Text;
+
+namespace BeamModManager.Core.Search;
+
+/// <summary>Итог цены по всем источникам карточки. Показывается рядом с ценой каждого источника, а не вместо неё.</summary>
+public enum PriceSummary { Unknown, Free, Paid, Mixed }
+
+public sealed record ModCard(
+    string Id,
+    string Title,
+    IReadOnlyList<Listing> Listings,
+    PriceSummary Price,
+    /// <summary>Карточки, которые, возможно, тот же мод. Автоматически не объединяются, решает пользователь.</summary>
+    IReadOnlyList<string> PossibleSameAs,
+    double Relevance);
+
+public sealed record SourceReport(string SourceId, string DisplayName, SourceStatus Status, int Count, string? Note);
+
+public sealed record SearchResponse(IReadOnlyList<ModCard> Cards, IReadOnlyList<SourceReport> Sources);
+
+public sealed class SearchOptions
+{
+    public TimeSpan PerSourceTimeout { get; init; } = TimeSpan.FromSeconds(20);
+    public int MaxPerSource { get; init; } = 30;
+    public int MinQueryLength { get; init; } = 2;
+}
+
+/// <summary>
+/// Общий поиск по всем источникам: один запрос, одна карточка на мод, источники и цены внутри.
+/// Объединяем только при уверенном совпадении, сомнительное помечаем, чужое не склеиваем.
+/// </summary>
+public sealed class SearchService
+{
+    private readonly IReadOnlyList<IModSource> _sources;
+    private readonly Func<string, SourceStatus> _status;
+    private readonly SearchOptions _o;
+
+    public SearchService(IEnumerable<IModSource> sources, Func<string, SourceStatus>? statusOf = null, SearchOptions? options = null)
+    {
+        _sources = sources.ToList();
+        _status = statusOf ?? (_ => SourceStatus.Ok);
+        _o = options ?? new SearchOptions();
+    }
+
+    public async Task<SearchResponse> SearchAsync(string query, CancellationToken ct = default)
+    {
+        query = (query ?? "").Trim();
+        if (query.Length < _o.MinQueryLength)
+            return new SearchResponse(Array.Empty<ModCard>(), Array.Empty<SourceReport>());
+
+        var tasks = _sources.Select(s => RunOne(s, query, ct)).ToList();
+        var done = await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        var reports = done.Select(d => d.Report).ToList();
+        var listings = done.SelectMany(d => d.Listings).ToList();
+        return new SearchResponse(Group(listings, query), reports);
+    }
+
+    private async Task<(SourceReport Report, IReadOnlyList<Listing> Listings)> RunOne(IModSource s, string query, CancellationToken ct)
+    {
+        var st = _status(s.Id);
+        if (st != SourceStatus.Ok)
+            return (new SourceReport(s.Id, s.DisplayName, st, 0, st == SourceStatus.NeedsHumanCheck ? "нужно пройти проверку на сайте" : "сайт недоступен"), Array.Empty<Listing>());
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(_o.PerSourceTimeout);
+        try
+        {
+            var found = await s.SearchAsync(query, timeout.Token).ConfigureAwait(false);
+            var list = found.Take(_o.MaxPerSource).ToList();
+            return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Ok, list.Count, null), list);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Unavailable, 0, "сайт не ответил вовремя"), Array.Empty<Listing>());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Unavailable, 0, ex.Message), Array.Empty<Listing>());
+        }
+    }
+
+    internal IReadOnlyList<ModCard> Group(IReadOnlyList<Listing> listings, string query)
+    {
+        var clusters = new List<List<Listing>>();
+
+        foreach (var l in listings)
+        {
+            List<Listing>? best = null;
+            var bestScore = -1.0;
+            foreach (var c in clusters)
+            {
+                // Один сайт не даёт двух записей в одной карточке (кроме повтора той же записи).
+                if (c.Any(m => m.Source == l.Source)) continue;
+                var results = c.Select(m => DuplicateMatcher.Compare(m, l)).ToList();
+                if (results.Any(r => r.Verdict != MatchVerdict.Same)) continue; // со всеми участниками «Same», иначе цепочки склеят чужое
+                var score = results.Average(r => r.Score);
+                if (score > bestScore) { best = c; bestScore = score; }
+            }
+            if (best is not null) best.Add(l); else clusters.Add(new List<Listing> { l });
+        }
+
+        var cards = clusters.Select((c, i) => (Cluster: c, Id: CardId(c))).ToList();
+        var result = new List<ModCard>();
+        foreach (var (cluster, id) in cards)
+        {
+            var maybes = cards
+                .Where(o => o.Id != id)
+                .Where(o => o.Cluster.Any(b => cluster.Any(a =>
+                    a.Source != b.Source && DuplicateMatcher.Compare(a, b).Verdict == MatchVerdict.Maybe)))
+                .Select(o => o.Id).ToList();
+
+            var title = TitleParser.Parse(cluster[0].Title).Name;
+            if (title.Length == 0) title = cluster[0].Title;
+            var relevance = cluster.Max(m => TitleNormalizer.Similarity(query, m.Title)) + 0.05 * Math.Min(cluster.Count, 3);
+            result.Add(new ModCard(id, title, cluster, Summarize(cluster), maybes, relevance));
+        }
+
+        return result.OrderByDescending(c => c.Relevance).ThenBy(c => c.Title, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string CardId(List<Listing> c) => string.Join("+", c.Select(l => $"{l.Source}:{l.SourceId}").OrderBy(x => x, StringComparer.Ordinal));
+
+    public static PriceSummary Summarize(IReadOnlyList<Listing> ls)
+    {
+        var free = ls.Any(l => l.Price == PriceStatus.Free);
+        var paid = ls.Any(l => l.Price == PriceStatus.Paid);
+        if (free && paid) return PriceSummary.Mixed;
+        if (free) return PriceSummary.Free;
+        if (paid) return PriceSummary.Paid;
+        return PriceSummary.Unknown;
+    }
+}
