@@ -19,6 +19,15 @@ public static class PackContentReader
 {
     public static ArchiveContent Read(Stream zip)
     {
+        try { return ReadCore(zip); }
+        catch (Exception e) when (e is InvalidDataException or IOException or NotSupportedException or ArgumentException or OverflowException)
+        {
+            return ArchiveContent.Empty; // повреждённый архив: состав неизвестен
+        }
+    }
+
+    private static ArchiveContent ReadCore(Stream zip)
+    {
         ZipArchive archive;
         try { archive = new ZipArchive(zip, ZipArchiveMode.Read, leaveOpen: true); }
         catch (InvalidDataException) { return ArchiveContent.Empty; }

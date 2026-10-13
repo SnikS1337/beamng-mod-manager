@@ -32,6 +32,7 @@ public static class ArchiveInspector
     private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".exe", ".dll", ".bat", ".cmd", ".com", ".scr", ".msi", ".ps1", ".vbs", ".sh", ".jar",
+        ".lnk", ".pif", ".reg", ".vbe", ".wsf", ".hta", ".psm1", ".appx", ".msix", ".cpl",
     };
 
     // Папки верхнего уровня, которые ожидает игра.
@@ -41,6 +42,17 @@ public static class ArchiveInspector
     };
 
     public static InspectionResult Inspect(Stream zip, ArchiveLimits? limits = null)
+    {
+        try { return InspectCore(zip, limits); }
+        // Повреждённый архив бывает «открывающимся», но ломается при чтении записей (обрезан, подделан каталог).
+        catch (Exception e) when (e is InvalidDataException or IOException or NotSupportedException or ArgumentException or OverflowException)
+        {
+            return new InspectionResult(
+                new[] { new Finding(Severity.Block, "not-zip", "Архив повреждён и не читается.") }, 0, 0);
+        }
+    }
+
+    private static InspectionResult InspectCore(Stream zip, ArchiveLimits? limits)
     {
         limits ??= new ArchiveLimits();
         var findings = new List<Finding>();
@@ -79,7 +91,8 @@ public static class ArchiveInspector
                     findings.Add(new Finding(Severity.Block, "zip-slip", "Небезопасный путь внутри архива.", entry.FullName));
 
                 var isDirectory = name.EndsWith('/');
-                if (!isDirectory && BlockedExtensions.Contains(Path.GetExtension(name)))
+                // Windows отбрасывает точки и пробелы в конце имени: «run.exe.» и «run.exe » — тот же исполняемый файл.
+                if (!isDirectory && BlockedExtensions.Contains(Path.GetExtension(name.TrimEnd('.', ' '))))
                     findings.Add(new Finding(Severity.Block, "executable",
                         "Исполняемый файл или скрипт: моды BeamNG так не распространяются.", entry.FullName));
 
@@ -106,6 +119,8 @@ public static class ArchiveInspector
     {
         if (name.StartsWith('/')) return true;
         if (name.Length >= 2 && name[1] == ':') return true; // C:\...
+        // «файл.txt:поток» — альтернативный поток данных NTFS; управляющие символы в путях не бывают честными.
+        if (name.Any(c => c == ':' || c < 32)) return true;
         return name.Split('/').Any(seg => seg == "..");
     }
 

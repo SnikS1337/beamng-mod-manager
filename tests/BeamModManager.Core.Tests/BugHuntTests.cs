@@ -156,5 +156,44 @@ public static class BugHuntTests
             await f.GetAsync(new Uri("https://x.test/0"));
             Assert.Eq(before + 1, inner.Calls);
         });
+
+        t.Group("Ревизия: проверка архивов");
+
+        t.Run("архив: исполняемый файл с точкой/пробелом на конце, альтернативный поток, управляющие символы — блокировка", () =>
+        {
+            foreach (var bad in new[] { "vehicles/a/run.exe.", "vehicles/a/run.exe ", "vehicles/a/x.txt:evil.exe", "vehicles/a/a\u0001b.jbeam", "vehicles/a/link.lnk", "vehicles/a/s.hta" })
+            {
+                var ms = new MemoryStream();
+                using (var z = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                {
+                    var e = z.CreateEntry(bad);
+                    using var w = new StreamWriter(e.Open()); w.Write("x");
+                }
+                ms.Position = 0;
+                Assert.True(BeamModManager.Core.Safety.ArchiveInspector.Inspect(ms).IsBlocked, bad);
+            }
+        });
+
+        t.Run("архив: обрезанный и случайный файл не вызывают исключения", () =>
+        {
+            var ms = new MemoryStream();
+            using (var z = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                for (var i = 0; i < 20; i++) { var e = z.CreateEntry($"vehicles/a/f{i}.jbeam"); using var w = new StreamWriter(e.Open()); w.Write(new string('x', 500)); }
+            var bytes = ms.ToArray();
+            for (var cut = 0; cut < bytes.Length; cut += 37)
+            {
+                var r = BeamModManager.Core.Safety.ArchiveInspector.Inspect(new MemoryStream(bytes, 0, cut));
+                Assert.True(r.IsBlocked || r.EntryCount >= 0, "без исключения");
+                BeamModManager.Core.Packs.PackContentReader.Read(new MemoryStream(bytes, 0, cut));
+            }
+            var rng = new Random(7);
+            for (var k = 0; k < 200; k++)
+            {
+                var copy = (byte[])bytes.Clone();
+                for (var m = 0; m < 8; m++) copy[rng.Next(copy.Length)] = (byte)rng.Next(256);
+                BeamModManager.Core.Safety.ArchiveInspector.Inspect(new MemoryStream(copy));
+                BeamModManager.Core.Packs.PackContentReader.Read(new MemoryStream(copy));
+            }
+        });
     }
 }
