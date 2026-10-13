@@ -34,8 +34,14 @@ public static class PackContentReader
 
         using (archive)
         {
+            // Записи-папки заранее в множество: иначе поиск для каждого файла превращается в квадратичный перебор.
+            var dirEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in archive.Entries)
+                if (e.FullName.EndsWith('/') || e.FullName.EndsWith('\\'))
+                    dirEntries.Add(Normalize(e.FullName));
+
             var paths = archive.Entries
-                .Select(e => e.FullName.Replace('\\', '/').Trim('/'))
+                .Select(e => Normalize(e.FullName))
                 .Where(p => p.Length > 0)
                 .Select(p => p.Split('/'))
                 .ToList();
@@ -55,7 +61,7 @@ public static class PackContentReader
                 if (p.Length <= offset + 1) continue;
                 var root = p[offset];
                 var name = p[offset + 1];
-                if (p.Length == offset + 2 && !IsDirEntry(archive, p)) continue; // файл прямо в vehicles/
+                if (p.Length == offset + 2 && !dirEntries.Contains(string.Join('/', p))) continue; // файл прямо в vehicles/
                 if (root.Equals("vehicles", StringComparison.OrdinalIgnoreCase)) vehicles.Add(name.ToLowerInvariant());
                 else if (root.Equals("levels", StringComparison.OrdinalIgnoreCase)) levels.Add(name.ToLowerInvariant());
             }
@@ -66,10 +72,11 @@ public static class PackContentReader
     private static bool IsRoot(string s) =>
         s.Equals("vehicles", StringComparison.OrdinalIgnoreCase) || s.Equals("levels", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsDirEntry(ZipArchive a, string[] parts)
+    /// <summary>Единый вид пути: прямые слэши, без «./» в начале и слэшей по краям.</summary>
+    private static string Normalize(string name)
     {
-        var joined = string.Join('/', parts);
-        return a.Entries.Any(e => e.FullName.Replace('\\', '/').TrimEnd('/').Equals(joined, StringComparison.OrdinalIgnoreCase)
-                                  && (e.FullName.EndsWith('/') || e.FullName.EndsWith('\\')));
+        var n = name.Replace('\\', '/');
+        while (n.StartsWith("./")) n = n[2..];
+        return n.Trim('/');
     }
 }

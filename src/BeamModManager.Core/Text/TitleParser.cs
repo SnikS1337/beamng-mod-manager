@@ -24,7 +24,8 @@ public static class TitleParser
     private static readonly Regex TrailingBareVersion = new(@"\s(\d{1,2}(?:\.\d+)+)\s*$", Opt);
 
     // Метка платного в названии: [PAID] в любой форме скобок или слово PAID заглавными.
-    private static readonly Regex PaidBracketed = new(@"[\[(]\s*(?:paid|premium|vip|early\s+access)\s*[\])]", Opt);
+    // В круглых скобках только «paid»: «(Premium)» и «(VIP)» чаще комплектация машины, а не платный доступ.
+    private static readonly Regex PaidBracketed = new(@"\[\s*(?:paid|premium|vip|early\s+access)\s*\]|\(\s*paid\s*\)", Opt);
     private static readonly Regex PaidUpper = new(@"(?<![\p{L}\p{Nd}])PAID(?![\p{L}\p{Nd}])", RegexOptions.CultureInvariant);
 
     public static bool HasPaidMarker(string title) =>
