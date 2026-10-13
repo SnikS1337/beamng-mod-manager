@@ -14,6 +14,7 @@ RealPageTests.Register(t);
 SourceStatusTests.Register(t);
 UpdatePlannerTests.Register(t);
 NetTests.Register(t);
+InstallTests.Register(t);
 LibraryTests.Register(t);
 
 
