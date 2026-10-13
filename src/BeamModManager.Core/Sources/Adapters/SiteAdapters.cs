@@ -4,6 +4,7 @@ using BeamModManager.Core.Models;
 using BeamModManager.Core.Net;
 using BeamModManager.Core.Sources.Modland;
 using BeamModManager.Core.Sources.ModsGaming;
+using BeamModManager.Core.Sources.BeamNg;
 using BeamModManager.Core.Sources.StMods;
 
 namespace BeamModManager.Core.Sources;
@@ -141,4 +142,22 @@ public sealed class ModsGamingSource : SiteAdapter
         var m = Regex.Match(last, @"-(\d+)$");
         return m.Success ? m.Groups[1].Value : last;
     }
+}
+
+/// <summary>
+/// Официальный репозиторий beamng.com/resources. Лента по умолчанию — «Last Update», 100 модов на странице.
+/// Поиск не включён: форма поиска XenForo отправляется POST-запросом с токеном, образца результатов нет.
+/// </summary>
+public sealed class BeamNgRepoSource : SiteAdapter
+{
+    private static readonly Uri Root = new("https://beamng.com/");
+    public BeamNgRepoSource(PoliteFetcher f) : base(f) { }
+    public override string Id => BeamNgRepoParser.SourceId;
+    public override string DisplayName => "BeamNG (официальный)";
+    public override bool SupportsSearch => false;
+    protected override IReadOnlyList<Listing> ParseList(string html) => BeamNgRepoParser.ParseList(html);
+    protected override Listing ParseDetail(string html, Listing basis) => BeamNgRepoParser.ParseDetail(html, basis);
+    protected override string SlugOf(Uri url) => BeamNgRepoParser.SlugOf(url);
+    protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "resources/" : $"resources/?page={page}");
+    protected override Uri? SearchUrl(string q) => null;
 }

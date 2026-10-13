@@ -25,6 +25,11 @@ public sealed record Listing(string Source, Uri Url, string SourceId, string Tit
     public IReadOnlyList<Offer> Offers { get; init; } = Array.Empty<Offer>();
     /// <summary>Дата публикации на сайте, если она видна в выдаче.</summary>
     public DateTimeOffset? PublishedAt { get; init; }
+    /// <summary>Дата последнего обновления на сайте, если она видна в ленте.</summary>
+    public DateTimeOffset? UpdatedAt { get; init; }
+
+    /// <summary>Устойчивый идентификатор мода у источника (у официального репозитория — Unique ID, как в игре).</summary>
+    public string? ExternalId { get; init; }
     public DateTimeOffset? FirstSeen { get; init; }
     public DateTimeOffset? LastSeen { get; init; }
 }

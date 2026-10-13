@@ -1,4 +1,5 @@
 using BeamModManager.Core.Models;
+using BeamModManager.Core.Sources.BeamNg;
 using BeamModManager.Core.Sources.Modland;
 using BeamModManager.Core.Sources.ModsFire;
 using BeamModManager.Core.Sources.ModsGaming;
@@ -165,6 +166,43 @@ public static class RealPageTests
             Assert.True(all.All(x => x.Price == PriceStatus.Unknown), "ни Paid, ни Free без доказательств");
             var d = StModsParser.ParseDetail(Fx("stmods/mod-real.html"), new Listing("stmods", new Uri("https://stmods.org/beamng_drive/mods/x/"), "x", "BMW E34"));
             Assert.Eq(PriceStatus.Unknown, d.Price);
+        });
+
+        t.Run("Официальный репозиторий, лента: версии, авторы, категории, даты обновления", () =>
+        {
+            var l = BeamNgRepoParser.ParseList(Fx("beamng/list-real.html"));
+            Assert.Eq(4, l.Count);
+            Assert.Eq("39753", l[0].SourceId);
+            Assert.Eq("Object Spawner", l[0].Title);
+            Assert.Eq("1.0", l[0].ModVersion);
+            Assert.Eq("Bikk-", l[0].Author);
+            Assert.Eq("User Interface Apps", l[0].Category);
+            Assert.Eq(1791897661L, l[0].UpdatedAt?.ToUnixTimeSeconds());
+            Assert.Eq("https://beamng.com/resources/object-spawner.39753/", l[0].Url.AbsoluteUri);
+        });
+        t.Run("Официальный репозиторий: метка Beta не попадает в название, версия с суффиксом", () =>
+        {
+            var l = BeamNgRepoParser.ParseList(Fx("beamng/list-real.html"));
+            Assert.Eq("ACNG - Tire Heat, Pressure & Wear", l[1].Title);
+            Assert.Eq("0.3.1-beta", l[1].ModVersion);
+            Assert.Eq(2026, l[1].UpdatedAt?.Year);
+        });
+        t.Run("Официальный репозиторий: «Updated», а не дата создания, задаёт время обновления", () =>
+        {
+            var d = BeamNgRepoParser.ParseList(Fx("beamng/list-real.html"))[2];
+            Assert.Eq("dynamic dirt - grime", d.Title);
+            Assert.Eq(10, d.UpdatedAt?.Month); // 13 октября, а не 30 сентября
+            Assert.Eq(13, d.UpdatedAt?.Day);
+        });
+        t.Run("Официальный репозиторий, карточка: Unique ID, размер, прямая ссылка, бесплатно", () =>
+        {
+            var b = BeamNgRepoParser.ParseList(Fx("beamng/list-real.html"))[1];
+            var d = BeamNgRepoParser.ParseDetail(Fx("beamng/mod-real.html"), b);
+            Assert.Eq("MOKU3EJNG", d.ExternalId);
+            Assert.Eq((long)(100.2 * 1024), d.SizeBytes);
+            Assert.Eq("0.3.1-beta", d.ModVersion);
+            Assert.Eq(PriceStatus.Free, d.Price);
+            Assert.Eq("/resources/acng-tire-heat-pressure-wear.39760/download", d.Offers.Single().Url.AbsolutePath);
         });
 
         t.Run("в сохранённых страницах нет IP и токенов", () =>
