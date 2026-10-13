@@ -54,7 +54,14 @@ public sealed class UpdateCoordinator
     {
         lock (_gate)
         {
-            if (_current is not null) return _current; // уже идёт: присоединяемся
+            if (_current is not null)
+            {
+                // Идущую проверку уже отменили: присоединяться к ней бессмысленно (получим «прервано»).
+                // Дожидаемся её конца и запускаем свежую; несколько ожидающих сойдутся в одной новой проверке.
+                if (_cts is { IsCancellationRequested: true })
+                    return _current.ContinueWith(_ => CheckAsync(force, progress), TaskScheduler.Default).Unwrap();
+                return _current; // уже идёт: присоединяемся
+            }
             if (force && _lastFinished is { } done && _clock() - done < _o.MinForceInterval && LastReport is { } last && !last.Cancelled)
                 return Task.FromResult(last with { Reused = true });
             _cts = new CancellationTokenSource();

@@ -10,6 +10,19 @@ namespace BeamModManager.Core.Install;
 /// </summary>
 public sealed record ModLayout(string ModsDir, string DisabledDir, string BackupDir)
 {
+    /// <summary>
+    /// Служебные папки в папке менеджера (например, %LOCALAPPDATA%\BeamModManager), отдельно для каждой папки mods.
+    /// Рекомендуемый вариант: игра при крупных обновлениях чистит свою папку пользователя, и всё чужое там может пропасть.
+    /// </summary>
+    public static ModLayout InAppFolder(string modsDir, string appFolder)
+    {
+        var key = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            Path.GetFullPath(modsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToLowerInvariant())))[..10].ToLowerInvariant();
+        var root = Path.Combine(appFolder, key);
+        return new ModLayout(modsDir, Path.Combine(root, "disabled"), Path.Combine(root, "backups"));
+    }
+
+    /// <summary>Рядом с папкой mods (в папке пользователя игры). Подходит для тестов; в приложении лучше <see cref="InAppFolder"/>.</summary>
     public static ModLayout Beside(string modsDir)
     {
         var full = Path.GetFullPath(modsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);

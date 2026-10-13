@@ -18,23 +18,55 @@ public static class GameFolders
 {
     private static readonly Regex VersionDir = new(@"^\d+(\.\d+)*$", RegexOptions.Compiled);
 
-    public static string DefaultUserRoot() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamNG.drive");
+    /// <summary>
+    /// Где игра хранит папку пользователя. С версии 0.37 это %LOCALAPPDATA%\BeamNG\BeamNG.drive\current
+    /// (источник: официальный анонс «User Folder and Migration Changes»); раньше — %LOCALAPPDATA%\BeamNG.drive\&lt;версия&gt;.
+    /// Возвращаются оба корня, новый первым.
+    /// </summary>
+    public static IReadOnlyList<string> DefaultUserRoots()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return new[] { Path.Combine(local, "BeamNG", "BeamNG.drive"), Path.Combine(local, "BeamNG.drive") };
+    }
 
-    /// <summary>Папки mods внутри папки пользователя: версии по убыванию (0.39 раньше 0.38, 0.100 позже 0.39 по числам).</summary>
+    /// <summary>Первый существующий корень из <see cref="DefaultUserRoots"/>; если ни одного нет — новый путь по умолчанию.</summary>
+    public static string DefaultUserRoot()
+    {
+        var roots = DefaultUserRoots();
+        return roots.FirstOrDefault(Directory.Exists) ?? roots[0];
+    }
+
+    /// <summary>
+    /// Папки mods внутри папки пользователя, лучшие первыми: сама mods, затем current\mods, затем версии по убыванию
+    /// (0.39 раньше 0.38, 0.100 позже 0.39 — по числам). Понимает и корень «BeamNG», внутри которого лежит BeamNG.drive.
+    /// </summary>
     public static IReadOnlyList<string> FindModsFolders(string userRoot)
     {
         if (!Directory.Exists(userRoot)) return Array.Empty<string>();
         var result = new List<string>();
-        var direct = Path.Combine(userRoot, "mods");
-        if (Directory.Exists(direct)) result.Add(direct);
+        void AddIfExists(string dir) { if (Directory.Exists(dir) && !result.Contains(dir)) result.Add(dir); }
+
+        AddIfExists(Path.Combine(userRoot, "mods"));
+        AddIfExists(Path.Combine(userRoot, "current", "mods"));
         var versions = Directory.EnumerateDirectories(userRoot)
             .Select(d => (Dir: d, Name: Path.GetFileName(d)))
-            .Where(x => VersionDir.IsMatch(x.Name) && Directory.Exists(Path.Combine(x.Dir, "mods")))
+            .Where(x => VersionDir.IsMatch(x.Name))
             .OrderByDescending(x => Version(x.Name))
             .Select(x => Path.Combine(x.Dir, "mods"));
-        result.AddRange(versions);
+        foreach (var v in versions) AddIfExists(v);
+
+        // Выбрали папку «BeamNG» (родитель BeamNG.drive).
+        var nested = Path.Combine(userRoot, "BeamNG.drive");
+        if (result.Count == 0 && Directory.Exists(nested)) result.AddRange(FindModsFolders(nested));
         return result;
+    }
+
+    /// <summary>Путь из поля ввода: без кавычек вокруг («Копировать как путь» в проводнике их добавляет), с раскрытыми %переменными%.</summary>
+    public static string CleanPath(string raw)
+    {
+        var p = raw.Trim();
+        if (p.Length >= 2 && ((p[0] == '"' && p[^1] == '"') || (p[0] == '\'' && p[^1] == '\''))) p = p[1..^1].Trim();
+        return Environment.ExpandEnvironmentVariables(p);
     }
 
     /// <summary>
@@ -44,7 +76,9 @@ public static class GameFolders
     public static FolderCheck Resolve(string? selected, bool checkWritable = true)
     {
         if (string.IsNullOrWhiteSpace(selected)) return new(FolderProblem.Empty, null, "Папка не выбрана.");
-        var path = selected.Trim();
+        var path = CleanPath(selected);
+        if (path.Length == 0) return new(FolderProblem.Empty, null, "Папка не выбрана.");
+        if (!Path.IsPathRooted(path)) return new(FolderProblem.NotFound, null, "Нужен полный путь к папке (например, C:\\Users\\...).");
         if (File.Exists(path)) return new(FolderProblem.NotADirectory, null, "Выбран файл, а нужна папка.");
         if (!Directory.Exists(path)) return new(FolderProblem.NotFound, null, "Папка не найдена.");
 
