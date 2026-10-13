@@ -52,6 +52,10 @@ public interface ILibraryStore
     SourceStatus GetSourceStatus(string source);
     void SetSourceStatus(string source, SourceStatus status);
     IReadOnlyDictionary<string, SourceStatus> SourceStatuses();
+
+    /// <summary>«Пропустить эту версию»: ключ обновления, которое пользователь отклонил для мода (null — не отклонял).</summary>
+    string? GetDismissedUpdate(string modId);
+    void SetDismissedUpdate(string modId, string? key);
 }
 
 public sealed class InMemoryLibraryStore : ILibraryStore
@@ -62,6 +66,7 @@ public sealed class InMemoryLibraryStore : ILibraryStore
     private readonly Dictionary<(string, string), ModBinding> _bindings = new();
     private readonly Dictionary<(string, string), CheckState> _checks = new();
     private readonly Dictionary<string, SourceStatus> _statuses = new();
+    private readonly Dictionary<string, string> _dismissed = new();
 
     public IReadOnlyList<InstalledMod> Mods() { lock (_g) return _mods.Values.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList(); }
     public InstalledMod? GetMod(string id) { lock (_g) return _mods.GetValueOrDefault(id); }
@@ -74,6 +79,18 @@ public sealed class InMemoryLibraryStore : ILibraryStore
             _mods.Remove(id);
             foreach (var k in _bindings.Keys.Where(k => k.Item1 == id).ToList()) _bindings.Remove(k);
             foreach (var k in _checks.Keys.Where(k => k.Item1 == id).ToList()) _checks.Remove(k);
+            _dismissed.Remove(id);
+        }
+    }
+
+    public string? GetDismissedUpdate(string modId) { lock (_g) return _dismissed.GetValueOrDefault(modId); }
+
+    public void SetDismissedUpdate(string modId, string? key)
+    {
+        lock (_g)
+        {
+            if (!_mods.ContainsKey(modId)) return; // мода уже нет: ничего не запоминаем
+            if (string.IsNullOrEmpty(key)) _dismissed.Remove(modId); else _dismissed[modId] = key;
         }
     }
 

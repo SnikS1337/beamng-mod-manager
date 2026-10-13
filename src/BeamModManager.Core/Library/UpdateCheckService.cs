@@ -12,7 +12,17 @@ public sealed record UpdateFinding(
     UpdateStatus Status,
     string? InstalledVersion,
     string? LatestVersion,
-    Uri Url);
+    Uri Url)
+{
+    /// <summary>
+    /// Что именно пользователь отклоняет: новая версия или, если версия неизвестна, состояние файла по размеру.
+    /// Когда на сайте появится другая версия, ключ изменится и обновление покажется снова.
+    /// </summary>
+    public string DismissKey { get; init; } = LatestVersion ?? "";
+
+    /// <summary>Пользователь пропустил это обновление (показывается только в списке «скрытые»).</summary>
+    public bool IsDismissed { get; init; }
+}
 
 /// <summary>
 /// Склеивает хранилище, планировщик и решение «есть обновление». Сеть сюда не входит:
@@ -65,12 +75,16 @@ public static class UpdateCheckService
         store.SaveCheck(new CheckState(b.ModId, b.Source, now, now, entry.Version, entry.SizeBytes ?? prev?.LastSize));
     }
 
-    /// <summary>Список обновлений. Считается при чтении, поэтому установка новой версии убирает пункт сама.</summary>
-    public static IReadOnlyList<UpdateFinding> Pending(ILibraryStore store)
+    /// <summary>
+    /// Список обновлений. Считается при чтении, поэтому установка новой версии убирает пункт сама.
+    /// Отклонённые («пропустить эту версию») скрыты, пока на сайте не появится другая версия.
+    /// </summary>
+    public static IReadOnlyList<UpdateFinding> Pending(ILibraryStore store, bool includeDismissed = false)
     {
         var result = new List<UpdateFinding>();
         foreach (var mod in store.Mods())
         {
+            var dismissed = store.GetDismissedUpdate(mod.Id);
             UpdateFinding? best = null;
             foreach (var b in store.Bindings().Where(x => x.ModId == mod.Id && x.Confirmed))
             {
@@ -80,11 +94,23 @@ public static class UpdateCheckService
                     new VersionSnapshot(mod.Version, mod.SizeBytes),
                     new VersionSnapshot(c.LastVersion, c.LastSize));
                 if (status == UpdateStatus.None) continue;
-                if (best is null || status > best.Status)
-                    best = new UpdateFinding(mod.Id, mod.Name, b.Source, status, mod.Version, c.LastVersion, b.Url);
+                var key = c.LastVersion ?? $"size:{c.LastSize}";
+                var isDismissed = dismissed is not null && string.Equals(dismissed, key, StringComparison.OrdinalIgnoreCase);
+                if (isDismissed && !includeDismissed) continue;
+                var f = new UpdateFinding(mod.Id, mod.Name, b.Source, status, mod.Version, c.LastVersion, b.Url) { DismissKey = key, IsDismissed = isDismissed };
+                // Среди не скрытых берём более уверенное; скрытое не вытесняет нескрытое.
+                if (best is null || (best.IsDismissed && !f.IsDismissed) || (best.IsDismissed == f.IsDismissed && status > best.Status))
+                    best = f;
             }
             if (best is not null) result.Add(best);
         }
         return result;
     }
+
+    /// <summary>«Пропустить эту версию».</summary>
+    public static void Dismiss(ILibraryStore store, UpdateFinding finding) =>
+        store.SetDismissedUpdate(finding.ModId, finding.DismissKey);
+
+    /// <summary>Вернуть скрытое обновление в список.</summary>
+    public static void Restore(ILibraryStore store, string modId) => store.SetDismissedUpdate(modId, null);
 }
