@@ -9,5 +9,6 @@ HostLinkTests.Register(t);
 MatcherTests.Register(t);
 ArchiveTests.Register(t);
 ModlandTests.Register(t);
+ModsGamingTests.Register(t);
 
 return t.Summary();
