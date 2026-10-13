@@ -109,6 +109,8 @@ public sealed class ModInstaller
             if (early is not null) return early;
 
             // Копирование и проверка — вне блокировки: поток может быть медленным (скачивание).
+            // Хеш считается при копировании: отдельное чтение файла (до гигабайтов) не нужно.
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             using (var fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write))
             {
                 var buffer = new byte[81920];
@@ -120,6 +122,7 @@ public sealed class ModInstaller
                     if (total > options.MaxArchiveBytes)
                         return InstallResult.Fail(InstallError.TooLarge, "Файл больше допустимого размера, загрузка прервана.");
                     fs.Write(buffer, 0, read);
+                    hasher.AppendData(buffer, 0, read);
                 }
             }
 
@@ -132,9 +135,7 @@ public sealed class ModInstaller
             if (inspection.HasWarnings && !options.AllowWarnings)
                 return InstallResult.Fail(InstallError.HasWarnings, "В архиве есть предупреждения, нужно решение пользователя.", inspection);
 
-            string hash;
-            using (var fs = File.OpenRead(temp))
-                hash = Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
+            var hash = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
 
             lock (Gate)
             {

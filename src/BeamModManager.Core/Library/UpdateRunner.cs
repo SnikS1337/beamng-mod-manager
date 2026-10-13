@@ -82,46 +82,64 @@ public static class UpdateRunner
             if (plan.Due.Any(b => b.Source == src) && !reports.ContainsKey(src))
                 reports[src] = new SourceRunReport(src, SourceStatus.Unavailable, 0, 0, 0, Array.Empty<string>(), why);
 
-        void Fail(string source, Exception e)
-        {
-            var st = e is SourceException se ? se.Status : SourceStatus.Unavailable;
-            failed[source] = (st, e.Message);
-            // Проверка «вы человек?» запоминается, пока пользователь её не пройдёт; недоступность — нет, она может пройти сама.
-            if (st == SourceStatus.NeedsHumanCheck) store.SetSourceStatus(source, SourceStatus.NeedsHumanCheck);
-        }
-
-        var feeds = new Dictionary<string, IReadOnlyDictionary<string, FeedEntry>>();
         var feedPagesDone = new Dictionary<string, int>();
         var cardsDone = new Dictionary<string, int>();
         var missing = new Dictionary<string, List<string>>();
-        IReadOnlyList<TrackedBinding> postponedAll = Array.Empty<TrackedBinding>();
+        var postponedAll = new List<TrackedBinding>();
 
-        try
+        // Сайты независимы (у каждого своя очередь запросов и свои паузы), поэтому идут параллельно:
+        // проверка занимает время самого медленного сайта, а не сумму. Общее состояние каждый сайт пишет
+        // только в свой результат; хранилище защищено блокировкой, а привязки разных сайтов не пересекаются.
+        var progressGate = new object();
+        void Report(UpdateProgress p) { if (progress is null) return; lock (progressGate) progress.Report(p); }
+
+        var jobs = plan.FeedPages
+            .Where(kv => !reports.ContainsKey(kv.Key))
+            .Select(kv => RunSourceAsync(kv.Key, kv.Value))
+            .ToList();
+        var outcomes = await Task.WhenAll(jobs).ConfigureAwait(false);
+
+        foreach (var o in outcomes)
         {
-            // 1. Ленты.
-            foreach (var (source, pages) in plan.FeedPages)
+            requests += o.Requests;
+            upToDate += o.UpToDate;
+            cancelled |= o.Cancelled;
+            stoppedByTime |= o.StoppedByTime;
+            if (o.FeedPages > 0) feedPagesDone[o.Source] = o.FeedPages;
+            if (o.CardsDone is { } cd) cardsDone[o.Source] = cd;
+            if (o.Missing.Count > 0) missing[o.Source] = o.Missing;
+            if (o.Note is not null) notes[o.Source] = o.Note;
+            if (o.Failure is { } fl) failed[o.Source] = fl;
+            postponedAll.AddRange(o.Postponed);
+        }
+
+        async Task<SourceOutcome> RunSourceAsync(string source, int pages)
+        {
+            var o = new SourceOutcome(source);
+            try
             {
-                if (reports.ContainsKey(source)) continue;
                 if (!byId.TryGetValue(source, out var src))
                 {
-                    notes[source] = "нет адаптера для этого сайта";
-                    failed[source] = (SourceStatus.Unavailable, notes[source]);
-                    continue;
+                    o.Note = "нет адаптера для этого сайта";
+                    o.Failure = (SourceStatus.Unavailable, o.Note);
+                    return o;
                 }
+
+                // 1. Лента.
                 var entries = new Dictionary<string, FeedEntry>();
                 for (var p = 1; p <= pages; p++)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (TimeUp()) { stoppedByTime = true; break; }
-                    progress?.Report(new UpdateProgress(source, "лента", p - 1, pages));
+                    if (TimeUp()) { o.StoppedByTime = true; break; }
+                    Report(new UpdateProgress(source, "лента", p - 1, pages));
                     try
                     {
                         var page = await src.FeedPageAsync(p, ct).ConfigureAwait(false);
-                        requests++;
-                        feedPagesDone[source] = p;
+                        o.Requests++;
+                        o.FeedPages = p;
                         if (page.Count == 0)
                         {
-                            if (p == 1) notes[source] = "лента пуста: возможно, изменилась вёрстка сайта";
+                            if (p == 1) o.Note = "лента пуста: возможно, изменилась вёрстка сайта";
                             break;
                         }
                         foreach (var l in page)
@@ -129,77 +147,83 @@ public static class UpdateRunner
                     }
                     catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
                     {
-                        requests++;
-                        Fail(source, e);
-                        break;
+                        o.Requests++;
+                        o.Failure = FailureOf(source, e);
+                        return o; // у сайта, отказавшего на ленте, карточки не открываем
                     }
                 }
-                feeds[source] = entries;
-            }
 
-            // 2. Знакомство: версия есть в ленте, прошлых данных нет, карточка не нужна.
-            var cardCandidates = new List<TrackedBinding>();
-            foreach (var b in plan.Due.Where(b => !failed.ContainsKey(b.Source) && !reports.ContainsKey(b.Source) && byId.ContainsKey(b.Source)))
-            {
-                if (b.LastVersion is null && feeds.TryGetValue(b.Source, out var f)
-                    && f.TryGetValue(b.SourceId, out var entry) && entry.Version is not null)
-                    UpdateCheckService.ApplyFeedBaseline(store, b, entry, now);
-                else
-                    cardCandidates.Add(b);
-            }
+                // 2. Знакомство: версия есть в ленте, прошлых данных нет, карточка не нужна.
+                var cardCandidates = new List<TrackedBinding>();
+                foreach (var b in plan.Due.Where(b => b.Source == source))
+                {
+                    if (b.LastVersion is null && entries.TryGetValue(b.SourceId, out var entry) && entry.Version is not null)
+                        UpdateCheckService.ApplyFeedBaseline(store, b, entry, now);
+                    else
+                        cardCandidates.Add(b);
+                }
 
-            // 3. Карточки: только у сайтов, которые ответили.
-            var cardPlan = UpdateCheckPlanner.PlanCards(cardCandidates, feeds, now, options);
-            postponedAll = cardPlan.Postponed;
-            foreach (var b in cardPlan.ConfirmedUnchanged)
-            {
-                UpdateCheckService.ApplyFeedUnchanged(store, b, now);
-                upToDate++;
-            }
+                // 3. Карточки.
+                var feeds = new Dictionary<string, IReadOnlyDictionary<string, FeedEntry>> { [source] = entries };
+                var cardPlan = UpdateCheckPlanner.PlanCards(cardCandidates, feeds, now, options);
+                o.Postponed.AddRange(cardPlan.Postponed);
+                foreach (var b in cardPlan.ConfirmedUnchanged)
+                {
+                    UpdateCheckService.ApplyFeedUnchanged(store, b, now);
+                    o.UpToDate++;
+                }
 
-            foreach (var (source, list) in cardPlan.ToFetch)
-            {
-                var src = byId[source];
+                if (!cardPlan.ToFetch.TryGetValue(source, out var list)) return o;
                 var done = 0;
                 var attempted = 0;
+                o.CardsDone = 0;
                 foreach (var b in list)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (TimeUp()) { stoppedByTime = true; break; }
+                    if (TimeUp()) { o.StoppedByTime = true; break; }
                     // Мод или привязку могли удалить, пока шла проверка.
                     var bind = store.Bindings().FirstOrDefault(x => x.ModId == b.ModId && x.Source == b.Source);
                     if (bind is null) continue;
-                    progress?.Report(new UpdateProgress(source, "карточки", done, list.Count));
+                    Report(new UpdateProgress(source, "карточки", done, list.Count));
                     try
                     {
                         var current = await src.GetListingAsync(bind.Url, ct).ConfigureAwait(false);
-                        requests++;
+                        o.Requests++;
                         done++;
                         attempted++;
+                        o.CardsDone = done;
                         if (current is null)
                         {
                             // Страницы нет (убрана автором или сменила адрес): прошлое состояние не трогаем, сообщаем.
-                            (missing.TryGetValue(source, out var m) ? m : missing[source] = new()).Add(store.GetMod(b.ModId)?.Name ?? b.ModId);
+                            o.Missing.Add(store.GetMod(b.ModId)?.Name ?? b.ModId);
                             continue;
                         }
                         UpdateCheckService.ApplyCard(store, b, current, now);
                     }
                     catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
                     {
-                        requests++;
-                        Fail(source, e);
+                        o.Requests++;
+                        o.Failure = FailureOf(source, e);
                         break;
                     }
                 }
-                cardsDone[source] = done;
                 // Не нашлись сразу много карточек подряд: скорее сломались адреса или вёрстка, чем всё удалили.
-                if (attempted >= 3 && missing.TryGetValue(source, out var mm) && mm.Count == attempted)
-                    notes[source] = "карточки не найдены ни у одного мода: возможно, изменились адреса или вёрстка сайта";
+                if (attempted >= 3 && o.Missing.Count == attempted)
+                    o.Note = "карточки не найдены ни у одного мода: возможно, изменились адреса или вёрстка сайта";
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                o.Cancelled = true;
+            }
+            return o;
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+
+        (SourceStatus Status, string Note) FailureOf(string source, Exception e)
         {
-            cancelled = true;
+            var st = e is SourceException se ? se.Status : SourceStatus.Unavailable;
+            // Проверка «вы человек?» запоминается, пока пользователь её не пройдёт; недоступность — нет, она может пройти сама.
+            if (st == SourceStatus.NeedsHumanCheck) store.SetSourceStatus(source, SourceStatus.NeedsHumanCheck);
+            return (st, e.Message);
         }
 
         // 4. Отчёт по сайтам.
@@ -231,4 +255,18 @@ public static class UpdateRunner
             StoppedByTime = stoppedByTime,
         };
     }
+}
+
+/// <summary>Итог работы с одним сайтом внутри проверки (собирается отдельно, чтобы сайты могли идти параллельно).</summary>
+internal sealed class SourceOutcome
+{
+    public SourceOutcome(string source) { Source = source; }
+    public string Source { get; }
+    public int Requests, UpToDate, FeedPages;
+    public int? CardsDone;
+    public bool Cancelled, StoppedByTime;
+    public string? Note;
+    public (SourceStatus Status, string Note)? Failure;
+    public List<string> Missing { get; } = new();
+    public List<TrackedBinding> Postponed { get; } = new();
 }

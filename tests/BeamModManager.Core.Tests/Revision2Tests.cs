@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using BeamModManager.Core.Install;
+using BeamModManager.Core.Models;
 using BeamModManager.Core.Library;
 using BeamModManager.Core.Net;
 using BeamModManager.Core.Settings;
@@ -30,6 +31,27 @@ public static class Revision2Tests
         public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) { Requested.Add(url); return Task.FromResult(new RawResponse(200, "<html><h1>x</h1></html>")); }
     }
 
+    private sealed class Rendezvous : IModSource
+    {
+        private readonly TaskCompletionSource _mine = new(), _other;
+        public Rendezvous(string id, TaskCompletionSource mine, TaskCompletionSource other) { Id = id; DisplayName = id; _mine = mine; _other = other; }
+        public string Id { get; }
+        public string DisplayName { get; }
+        public bool SupportsSearch => false;
+        public async Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
+        {
+            _mine.TrySetResult();
+            // Дожидаемся, что второй сайт тоже начал работу: при последовательной проверке этого не случится.
+            var finished = await Task.WhenAny(_other.Task, Task.Delay(5000, ct));
+            if (finished != _other.Task) throw new TimeoutException("второй сайт не начал работу — проверка последовательная");
+            return page == 1 ? new[] { new Listing(Id, new Uri($"https://{Id}.test/m"), "m", "m") { ModVersion = "1.0" } } : Array.Empty<Listing>();
+        }
+        public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default) => Task.FromResult<Listing?>(null);
+        public Task<IReadOnlyList<Listing>> SearchAsync(string q, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
+        public Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? s, CancellationToken ct = default) => FeedPageAsync(1, ct);
+        public Task<IReadOnlyList<Offer>> GetOffersAsync(Listing l, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Offer>>(Array.Empty<Offer>());
+    }
+
     private sealed class Box : IDisposable
     {
         public readonly string Root = Path.Combine(Path.GetTempPath(), "bmm-r2-" + Guid.NewGuid().ToString("N"));
@@ -49,6 +71,16 @@ public static class Revision2Tests
     public static void Register(TestRunner t)
     {
         t.Group("Ревизия 2: установка и параллельность");
+
+        t.Run("хеш установленного файла совпадает с хешем содержимого архива", () =>
+        {
+            using var b = new Box();
+            var data = Mod(5000).ToArray();
+            var r = b.Inst.Install(new MemoryStream(data), "car.zip");
+            Assert.True(r.Success, r.Message ?? "");
+            Assert.Eq(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant(), r.Sha256);
+            Assert.Eq(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(r.Path!))).ToLowerInvariant(), r.Sha256);
+        });
 
         t.Run("8 одновременных установок одного имени: успешна одна, файл один, без исключений", () =>
         {
@@ -236,6 +268,26 @@ public static class Revision2Tests
             Assert.True(BeamModManager.Core.Safety.ArchiveInspector.Inspect(One("vehicles/.../x")).IsBlocked, "«...»");
             var c = BeamModManager.Core.Packs.PackContentReader.Read(One("./vehicles/car/a.jbeam"));
             Assert.True(c.Vehicles.Contains("car"), "машина найдена");
+        });
+
+        t.Group("Ревизия 2: параллельная проверка сайтов");
+
+        t.Run("два сайта опрашиваются одновременно, результаты обоих собраны", async () =>
+        {
+            var T0 = new DateTimeOffset(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
+            var store = new InMemoryLibraryStore();
+            foreach (var src in new[] { "a", "b" })
+            {
+                store.UpsertMod(new InstalledMod("m" + src, "m" + src, "m.zip", "1.0", null, T0.AddDays(-9)));
+                store.UpsertBinding(new ModBinding("m" + src, src, "m", new Uri($"https://{src}.test/m"), true));
+            }
+            var ta = new TaskCompletionSource(); var tb = new TaskCompletionSource();
+            var report = await UpdateRunner.RunAsync(store, new IModSource[] { new Rendezvous("a", ta, tb), new Rendezvous("b", tb, ta) }, T0);
+            Assert.Eq(2, report.Sources.Count);
+            Assert.True(report.Sources.All(s => s.Status == SourceStatus.Ok && s.Note is null), string.Join("; ", report.Sources.Select(s => s.Note)));
+            Assert.Eq(4, report.Requests); // у каждого сайта страница 1 и пустая страница 2
+            Assert.Eq("1.0", store.GetCheck("ma", "a")!.LastVersion);
+            Assert.Eq("1.0", store.GetCheck("mb", "b")!.LastVersion);
         });
 
         t.Group("Ревизия 2: большая библиотека");
