@@ -4,6 +4,7 @@ namespace BeamModManager.Core.Tests;
 
 public static class VersionTests
 {
+    private const long MB = 1024 * 1024; // размеры в тестах реалистичные: допуск на округление мелочь не различает
     public static void Register(TestRunner t)
     {
         t.Group("Сравнение версий");
@@ -33,27 +34,27 @@ public static class VersionTests
 
         t.Run("версия выросла: вероятно обновление", () =>
             Assert.Eq(UpdateStatus.Likely,
-                UpdateDecider.Decide(new VersionSnapshot("1.0", 100), new VersionSnapshot("1.1", 100))));
+                UpdateDecider.Decide(new VersionSnapshot("1.0", 100 * MB), new VersionSnapshot("1.1", 100 * MB))));
 
         t.Run("версия та же, размер изменился: возможно", () =>
             Assert.Eq(UpdateStatus.Possible,
-                UpdateDecider.Decide(new VersionSnapshot("1.0", 100), new VersionSnapshot("1.0", 120))));
+                UpdateDecider.Decide(new VersionSnapshot("1.0", 100 * MB), new VersionSnapshot("1.0", 120 * MB))));
 
         t.Run("всё то же: обновления нет", () =>
             Assert.Eq(UpdateStatus.None,
-                UpdateDecider.Decide(new VersionSnapshot("1.0", 100, "abc"), new VersionSnapshot("1.0", 100, "abc"))));
+                UpdateDecider.Decide(new VersionSnapshot("1.0", 100 * MB, "abc"), new VersionSnapshot("1.0", 100 * MB, "abc"))));
 
         t.Run("версия не разобрана, размер изменился: возможно", () =>
             Assert.Eq(UpdateStatus.Possible,
-                UpdateDecider.Decide(new VersionSnapshot("Update 2!", 100), new VersionSnapshot("Update 3!", 150))));
+                UpdateDecider.Decide(new VersionSnapshot("Update 2!", 100 * MB), new VersionSnapshot("Update 3!", 150 * MB))));
 
         t.Run("версия не разобрана, ничего не изменилось: обновления нет", () =>
             Assert.Eq(UpdateStatus.None,
-                UpdateDecider.Decide(new VersionSnapshot("Update 2!", 100), new VersionSnapshot("Update 2!", 100))));
+                UpdateDecider.Decide(new VersionSnapshot("Update 2!", 100 * MB), new VersionSnapshot("Update 2!", 100 * MB))));
 
         t.Run("на сайте версия старее: не предлагаем «обновление»", () =>
             Assert.Eq(UpdateStatus.None,
-                UpdateDecider.Decide(new VersionSnapshot("2.0", 100), new VersionSnapshot("1.5", 90))));
+                UpdateDecider.Decide(new VersionSnapshot("2.0", 100 * MB), new VersionSnapshot("1.5", 90 * MB))));
 
         t.Run("изменился только хеш описания: возможно", () =>
             Assert.Eq(UpdateStatus.Possible,

@@ -29,7 +29,7 @@ public static class UpdateDecider
         if (order == VersionOrder.Older) return UpdateStatus.None; // на сайте версия старее: не откатываем
 
         var changed =
-            (installed.SizeBytes is not null && current.SizeBytes is not null && installed.SizeBytes != current.SizeBytes) ||
+            SizeComparer.Differs(installed.SizeBytes, current.SizeBytes) ||
             (installed.ContentHash is not null && current.ContentHash is not null && installed.ContentHash != current.ContentHash);
 
         return changed ? UpdateStatus.Possible : UpdateStatus.None;

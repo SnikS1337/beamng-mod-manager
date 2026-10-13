@@ -45,7 +45,9 @@ public static class HostLinkParser
 
         if (segments.Length == 1 && !ModsFireReserved.Contains(segments[0]))
             id = segments[0];
-        else if (segments.Length >= 2 && segments[0].Equals("download", StringComparison.OrdinalIgnoreCase))
+        else if (segments.Length >= 2 && (segments[0].Equals("download", StringComparison.OrdinalIgnoreCase)
+                                          || segments[0].Equals("d", StringComparison.OrdinalIgnoreCase)
+                                          || segments[0].Equals("install_mod", StringComparison.OrdinalIgnoreCase)))
             id = segments[1];
 
         return id is not null && IdPattern.IsMatch(id) ? new HostLink("modsfire", id, uri) : null;
