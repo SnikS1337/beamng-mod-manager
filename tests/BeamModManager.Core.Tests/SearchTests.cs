@@ -15,6 +15,8 @@ public static class SearchTests
         public Fake(string id, params Listing[] items) : this(id, _ => Task.FromResult<IReadOnlyList<Listing>>(items)) { }
         public string Id { get; }
         public string DisplayName { get; }
+        public bool SupportsSearch => true;
+        public Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
         public Task<IReadOnlyList<Listing>> SearchAsync(string query, CancellationToken ct = default) => _search(ct);
         public Task<Listing?> GetListingAsync(Uri url, CancellationToken ct = default) => Task.FromResult<Listing?>(null);
         public Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? since, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<Listing>>(Array.Empty<Listing>());
