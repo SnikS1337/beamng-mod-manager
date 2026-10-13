@@ -72,9 +72,9 @@ input::placeholder{{color:rgba(255,255,255,0.62)}}
 .b2{{animation:d2 48s ease-in-out infinite alternate;animation-delay:-12s}}
 .b3{{animation:d3 48s ease-in-out infinite alternate;animation-delay:-24s}}
 @keyframes kb{{0%{{transform:scale(1.04) translate(0,0)}}100%{{transform:scale(1.12) translate(-22px,-14px)}}}}
-.wall{{position:absolute;inset:-30px;animation:kb 48s ease-in-out infinite alternate}}
+.wall{{position:absolute;inset:-70px;filter:blur(16px) saturate(1.1);animation:kb 48s ease-in-out infinite alternate}}
 @keyframes flow{{0%{{background-position:0% 50%}}100%{{background-position:300% 50%}}}}
-.grade{{position:absolute;inset:0;background:linear-gradient(110deg,hsla(212,75%,52%,.40),hsla(262,55%,56%,.34),hsla(24,85%,58%,.34),hsla(190,70%,50%,.34),hsla(212,75%,52%,.40));background-size:300% 100%;animation:flow 48s linear infinite;mix-blend-mode:soft-light}}
+.grade{{position:absolute;inset:0;background:linear-gradient(110deg,hsla(212,80%,54%,.62),hsla(268,60%,58%,.52),hsla(24,90%,60%,.50),hsla(190,75%,52%,.52),hsla(212,80%,54%,.62));background-size:300% 100%;animation:flow 48s linear infinite;mix-blend-mode:soft-light}}
 @keyframes dropin{{0%{{opacity:0;transform:translateY(-18px) scale(.97)}}100%{{opacity:1;transform:none}}}}
 @keyframes leftin{{0%{{opacity:0;transform:translateX(-24px)}}100%{{opacity:1;transform:none}}}}
 .top{{animation:dropin .9s .15s var(--ease) both}}
@@ -94,11 +94,12 @@ input::placeholder{{color:rgba(255,255,255,0.62)}}
 .fly{{position:absolute;border-radius:50%;mix-blend-mode:screen;pointer-events:none;background:radial-gradient(circle,#fff 0,rgba(255,244,214,.9) 28%,rgba(255,226,170,0) 70%);animation:fly var(--t) ease-in-out infinite alternate, tw var(--w) ease-in-out infinite}}
 @keyframes rise{{0%{{opacity:0;transform:translateY(22px) scale(.96)}}100%{{opacity:1;transform:none}}}}
 .card{{animation:rise .8s cubic-bezier(.2,.8,.2,1) both}}
-.ph{{position:relative;overflow:hidden;transition:transform var(--mid) var(--ease), box-shadow var(--mid) var(--ease)}}
+.plate{{position:relative;border-radius:24px;padding:8px 8px 0;background:rgba(18,26,42,.50);box-shadow:0 12px 32px rgba(6,10,22,.38), inset 0 0 0 1px rgba(255,255,255,.14), inset 0 1px 0 rgba(255,255,255,.24);transition:transform var(--mid) var(--ease), box-shadow var(--mid) var(--ease), background var(--mid) var(--ease)}}
+.card:hover .plate{{transform:translateY(-5px);background:rgba(26,36,58,.62);box-shadow:0 20px 44px rgba(6,10,22,.5), 0 0 34px rgba(170,205,255,.22), inset 0 0 0 1px rgba(255,255,255,.22), inset 0 1px 0 rgba(255,255,255,.3)}}
+.ph{{position:relative;overflow:hidden}}
 .ph::after{{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.28) 50%,transparent 65%);background-size:260% 100%;background-position:130% 0;transition:background-position .9s cubic-bezier(.2,.8,.2,1)}}
-.card:hover .ph{{transform:translateY(-5px) scale(1.025);box-shadow:0 18px 40px rgba(6,10,22,.5), 0 0 34px rgba(170,205,255,.25)}}
 .card:hover .ph::after{{background-position:-30% 0}}
-@keyframes breathe{{0%,100%{{box-shadow:0 0 0 2px rgba(255,255,255,.92), 0 10px 34px rgba(140,190,255,.30)}}50%{{box-shadow:0 0 0 2px rgba(255,255,255,.92), 0 14px 56px rgba(140,190,255,.66)}}}}
+@keyframes breathe{{0%,100%{{box-shadow:0 0 0 2px rgba(255,255,255,.92), 0 12px 34px rgba(140,190,255,.30), inset 0 1px 0 rgba(255,255,255,.3)}}50%{{box-shadow:0 0 0 2px rgba(255,255,255,.92), 0 16px 58px rgba(140,190,255,.66), inset 0 1px 0 rgba(255,255,255,.3)}}}}
 .sel{{animation:breathe var(--beat) ease-in-out infinite}}
 @keyframes pulse{{0%,40%{{box-shadow:0 0 0 0 rgba(255,255,255,.75)}}75%,100%{{box-shadow:0 0 0 10px rgba(255,255,255,0)}}}}
 .pulse{{animation:pulse var(--beat) ease-out infinite}}
@@ -144,9 +145,9 @@ def page(title, filters, body, glass, anim=True):
 <div class="wall pic p-wall"></div>
 <div class="grade"></div>
 <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(12,18,32,.30),rgba(12,18,32,.52))"></div>
-<div class="blob b1" style="left:-220px;top:380px;width:760px;height:760px;mix-blend-mode:screen;background:radial-gradient(circle,hsla(200,60%,56%,.26) 0%,transparent 66%)"></div>
-<div class="blob b2" style="left:760px;top:-300px;width:860px;height:860px;mix-blend-mode:screen;background:radial-gradient(circle,hsla(250,45%,62%,.22) 0%,transparent 66%)"></div>
-<div class="blob b3" style="left:380px;top:560px;width:640px;height:640px;mix-blend-mode:screen;background:radial-gradient(circle,hsla(30,70%,62%,.18) 0%,transparent 66%)"></div>
+<div class="blob b1" style="left:-220px;top:380px;width:760px;height:760px;mix-blend-mode:screen;background:radial-gradient(circle,hsla(200,65%,58%,.34) 0%,transparent 66%)"></div>
+<div class="blob b2" style="left:760px;top:-300px;width:860px;height:860px;mix-blend-mode:screen;background:radial-gradient(circle,hsla(250,50%,64%,.30) 0%,transparent 66%)"></div>
+<div class="blob b3" style="left:380px;top:560px;width:640px;height:640px;mix-blend-mode:screen;background:radial-gradient(circle,hsla(30,75%,62%,.26) 0%,transparent 66%)"></div>
 {body}
 </div>
 </x-dc>
@@ -212,8 +213,11 @@ GRID = [
 ]
 
 
+PLATE_H = 236
+
+
 def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
-    ph = int(w * 0.58)
+    ph = int((w - 16) * 0.58)
     extra = ''
     if crop:
         d = dict(p.split(':') for p in crop.split(';'))
@@ -231,10 +235,11 @@ def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
         line2 = '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ffd36b;margin-right:7px"></span>Возможно, обновлён'
     if status == 'off':
         line2 = 'Выключен'
+    cap_html = (f'<div style="padding:10px 6px 0"><div style="font-size:15px;font-weight:620;letter-spacing:-0.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff">{n}</div>'
+                f'<div style="margin-top:1px;font-size:12.5px;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{line2}</div></div>' if cap else '')
     return (f'<article class="card" style="position:absolute;left:{x}px;top:{y}px;width:{w}px;animation-delay:{60 + pos * 45}ms">'
-            f'<div class="ph pic p-{img}{" sel" if sel else ""}" style="height:{ph}px;border-radius:20px;{grey}{extra}box-shadow:0 4px 18px rgba(6,10,22,.35), inset 0 0 0 1px rgba(255,255,255,.14)">{badge}</div>'
-            + (f'<div style="padding:10px 4px 0"><div style="font-size:15px;font-weight:620;letter-spacing:-0.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff">{n}</div>'
-            f'<div style="margin-top:1px;font-size:12.5px;color:rgba(255,255,255,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{line2}</div></div>' if cap else '') + '</article>\n')
+            f'<div class="plate{" sel" if sel else ""}" style="height:{PLATE_H}px;box-sizing:border-box">'
+            f'<div class="ph pic p-{img}" style="height:{ph}px;border-radius:17px;{grey}{extra}box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)">{badge}</div>{cap_html}</div></article>\n')
 
 
 def navitem(k, label, on, badge=None):
@@ -267,7 +272,7 @@ def garage(glass):
     filters = (lens('lgRail', 'rail', 84, 212, 70) + lens('lgGear', 'gear', 56, 56, 56) + lens('lgBar', 'bar', 964, 52, 80) + lens('lgInsp', 'insp', 328, 928, 96)) if glass else ''
     body = ''
     cw = 308
-    rowh = int(cw * 0.58) + 62
+    rowh = PLATE_H
     for pos, t in enumerate(GRID):
         col, row = pos % 4, pos // 4
         body += tile(116 + col * (cw + 20), -96 + row * (rowh + 20), cw, pos, *t[:5], sel=(pos == 4), cap=(col < 3))
