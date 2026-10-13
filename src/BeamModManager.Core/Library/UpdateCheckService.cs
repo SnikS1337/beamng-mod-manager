@@ -82,11 +82,13 @@ public static class UpdateCheckService
     public static IReadOnlyList<UpdateFinding> Pending(ILibraryStore store, bool includeDismissed = false)
     {
         var result = new List<UpdateFinding>();
+        // Привязки берём один раз: иначе на каждый мод копировался бы весь список (квадратично).
+        var byMod = store.Bindings().Where(x => x.Confirmed).ToLookup(x => x.ModId);
         foreach (var mod in store.Mods())
         {
             var dismissed = store.GetDismissedUpdate(mod.Id);
             UpdateFinding? best = null;
-            foreach (var b in store.Bindings().Where(x => x.ModId == mod.Id && x.Confirmed))
+            foreach (var b in byMod[mod.Id])
             {
                 var c = store.GetCheck(mod.Id, b.Source);
                 if (c is null) continue;
