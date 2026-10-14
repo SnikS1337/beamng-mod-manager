@@ -21,20 +21,30 @@ FINAL_CSS = '''
  box-shadow:0 24px 44px rgba(4,8,20,.55),0 0 46px rgba(150,200,255,.30) !important}
 .cd.sel::after{display:none !important}
 .cd.sel::before{box-shadow:inset 0 0 0 1px rgba(255,255,255,.42),inset 0 2px 0 rgba(255,255,255,.75),inset 1.5px 0 0 rgba(255,255,255,.26),inset 0 -1px 0 rgba(255,255,255,.16) !important}
-/* кнопки окна: стеклянная капсула в правом верхнем углу */
-.wcap{position:absolute;right:16px;top:16px;height:36px;display:flex;border-radius:18px;overflow:hidden;z-index:6;
+/* кнопки окна: стеклянная капсула в правом верхнем углу; при наведении под кнопкой появляется капля жидкого стекла
+   (та же, что в левой панели и фильтрах) и перетекает между кнопками; на «Закрыть» капля красная */
+.wcap{position:absolute;right:16px;top:16px;height:36px;display:flex;border-radius:18px;z-index:6;
  background:rgba(14,24,44,.44);-webkit-backdrop-filter:blur(4px) saturate(1.4) brightness(.78);backdrop-filter:blur(4px) saturate(1.4) brightness(.78);
  box-shadow:0 14px 34px rgba(8,12,24,.38),inset 0 0 0 1px rgba(205,230,255,.22),inset 0 1.5px 0 rgba(235,246,255,.45)}
-.wcap button{width:44px;height:36px;border:0;padding:0;background:transparent;color:rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--fast)}
-.wcap button:hover{background:rgba(255,255,255,.14)}
-.wcap button.x:hover{background:rgba(220,64,52,.92);color:#fff}
+.wcap button{position:relative;z-index:4;width:44px;height:36px;border:0;padding:0;background:transparent;color:rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:color var(--fast)}
+.wcap button:hover{color:#fff}
 .wcap button:focus-visible{outline:3px solid #fff;outline-offset:-3px;border-radius:18px}
+.wcap .wdrop{top:1px;height:34px;left:-1px;width:46px;border-radius:17px;opacity:0;transform:scale(.6);
+ transition:left .5s cubic-bezier(.3,1.35,.45,1),opacity .2s ease,transform .35s cubic-bezier(.3,1.35,.45,1),background .25s ease}
+.wcap:has(button:hover) .wdrop{opacity:1;transform:scale(1)}
+.wcap:has(button:nth-of-type(1):hover) .wdrop{left:-1px}
+.wcap:has(button:nth-of-type(2):hover) .wdrop{left:43px}
+.wcap:has(button:nth-of-type(3):hover) .wdrop{left:87px;
+ background:linear-gradient(160deg,rgba(255,130,118,.62),rgba(214,58,46,.52) 52%,rgba(255,120,108,.58));
+ box-shadow:inset 0 0 0 1px rgba(255,190,180,.45),inset 2px 2px 4px -1px rgba(255,235,230,.85),inset -2px -2px 4px -1px rgba(255,200,190,.45),0 8px 18px rgba(120,20,10,.45)}
+@media (prefers-reduced-motion:reduce){.wcap .wdrop{transition:opacity .15s}}
 '''
 
 CAPSULE = ('<div class="wcap" role="group" aria-label="Окно">'
            '<button type="button" aria-label="Свернуть"><svg width="11" height="11" viewBox="0 0 11 11"><path d="M1 5.5h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>'
            '<button type="button" aria-label="Развернуть"><svg width="11" height="11" viewBox="0 0 11 11"><rect x="1" y="1" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>'
-           '<button type="button" class="x" aria-label="Закрыть"><svg width="11" height="11" viewBox="0 0 11 11"><path d="M1.5 1.5l8 8M9.5 1.5l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button></div>\n')
+           '<button type="button" class="x" aria-label="Закрыть"><svg width="11" height="11" viewBox="0 0 11 11"><path d="M1.5 1.5l8 8M9.5 1.5l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>'
+           '<i class="drop wdrop" aria-hidden="true"></i></div>\n')
 
 
 def build():
