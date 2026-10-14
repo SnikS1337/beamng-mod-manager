@@ -26,6 +26,17 @@ public static class DuplicateMatcher
 
     private static readonly Regex NonAlnum = new(@"[^\p{L}\p{Nd}]+", RegexOptions.Compiled);
 
+    /// <summary>Как <see cref="Compare(Listing, Listing)"/>, но ручное решение пользователя сильнее любых признаков.</summary>
+    public static MatchResult Compare(Listing a, Listing b, IMatchDecisions? decisions)
+    {
+        switch (decisions?.Get(a, b))
+        {
+            case ManualMatch.Same: return new MatchResult(1.0, MatchVerdict.Same, "решение пользователя: один мод");
+            case ManualMatch.Different: return new MatchResult(0.0, MatchVerdict.Different, "решение пользователя: разные моды");
+            default: return Compare(a, b);
+        }
+    }
+
     public static MatchResult Compare(Listing a, Listing b)
     {
         // Сильный признак: одинаковый файл на одном и том же файлообменнике.

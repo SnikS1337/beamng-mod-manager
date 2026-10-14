@@ -74,12 +74,21 @@ public static class BindingSuggester
             .ToList();
     }
 
+    /// <summary>Подсказки с учётом отказа «Не проверять этот мод»: такому моду страницы не предлагаются, пока пользователь сам не привяжет одну.</summary>
+    public static IReadOnlyList<BindingSuggestion> Suggest(ILibraryStore store, InstalledMod mod, IEnumerable<Listing> candidates, int max = 5) =>
+        store.IsCheckingDeclined(mod.Id) ? Array.Empty<BindingSuggestion>() : Suggest(mod, candidates, max);
+
     /// <summary>Ищет кандидатов через общий поиск и ранжирует. Поиск идёт по названию, угаданному из имени файла.</summary>
     public static string QueryFor(InstalledMod mod)
     {
         var query = FromFileName(mod.FileName).Name;
         return string.IsNullOrWhiteSpace(query) ? mod.Name : query;
     }
+
+    /// <summary>Как <see cref="FindAsync(InstalledMod, SearchService, CancellationToken)"/>, но моду с отказом «Не проверять» ничего не ищет и не предлагает.</summary>
+    public static Task<IReadOnlyList<BindingSuggestion>> FindAsync(
+        ILibraryStore store, InstalledMod mod, SearchService search, CancellationToken ct = default) =>
+        store.IsCheckingDeclined(mod.Id) ? Task.FromResult<IReadOnlyList<BindingSuggestion>>(Array.Empty<BindingSuggestion>()) : FindAsync(mod, search, ct);
 
     public static async Task<IReadOnlyList<BindingSuggestion>> FindAsync(
         InstalledMod mod, SearchService search, CancellationToken ct = default)

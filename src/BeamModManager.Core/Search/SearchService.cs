@@ -38,13 +38,26 @@ public sealed class SearchService
     private readonly IReadOnlyList<IModSource> _sources;
     private readonly Func<string, SourceStatus> _status;
     private readonly SearchOptions _o;
+    private readonly IMatchDecisions? _decisions;
 
-    public SearchService(IEnumerable<IModSource> sources, Func<string, SourceStatus>? statusOf = null, SearchOptions? options = null)
+    public SearchService(IEnumerable<IModSource> sources, Func<string, SourceStatus>? statusOf = null, SearchOptions? options = null,
+        IMatchDecisions? decisions = null)
     {
         _sources = sources.ToList();
         _status = statusOf ?? (_ => SourceStatus.Ok);
         _o = options ?? new SearchOptions();
+        _decisions = decisions;
     }
+
+    /// <summary>Хранилище ручных решений («Это один мод» / «Это разные»), если оно подключено.</summary>
+    public IMatchDecisions? Decisions => _decisions;
+
+    /// <summary>
+    /// Заново собирает карточки из уже найденных записей, не обращаясь к сайтам. Нужен сразу после ручного решения:
+    /// карточки склеиваются или расходятся мгновенно, а отчёт по сайтам остаётся прежним.
+    /// </summary>
+    public SearchResponse Regroup(SearchResponse previous, string query) =>
+        new(Group(previous.Cards.SelectMany(c => c.Listings).ToList(), (query ?? "").Trim()), previous.Sources);
 
     public async Task<SearchResponse> SearchAsync(string query, CancellationToken ct = default)
     {
@@ -108,8 +121,12 @@ public sealed class SearchService
             {
                 // Один сайт не даёт двух записей в одной карточке (кроме повтора той же записи).
                 if (c.Any(m => m.Source == l.Source)) continue;
-                var results = c.Select(m => DuplicateMatcher.Compare(m, l)).ToList();
-                if (results.Any(r => r.Verdict != MatchVerdict.Same)) continue; // со всеми участниками «Same», иначе цепочки склеят чужое
+                // Ручное решение сильнее признаков: «разные» запрещает слияние, «один мод» даёт его,
+                // даже если другой участник карточки по признакам не совпал.
+                if (_decisions is not null && c.Any(m => _decisions.Get(m, l) == ManualMatch.Different)) continue;
+                var results = c.Select(m => DuplicateMatcher.Compare(m, l, _decisions)).ToList();
+                var forced = _decisions is not null && c.Any(m => _decisions.Get(m, l) == ManualMatch.Same);
+                if (!forced && results.Any(r => r.Verdict != MatchVerdict.Same)) continue; // со всеми участниками «Same», иначе цепочки склеят чужое
                 var score = results.Average(r => r.Score);
                 if (score > bestScore) { best = c; bestScore = score; }
             }
@@ -123,7 +140,7 @@ public sealed class SearchService
             var maybes = cards
                 .Where(o => o.Id != id)
                 .Where(o => o.Cluster.Any(b => cluster.Any(a =>
-                    a.Source != b.Source && DuplicateMatcher.Compare(a, b).Verdict == MatchVerdict.Maybe)))
+                    a.Source != b.Source && DuplicateMatcher.Compare(a, b, _decisions).Verdict == MatchVerdict.Maybe)))
                 .Select(o => o.Id).ToList();
 
             var title = TitleParser.Parse(cluster[0].Title).Name;

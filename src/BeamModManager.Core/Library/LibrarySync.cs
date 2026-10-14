@@ -142,6 +142,7 @@ public static class LibrarySync
                 ? NewMod(store, new DiskMod(fileName, enabled, sizeBytes), id: null, now) with { Version = v }
                 : existing with { FileName = fileName, Version = v, SizeBytes = sizeBytes, Enabled = enabled };
             store.UpsertMod(mod);
+            if (existing is not null) store.AddFileHistory(existing.Id, existing.FileName); // прежнее имя нужно для «Прошлых версий»
             return mod;
         }
     }
@@ -181,5 +182,6 @@ public static class LibrarySync
         var g = BindingSuggester.FromFileName(nw.FileName);
         // Название, которое пользователь мог поправить, и время установки сохраняем; привязки остаются: Id тот же.
         store.UpsertMod(old with { FileName = nw.FileName, Version = g.Version, SizeBytes = nw.SizeBytes, Enabled = nw.Enabled });
+        store.AddFileHistory(old.Id, old.FileName);
     }
 }

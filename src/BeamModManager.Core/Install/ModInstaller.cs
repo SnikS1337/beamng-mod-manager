@@ -62,6 +62,15 @@ public sealed record UpdateResult(InstallResult Install, bool OldRemoved, bool W
 
 public sealed record OpResult(bool Success, string? Message = null, string? Path = null);
 
+/// <summary>
+/// Резервная копия файла мода. <see cref="Id"/> — имя файла копии, по нему копию можно вернуть. Время берётся из имени
+/// (оно записано при создании копии) и нужно для показа; порядок копий задаёт <see cref="Sequence"/>.
+/// </summary>
+public sealed record BackupEntry(string Id, string FileName, long Sequence, DateTimeOffset? SavedAtUtc, long SizeBytes);
+
+/// <summary>Мод, которого уже нет в папках, но копии остались («Удалённые моды»).</summary>
+public sealed record DeletedMod(string FileName, int BackupCount, DateTimeOffset? LastSavedAtUtc, long LastSizeBytes);
+
 public sealed class ModInstaller
 {
     private readonly ModLayout _layout;
@@ -349,6 +358,43 @@ public sealed class ModInstaller
             : Array.Empty<string>();
     }
 
+    /// <summary>Копии мода, от новых к старым (так их показывает «Прошлые версии»).</summary>
+    public IReadOnlyList<BackupEntry> ListBackups(string fileName)
+    {
+        var name = SafeFileName(fileName);
+        if (name is null) return Array.Empty<BackupEntry>();
+        lock (Gate)
+        {
+            var list = new List<BackupEntry>();
+            foreach (var path in Backups(name))
+            {
+                try
+                {
+                    var fi = new FileInfo(path);
+                    if (!fi.Exists) continue;
+                    list.Add(ParseBackup(fi, name));
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* копия исчезла или занята: пропускаем */ }
+            }
+            return list.OrderByDescending(x => x.Sequence).ToList();
+        }
+    }
+
+    private static BackupEntry ParseBackup(FileInfo fi, string modName)
+    {
+        var fn = fi.Name;
+        long seq = 0;
+        DateTimeOffset? saved = null;
+        var digits = fn.TakeWhile(char.IsAsciiDigit).Count();
+        if (digits is > 0 and <= 15 && long.TryParse(fn.AsSpan(0, digits), out var n)) seq = n;
+        const int StampLen = 19; // yyyyMMdd-HHmmss-fff
+        if (digits > 0 && fn.Length >= digits + 1 + StampLen && fn[digits] == '_' &&
+            DateTime.TryParseExact(fn.Substring(digits + 1, StampLen), "yyyyMMdd-HHmmss-fff", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt))
+            saved = new DateTimeOffset(dt, TimeSpan.Zero);
+        return new BackupEntry(fn, modName, seq, saved, fi.Length);
+    }
+
     /// <summary>Возвращает последнюю резервную копию на место; текущий файл сам уходит в резервные.</summary>
     public OpResult RestoreLatestBackup(string fileName)
     {
@@ -356,8 +402,102 @@ public sealed class ModInstaller
         if (name is null) return new OpResult(false, "Недопустимое имя файла.");
         lock (Gate)
         {
-        var last = Backups(name).LastOrDefault();
-        if (last is null) return new OpResult(false, "Резервных копий нет.");
+            var last = Backups(name).LastOrDefault();
+            if (last is null) return new OpResult(false, "Резервных копий нет.");
+            return RestoreFrom(name, last);
+        }
+    }
+
+    /// <summary>Возвращает на место конкретную копию (по <see cref="BackupEntry.Id"/>); текущий файл с тем же именем уходит в резервные.</summary>
+    public OpResult RestoreBackup(string fileName, string backupId)
+    {
+        var name = SafeFileName(fileName);
+        if (name is null) return new OpResult(false, "Недопустимое имя файла.");
+        lock (Gate)
+        {
+            var path = FindBackup(name, backupId);
+            return path is null ? new OpResult(false, "Такой резервной копии нет.") : RestoreFrom(name, path);
+        }
+    }
+
+    /// <summary>Идентификатор копии принимается только как имя файла из папки копий этого мода: путь составить из него нельзя.</summary>
+    private string? FindBackup(string name, string backupId) =>
+        string.IsNullOrEmpty(backupId) ? null : Backups(name).FirstOrDefault(p => string.Equals(Path.GetFileName(p), backupId, StringComparison.Ordinal));
+
+    /// <summary>
+    /// «Вернуть» прошлую версию, у которой другое имя файла (после обновления имя обычно меняется): текущий файл уходит в резервные,
+    /// копия встаёт на его место с тем же состоянием «включён/отключён». Если вернуть не удалось, текущий файл остаётся как был.
+    /// </summary>
+    public OpResult RestoreVersion(string currentFileName, string backupFileName, string backupId)
+    {
+        var cur = SafeFileName(currentFileName);
+        var old = SafeFileName(backupFileName);
+        if (cur is null || old is null) return new OpResult(false, "Недопустимое имя файла.");
+        if (string.Equals(cur, old, StringComparison.OrdinalIgnoreCase)) return RestoreBackup(old, backupId);
+
+        lock (Gate)
+        {
+            var src = FindBackup(old, backupId);
+            if (src is null) return new OpResult(false, "Такой резервной копии нет.");
+
+            var curEnabled = File.Exists(Path.Combine(_layout.ModsDir, cur));
+            var curDisabled = File.Exists(Path.Combine(_layout.DisabledDir, cur));
+            if (curEnabled && curDisabled) return new OpResult(false, "Файл с таким именем есть и среди включённых, и среди отключённых; уберите лишнюю копию.");
+            var dir = curDisabled ? _layout.DisabledDir : _layout.ModsDir;
+            var target = Path.Combine(dir, old);
+            // Файл с именем возвращаемой версии уже лежит в одной из папок (не копия): молча затирать нельзя.
+            if (File.Exists(Path.Combine(_layout.ModsDir, old)) || File.Exists(Path.Combine(_layout.DisabledDir, old)))
+                return new OpResult(false, "Файл с именем той версии уже есть в папке.");
+
+            string? moved = null;
+            try
+            {
+                if (curEnabled || curDisabled) moved = BackupFile(Path.Combine(dir, cur), cur, move: true);
+                Directory.CreateDirectory(dir);
+                try { File.Move(src, target, overwrite: false); }
+                catch
+                {
+                    var currentPath = Path.Combine(dir, cur);
+                    if (moved is not null && !File.Exists(currentPath)) { try { File.Move(moved, currentPath); } catch (IOException) { } }
+                    throw;
+                }
+                Rotate(cur);
+                Rotate(old);
+                return new OpResult(true, "Восстановлено.", target);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return new OpResult(false, IoMessage(e));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Моды, которых нет ни среди включённых, ни среди отключённых, но резервные копии остались: удалённые вами (или пропавшие с диска).
+    /// От новых к старым по времени последней копии.
+    /// </summary>
+    public IReadOnlyList<DeletedMod> DeletedMods()
+    {
+        lock (Gate)
+        {
+            var result = new List<DeletedMod>();
+            if (!Directory.Exists(_layout.BackupDir)) return result;
+            foreach (var dir in Directory.EnumerateDirectories(_layout.BackupDir))
+            {
+                var name = SafeFileName(Path.GetFileName(dir));
+                if (name is null) continue;
+                if (File.Exists(Path.Combine(_layout.ModsDir, name)) || File.Exists(Path.Combine(_layout.DisabledDir, name))) continue;
+                var list = ListBackups(name);
+                if (list.Count == 0) continue;
+                result.Add(new DeletedMod(name, list.Count, list[0].SavedAtUtc, list[0].SizeBytes));
+            }
+            return result.OrderByDescending(d => d.LastSavedAtUtc ?? DateTimeOffset.MinValue).ThenBy(d => d.FileName, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+    }
+
+    /// <summary>Общая часть возврата копии: текущий файл (если есть) уходит в резервные, копия встаёт на его место.</summary>
+    private OpResult RestoreFrom(string name, string last)
+    {
         // Мод отключён — восстанавливаем отключённую копию, иначе получился бы второй файл с тем же именем.
         var target = TargetPath(name);
         string? moved = null;
@@ -377,7 +517,6 @@ public sealed class ModInstaller
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return new OpResult(false, IoMessage(e));
-        }
         }
     }
 
