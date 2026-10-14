@@ -451,6 +451,7 @@
 | --- | --- |
 | `design/mockup/tools/gen.py` | Считает карты преломления и бликов для панелей (нужны `numpy`, `Pillow`) |
 | `design/mockup/tools/build_ui.py` | Собирает `Main` (Гараж), `MainMatte` (без жидкого стекла), `Settings` (внешний вид) и общие детали |
+| `design/mockup/tools/gen_ice.py`, `build_ice.py` | Эксперимент «ледяное стекло»: иней по краям панелей, холодный оттенок, искры. Одна доска «Гараж: ледяное стекло», решение не принято |
 | `design/mockup/tools/build_m3.py` | Одна доска «Гараж в Material 3» для сравнения стилей (не часть дизайна, ничего не заменяет) |
 | `design/mockup/tools/build_screens.py` | Собирает `Updates`, `Search`, `Download`, `DownloadChecked`, `SettingsDownload`, `SettingsSites` |
 
