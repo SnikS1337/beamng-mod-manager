@@ -5,7 +5,8 @@ import build_ui as U
 
 _rim = U.rim
 _surface = U.surface
-SIZES = {'rail': (84, 284), 'gear': (56, 56), 'bar': (964, 52), 'insp': (328, 928)}
+SIZES = {'rail': (84, 284), 'gear': (56, 56), 'bar': (964, 52), 'insp': (328, 928), 'chk': (328, 540), 'set': (1308, 640), 'set_d': (1308, 470), 'set_s': (1308, 560), 'dl': (1100, 700)}
+GLINTS = {'rail': 6, 'gear': 2, 'bar': 8, 'insp': 12, 'chk': 8, 'set': 12, 'set_d': 10, 'set_s': 10, 'dl': 12}
 
 
 def glints(name, n, seed):
@@ -28,15 +29,15 @@ def glints(name, n, seed):
 def rim(glass, name):
     base = _rim(glass, 'rail4' if name == 'rail' else name)
     if glass and name in SIZES:
-        n = {'rail': 6, 'gear': 2, 'bar': 8, 'insp': 12}[name]
+        n = GLINTS[name]
         return base + f'<div class="ice" style="background-image:url({U.A("ice_" + name + ".png")})">{glints(name, n, hash(name) % 97)}</div>'
     return base
 
 
 def surface(glass, name, blur, scale=None):
     # настоящее Liquid Glass почти не размывает: видно картинку, а не пятно; смысл даёт преломление
-    css = _surface(glass, name, {'Insp': 5, 'Bar': 3}.get(name, 2), scale)
-    dim = {'Insp': ' brightness(.70) contrast(.9)', 'Bar': ' brightness(.60) contrast(.9)', 'Rail': ' brightness(.78)'}.get(name, '')
+    css = _surface(glass, name, {'Insp': 5, 'Chk': 5, 'Set': 4, 'Dl': 4, 'Bar': 3}.get(name, 2), scale)
+    dim = {'Insp': ' brightness(.70) contrast(.9)', 'Bar': ' brightness(.60) contrast(.9)', 'Rail': ' brightness(.78)', 'Chk': ' brightness(.70)', 'Set': ' brightness(.66)', 'Dl': ' brightness(.66)'}.get(name, '')
     return css.replace('saturate(1.4)', 'saturate(1.4)' + dim)
 
 
@@ -60,9 +61,10 @@ EXTRA = '''
 .sb{color:rgba(255,255,255,.88) !important}
 .glass [style*="rgba(255,255,255,0.64)"],.glass [style*="rgba(255,255,255,0.66)"],.glass [style*="rgba(255,255,255,0.7)"],.glass [style*="rgba(255,255,255,0.72)"],.glass [style*="rgba(255,255,255,.7)"],.glass [style*="rgba(255,255,255,.6)"]{color:rgba(255,255,255,.90) !important}
 .glass.insp{background:rgba(14,24,44,.50) !important;text-shadow:0 1px 8px rgba(4,8,18,.7)}
-.glass.top [style*="rgba(255,255,255"]{color:rgba(255,255,255,.94) !important}
 .glass.insp .ice{opacity:.16}
-.glass.insp [style*="background:rgba(255,255,255,0.09)"]{background:rgba(8,14,28,.34) !important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),inset 0 1px 0 rgba(255,255,255,.14)}
+.glass [style*="background:rgba(255,255,255,0.09)"],.glass [style*="background:rgba(255,255,255,.09)"]{background:rgba(8,14,28,.34) !important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),inset 0 1px 0 rgba(255,255,255,.14)}
+[aria-label="Настройки"] .ice,[aria-label="Скачивание"] .ice{opacity:.13}
+.glass .ice{mix-blend-mode:normal}
 .glass.top .ice{opacity:.34}
 .hfade{position:absolute;left:104px;top:0;width:988px;height:98px;z-index:0;pointer-events:none;background:linear-gradient(180deg,rgba(8,14,28,.58) 0,rgba(8,14,28,.58) 52%,rgba(8,14,28,0) 100%);-webkit-mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent)}
 .ice{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-size:100% 100%;opacity:.55}
@@ -76,8 +78,25 @@ EXTRA = '''
 '''
 
 
-W_SEG = [52, 112, 148, 152]            # ширины пунктов (фиксированы, чтобы капля знала, куда ехать)
+W_SEG = [52, 112, 148, 152]            # ширины пунктов главного экрана (запас на жирный шрифт)
 LABELS = [('Все', None), ('Включённые', None), ('Нужно обновить', '3'), ('Не проверяются', '12')]
+_WCACHE = {}
+
+
+def measure(labels):
+    """Ширины пунктов (px) для капли: меряем настоящий текст жирным шрифтом в браузере."""
+    key = tuple(labels)
+    if key not in _WCACHE:
+        from playwright.sync_api import sync_playwright
+        html = '<body style="font-family:%s;font-size:13px;font-weight:650">' % U.FONT + ''.join(
+            f'<span id="m{i}" style="display:inline-block;white-space:nowrap;padding:0 14px">{t}{(" <b style=margin-left:5px>" + c + "</b>") if c else ""}</span><br>' for i, (t, c) in enumerate(labels))
+        with sync_playwright() as p:
+            br = p.chromium.launch(executable_path='/opt/pw-browsers/chromium')
+            pg = br.new_page(); pg.set_content(html)
+            w = [int(pg.evaluate(f"document.getElementById('m{i}').getBoundingClientRect().width")) + 8 for i in range(len(labels))]
+            br.close()
+        _WCACHE[key] = w
+    return _WCACHE[key]
 OVER, TRK = 6, 3                        # капля выступает за пункт на 6 px по бокам; поля подложки 3 px
 
 
@@ -95,14 +114,16 @@ def drop_filter():
     return flex + U.lens('dpn', 'dropsq', 70, 58, 44)
 
 
-def segmented():
+def segmented(labels=None):
+    W_SEG_ = W_SEG if labels is None else measure(labels)
+    LABELS_ = LABELS if labels is None else labels
     lefts, x = [], TRK
-    for w in W_SEG:
+    for w in W_SEG_:
         lefts.append(x - OVER); x += w
     labs = ''.join(
-        f'<label><input type="radio" name="f" id="f{i}" {"checked" if i == 0 else ""}><span style="width:{W_SEG[i]}px">{t}'
-        f'{(" <b style=\"opacity:.7;font-weight:600;margin-left:5px\">" + c + "</b>") if c else ""}</span></label>' for i, (t, c) in enumerate(LABELS))
-    rules = ''.join(f'.sg:has(#f{i}:checked) .drop{{left:{lefts[i]}px;width:{W_SEG[i] + 2 * OVER}px}}\n' for i in range(4))
+        f'<label><input type="radio" name="f" id="f{i}" {"checked" if i == 0 else ""}><span style="width:{W_SEG_[i]}px">{t}'
+        f'{(" <b style=\"opacity:.7;font-weight:600;margin-left:5px\">" + c + "</b>") if c else ""}</span></label>' for i, (t, c) in enumerate(LABELS_))
+    rules = ''.join(f'.sg:has(#f{i}:checked) .drop{{left:{lefts[i]}px;width:{W_SEG_[i] + 2 * OVER}px}}\n' for i in range(len(LABELS_)))
     return f'<div class="sg" role="radiogroup" aria-label="Фильтр">{labs}<i class="drop"></i></div>', rules
 
 
@@ -133,15 +154,20 @@ NAV = [('grid', 'Гараж', 14, None), ('upd', 'Обновления', 76, '3'
 RAIL_H = 284
 
 
+ACTIVE = {'garage': 0, 'updates': 1, 'search': 2, 'settings': 3}
+
+
 def chrome(glass, active):
     """Левая панель: четыре раздела в одной капсуле, одна подвижная капля; настройки отделены тонкой чертой."""
     items = ''
     for i, (k, label, top, badge) in enumerate(NAV):
         bd = (f'<span class="pulse" style="position:absolute;top:3px;right:6px;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:9px;background:#fff;color:#111;'
               f'font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">{badge}</span>') if badge else ''
-        items += (f'<label class="rn" style="top:{top}px"><input type="radio" name="nv" id="n{i}" {"checked" if i == 0 else ""} aria-label="{label}">'
+        items += (f'<label class="rn" style="top:{top}px"><input type="radio" name="nv" id="n{i}" {"checked" if i == ACTIVE.get(active, 0) else ""} aria-label="{label}">'
                   f'{U.icon(k, 22, 1.7)}<span>{label}</span>{bd}</label>')
     rules = ''.join(f'.lft:has(#n{i}:checked) .ndrop{{top:{t}px}}\n' for i, (_, _, t, _) in enumerate(NAV))
+    first = NAV[ACTIVE.get(active, 0)][2]
+    rules += f'.ndrop{{top:{first}px}}\n'
     html = (f'<nav class="glass lft" aria-label="Разделы" style="left:16px;top:16px;width:84px;height:{RAIL_H}px;border-radius:36px;{U.surface(glass, "Rail", 7)}">'
             f'{U.rim(glass, "rail")}<div style="position:absolute;inset:0"><i class="ndrop"></i>{items}<i class="hr" style="top:200px"></i></div></nav>\n')
     return html + f'<style>{rules}</style>'
@@ -229,18 +255,27 @@ CARD_CSS = '''
 '''
 
 
-def build():
-    html = U.garage(True)
-    html = html.replace('<title>Гараж</title>', '<title>Гараж: ледяное стекло</title>')
+def finish(html, rules='', title=None):
+    """Общая одежда ледяного стиля для любого экрана: капля вместо фильтров, фильтр линзы, стили."""
     import re
-    seg, rules = segmented()
-    html, n = re.subn(r'<div role="radiogroup" aria-label="Фильтр".*?</div>(?=<label style)', lambda m: seg, html, count=1, flags=re.S)
-    assert n == 1, 'полоса фильтров не найдена'
+    m = re.search(r'<div role="radiogroup" aria-label="Фильтр".*?</div>(?=<label style)', html, flags=re.S)
+    if m:
+        labels = [(t.strip(), c) for t, c in re.findall(r'<span>([^<]*?)(?: <b[^>]*>([^<]*)</b>)?</span>', m.group(0))]
+        labels = [(t, c or None) for t, c in labels]
+        seg, r2 = segmented(labels)
+        html = html.replace(m.group(0), seg, 1); rules += r2
     html = html.replace('</defs></svg>', drop_filter().replace('id="dpn"', 'id="lgdpn"') + '</defs></svg>', 1)
+    if title:
+        html = re.sub(r'<title>.*?</title>', f'<title>{title}</title>', html, count=1)
+    return html.replace('</style>', EXTRA + DROP_CSS + RAIL_CSS + CARD_CSS + rules + '</style>', 1)
+
+
+def build():
+    import re
+    html = U.garage(True)
     html = html.replace('<header class="glass lq top"', '<div class="hfade"></div><header class="glass lq top"', 1)
     assert 'class="hfade"' in html
     html = html.replace('>Машина</span>', '>Состав</span>', 1).replace('font-weight:500">Dacia Sandero Stepway</span>', 'font-weight:500">Машина, 3 цвета</span>', 1)
-    html = html.replace("('Машина', 'Dacia Sandero Stepway')", "('Машина', 'Dacia Sandero Stepway')").replace('>Dacia Sandero Stepway</span>', ' style="white-space:nowrap">Dacia Sandero Stepway</span>', 1) if False else html
     html = html.replace('142 МБ, на сайте 151 МБ', '142 МБ <span style="opacity:.82;font-weight:450">(на сайте 151)</span>', 1)
     btn = 'white-space:nowrap;padding:0 6px;height:38px;border-radius:19px;border:0;cursor:pointer;color:#fff;font-size:13px;font-weight:600;background:rgba(255,255,255,.14);box-shadow:inset 0 0 0 1px rgba(255,255,255,.20),inset 0 1px 0 rgba(255,255,255,.28)'
     tail = (f'<div style="margin-top:auto;display:flex;flex-direction:column;gap:12px"><div style="display:flex;gap:10px">'
@@ -249,7 +284,7 @@ def build():
             f'<span style="font-size:12.5px;color:rgba(255,255,255,.88)">Можно вернуть позже</span></div></div></div></aside>')
     html, n = re.subn(r'<div style="margin-top:auto;display:flex;flex-wrap.*?</span></div></div></aside>', lambda m: tail, html, count=1, flags=re.S)
     assert n == 1, 'низ инспектора не найден'
-    return html.replace('</style>', EXTRA + DROP_CSS + RAIL_CSS + CARD_CSS + rules + '</style>', 1)
+    return finish(html, title='Гараж: ледяное стекло')
 
 
 if __name__ == '__main__':
