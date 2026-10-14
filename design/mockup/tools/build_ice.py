@@ -34,23 +34,32 @@ def rim(glass, name):
 
 
 def surface(glass, name, blur, scale=None):
-    return _surface(glass, name, blur + 2, scale)   # изморозь рассеивает сильнее
+    # настоящее Liquid Glass почти не размывает: видно картинку, а не пятно; смысл даёт преломление
+    return _surface(glass, name, {'Insp': 5, 'Bar': 3}.get(name, 2), scale)
+
+
+_lens = U.lens
+def lens(fid, name, w, h, scale=46):
+    return _lens(fid, name, w, h, int(scale * 1.5))   # линза заметнее: контент изгибается у краёв
+U.lens = lens
 
 
 U.rim = rim
 U.surface = surface
 
 EXTRA = '''
-.glass{background:rgba(46,70,106,.26) !important}
-.glass.insp{background:rgba(26,42,68,.52) !important}
-.ice{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-size:100% 100%;opacity:.5}
+.glass{background:rgba(16,26,48,.20) !important}
+.glass.top{background:rgba(16,26,48,.30) !important}
+.glass.top,.glass.lft{text-shadow:0 1px 8px rgba(8,14,28,.55)}
+.glass.insp{background:rgba(18,30,52,.40) !important}
+.ice{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-size:100% 100%;opacity:.55}
 .gl{position:absolute;opacity:0;pointer-events:none;background:
  linear-gradient(90deg,transparent 0,rgba(235,246,255,.7) 50%,transparent 100%) center/100% 1.5px no-repeat,
  linear-gradient(0deg,transparent 0,rgba(235,246,255,.7) 50%,transparent 100%) center/1.5px 100% no-repeat,
  radial-gradient(circle,rgba(255,255,255,.95) 0,rgba(210,232,255,.0) 55%);animation:glint var(--beat) ease-in-out infinite}
 @keyframes glint{0%,70%,100%{opacity:0;transform:scale(.4) rotate(0)}82%{opacity:1;transform:scale(1) rotate(12deg)}92%{opacity:.25;transform:scale(.7) rotate(20deg)}}
 .plate{box-shadow:0 12px 32px rgba(6,10,22,.38), inset 0 0 0 1px rgba(205,230,255,.20), inset 0 1px 0 rgba(235,246,255,.34), inset 0 0 26px rgba(170,205,255,.07) !important}
-@media (prefers-reduced-motion:reduce){.gl{animation:none;opacity:.5}}
+@media (prefers-reduced-motion:reduce){.gl{animation:none;opacity:.55}}
 '''
 
 
