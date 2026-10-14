@@ -35,7 +35,9 @@ def rim(glass, name):
 
 def surface(glass, name, blur, scale=None):
     # настоящее Liquid Glass почти не размывает: видно картинку, а не пятно; смысл даёт преломление
-    return _surface(glass, name, {'Insp': 5, 'Bar': 3}.get(name, 2), scale)
+    css = _surface(glass, name, {'Insp': 5, 'Bar': 3}.get(name, 2), scale)
+    dim = {'Insp': ' brightness(.62) contrast(.9)', 'Bar': ' brightness(.42) contrast(.9)', 'Rail': ' brightness(.84)'}.get(name, '')
+    return css.replace('saturate(1.4)', 'saturate(1.4)' + dim)
 
 
 _lens = U.lens
@@ -50,10 +52,16 @@ U.rim = rim
 U.surface = surface
 
 EXTRA = '''
+.glass.top>div>span:nth-child(-n+2){background:rgba(8,14,28,.55);padding:3px 8px;border-radius:9px;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
 .glass{background:rgba(16,26,48,.20) !important}
-.glass.top{background:rgba(16,26,48,.30) !important}
-.glass.top,.glass.lft{text-shadow:0 1px 8px rgba(8,14,28,.55)}
-.glass.insp{background:rgba(18,30,52,.40) !important}
+.glass.top{background:rgba(12,20,38,.68) !important;text-shadow:0 1px 8px rgba(4,8,18,.8),0 0 2px rgba(4,8,18,.6)}
+.glass{text-shadow:0 1px 6px rgba(6,12,24,.50)}
+.glass .cta{text-shadow:none}
+/* читаемость: второстепенный текст на стекле не бледнее 0,84 */
+.sb{color:rgba(255,255,255,.88) !important}
+.glass [style*="rgba(255,255,255,0.64)"],.glass [style*="rgba(255,255,255,0.66)"],.glass [style*="rgba(255,255,255,0.7)"],.glass [style*="rgba(255,255,255,0.72)"],.glass [style*="rgba(255,255,255,.7)"],.glass [style*="rgba(255,255,255,.6)"]{color:rgba(255,255,255,.90) !important}
+.glass.insp{background:rgba(14,24,44,.64) !important;text-shadow:0 1px 8px rgba(4,8,18,.7)}
+.glass.top [style*="rgba(255,255,255"]{color:rgba(255,255,255,.94) !important}
 .ice{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-size:100% 100%;opacity:.55}
 .gl{position:absolute;opacity:0;pointer-events:none;background:
  linear-gradient(90deg,transparent 0,rgba(235,246,255,.7) 50%,transparent 100%) center/100% 1.5px no-repeat,
@@ -165,6 +173,8 @@ def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
     if crop:
         d = dict(p.split(':') for p in crop.split(';'))
         extra = f'background-size:{d["size"]};background-position:{d["pos"]};'
+    if not cap:
+        status = None if status != 'off' else 'off'
     chip = {
         'update': '<span class="chip wh pulse">Есть обновление</span>',
         'lost': f'<span class="chip dk">{DOT.format(c="#ffb340")}Страница пропала</span>',
@@ -177,7 +187,7 @@ def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
     info = (f'<div class="info"><div class="nm">{n}</div><div class="sb">{subh}</div></div>') if cap else ''
     return (f'<article class="card" style="position:absolute;left:{x}px;top:{y}px;width:{w}px;animation-delay:{60 + pos * 45}ms">'
             f'<div class="cd{" sel" if sel else ""}{" off" if off else ""}{"" if cap else " under"}" style="height:{U.PLATE_H}px" tabindex="0">'
-            f'<div class="pw"><div class="ph pic p-{img}" style="{extra}"></div>{frost}<div class="scrim"></div></div>{chip}{info}</div></article>\n')
+            f'<div class="pw"><div class="ph pic p-{img}" style="{extra}"></div>{frost}<div class="scrim"></div></div>{chip if cap else ''}{info}</div></article>\n')
 
 
 U.tile = tile
@@ -195,14 +205,14 @@ CARD_CSS = '''
 .cd:hover{transform:translateY(-5px);box-shadow:0 26px 44px rgba(4,8,20,.58),0 0 34px rgba(170,205,255,.20),0 3px 8px rgba(4,8,20,.35)}
 .cd:hover .ph{transform:scale(1.06)}
 .info{position:absolute;left:10px;right:10px;bottom:10px;height:56px;box-sizing:border-box;padding:9px 15px 0;border-radius:19px;z-index:3;
- background:linear-gradient(180deg,rgba(22,34,58,.40),rgba(10,18,34,.62));
- -webkit-backdrop-filter:blur(10px) saturate(1.5);backdrop-filter:blur(10px) saturate(1.5);
+ background:linear-gradient(180deg,rgba(20,30,52,.68),rgba(10,18,34,.84));
+ -webkit-backdrop-filter:blur(12px) saturate(1.5) brightness(.8);backdrop-filter:blur(12px) saturate(1.5) brightness(.8);
  box-shadow:inset 0 0 0 1px rgba(255,255,255,.15),inset 0 1.5px 0 rgba(255,255,255,.40),inset 0 -1px 0 rgba(255,255,255,.08),0 6px 14px rgba(4,8,20,.32)}
 .nm{font-size:15px;line-height:19px;font-weight:620;letter-spacing:-.005em;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb{margin-top:1px;font-size:12.5px;line-height:17px;color:rgba(255,255,255,.74);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chip{position:absolute;top:12px;right:12px;z-index:3;display:inline-flex;align-items:center;height:26px;padding:0 11px;border-radius:13px;font-size:12px;font-weight:700;letter-spacing:.005em}
 .chip.wh{background:rgba(255,255,255,.95);color:#14181f;box-shadow:0 4px 12px rgba(4,8,20,.35)}
-.chip.dk{background:rgba(14,22,40,.58);color:#fff;font-weight:600;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),inset 0 1px 0 rgba(255,255,255,.4),0 4px 12px rgba(4,8,20,.3)}
+.chip.dk{background:rgba(10,16,30,.80);color:#fff;font-weight:600;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),inset 0 1px 0 rgba(255,255,255,.4),0 4px 12px rgba(4,8,20,.3)}
 .cd.sel{transform:translateY(-3px);animation:selglow var(--beat) ease-in-out infinite}
 .cd.sel::after{content:"";position:absolute;inset:-4px;border-radius:30px;padding:2.5px;pointer-events:none;z-index:5;
  background:conic-gradient(from 200deg,rgba(255,255,255,.95),rgba(120,205,255,.95) 16%,rgba(255,255,255,.9) 34%,rgba(255,255,255,.75) 55%,rgba(255,115,205,.9) 72%,rgba(255,255,255,.95) 90%,rgba(255,255,255,.95));
