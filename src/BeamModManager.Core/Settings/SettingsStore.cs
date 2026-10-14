@@ -74,6 +74,7 @@ public sealed class SettingsStore
                     UiAnimations = Bool(r, nameof(AppSettings.UiAnimations), d.UiAnimations, warnings),
                     AnimatedBackground = Bool(r, nameof(AppSettings.AnimatedBackground), d.AnimatedBackground, warnings),
                     Fireflies = Bool(r, nameof(AppSettings.Fireflies), d.Fireflies, warnings),
+                    BackgroundTilt = Bool(r, nameof(AppSettings.BackgroundTilt), d.BackgroundTilt, warnings),
                     ActiveModsWarnAbove = Int(r, nameof(AppSettings.ActiveModsWarnAbove), d.ActiveModsWarnAbove, warnings),
                     FirstRunDone = Bool(r, nameof(AppSettings.FirstRunDone), d.FirstRunDone, warnings),
                     WindowWidth = Int(r, nameof(AppSettings.WindowWidth), d.WindowWidth, warnings),

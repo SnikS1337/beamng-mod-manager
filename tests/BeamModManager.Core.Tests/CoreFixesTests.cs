@@ -569,6 +569,9 @@ public static class CoreFixesTests
             Assert.Eq(0, low.BackgroundDim);
             Assert.Eq(1000, low.ActiveModsWarnAbove);
             Assert.True(low.WindowWidth == 1280 && low.WindowHeight == 720, "нормальный размер окна сохраняется");
+            var small = new AppSettings { WindowWidth = 999, WindowHeight = 679 }.Normalize();
+            Assert.True(small.WindowWidth == 0 && small.WindowHeight == 0, "меньше минимума окна 1000 × 680 — по умолчанию");
+            Assert.False(new AppSettings().BackgroundTilt, "наклон фона по умолчанию выключен");
         });
 
         t.Run("сохранение и чтение возвращают все новые поля", () =>
@@ -577,7 +580,7 @@ public static class CoreFixesTests
             var want = new AppSettings
             {
                 LiquidGlass = false, Frost = false, FrostStrength = 2, FrostSparks = false, Background = BackgroundMode.SolidColor, BackgroundDim = 70,
-                UiAnimations = false, AnimatedBackground = false, Fireflies = false, ActiveModsWarnAbove = 55, FirstRunDone = true,
+                UiAnimations = false, AnimatedBackground = false, Fireflies = false, BackgroundTilt = true, ActiveModsWarnAbove = 55, FirstRunDone = true,
                 WindowWidth = 1600, WindowHeight = 900, WindowMaximized = true,
             };
             var st = new SettingsStore(p);
@@ -730,6 +733,38 @@ public static class CoreFixesTests
             Assert.False(s.IsCheckingDeclined("e34"), "флаг снят");
             Assert.Eq(0, s.Bindings().Count);
             Assert.True(BindingSuggester.Suggest(s, s.GetMod("e34")!, cand).Count > 0, "предлагает");
+        });
+
+        t.Run("«Отменить» после отказа возвращает привязки, проверки и пропущенную версию", () =>
+        {
+            var s = Bound();
+            var check = new CheckState("e34", "stmods", T0, null, "1.1", 120);
+            s.SaveCheck(check);
+            s.SetDismissedUpdate("e34", "stmods:1.1");
+            var undo = BindingActions.Decline(s, "e34")!;
+            Assert.Eq(2, undo.Bindings.Count);
+            Assert.True(BindingActions.Undo(s, undo), "отменено");
+            Assert.Eq(2, s.Bindings().Count);
+            Assert.True(s.GetCheck("e34", "stmods") == check, "состояние проверки вернулось");
+            Assert.Eq("stmods:1.1", s.GetDismissedUpdate("e34"));
+            Assert.False(s.IsCheckingDeclined("e34"), "отказа нет");
+        });
+
+        t.Run("«Отменить» не затирает привязку, сделанную после отказа, и безвредна для удалённого мода", () =>
+        {
+            var s = Bound();
+            var undo = BindingActions.Decline(s, "e34")!;
+            var fresh = new ModBinding("e34", "stmods", "new_page", new Uri("https://stmods.org/new_page/"), true);
+            s.UpsertBinding(fresh);
+            Assert.True(BindingActions.Undo(s, undo), "отменено");
+            Assert.Eq("new_page", s.Bindings().Single(b => b.Source == "stmods").SourceId);
+            Assert.Eq(2, s.Bindings().Count); // modland вернулась
+            var s2 = Bound();
+            var undo2 = BindingActions.Decline(s2, "e34")!;
+            s2.RemoveMod("e34");
+            Assert.False(BindingActions.Undo(s2, undo2), "мода нет");
+            Assert.Eq(0, s2.Bindings().Count);
+            Assert.True(BindingActions.Decline(s2, "e34") is null, "нет мода — нечего снимать");
         });
 
         t.Run("несуществующий мод и повторный отказ безвредны", () =>

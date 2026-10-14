@@ -36,7 +36,7 @@ public static class AppearancePresets
         {
             LiquidGlass = false, Frost = false, FrostStrength = 1, FrostSparks = false,
             Background = BackgroundMode.Photo, BackgroundDim = 35,
-            UiAnimations = false, AnimatedBackground = false, Fireflies = false,
+            UiAnimations = false, AnimatedBackground = false, Fireflies = false, BackgroundTilt = false,
         },
         _ => s,
     }).Normalize();
