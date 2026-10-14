@@ -1,48 +1,59 @@
-"""Доска «Гараж: финальный вид» — главный экран со всеми решениями на 2026-10-14:
-лёд при первом запуске, окно Windows с обычным заголовком, самостоятельно движется только фон
-(пульс только у непросмотренного бейджа «Обновления»), выключенный мод покрыт инеем.
+"""Доска «Гараж» (GarageFinal) — главный экран со всеми решениями на 2026-10-14:
+лёд при первом запуске; своя верхушка окна: стандартной полосы Windows нет, фон доходит до самого верха,
+кнопки «свернуть / развернуть / закрыть» — стеклянная капсула в правом верхнем углу; правая панель опущена под неё;
+самостоятельно движется только фон (пульс только у непросмотренного бейджа «Обновления»);
+выбранная карточка без отдельной обводки: приподнята и подсвечена; сетка заканчивается у правой панели.
 Запуск из папки tools после gen.py, gen_ice.py и build_ui.py:  python3 build_final.py"""
 import re
 import build_ui as U
 import build_ice as I
 
-TITLE_H = 32
+CAP_W, CAP_H = 132, 36                 # капсула кнопок окна
+INSP_TOP = 16 + CAP_H + 12             # правая панель начинается под капсулой
+INSP_H = 960 - INSP_TOP - 16
 
 FINAL_CSS = '''
 /* по DESIGN_MOTION.md: само движется только фон; выбранная карточка и главная кнопка не «дышат» */
-.cd.sel{animation:none !important;box-shadow:0 22px 40px rgba(4,8,20,.5),0 0 40px rgba(140,195,255,.45) !important}
-.cta::after{display:none !important}/* кольцо выбранной карточки: светлое и холодно-голубое, без розового (DESIGN.md раздел 4) */
-.cd.sel::after{background:conic-gradient(from 200deg,rgba(255,255,255,.95),rgba(150,210,255,.95) 18%,rgba(255,255,255,.9) 40%,rgba(205,230,255,.85) 62%,rgba(150,210,255,.9) 80%,rgba(255,255,255,.95)) !important}
-
+.cta::after{display:none !important}
 .chip.up{animation:none !important}
-.wintb{position:absolute;left:0;top:0;width:1440px;height:32px;z-index:50;display:flex;align-items:center;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;
- background:#141b27;color:rgba(255,255,255,.86);font-size:12px;box-shadow:inset 0 -1px 0 rgba(255,255,255,.06)}
-.wintb .ttl{padding-left:16px;flex:1}
-.wintb .wb{width:46px;height:32px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.86)}
-.wintb .wb:hover{background:rgba(255,255,255,.08)}.wintb .wb.x:hover{background:#c42b1c;color:#fff}
+/* выбранная карточка: без отдельного кольца; приподнята, светлая кромка ярче, мягкое холодное свечение */
+.cd.sel{animation:none !important;transform:translateY(-4px) !important;
+ box-shadow:0 24px 44px rgba(4,8,20,.55),0 0 46px rgba(150,200,255,.30) !important}
+.cd.sel::after{display:none !important}
+.cd.sel::before{box-shadow:inset 0 0 0 1px rgba(255,255,255,.42),inset 0 2px 0 rgba(255,255,255,.75),inset 1.5px 0 0 rgba(255,255,255,.26),inset 0 -1px 0 rgba(255,255,255,.16) !important}
+/* кнопки окна: стеклянная капсула в правом верхнем углу */
+.wcap{position:absolute;right:16px;top:16px;height:36px;display:flex;border-radius:18px;overflow:hidden;z-index:6;
+ background:rgba(14,24,44,.44);-webkit-backdrop-filter:blur(4px) saturate(1.4) brightness(.78);backdrop-filter:blur(4px) saturate(1.4) brightness(.78);
+ box-shadow:0 14px 34px rgba(8,12,24,.38),inset 0 0 0 1px rgba(205,230,255,.22),inset 0 1.5px 0 rgba(235,246,255,.45)}
+.wcap button{width:44px;height:36px;border:0;padding:0;background:transparent;color:rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background var(--fast)}
+.wcap button:hover{background:rgba(255,255,255,.14)}
+.wcap button.x:hover{background:rgba(220,64,52,.92);color:#fff}
+.wcap button:focus-visible{outline:3px solid #fff;outline-offset:-3px;border-radius:18px}
 '''
+
+CAPSULE = ('<div class="wcap" role="group" aria-label="Окно">'
+           '<button type="button" aria-label="Свернуть"><svg width="11" height="11" viewBox="0 0 11 11"><path d="M1 5.5h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>'
+           '<button type="button" aria-label="Развернуть"><svg width="11" height="11" viewBox="0 0 11 11"><rect x="1" y="1" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></button>'
+           '<button type="button" class="x" aria-label="Закрыть"><svg width="11" height="11" viewBox="0 0 11 11"><path d="M1.5 1.5l8 8M9.5 1.5l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button></div>\n')
 
 
 def build():
     html = I.build()
-    # 1. Статусы карточек не пульсируют; бейдж «Обновления» пульсирует (непросмотренное) — он уже с классом pulse
     html = html.replace('<span class="chip dk up pulse">', '<span class="chip dk up">')
-    # 2. «Не проверяется» словами у одной карточки (фильтр «Не проверяются 12»)
     html = html.replace('>3.1 · 54 МБ<', '>3.1 · не проверяется<', 1)
-    # 3. Обычное окно Windows: заголовок 32 px сверху, содержимое 1440 × 960 под ним
-    m = re.search(r'<div style="position:relative;width:1440px;height:960px;overflow:hidden;', html)
-    assert m, 'обёртка страницы не найдена'
-    start = m.start()
-    tb = ('<div class="wintb" role="banner"><span class="ttl">ModManager BeamNG</span>'
-          '<span class="wb" aria-label="Свернуть"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></span>'
-          '<span class="wb" aria-label="Развернуть"><svg width="10" height="10" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></span>'
-          '<span class="wb x" aria-label="Закрыть"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></span></div>')
-    html = (html[:start] + f'<div style="position:relative;width:1440px;height:{960 + TITLE_H}px;overflow:hidden;background:#141b27">{tb}'
-            f'<div style="position:absolute;left:0;top:{TITLE_H}px;width:1440px;height:960px">' + html[start:])
-    end = html.rindex('</x-dc>')
-    html = html[:end] + '</div></div>\n' + html[end:]
-    html = html.replace('"height":960', f'"height":{960 + TITLE_H}', 1)
-    html = re.sub(r'<title>.*?</title>', '<title>Гараж: финальный вид</title>', html, count=1)
+    # правая панель опускается под капсулу кнопок окна
+    old = 'left:1096px;top:16px;width:328px;height:928px'
+    assert old in html, 'правая панель не найдена'
+    html = html.replace(old, f'left:1096px;top:{INSP_TOP}px;width:328px;height:{INSP_H}px', 1)
+    html, n = re.subn(r'<filter id="lgInsp".*?</filter>', lambda m: U.lens('lgInsp', 'insp', 328, INSP_H, 96), html, count=1, flags=re.S)
+    assert n == 1, 'линза правой панели не найдена'
+    # фото в панели чуть ниже, чтобы содержимое поместилось
+    html = html.replace('<div class="pic p-dacia" style="height:150px;', '<div class="pic p-dacia" style="height:132px;', 1)
+    html = html.replace('<header class="glass', CAPSULE + '<header class="glass', 1)
+    # четвёртая колонка карточек под правой панелью убрана: иначе она торчит в углу рядом с кнопками окна
+    html, n = re.subn(r'<article class="card"[^>]*><div class="cd[^"]* under".*?</article>\n', '', html, flags=re.S)
+    assert n > 0, 'карточки под панелью не найдены'
+    html = re.sub(r'<title>.*?</title>', '<title>Гараж</title>', html, count=1)
     return html.replace('</style>', FINAL_CSS + '</style>', 1)
 
 
