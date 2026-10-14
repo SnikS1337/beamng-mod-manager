@@ -61,13 +61,13 @@ EXTRA = '''
 .sb{color:rgba(255,255,255,.88) !important}
 .glass [style*="rgba(255,255,255,0.64)"],.glass [style*="rgba(255,255,255,0.66)"],.glass [style*="rgba(255,255,255,0.7)"],.glass [style*="rgba(255,255,255,0.72)"],.glass [style*="rgba(255,255,255,.7)"],.glass [style*="rgba(255,255,255,.6)"]{color:rgba(255,255,255,.90) !important}
 .glass.insp{background:rgba(14,24,44,.50) !important;text-shadow:0 1px 8px rgba(4,8,18,.7)}
-.glass.insp .ice{opacity:.16}
+.glass.insp .ice{opacity:calc(.16*var(--k,1))}
 .glass [style*="background:rgba(255,255,255,0.09)"],.glass [style*="background:rgba(255,255,255,.09)"]{background:rgba(8,14,28,.34) !important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),inset 0 1px 0 rgba(255,255,255,.14)}
-[aria-label="Настройки"] .ice,[aria-label="Скачивание"] .ice{opacity:.13}
+[aria-label="Настройки"] .ice,[aria-label="Скачивание"] .ice{opacity:calc(.13*var(--k,1))}
 .glass .ice{mix-blend-mode:normal}
-.glass.top .ice{opacity:.34}
+.glass.top .ice{opacity:calc(.34*var(--k,1))}
 .hfade{position:absolute;left:104px;top:0;width:988px;height:98px;z-index:0;pointer-events:none;background:linear-gradient(180deg,rgba(8,14,28,.58) 0,rgba(8,14,28,.58) 52%,rgba(8,14,28,0) 100%);-webkit-mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent)}
-.ice{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-size:100% 100%;opacity:.55}
+.ice{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-size:100% 100%;opacity:calc(.55*var(--k,1))}
 .gl{position:absolute;opacity:0;pointer-events:none;background:
  linear-gradient(90deg,transparent 0,rgba(235,246,255,.7) 50%,transparent 100%) center/100% 1.5px no-repeat,
  linear-gradient(0deg,transparent 0,rgba(235,246,255,.7) 50%,transparent 100%) center/1.5px 100% no-repeat,
