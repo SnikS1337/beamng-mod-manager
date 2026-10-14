@@ -21,10 +21,24 @@
 
 ## Стек
 
-.NET 8 (ядро, библиотека классов), WPF + WPF-UI (интерфейс), SQLite (FTS5), AngleSharp
-(разбор страниц), WebView2 (окно загрузки), SharpCompress (RAR/7z).
-Сейчас у ядра нет ни одного внешнего пакета: разбор страниц самописный, хранилище в памяти. Пакеты
-подключаются на Windows (см. [docs/STATUS.md](docs/STATUS.md)).
+Статусы: **работает** (есть в репозитории и проверено тестами), **на Windows** (решено, подключается при сборке на
+Windows), **не решено** (выбор после проверки на Windows). Версии пакетов фиксируются при подключении.
+
+| Часть | Технология | Статус | Где описано |
+| --- | --- | --- | --- |
+| Ядро: логика, адаптеры сайтов, дубли, обновления, установка | .NET 8, C#, без внешних пакетов | работает | этот файл, [STATUS.md](docs/STATUS.md) |
+| Тесты ядра | свой мини-раннер (`TestRunner.cs`), позже можно перенести на xunit | работает | раздел «Сборка и тесты» ниже |
+| Разбор страниц сайтов | самописный разбор HTML; AngleSharp как замена | работает / не решено | [STATUS.md](docs/STATUS.md) 3.2 |
+| Сеть | `HttpClient` (`HttpPageFetcher`): очередь на сайт, паузы, кэш | работает (на живых сайтах не проверено) | [PLAN.md](docs/PLAN.md) 9 |
+| Страницы с проверкой «вы человек?», окно загрузки ModsFire | WebView2 | на Windows | [PHASE0.md](docs/PHASE0.md), [PLAN.md](docs/PLAN.md) 7 |
+| Библиотека модов | SQLite с полнотекстовым поиском (FTS5), вероятно пакет Microsoft.Data.Sqlite; сейчас хранилище в памяти | на Windows | [PLAN.md](docs/PLAN.md) 5, [STATUS.md](docs/STATUS.md) 3.2 |
+| Настройки, решения по дублям | JSON-файлы (`System.Text.Json`), атомарная запись | работает | [STATUS.md](docs/STATUS.md) 3.1 |
+| Архивы | ZIP: встроенный `System.IO.Compression`; RAR и 7z → ZIP: SharpCompress | ZIP работает / RAR, 7z на Windows | [PLAN.md](docs/PLAN.md) 7 |
+| Интерфейс | WPF + WPF-UI | на Windows | [DESIGN.md](docs/DESIGN.md) 8 |
+| Жидкое стекло | шейдер HLSL (`ShaderEffect`) в WPF; запасной путь — весь интерфейс в WebView2 | на Windows / не решено (после замера кадров) | [DESIGN.md](docs/DESIGN.md) 8 |
+| Анимации | анимации WPF (`Storyboard`) со своей пружинной кривой по формулам Apple; готовые мелочи через LottieSharp | на Windows / Lottie не решено | [DESIGN_MOTION.md](docs/DESIGN_MOTION.md) 5 |
+| Сбор данных об игре | PowerShell (`tools/windows/collect-beamng-info.ps1`) | работает (на Windows не запускался) | [PHASE0.md](docs/PHASE0.md) |
+| Макет дизайна (в программу не входит) | Python 3, numpy, Pillow | работает | [DESIGN.md](docs/DESIGN.md) 12 |
 
 ## Структура
 

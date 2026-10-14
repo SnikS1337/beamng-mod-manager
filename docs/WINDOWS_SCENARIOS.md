@@ -24,6 +24,6 @@
 | B14 | Удалить мод через меню игры | Куда девается файл, что в `db.json` |
 | B15 | Переименовать `mods` в `mods-off` | Создаёт ли игра пустую `mods` и `db.json` |
 
-Дальше без игры: Cloudflare на Modland в WebView2, второй шаг ModsFire, поиск beamng.com/resources, куда ведёт
+Дальше без игры: Cloudflare на Modland в WebView2, перехват загрузки ModsFire в WebView2, поиск beamng.com/resources, куда ведёт
 «Скачать» на ModsGaming, тесты ядра на Windows (`dotnet run --project tests/BeamModManager.Core.Tests`),
 выборка из 30 модов на нескольких сайтах (PHASE0.md).
