@@ -105,6 +105,11 @@ dotnet run --project tests/BeamModManager.Core.Tests
 
 ## 4. Первый день с Windows (порядок)
 
+Что можно получить с чужого компьютера заранее: один запуск `tools/windows/collect-beamng-info.ps1` (только читает,
+собирает путь к папке модов, `db.json`, версию игры, список модов и содержимое архивов в один ZIP).
+Полный список сценариев на потом: [WINDOWS_SCENARIOS.md](WINDOWS_SCENARIOS.md).
+
+
 1. Поставить .NET 8 SDK и Visual Studio или Rider. `dotnet run --project tests/BeamModManager.Core.Tests`.
    Ожидаются 456 тестов. Всё, что упало на Windows (регистр имён, пути, блокировки), записать в AUDIT.md.
 2. Пройти [PHASE0.md](PHASE0.md) сверху вниз, отмечая пункты. Начать с «мод, положенный вручную в папку, виден в игре»
