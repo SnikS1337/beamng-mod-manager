@@ -89,6 +89,7 @@ public static class CoreFixesTests
         Versions(t);
         Appearance(t);
         Declined(t);
+        Review2(t);
     }
 
     // ---------------------------------------------------------------- 1. Ручные решения по дублям
@@ -747,6 +748,106 @@ public static class CoreFixesTests
             BindingActions.DeclineChecking(s, "e34");
             Assert.Eq(0, UpdateCheckServiceTracked(s));
             Assert.Eq(0, BindingSuggesterCount(s));
+        });
+    }
+
+    // ---------------------------------------------------------------- Повторная ревизия (найдено при проверке)
+    private static void Review2(TestRunner t)
+    {
+        t.Group("Повторная ревизия новых функций");
+
+        t.Run("после обновления с новым именем старое имя не попадает в «Удалённые моды»", () =>
+        {
+            using var sb = new Sandbox();
+            var m = sb.InstallNew("car_v1.0.zip", 10);
+            sb.UpdateTo(m, "car_v2.0.zip", 20);
+            Assert.Eq(0, VersionHistory.Deleted(sb.Inst, sb.Store).Count);
+        });
+
+        t.Run("старое имя не считается удалённым, даже если история имён потеряна (тот же мод по названию)", () =>
+        {
+            using var sb = new Sandbox();
+            var m = sb.InstallNew("car_v1.0.zip", 10);
+            sb.UpdateTo(m, "car_v2.0.zip", 20);
+            var fresh = new InMemoryLibraryStore(); // библиотека без истории (например, после перезапуска)
+            LibrarySync.Reconcile(fresh, sb.Inst.ScanDetailed());
+            Assert.Eq(0, VersionHistory.Deleted(sb.Inst, fresh).Count);
+            Assert.Eq(1, VersionHistory.For(sb.Inst, fresh, fresh.Mods().Single()).Count); // и в «Прошлых версиях» копия видна
+        });
+
+        t.Run("по-настоящему удалённый мод в списке остаётся", () =>
+        {
+            using var sb = new Sandbox();
+            sb.InstallNew("car_v1.0.zip", 10);
+            sb.InstallNew("truck.zip", 12);
+            sb.Inst.Remove("truck.zip");
+            LibrarySync.Reconcile(sb.Store, sb.Inst.ScanDetailed());
+            var d = VersionHistory.Deleted(sb.Inst, sb.Store);
+            Assert.Eq(1, d.Count);
+            Assert.Eq("truck.zip", d[0].FileName);
+        });
+
+        t.Run("посторонние файлы в папке копий (desktop.ini, Thumbs.db) не считаются копиями и не возвращаются", () =>
+        {
+            using var sb = new Sandbox();
+            sb.Inst.Install(Zip(10), "car.zip");
+            sb.Inst.Install(Zip(20), "car.zip", new InstallOptions { ReplaceExisting = true });
+            var dir = Path.Combine(sb.Layout.BackupDir, "car.zip");
+            File.WriteAllText(Path.Combine(dir, "desktop.ini"), "[.ShellClassInfo]");
+            File.WriteAllText(Path.Combine(dir, "Thumbs.db"), "x");
+            Assert.Eq(1, sb.Inst.ListBackups("car.zip").Count);
+            Assert.Eq(1, sb.Inst.Backups("car.zip").Count);
+            var expected = sb.Inst.ListBackups("car.zip")[0].SizeBytes;
+            Assert.True(sb.Inst.RestoreLatestBackup("car.zip").Success, "возврат");
+            Assert.Eq(expected, new FileInfo(Path.Combine(sb.Layout.ModsDir, "car.zip")).Length);
+            Assert.False(sb.Inst.RestoreBackup("car.zip", "desktop.ini").Success, "посторонний файл не возвращается");
+            Assert.True(File.Exists(Path.Combine(dir, "desktop.ini")), "и не удаляется при чистке копий");
+        });
+
+        t.Run("ручное «Это один мод» сильнее автоматической склейки с другой карточкой", async () =>
+        {
+            var offers = new[] { new Offer(OfferKind.ExternalHost, "modsfire", new Uri("https://modsfire.com/9nDwN00BJ04Ef55"), "9nDwN00BJ04Ef55") };
+            var x = L("modland", "a", "Toyota Sienna 2011-2017 2.2") with { Offers = offers };
+            var y = L("modsgaming", "b", "МОД Toyota Sienna 2011-2017 v2.2 (0.39.x) ДЛЯ BEAMNG.DRIVE") with { Offers = offers };
+            var niva = new[] { new Offer(OfferKind.ExternalHost, "modsfire", new Uri("https://modsfire.com/NivaNivaNiva123"), "NivaNivaNiva123") };
+            var other = L("stmods", "z", "Lada Niva 4x4") with { Offers = niva };
+            var w = L("site4", "w", "Lada Niva 4x4 (1977)") with { Offers = niva }; // сама склеится с other
+            var s = new MatchDecisionStore();
+            s.Set(y, other, ManualMatch.Same); // пользователь сказал: y — это Нива (x и y по признакам один мод)
+            var svc = new SearchService(new IModSource[] { new Fake("stmods", other), new Fake("site4", w), new Fake("modland", x), new Fake("modsgaming", y) }, decisions: s);
+            var cards = (await svc.SearchAsync("sienna")).Cards;
+            Assert.True(cards.Any(c => c.Listings.Contains(y) && c.Listings.Contains(other)), "y вместе с выбранной пользователем записью");
+        });
+
+        t.Run("пересборка после «Вернуть как было» даёт те же карточки, что исходный поиск", async () =>
+        {
+            var a = L("modland", "a", "Toyota Sienna 2011-2017 2.2");
+            var b = L("modsgaming", "b", "МОД Toyota Sienna 2011-2017 v2.2 (0.39.x) ДЛЯ BEAMNG.DRIVE");
+            var c = L("stmods", "c", "Toyota Sienna (2011-2017) версия 2.2 для BeamNG.drive (v0.39.x)");
+            var s = new MatchDecisionStore();
+            var svc = new SearchService(new IModSource[] { new Fake("modland", a), new Fake("modsgaming", b), new Fake("stmods", c) }, decisions: s);
+            var r0 = await svc.SearchAsync("sienna");
+            s.Set(a, c, ManualMatch.Same);
+            var r1 = svc.Regroup(r0, "sienna");
+            s.Clear(a, c);
+            var r2 = svc.Regroup(r1, "sienna");
+            Assert.Eq(string.Join("|", r0.Cards.Select(x => x.Id)), string.Join("|", r2.Cards.Select(x => x.Id)));
+            Assert.True(r2.Listings.SequenceEqual(r0.Listings), "порядок записей как у сайтов, а не как в карточках");
+            Assert.Eq(3, r0.Listings.Count);
+        });
+
+        t.Run("ручная правка файла решений: регистр сайта в ключе не мешает", () =>
+        {
+            var p = Path.Combine(Tmp(), "decisions.json");
+            File.WriteAllText(p, "{ \"items\": [ { \"a\": \"ModLand:a\", \"b\": \" STMods :c\", \"decision\": \"same\" } ] }");
+            var s = new MatchDecisionStore(p);
+            Assert.True(s.Get(L("modland", "a", "x"), L("stmods", "c", "y")) == ManualMatch.Same, "найдено");
+        });
+
+        t.Run("набор «Лёгкое» не меняет затемнение фона (в дизайне его нет)", () =>
+        {
+            var light = AppearancePresets.Apply(new AppSettings { BackgroundDim = 35 }, AppearancePreset.Light);
+            Assert.Eq(35, light.BackgroundDim);
         });
     }
 

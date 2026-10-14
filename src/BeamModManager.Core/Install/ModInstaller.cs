@@ -352,10 +352,37 @@ public sealed class ModInstaller
 
     public IReadOnlyList<string> Backups(string fileName)
     {
-        var dir = BackupFolderFor(SafeFileName(fileName) ?? "");
+        var name = SafeFileName(fileName);
+        if (name is null) return Array.Empty<string>();
+        var dir = BackupFolderFor(name);
         return Directory.Exists(dir)
-            ? Directory.EnumerateFiles(dir).OrderBy(f => f, StringComparer.Ordinal).ToList()
+            ? Directory.EnumerateFiles(dir).Where(f => IsBackupOf(Path.GetFileName(f), name)).OrderBy(f => f, StringComparer.Ordinal).ToList()
             : Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// Копия, сделанная менеджером: «номер_время_имя». Посторонние файлы в папке копий (desktop.ini, Thumbs.db, что-то положенное
+    /// руками) копиями не считаются: их нельзя «вернуть» вместо мода, и чистка лишних копий их не трогает.
+    /// </summary>
+    private static bool IsBackupOf(string fn, string name)
+    {
+        var digits = fn.TakeWhile(char.IsAsciiDigit).Count();
+        return digits is > 0 and <= 15 && fn.Length > digits + 1 + name.Length && fn[digits] == '_' &&
+               fn.EndsWith("_" + name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Имена файлов модов, для которых в папке копий есть хотя бы одна копия.</summary>
+    public IReadOnlyList<string> BackedUpFileNames()
+    {
+        lock (Gate)
+        {
+            if (!Directory.Exists(_layout.BackupDir)) return Array.Empty<string>();
+            return Directory.EnumerateDirectories(_layout.BackupDir)
+                .Select(d => SafeFileName(Path.GetFileName(d)))
+                .Where(n => n is not null && Backups(n).Count > 0)
+                .Select(n => n!)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+        }
     }
 
     /// <summary>Копии мода, от новых к старым (так их показывает «Прошлые версии»).</summary>
@@ -474,7 +501,8 @@ public sealed class ModInstaller
 
     /// <summary>
     /// Моды, которых нет ни среди включённых, ни среди отключённых, но резервные копии остались: удалённые вами (или пропавшие с диска).
-    /// От новых к старым по времени последней копии.
+    /// От новых к старым по времени последней копии. Это сырой список по папкам: в нём есть и прежние имена файлов модов,
+    /// обновлённых под новым именем. Интерфейс показывает <see cref="Library.VersionHistory.Deleted"/>, где они отсеяны.
     /// </summary>
     public IReadOnlyList<DeletedMod> DeletedMods()
     {
@@ -577,7 +605,7 @@ public sealed class ModInstaller
     {
         try
         {
-            var all = Directory.EnumerateFiles(BackupFolderFor(name)).OrderBy(f => f, StringComparer.Ordinal).ToList();
+            var all = Backups(name).ToList();
             foreach (var old in all.Take(Math.Max(0, all.Count - _keepBackups))) File.Delete(old);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }

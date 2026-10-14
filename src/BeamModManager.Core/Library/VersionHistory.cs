@@ -11,10 +11,20 @@ public sealed record PastVersion(BackupEntry Backup, string Version);
 /// </summary>
 public static class VersionHistory
 {
-    /// <summary>Все копии мода от новых к старым. Версия берётся из имени файла копии, если она там есть (иначе пусто).</summary>
+    /// <summary>
+    /// Все копии мода от новых к старым. Версия берётся из имени файла копии, если она там есть (иначе пусто).
+    /// Копии ищутся под текущим именем, под прежними именами из библиотеки и под именами с тем же названием мода
+    /// («car_v1.0.zip» для «car_v2.0.zip»): так прошлые версии видны, даже если история имён не сохранилась.
+    /// Имя, которым сейчас называется файл другого мода, не берётся.
+    /// </summary>
     public static IReadOnlyList<PastVersion> For(ModInstaller installer, ILibraryStore store, InstalledMod mod)
     {
+        var mods = store.Mods();
+        var otherCurrent = new HashSet<string>(mods.Where(m => m.Id != mod.Id).Select(m => m.FileName), StringComparer.OrdinalIgnoreCase);
+        var key = LibrarySync.NameKey(mod.FileName);
         var names = new List<string>(store.FileHistory(mod.Id)) { mod.FileName };
+        if (key.Length > 0)
+            names.AddRange(installer.BackedUpFileNames().Where(n => !otherCurrent.Contains(n) && LibrarySync.NameKey(n) == key));
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var all = new List<PastVersion>();
         foreach (var name in names)
@@ -25,6 +35,24 @@ public static class VersionHistory
         }
         // Порядковые номера считаются внутри папки одного имени файла, поэтому между именами сравниваем по времени.
         return all.OrderByDescending(p => p.Backup.SavedAtUtc ?? DateTimeOffset.MinValue).ThenByDescending(p => p.Backup.Sequence).ToList();
+    }
+
+    /// <summary>
+    /// «Удалённые моды»: копии, которые не принадлежат ни одному моду из библиотеки. Прежние имена файлов (после обновления под
+    /// новым именем) сюда не попадают: они в «Прошлых версиях» своего мода, иначе «Вернуть» поставило бы старую версию рядом с новой.
+    /// </summary>
+    public static IReadOnlyList<DeletedMod> Deleted(ModInstaller installer, ILibraryStore store)
+    {
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var keys = new HashSet<string>();
+        foreach (var m in store.Mods())
+        {
+            taken.Add(m.FileName);
+            foreach (var h in store.FileHistory(m.Id)) taken.Add(h);
+            var k = LibrarySync.NameKey(m.FileName);
+            if (k.Length > 0) keys.Add(k);
+        }
+        return installer.DeletedMods().Where(d => !taken.Contains(d.FileName) && !keys.Contains(LibrarySync.NameKey(d.FileName))).ToList();
     }
 
     /// <summary>Возвращает выбранную версию: файл ставится на место текущего, запись в библиотеке следует за ним.</summary>

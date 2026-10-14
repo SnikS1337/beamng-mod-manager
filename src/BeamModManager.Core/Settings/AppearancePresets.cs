@@ -35,7 +35,7 @@ public static class AppearancePresets
         AppearancePreset.Light => s with
         {
             LiquidGlass = false, Frost = false, FrostStrength = 1, FrostSparks = false,
-            Background = BackgroundMode.Photo, BackgroundDim = 45,
+            Background = BackgroundMode.Photo, BackgroundDim = 35,
             UiAnimations = false, AnimatedBackground = false, Fireflies = false,
         },
         _ => s,
