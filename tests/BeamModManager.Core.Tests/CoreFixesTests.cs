@@ -399,6 +399,23 @@ public static class CoreFixesTests
             Assert.Eq(1, sb.Inst.ListBackups("car_v1.0.zip").Count);
         });
 
+        t.Run("сбой посреди возврата версии: текущий файл возвращается на место, копия не теряется", () =>
+        {
+            using var sb = new Sandbox();
+            var m = sb.InstallNew("car_v1.0.zip", 10);
+            m = sb.UpdateTo(m, "car_v2.0.zip", 20);
+            var curSize = new FileInfo(Path.Combine(sb.Layout.ModsDir, "car_v2.0.zip")).Length;
+            Directory.CreateDirectory(Path.Combine(sb.Layout.ModsDir, "car_v1.0.zip")); // на месте будущего файла лежит папка: перенос сорвётся
+            var v1 = VersionHistory.For(sb.Inst, sb.Store, m).Single();
+            var r = VersionHistory.Restore(sb.Inst, sb.Store, m, v1, sb.Now);
+            Assert.False(r.Success, "сбой сообщён");
+            Assert.True(File.Exists(Path.Combine(sb.Layout.ModsDir, "car_v2.0.zip")), "текущая на месте");
+            Assert.Eq(curSize, new FileInfo(Path.Combine(sb.Layout.ModsDir, "car_v2.0.zip")).Length);
+            Assert.Eq(1, sb.Inst.ListBackups("car_v1.0.zip").Count);
+            Assert.Eq(0, sb.Inst.ListBackups("car_v2.0.zip").Count);
+            Assert.Eq("car_v2.0.zip", sb.Store.Mods().Single().FileName);
+        });
+
         t.Run("текущего файла нет (удалён руками): копия встаёт без ошибки", () =>
         {
             using var sb = new Sandbox();
