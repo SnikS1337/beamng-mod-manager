@@ -15,7 +15,7 @@ public static class UpdateRunnerTests
         public List<Listing> Feed = new();
         public Exception? FeedFails, CardFails;
         public Action? OnCard;
-        public Task? FeedGate;
+        public Task? FeedGate = null;
         public int FeedCalls, CardCalls;
         public Site(string id) { Id = id; DisplayName = id; }
         public string Id { get; }
