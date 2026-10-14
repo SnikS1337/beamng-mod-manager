@@ -65,6 +65,20 @@ public sealed class SettingsStore
                     DisabledSources = Strs(r, nameof(AppSettings.DisabledSources), warnings),
                     KeepBackups = Int(r, nameof(AppSettings.KeepBackups), d.KeepBackups, warnings),
                     MaxCardChecksPerSource = Int(r, nameof(AppSettings.MaxCardChecksPerSource), d.MaxCardChecksPerSource, warnings),
+                    LiquidGlass = Bool(r, nameof(AppSettings.LiquidGlass), d.LiquidGlass, warnings),
+                    Frost = Bool(r, nameof(AppSettings.Frost), d.Frost, warnings),
+                    FrostStrength = Int(r, nameof(AppSettings.FrostStrength), d.FrostStrength, warnings),
+                    FrostSparks = Bool(r, nameof(AppSettings.FrostSparks), d.FrostSparks, warnings),
+                    Background = (BackgroundMode)Int(r, nameof(AppSettings.Background), (int)d.Background, warnings),
+                    BackgroundDim = Int(r, nameof(AppSettings.BackgroundDim), d.BackgroundDim, warnings),
+                    UiAnimations = Bool(r, nameof(AppSettings.UiAnimations), d.UiAnimations, warnings),
+                    AnimatedBackground = Bool(r, nameof(AppSettings.AnimatedBackground), d.AnimatedBackground, warnings),
+                    Fireflies = Bool(r, nameof(AppSettings.Fireflies), d.Fireflies, warnings),
+                    ActiveModsWarnAbove = Int(r, nameof(AppSettings.ActiveModsWarnAbove), d.ActiveModsWarnAbove, warnings),
+                    FirstRunDone = Bool(r, nameof(AppSettings.FirstRunDone), d.FirstRunDone, warnings),
+                    WindowWidth = Int(r, nameof(AppSettings.WindowWidth), d.WindowWidth, warnings),
+                    WindowHeight = Int(r, nameof(AppSettings.WindowHeight), d.WindowHeight, warnings),
+                    WindowMaximized = Bool(r, nameof(AppSettings.WindowMaximized), d.WindowMaximized, warnings),
                 };
                 return new SettingsLoadResult(s.Normalize(), warnings);
             }

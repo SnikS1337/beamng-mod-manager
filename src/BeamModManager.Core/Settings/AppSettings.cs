@@ -2,6 +2,9 @@ using BeamModManager.Core.Updates;
 
 namespace BeamModManager.Core.Settings;
 
+/// <summary>«Что за панелями»: фото, размытое фото, один цвет.</summary>
+public enum BackgroundMode { Photo = 0, BlurredPhoto = 1, SolidColor = 2 }
+
 /// <summary>
 /// Настройки менеджера. Любое неизвестное, повреждённое или отсутствующее значение заменяется безопасным
 /// по умолчанию, в первую очередь загрузка модов: она включается только явным значением true в файле.
@@ -39,9 +42,57 @@ public sealed record AppSettings
     /// <summary>Сколько карточек открывать за одну проверку на сайт (5–500).</summary>
     public int MaxCardChecksPerSource { get; init; } = 150;
 
+    // ---- Внешний вид (DESIGN.md, раздел 5.1). Всё независимо друг от друга; зависимые пункты показываются тусклыми, но значения хранятся.
+
+    /// <summary>«Жидкое стекло»: края панелей преломляют фон. Выключено: обычное матовое стекло.</summary>
+    public bool LiquidGlass { get; init; } = true;
+
+    /// <summary>«Иней на стекле».</summary>
+    public bool Frost { get; init; } = true;
+
+    /// <summary>«Сила инея»: 0 слабо, 1 средне, 2 сильно.</summary>
+    public int FrostStrength { get; init; } = 1;
+
+    /// <summary>«Искры льда»: блики на кромках. Работают только при включённом инее.</summary>
+    public bool FrostSparks { get; init; } = true;
+
+    /// <summary>«Что за панелями»: фото, размытое фото или один цвет.</summary>
+    public BackgroundMode Background { get; init; } = BackgroundMode.Photo;
+
+    /// <summary>«Затемнение фона», 0–100 процентов (по умолчанию 35).</summary>
+    public int BackgroundDim { get; init; } = 35;
+
+    /// <summary>«Анимации интерфейса»: капля-выбор, появление и подъём карточек.</summary>
+    public bool UiAnimations { get; init; } = true;
+
+    /// <summary>«Анимированный фон»: фото медленно меняет цвет.</summary>
+    public bool AnimatedBackground { get; init; } = true;
+
+    /// <summary>«Огоньки»: светлые точки над фоном.</summary>
+    public bool Fireflies { get; init; } = true;
+
+    // ---- Прочее
+
+    /// <summary>Предупреждать, когда включённых модов больше этого числа (по умолчанию 30, PLAN.md), 1–1000.</summary>
+    public int ActiveModsWarnAbove { get; init; } = 30;
+
+    /// <summary>Подсказка первого запуска уже показана.</summary>
+    public bool FirstRunDone { get; init; }
+
+    /// <summary>Размер окна при закрытии (0 — не сохранён, окно открывается по умолчанию).</summary>
+    public int WindowWidth { get; init; }
+    public int WindowHeight { get; init; }
+    public bool WindowMaximized { get; init; }
+
     /// <summary>Приводит значения к допустимым и убирает мусор. Возвращает исправленное.</summary>
     public AppSettings Normalize() => this with
     {
+        FrostStrength = Math.Clamp(FrostStrength, 0, 2),
+        Background = Enum.IsDefined(Background) ? Background : BackgroundMode.Photo,
+        BackgroundDim = Math.Clamp(BackgroundDim, 0, 100),
+        ActiveModsWarnAbove = Math.Clamp(ActiveModsWarnAbove, 1, 1000),
+        WindowWidth = WindowWidth is >= 640 and <= 20000 ? WindowWidth : 0,       // обрывок или мусор: окно откроется по умолчанию
+        WindowHeight = WindowHeight is >= 480 and <= 20000 ? WindowHeight : 0,
         SchemaVersion = CurrentSchema,
         ModsFolder = Clean(ModsFolder),
         UserFolder = Clean(UserFolder),

@@ -30,6 +30,7 @@ ScenarioTests.Register(t);
 SyncTests.Register(t);
 DownloadPolicyTests.Register(t);
 LibraryTests.Register(t);
+CoreFixesTests.Register(t);
 
 
 return t.Summary();

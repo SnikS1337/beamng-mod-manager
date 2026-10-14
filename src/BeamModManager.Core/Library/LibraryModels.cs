@@ -58,6 +58,15 @@ public interface ILibraryStore
     /// <summary>«Пропустить эту версию»: ключ обновления, которое пользователь отклонил для мода (null — не отклонял).</summary>
     string? GetDismissedUpdate(string modId);
     void SetDismissedUpdate(string modId, string? key);
+
+    /// <summary>Прежние имена файла мода (от старых к новым): после обновления имя обычно меняется («audi_v1.0.zip» → «audi_v1.5.zip»),
+    /// а копии лежат под старым именем. По этому списку находятся «Прошлые версии».</summary>
+    IReadOnlyList<string> FileHistory(string modId);
+    void AddFileHistory(string modId, string fileName);
+
+    /// <summary>«Не проверять этот мод»: пользователь отказался от привязки; подсказки привязки такому моду не предлагаются.</summary>
+    bool IsCheckingDeclined(string modId);
+    void SetCheckingDeclined(string modId, bool declined);
 }
 
 public sealed class InMemoryLibraryStore : ILibraryStore
@@ -69,6 +78,8 @@ public sealed class InMemoryLibraryStore : ILibraryStore
     private readonly Dictionary<(string, string), CheckState> _checks = new();
     private readonly Dictionary<string, SourceStatus> _statuses = new();
     private readonly Dictionary<string, string> _dismissed = new();
+    private readonly Dictionary<string, List<string>> _history = new();
+    private readonly HashSet<string> _declined = new();
 
     public IReadOnlyList<InstalledMod> Mods() { lock (_g) return _mods.Values.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList(); }
     public InstalledMod? GetMod(string id) { lock (_g) return _mods.GetValueOrDefault(id); }
@@ -82,6 +93,34 @@ public sealed class InMemoryLibraryStore : ILibraryStore
             foreach (var k in _bindings.Keys.Where(k => k.Item1 == id).ToList()) _bindings.Remove(k);
             foreach (var k in _checks.Keys.Where(k => k.Item1 == id).ToList()) _checks.Remove(k);
             _dismissed.Remove(id);
+            _history.Remove(id);
+            _declined.Remove(id);
+        }
+    }
+
+    public IReadOnlyList<string> FileHistory(string modId) { lock (_g) return _history.TryGetValue(modId, out var l) ? l.ToList() : Array.Empty<string>(); }
+
+    public void AddFileHistory(string modId, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return;
+        lock (_g)
+        {
+            if (!_mods.TryGetValue(modId, out var mod)) return;
+            if (string.Equals(mod.FileName, fileName, StringComparison.OrdinalIgnoreCase)) return; // текущее имя не «прежнее»
+            if (!_history.TryGetValue(modId, out var l)) _history[modId] = l = new List<string>();
+            l.RemoveAll(x => string.Equals(x, fileName, StringComparison.OrdinalIgnoreCase));
+            l.Add(fileName); // самое свежее в конце
+        }
+    }
+
+    public bool IsCheckingDeclined(string modId) { lock (_g) return _declined.Contains(modId); }
+
+    public void SetCheckingDeclined(string modId, bool declined)
+    {
+        lock (_g)
+        {
+            if (!_mods.ContainsKey(modId)) return; // мода уже нет: ничего не запоминаем
+            if (declined) _declined.Add(modId); else _declined.Remove(modId);
         }
     }
 
@@ -104,6 +143,7 @@ public sealed class InMemoryLibraryStore : ILibraryStore
         {
             if (!_mods.ContainsKey(b.ModId)) throw new InvalidOperationException($"Нет мода {b.ModId}");
             _bindings[(b.ModId, b.Source)] = b;
+            if (b.Confirmed) _declined.Remove(b.ModId); // пользователь сам привязал страницу: прежний отказ от проверки снят
         }
     }
 
