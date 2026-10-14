@@ -48,6 +48,16 @@ public sealed class MatchDecisionStore : IMatchDecisions
     /// <summary>Ключ записи: «сайт:номер на сайте». Сайт без различия регистра, номер как есть.</summary>
     public static string KeyOf(Listing l) => $"{l.Source.Trim().ToLowerInvariant()}:{l.SourceId.Trim()}";
 
+    /// <summary>Ключ из файла (его могли поправить руками): сайт к нижнему регистру, пробелы по краям убраны. Без «сайт:» — пусто.</summary>
+    private static string NormKey(string k)
+    {
+        var i = k.IndexOf(':');
+        if (i <= 0 || i == k.Length - 1) return "";
+        var src = k[..i].Trim().ToLowerInvariant();
+        var id = k[(i + 1)..].Trim();
+        return src.Length == 0 || id.Length == 0 ? "" : $"{src}:{id}";
+    }
+
     private static (string, string) Pair(string a, string b) => string.CompareOrdinal(a, b) <= 0 ? (a, b) : (b, a);
 
     public ManualMatch? Get(Listing a, Listing b)
@@ -154,7 +164,7 @@ public sealed class MatchDecisionStore : IMatchDecisions
                     !e.TryGetProperty("b", out var b) || b.ValueKind != JsonValueKind.String ||
                     !e.TryGetProperty("decision", out var d) || d.ValueKind != JsonValueKind.String)
                 { skipped++; continue; }
-                var ka = a.GetString()!; var kb = b.GetString()!;
+                var ka = NormKey(a.GetString()!); var kb = NormKey(b.GetString()!);
                 var dec = d.GetString() switch { "same" => (ManualMatch?)ManualMatch.Same, "different" => ManualMatch.Different, _ => null };
                 if (dec is null || ka.Length == 0 || kb.Length == 0 || ka == kb) { skipped++; continue; }
                 var at = e.TryGetProperty("at", out var t) && t.ValueKind == JsonValueKind.String && t.TryGetDateTimeOffset(out var parsed) ? parsed : _now();

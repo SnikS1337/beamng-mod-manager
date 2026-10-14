@@ -19,7 +19,11 @@ public sealed record ModCard(
 
 public sealed record SourceReport(string SourceId, string DisplayName, SourceStatus Status, int Count, string? Note);
 
-public sealed record SearchResponse(IReadOnlyList<ModCard> Cards, IReadOnlyList<SourceReport> Sources);
+public sealed record SearchResponse(IReadOnlyList<ModCard> Cards, IReadOnlyList<SourceReport> Sources)
+{
+    /// <summary>Все записи в порядке получения от сайтов. По ним <see cref="SearchService.Regroup"/> пересобирает карточки так же, как исходный поиск.</summary>
+    public IReadOnlyList<Listing> Listings { get; init; } = Array.Empty<Listing>();
+}
 
 public sealed class SearchOptions
 {
@@ -56,8 +60,11 @@ public sealed class SearchService
     /// Заново собирает карточки из уже найденных записей, не обращаясь к сайтам. Нужен сразу после ручного решения:
     /// карточки склеиваются или расходятся мгновенно, а отчёт по сайтам остаётся прежним.
     /// </summary>
-    public SearchResponse Regroup(SearchResponse previous, string query) =>
-        new(Group(previous.Cards.SelectMany(c => c.Listings).ToList(), (query ?? "").Trim()), previous.Sources);
+    public SearchResponse Regroup(SearchResponse previous, string query)
+    {
+        var listings = previous.Listings.Count > 0 ? previous.Listings : previous.Cards.SelectMany(c => c.Listings).ToList();
+        return new SearchResponse(Group(listings, (query ?? "").Trim()), previous.Sources) { Listings = listings };
+    }
 
     public async Task<SearchResponse> SearchAsync(string query, CancellationToken ct = default)
     {
@@ -71,7 +78,7 @@ public sealed class SearchService
 
         var reports = done.Select(d => d.Report).ToList();
         var listings = done.SelectMany(d => d.Listings).ToList();
-        return new SearchResponse(Group(listings, query), reports);
+        return new SearchResponse(Group(listings, query), reports) { Listings = listings };
     }
 
     private async Task<(SourceReport Report, IReadOnlyList<Listing> Listings)> RunOne(IModSource s, string query, CancellationToken ct)
@@ -117,6 +124,7 @@ public sealed class SearchService
         {
             List<Listing>? best = null;
             var bestScore = -1.0;
+            var bestForced = false;
             foreach (var c in clusters)
             {
                 // Один сайт не даёт двух записей в одной карточке (кроме повтора той же записи).
@@ -128,7 +136,8 @@ public sealed class SearchService
                 var forced = _decisions is not null && c.Any(m => _decisions.Get(m, l) == ManualMatch.Same);
                 if (!forced && results.Any(r => r.Verdict != MatchVerdict.Same)) continue; // со всеми участниками «Same», иначе цепочки склеят чужое
                 var score = results.Average(r => r.Score);
-                if (score > bestScore) { best = c; bestScore = score; }
+                // Карточка, с которой пользователь сам объединил запись, важнее любой автоматической склейки.
+                if ((forced && !bestForced) || (forced == bestForced && score > bestScore)) { best = c; bestScore = score; bestForced = forced; }
             }
             if (best is not null) best.Add(l); else clusters.Add(new List<Listing> { l });
         }

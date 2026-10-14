@@ -164,7 +164,7 @@ public static class LibrarySync
         return null;
     }
 
-    private static string NameKey(string fileName) => TitleNormalizer.Normalize(BindingSuggester.FromFileName(fileName).Name);
+    internal static string NameKey(string fileName) => TitleNormalizer.Normalize(BindingSuggester.FromFileName(fileName).Name);
 
     private static InstalledMod NewMod(ILibraryStore store, DiskMod d, string? id, DateTimeOffset? now = null)
     {
