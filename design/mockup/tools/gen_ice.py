@@ -5,7 +5,9 @@ from PIL import Image
 from scipy.ndimage import gaussian_filter
 from gen import sdf_rrect
 
-SPECS = [('rail', 84, 284, 36, 34), ('gear', 56, 56, 28, 22), ('bar', 964, 52, 26, 24), ('insp', 328, 928, 32, 52), ('card', 308, 236, 26, 60)]
+SPECS = [('rail', 84, 284, 36, 34), ('gear', 56, 56, 28, 22), ('bar', 964, 52, 26, 24), ('insp', 328, 928, 32, 52), ('card', 308, 236, 26, 60),
+         ('chk', 328, 540, 32, 50), ('set', 1308, 640, 32, 50), ('set_d', 1308, 470, 32, 50), ('set_s', 1308, 560, 32, 50), ('dl', 1100, 700, 36, 50),
+         ('set_a', 1308, 760, 32, 50), ('pv', 420, 56, 28, 24)]
 
 
 def fractal(rng, W, H, base, octaves=5, gain=0.55):
