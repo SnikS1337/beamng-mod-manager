@@ -36,7 +36,7 @@ def rim(glass, name):
 def surface(glass, name, blur, scale=None):
     # настоящее Liquid Glass почти не размывает: видно картинку, а не пятно; смысл даёт преломление
     css = _surface(glass, name, {'Insp': 5, 'Bar': 3}.get(name, 2), scale)
-    dim = {'Insp': ' brightness(.62) contrast(.9)', 'Bar': ' brightness(.42) contrast(.9)', 'Rail': ' brightness(.84)'}.get(name, '')
+    dim = {'Insp': ' brightness(.70) contrast(.9)', 'Bar': ' brightness(.60) contrast(.9)', 'Rail': ' brightness(.78)'}.get(name, '')
     return css.replace('saturate(1.4)', 'saturate(1.4)' + dim)
 
 
@@ -52,16 +52,19 @@ U.rim = rim
 U.surface = surface
 
 EXTRA = '''
-.glass.top>div>span:nth-child(-n+2){background:rgba(8,14,28,.55);padding:3px 8px;border-radius:9px;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
-.glass{background:rgba(16,26,48,.20) !important}
-.glass.top{background:rgba(12,20,38,.68) !important;text-shadow:0 1px 8px rgba(4,8,18,.8),0 0 2px rgba(4,8,18,.6)}
+.glass{background:rgba(14,24,44,.44) !important}
+.glass.top{background:rgba(14,24,44,.44) !important;text-shadow:0 1px 8px rgba(4,8,18,.8),0 0 2px rgba(4,8,18,.6)}
 .glass{text-shadow:0 1px 6px rgba(6,12,24,.50)}
 .glass .cta{text-shadow:none}
 /* читаемость: второстепенный текст на стекле не бледнее 0,84 */
 .sb{color:rgba(255,255,255,.88) !important}
 .glass [style*="rgba(255,255,255,0.64)"],.glass [style*="rgba(255,255,255,0.66)"],.glass [style*="rgba(255,255,255,0.7)"],.glass [style*="rgba(255,255,255,0.72)"],.glass [style*="rgba(255,255,255,.7)"],.glass [style*="rgba(255,255,255,.6)"]{color:rgba(255,255,255,.90) !important}
-.glass.insp{background:rgba(14,24,44,.64) !important;text-shadow:0 1px 8px rgba(4,8,18,.7)}
+.glass.insp{background:rgba(14,24,44,.50) !important;text-shadow:0 1px 8px rgba(4,8,18,.7)}
 .glass.top [style*="rgba(255,255,255"]{color:rgba(255,255,255,.94) !important}
+.glass.insp .ice{opacity:.16}
+.glass.insp [style*="background:rgba(255,255,255,0.09)"]{background:rgba(8,14,28,.34) !important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),inset 0 1px 0 rgba(255,255,255,.14)}
+.glass.top .ice{opacity:.34}
+.hfade{position:absolute;left:104px;top:0;width:988px;height:98px;z-index:0;pointer-events:none;background:linear-gradient(180deg,rgba(8,14,28,.58) 0,rgba(8,14,28,.58) 52%,rgba(8,14,28,0) 100%);-webkit-mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent)}
 .ice{position:absolute;inset:0;border-radius:inherit;pointer-events:none;background-size:100% 100%;opacity:.55}
 .gl{position:absolute;opacity:0;pointer-events:none;background:
  linear-gradient(90deg,transparent 0,rgba(235,246,255,.7) 50%,transparent 100%) center/100% 1.5px no-repeat,
@@ -176,7 +179,7 @@ def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
     if not cap:
         status = None if status != 'off' else 'off'
     chip = {
-        'update': '<span class="chip wh pulse">Есть обновление</span>',
+        'update': f'<span class="chip dk up pulse">{DOT.format(c="#8fd0ff")}Есть обновление</span>',
         'lost': f'<span class="chip dk">{DOT.format(c="#ffb340")}Страница пропала</span>',
         'maybe': f'<span class="chip dk">{DOT.format(c="#ffd36b")}Возможно, обновлён</span>',
         'off': f'<span class="chip dk">{SNOW}<span style="margin-left:6px">Выключен</span></span>',
@@ -187,7 +190,7 @@ def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
     info = (f'<div class="info"><div class="nm">{n}</div><div class="sb">{subh}</div></div>') if cap else ''
     return (f'<article class="card" style="position:absolute;left:{x}px;top:{y}px;width:{w}px;animation-delay:{60 + pos * 45}ms">'
             f'<div class="cd{" sel" if sel else ""}{" off" if off else ""}{"" if cap else " under"}" style="height:{U.PLATE_H}px" tabindex="0">'
-            f'<div class="pw"><div class="ph pic p-{img}" style="{extra}"></div>{frost}<div class="scrim"></div></div>{chip if cap else ''}{info}</div></article>\n')
+            f'<div class="pw"><div class="ph pic p-{img}" style="{extra}"></div>{frost}<div class="scrim"></div><div class="fade"></div></div>{chip if cap else ''}{info}</div></article>\n')
 
 
 U.tile = tile
@@ -204,14 +207,13 @@ CARD_CSS = '''
 .scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,14,28,.18) 0%,rgba(8,14,28,0) 26%,rgba(8,14,28,0) 52%,rgba(8,14,28,.62) 100%)}
 .cd:hover{transform:translateY(-5px);box-shadow:0 26px 44px rgba(4,8,20,.58),0 0 34px rgba(170,205,255,.20),0 3px 8px rgba(4,8,20,.35)}
 .cd:hover .ph{transform:scale(1.06)}
-.info{position:absolute;left:10px;right:10px;bottom:10px;height:56px;box-sizing:border-box;padding:9px 15px 0;border-radius:19px;z-index:3;
- background:linear-gradient(180deg,rgba(20,30,52,.68),rgba(10,18,34,.84));
- -webkit-backdrop-filter:blur(12px) saturate(1.5) brightness(.8);backdrop-filter:blur(12px) saturate(1.5) brightness(.8);
- box-shadow:inset 0 0 0 1px rgba(255,255,255,.15),inset 0 1.5px 0 rgba(255,255,255,.40),inset 0 -1px 0 rgba(255,255,255,.08),0 6px 14px rgba(4,8,20,.32)}
+.fade{position:absolute;left:0;right:0;bottom:0;height:50%;pointer-events:none;background:linear-gradient(180deg,rgba(8,14,28,0) 0,rgba(8,14,28,.66) 34%,rgba(8,14,28,.90) 100%)}
+.info{position:absolute;left:20px;right:20px;bottom:14px;height:50px;box-sizing:border-box;z-index:3;text-shadow:0 1px 8px rgba(4,8,20,.75)}
 .nm{font-size:15px;line-height:19px;font-weight:620;letter-spacing:-.005em;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb{margin-top:1px;font-size:12.5px;line-height:17px;color:rgba(255,255,255,.74);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chip{position:absolute;top:12px;right:12px;z-index:3;display:inline-flex;align-items:center;height:26px;padding:0 11px;border-radius:13px;font-size:12px;font-weight:700;letter-spacing:.005em}
 .chip.wh{background:rgba(255,255,255,.95);color:#14181f;box-shadow:0 4px 12px rgba(4,8,20,.35)}
+.chip.dk.up{box-shadow:inset 0 0 0 1px rgba(143,208,255,.55),0 4px 12px rgba(4,8,20,.3)}
 .chip.dk{background:rgba(10,16,30,.80);color:#fff;font-weight:600;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),inset 0 1px 0 rgba(255,255,255,.4),0 4px 12px rgba(4,8,20,.3)}
 .cd.sel{transform:translateY(-3px);animation:selglow var(--beat) ease-in-out infinite}
 .cd.sel::after{content:"";position:absolute;inset:-4px;border-radius:30px;padding:2.5px;pointer-events:none;z-index:5;
@@ -221,7 +223,7 @@ CARD_CSS = '''
 .cd.off .ph{filter:saturate(.25) brightness(.9) contrast(1.05)}
 .cd.off .pw::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(150,195,235,.30),rgba(120,165,215,.20))}
 .frost{position:absolute;inset:0;background-size:100% 100%;z-index:1;opacity:.95}
-.cd.off .scrim{z-index:2}
+.cd.off .scrim,.cd.off .fade{z-index:2}
 @media (prefers-reduced-motion:reduce){.cd.sel{animation:none}}
 .cd.under{opacity:.5;filter:saturate(.7)}
 '''
@@ -235,6 +237,18 @@ def build():
     html, n = re.subn(r'<div role="radiogroup" aria-label="Фильтр".*?</div>(?=<label style)', lambda m: seg, html, count=1, flags=re.S)
     assert n == 1, 'полоса фильтров не найдена'
     html = html.replace('</defs></svg>', drop_filter().replace('id="dpn"', 'id="lgdpn"') + '</defs></svg>', 1)
+    html = html.replace('<header class="glass lq top"', '<div class="hfade"></div><header class="glass lq top"', 1)
+    assert 'class="hfade"' in html
+    html = html.replace('>Машина</span>', '>Состав</span>', 1).replace('font-weight:500">Dacia Sandero Stepway</span>', 'font-weight:500">Машина, 3 цвета</span>', 1)
+    html = html.replace("('Машина', 'Dacia Sandero Stepway')", "('Машина', 'Dacia Sandero Stepway')").replace('>Dacia Sandero Stepway</span>', ' style="white-space:nowrap">Dacia Sandero Stepway</span>', 1) if False else html
+    html = html.replace('142 МБ, на сайте 151 МБ', '142 МБ <span style="opacity:.82;font-weight:450">(на сайте 151)</span>', 1)
+    btn = 'white-space:nowrap;padding:0 6px;height:38px;border-radius:19px;border:0;cursor:pointer;color:#fff;font-size:13px;font-weight:600;background:rgba(255,255,255,.14);box-shadow:inset 0 0 0 1px rgba(255,255,255,.20),inset 0 1px 0 rgba(255,255,255,.28)'
+    tail = (f'<div style="margin-top:auto;display:flex;flex-direction:column;gap:12px"><div style="display:flex;gap:10px">'
+            f'<button type="button" style="flex:1;{btn}">Открыть страницу</button><button type="button" style="flex:1;{btn}">Выключить</button></div>'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;padding:0 6px"><button type="button" style="padding:0;border:0;background:transparent;color:#ffb8b0;font-size:13.5px;font-weight:650;cursor:pointer">Удалить</button>'
+            f'<span style="font-size:12.5px;color:rgba(255,255,255,.88)">Можно вернуть позже</span></div></div></div></aside>')
+    html, n = re.subn(r'<div style="margin-top:auto;display:flex;flex-wrap.*?</span></div></div></aside>', lambda m: tail, html, count=1, flags=re.S)
+    assert n == 1, 'низ инспектора не найден'
     return html.replace('</style>', EXTRA + DROP_CSS + RAIL_CSS + CARD_CSS + rules + '</style>', 1)
 
 
