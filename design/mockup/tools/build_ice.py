@@ -5,7 +5,7 @@ import build_ui as U
 
 _rim = U.rim
 _surface = U.surface
-SIZES = {'rail': (84, 928), 'gear': (56, 56), 'bar': (964, 52), 'insp': (328, 928)}
+SIZES = {'rail': (84, 284), 'gear': (56, 56), 'bar': (964, 52), 'insp': (328, 928)}
 
 
 def glints(name, n, seed):
@@ -26,9 +26,9 @@ def glints(name, n, seed):
 
 
 def rim(glass, name):
-    base = _rim(glass, 'railt' if name == 'rail' else name)
+    base = _rim(glass, 'rail4' if name == 'rail' else name)
     if glass and name in SIZES:
-        n = {'rail': 14, 'gear': 2, 'bar': 8, 'insp': 12}[name]
+        n = {'rail': 6, 'gear': 2, 'bar': 8, 'insp': 12}[name]
         return base + f'<div class="ice" style="background-image:url({U.A("ice_" + name + ".png")})">{glints(name, n, hash(name) % 97)}</div>'
     return base
 
@@ -41,7 +41,7 @@ def surface(glass, name, blur, scale=None):
 _lens = U.lens
 def lens(fid, name, w, h, scale=46):
     if fid == 'lgRail':
-        name, h = 'railt', 928
+        name, h = 'rail4', 284
     return _lens(fid, name, w, h, int(scale * 1.5))   # линза заметнее: контент изгибается у краёв
 U.lens = lens
 
@@ -118,13 +118,12 @@ DROP_CSS = '''
 '''
 
 
-NAV = [('grid', 'Гараж', 16, None), ('upd', 'Обновления', 80, '3'), ('search', 'Поиск', 144, None), ('gear', 'Настройки', 854, None)]
-RECENT = [('dacia', True, True, 'Dacia Sandero Stepway'), ('mustang', False, False, 'Ford Mustang Shelby GT500'), ('lambo', False, False, 'Lamborghini Huracán EVO'),
-          ('tractor', False, False, 'New Holland T7'), ('truck', False, True, 'Kenworth T610'), ('coupe', False, False, 'Falcon RS Coupe'), ('lebedka', False, False, 'Lebedka Tow')]
+NAV = [('grid', 'Гараж', 14, None), ('upd', 'Обновления', 76, '3'), ('search', 'Поиск', 138, None), ('gear', 'Настройки', 212, None)]
+RAIL_H = 284
 
 
 def chrome(glass, active):
-    """Левая панель на всю высоту: разделы (подвижная капля), «Недавние» фото, «Играть», настройки внутри."""
+    """Левая панель: четыре раздела в одной капсуле, одна подвижная капля; настройки отделены тонкой чертой."""
     items = ''
     for i, (k, label, top, badge) in enumerate(NAV):
         bd = (f'<span class="pulse" style="position:absolute;top:3px;right:6px;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:9px;background:#fff;color:#111;'
@@ -132,15 +131,8 @@ def chrome(glass, active):
         items += (f'<label class="rn" style="top:{top}px"><input type="radio" name="nv" id="n{i}" {"checked" if i == 0 else ""} aria-label="{label}">'
                   f'{U.icon(k, 22, 1.7)}<span>{label}</span>{bd}</label>')
     rules = ''.join(f'.lft:has(#n{i}:checked) .ndrop{{top:{t}px}}\n' for i, (_, _, t, _) in enumerate(NAV))
-    thumbs = ''.join(
-        f'<a class="th p-{img}{" cur" if cur else ""}" href="#" title="{name}" aria-label="{name}" style="top:{258 + i * 64}px">'
-        f'{"<i class=\"pulse\" style=\"position:absolute;top:-1px;right:-1px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px rgba(20,30,52,.6)\"></i>" if upd else ""}</a>'
-        for i, (img, cur, upd, name) in enumerate(RECENT))
-    play = ('<button type="button" class="play" aria-label="Играть"><svg width="26" height="26" viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>'
-            '<span class="plabel">Играть</span>')
-    html = (f'<nav class="glass lft" aria-label="Разделы" style="left:16px;top:16px;width:84px;height:928px;border-radius:36px;{U.surface(glass, "Rail", 7)}">'
-            f'{U.rim(glass, "rail")}<div style="position:absolute;inset:0"><i class="ndrop"></i>{items}'
-            f'<i class="hr" style="top:222px"></i><span class="cap" style="top:232px">Недавние</span>{thumbs}{play}</div></nav>\n')
+    html = (f'<nav class="glass lft" aria-label="Разделы" style="left:16px;top:16px;width:84px;height:{RAIL_H}px;border-radius:36px;{U.surface(glass, "Rail", 7)}">'
+            f'{U.rim(glass, "rail")}<div style="position:absolute;inset:0"><i class="ndrop"></i>{items}<i class="hr" style="top:200px"></i></div></nav>\n')
     return html + f'<style>{rules}</style>'
 
 
@@ -159,18 +151,69 @@ RAIL_CSS = '''
 .rn:hover{color:#fff}.rn:has(input:checked){color:#fff;font-weight:600}
 .rn:has(input:focus-visible){outline:3px solid #fff;outline-offset:2px;border-radius:24px}
 .hr{position:absolute;left:22px;width:40px;height:1px;background:rgba(255,255,255,.24)}
-.cap{position:absolute;left:0;right:0;text-align:center;font-size:10.5px;letter-spacing:.02em;color:rgba(255,255,255,.62)}
-.th{position:absolute;left:16px;width:52px;height:52px;border-radius:50%;background-size:cover;background-position:center;z-index:3;
- box-shadow:0 0 0 1.5px rgba(255,255,255,.50),0 8px 14px rgba(4,8,20,.45);transition:transform var(--mid) var(--ease),box-shadow var(--mid) var(--ease)}
-.th:hover{transform:translateY(-2px) scale(1.07);box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 22px rgba(170,205,255,.45),0 12px 18px rgba(4,8,20,.5)}
-.th.cur{box-shadow:0 0 0 2.5px #fff,0 0 24px rgba(170,205,255,.55),0 8px 14px rgba(4,8,20,.45)}
-.play{position:absolute;left:14px;top:766px;width:56px;height:56px;border:0;border-radius:50%;z-index:3;cursor:pointer;display:flex;align-items:center;justify-content:center;padding-left:3px;
- background:linear-gradient(160deg,rgba(150,205,255,.60),rgba(80,130,225,.30));
- -webkit-backdrop-filter:blur(2px) saturate(1.6);backdrop-filter:blur(2px) saturate(1.6);
- box-shadow:inset 0 0 0 1px rgba(255,255,255,.4),inset 2px 2px 4px -1px rgba(255,255,255,.9),inset -2px -2px 4px -1px rgba(255,255,255,.4),0 0 26px rgba(130,190,255,.55),0 10px 20px rgba(4,8,20,.5);
- transition:transform var(--fast) var(--ease)}
-.play:hover{transform:scale(1.06)}.play:active{transform:scale(.96)}
-.plabel{position:absolute;left:0;right:0;top:826px;text-align:center;font-size:11px;font-weight:500;color:rgba(255,255,255,.8)}
+'''
+
+
+# ---------------------------------------------------------------- Карточка мода: фото-окно со стеклянной подписью
+SNOW = ('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">'
+        '<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7"/></svg>')
+DOT = '<i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:{c};margin-right:7px;flex:0 0 auto"></i>'
+
+
+def tile(x, y, w, pos, img, n, sub, status, crop, sel, cap=True):
+    extra = ''
+    if crop:
+        d = dict(p.split(':') for p in crop.split(';'))
+        extra = f'background-size:{d["size"]};background-position:{d["pos"]};'
+    chip = {
+        'update': '<span class="chip wh pulse">Есть обновление</span>',
+        'lost': f'<span class="chip dk">{DOT.format(c="#ffb340")}Страница пропала</span>',
+        'maybe': f'<span class="chip dk">{DOT.format(c="#ffd36b")}Возможно, обновлён</span>',
+        'off': f'<span class="chip dk">{SNOW}<span style="margin-left:6px">Выключен</span></span>',
+    }.get(status, '')
+    off = status == 'off'
+    subh = f'<b style="color:#fff;font-weight:650">{sub}</b>' if status == 'update' else sub
+    frost = f'<div class="frost" style="background-image:url({U.A("ice_card.png")})"></div>' if off else ''
+    info = (f'<div class="info"><div class="nm">{n}</div><div class="sb">{subh}</div></div>') if cap else ''
+    return (f'<article class="card" style="position:absolute;left:{x}px;top:{y}px;width:{w}px;animation-delay:{60 + pos * 45}ms">'
+            f'<div class="cd{" sel" if sel else ""}{" off" if off else ""}{"" if cap else " under"}" style="height:{U.PLATE_H}px" tabindex="0">'
+            f'<div class="pw"><div class="ph pic p-{img}" style="{extra}"></div>{frost}<div class="scrim"></div></div>{chip}{info}</div></article>\n')
+
+
+U.tile = tile
+
+CARD_CSS = '''
+.card{animation:rise .8s cubic-bezier(.2,.8,.2,1) both}
+.cd{position:relative;border-radius:26px;box-sizing:border-box;cursor:pointer;
+ box-shadow:0 16px 32px rgba(4,8,20,.50),0 3px 8px rgba(4,8,20,.35);transition:transform var(--mid) var(--ease),box-shadow var(--mid) var(--ease)}
+.cd::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:4;
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),inset 0 1.5px 0 rgba(255,255,255,.55),inset 1.5px 0 0 rgba(255,255,255,.18),inset 0 -1px 0 rgba(255,255,255,.12)}
+.pw{position:absolute;inset:0;border-radius:inherit;overflow:hidden;background:#1d2533}
+.pw .ph{position:absolute;inset:0;background-size:cover;background-position:center;transition:transform 1.2s var(--ease),filter var(--mid)}
+.pw .ph::after{display:none}
+.scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,14,28,.18) 0%,rgba(8,14,28,0) 26%,rgba(8,14,28,0) 52%,rgba(8,14,28,.62) 100%)}
+.cd:hover{transform:translateY(-5px);box-shadow:0 26px 44px rgba(4,8,20,.58),0 0 34px rgba(170,205,255,.20),0 3px 8px rgba(4,8,20,.35)}
+.cd:hover .ph{transform:scale(1.06)}
+.info{position:absolute;left:10px;right:10px;bottom:10px;height:56px;box-sizing:border-box;padding:9px 15px 0;border-radius:19px;z-index:3;
+ background:linear-gradient(180deg,rgba(22,34,58,.40),rgba(10,18,34,.62));
+ -webkit-backdrop-filter:blur(10px) saturate(1.5);backdrop-filter:blur(10px) saturate(1.5);
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.15),inset 0 1.5px 0 rgba(255,255,255,.40),inset 0 -1px 0 rgba(255,255,255,.08),0 6px 14px rgba(4,8,20,.32)}
+.nm{font-size:15px;line-height:19px;font-weight:620;letter-spacing:-.005em;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb{margin-top:1px;font-size:12.5px;line-height:17px;color:rgba(255,255,255,.74);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip{position:absolute;top:12px;right:12px;z-index:3;display:inline-flex;align-items:center;height:26px;padding:0 11px;border-radius:13px;font-size:12px;font-weight:700;letter-spacing:.005em}
+.chip.wh{background:rgba(255,255,255,.95);color:#14181f;box-shadow:0 4px 12px rgba(4,8,20,.35)}
+.chip.dk{background:rgba(14,22,40,.58);color:#fff;font-weight:600;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),inset 0 1px 0 rgba(255,255,255,.4),0 4px 12px rgba(4,8,20,.3)}
+.cd.sel{transform:translateY(-3px);animation:selglow var(--beat) ease-in-out infinite}
+.cd.sel::after{content:"";position:absolute;inset:-4px;border-radius:30px;padding:2.5px;pointer-events:none;z-index:5;
+ background:conic-gradient(from 200deg,rgba(255,255,255,.95),rgba(120,205,255,.95) 16%,rgba(255,255,255,.9) 34%,rgba(255,255,255,.75) 55%,rgba(255,115,205,.9) 72%,rgba(255,255,255,.95) 90%,rgba(255,255,255,.95));
+ -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+@keyframes selglow{0%,100%{box-shadow:0 18px 34px rgba(4,8,20,.5),0 0 26px rgba(140,195,255,.32)}50%{box-shadow:0 22px 40px rgba(4,8,20,.5),0 0 52px rgba(140,195,255,.62)}}
+.cd.off .ph{filter:saturate(.25) brightness(.9) contrast(1.05)}
+.cd.off .pw::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(150,195,235,.30),rgba(120,165,215,.20))}
+.frost{position:absolute;inset:0;background-size:100% 100%;z-index:1;opacity:.95}
+.cd.off .scrim{z-index:2}
+@media (prefers-reduced-motion:reduce){.cd.sel{animation:none}}
+.cd.under{opacity:.5;filter:saturate(.7)}
 '''
 
 
@@ -182,7 +225,7 @@ def build():
     html, n = re.subn(r'<div role="radiogroup" aria-label="Фильтр".*?</div>(?=<label style)', lambda m: seg, html, count=1, flags=re.S)
     assert n == 1, 'полоса фильтров не найдена'
     html = html.replace('</defs></svg>', drop_filter().replace('id="dpn"', 'id="lgdpn"') + '</defs></svg>', 1)
-    return html.replace('</style>', EXTRA + DROP_CSS + RAIL_CSS + rules + '</style>', 1)
+    return html.replace('</style>', EXTRA + DROP_CSS + RAIL_CSS + CARD_CSS + rules + '</style>', 1)
 
 
 if __name__ == '__main__':
