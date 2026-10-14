@@ -71,6 +71,9 @@ public sealed record AppSettings
     /// <summary>«Огоньки»: светлые точки над фоном.</summary>
     public bool Fireflies { get; init; } = true;
 
+    /// <summary>«Наклон фона за мышкой» (DESIGN_MOTION.md 3.8). По умолчанию выключен.</summary>
+    public bool BackgroundTilt { get; init; }
+
     // ---- Прочее
 
     /// <summary>Предупреждать, когда включённых модов больше этого числа (по умолчанию 30, PLAN.md), 1–1000.</summary>
@@ -79,7 +82,8 @@ public sealed record AppSettings
     /// <summary>Подсказка первого запуска уже показана.</summary>
     public bool FirstRunDone { get; init; }
 
-    /// <summary>Размер окна при закрытии (0 — не сохранён, окно открывается по умолчанию).</summary>
+    /// <summary>Размер окна при закрытии (0 — не сохранён, окно открывается по умолчанию). Меньше минимума окна 1000 × 680
+    /// (DESIGN_FLOWS.md 2) не бывает: такое значение считается мусором.</summary>
     public int WindowWidth { get; init; }
     public int WindowHeight { get; init; }
     public bool WindowMaximized { get; init; }
@@ -91,8 +95,8 @@ public sealed record AppSettings
         Background = Enum.IsDefined(Background) ? Background : BackgroundMode.Photo,
         BackgroundDim = Math.Clamp(BackgroundDim, 0, 100),
         ActiveModsWarnAbove = Math.Clamp(ActiveModsWarnAbove, 1, 1000),
-        WindowWidth = WindowWidth is >= 640 and <= 20000 ? WindowWidth : 0,       // обрывок или мусор: окно откроется по умолчанию
-        WindowHeight = WindowHeight is >= 480 and <= 20000 ? WindowHeight : 0,
+        WindowWidth = WindowWidth is >= 1000 and <= 20000 ? WindowWidth : 0,       // обрывок или мусор: окно откроется по умолчанию
+        WindowHeight = WindowHeight is >= 680 and <= 20000 ? WindowHeight : 0,
         SchemaVersion = CurrentSchema,
         ModsFolder = Clean(ModsFolder),
         UserFolder = Clean(UserFolder),
