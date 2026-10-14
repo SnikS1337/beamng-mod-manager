@@ -11,7 +11,9 @@ TITLE_H = 32
 FINAL_CSS = '''
 /* по DESIGN_MOTION.md: само движется только фон; выбранная карточка и главная кнопка не «дышат» */
 .cd.sel{animation:none !important;box-shadow:0 22px 40px rgba(4,8,20,.5),0 0 40px rgba(140,195,255,.45) !important}
-.cta::after{display:none !important}
+.cta::after{display:none !important}/* кольцо выбранной карточки: светлое и холодно-голубое, без розового (DESIGN.md раздел 4) */
+.cd.sel::after{background:conic-gradient(from 200deg,rgba(255,255,255,.95),rgba(150,210,255,.95) 18%,rgba(255,255,255,.9) 40%,rgba(205,230,255,.85) 62%,rgba(150,210,255,.9) 80%,rgba(255,255,255,.95)) !important}
+
 .chip.up{animation:none !important}
 .wintb{position:absolute;left:0;top:0;width:1440px;height:32px;z-index:50;display:flex;align-items:center;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;
  background:#141b27;color:rgba(255,255,255,.86);font-size:12px;box-shadow:inset 0 -1px 0 rgba(255,255,255,.06)}
