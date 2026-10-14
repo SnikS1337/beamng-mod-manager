@@ -451,6 +451,7 @@
 | --- | --- |
 | `design/mockup/tools/gen.py` | Считает карты преломления и бликов для панелей (нужны `numpy`, `Pillow`) |
 | `design/mockup/tools/build_ui.py` | Собирает `Main` (Гараж), `MainMatte` (без жидкого стекла), `Settings` (внешний вид) и общие детали |
+| `design/mockup/tools/build_m3.py` | Одна доска «Гараж в Material 3» для сравнения стилей (не часть дизайна, ничего не заменяет) |
 | `design/mockup/tools/build_screens.py` | Собирает `Updates`, `Search`, `Download`, `DownloadChecked`, `SettingsDownload`, `SettingsSites` |
 
 Сборка из папки `tools`: положить в `photos/` файлы `wall.jpg` (фон, 1500 × 1000) и
