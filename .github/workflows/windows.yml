@@ -40,6 +40,14 @@ jobs:
           New-Item -ItemType Directory shots -Force | Out-Null
           dotnet build src/BeamModManager.App -c Release -warnaserror -nologo -clp:NoSummary 2>&1 | Tee-Object shots/build.log
           if ($LASTEXITCODE -ne 0) { throw "сборка не прошла" }
+      # собранный шейдер стекла уходит в ci-shots вместе со снимками, оттуда его можно взять в репозиторий
+      - name: Шейдер в снимки
+        shell: pwsh
+        run: |
+          $ps = "src/BeamModManager.App/Shaders/Glass.ps"
+          if (-not (Test-Path $ps)) { throw "${ps}: файла нет после сборки" }
+          Copy-Item $ps shots/Glass.ps
+          "Glass.ps: $((Get-Item shots/Glass.ps).Length) байт"
       - name: Снимки экрана
         shell: pwsh
         run: |

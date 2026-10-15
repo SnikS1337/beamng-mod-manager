@@ -15,10 +15,41 @@
 
   <ItemGroup>
     <Resource Include="Assets\frost-card.png"/>
+    <!-- Шейдер преломления (DESIGN.md 3.2). Glass.ps собирает цель CompileGlassShader ниже; элемент без звёздочки
+         остаётся в списке, даже если файла ещё нет. -->
+    <Resource Include="Shaders\Glass.ps"/>
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\BeamModManager.Ui\BeamModManager.Ui.csproj" />
   </ItemGroup>
+
+  <!-- Glass.fx -> Glass.ps компилятором fxc из Windows SDK (есть на машинах GitHub Actions). Путь можно задать
+       свойством FxcPath. Без fxc, но с готовым Glass.ps в репозитории сборка идёт дальше с ним.
+       Цель стоит до BeforeBuild: ресурсы WPF (.g.resources) собираются позже, внутри CoreBuild. -->
+  <PropertyGroup>
+    <GlassShaderSource>Shaders\Glass.fx</GlassShaderSource>
+    <GlassShaderOutput>Shaders\Glass.ps</GlassShaderOutput>
+  </PropertyGroup>
+
+  <Target Name="CompileGlassShader" BeforeTargets="BeforeBuild"
+          Inputs="$(MSBuildProjectDirectory)\$(GlassShaderSource)" Outputs="$(MSBuildProjectDirectory)\$(GlassShaderOutput)">
+    <ItemGroup Condition="'$(FxcPath)' == ''">
+      <_FxcCandidate Include="$(MSBuildProgramFiles32)\Windows Kits\10\bin\10.*\x64\fxc.exe"/>
+    </ItemGroup>
+    <PropertyGroup Condition="'$(FxcPath)' == ''">
+      <_FxcList>@(_FxcCandidate)</_FxcList>
+      <FxcPath Condition="'$(_FxcList)' != ''">$(_FxcList.Substring($([MSBuild]::Add($(_FxcList.LastIndexOf(';')), 1))))</FxcPath>
+    </PropertyGroup>
+
+    <Error Condition="!Exists('$(FxcPath)') And !Exists('$(MSBuildProjectDirectory)\$(GlassShaderOutput)')"
+           Text="Не найден fxc.exe (Windows SDK) и нет готового $(GlassShaderOutput). Установите Windows SDK или укажите путь: -p:FxcPath=..."/>
+    <Message Condition="!Exists('$(FxcPath)')" Importance="normal"
+             Text="fxc.exe не найден: используется готовый $(GlassShaderOutput)"/>
+
+    <Exec Condition="Exists('$(FxcPath)')" WorkingDirectory="$(MSBuildProjectDirectory)"
+          Command="&quot;$(FxcPath)&quot; /nologo /T ps_3_0 /E main /O3 /Fo &quot;$(GlassShaderOutput)&quot; &quot;$(GlassShaderSource)&quot;"
+          IgnoreStandardErrorWarningFormat="true" CustomErrorRegularExpression="error X\d+" StandardOutputImportance="high"/>
+  </Target>
 
 </Project>
