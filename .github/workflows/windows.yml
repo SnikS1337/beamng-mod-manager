@@ -35,10 +35,10 @@ jobs:
           $exe = "src/BeamModManager.App/bin/Release/net10.0-windows/BeamModManager.exe"
           New-Item -ItemType Directory shots -Force | Out-Null
           function Shot($name, [string[]]$extra) {
-            $args = @('--demo', 'design/demo', '--shot', "shots/$name.png") + $extra
-            $p = Start-Process $exe -ArgumentList $args -PassThru
-            if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "$name: окно не закрылось за 2 минуты" }
-            if (-not (Test-Path "shots/$name.png")) { throw "$name: снимка нет (код выхода $($p.ExitCode))" }
+            $a = @('--demo', 'design/demo', '--shot', "shots/$name.png") + $extra
+            $p = Start-Process $exe -ArgumentList $a -PassThru
+            if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "${name}: окно не закрылось за 2 минуты" }
+            if (-not (Test-Path "shots/$name.png")) { throw "${name}: снимка нет (код выхода $($p.ExitCode))" }
           }
           Shot 'garage' @('--select', '"Dacia Sandero Stepway"')
           Shot 'garage-empty-panel' @()
