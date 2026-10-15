@@ -52,7 +52,13 @@ public sealed record InstallResult(
 }
 
 /// <summary>Архив мода на диске.</summary>
-public sealed record DiskMod(string FileName, bool Enabled, long SizeBytes);
+/// <param name="SubFolder">Подпапка внутри mods: <see cref="ModInstaller.RepoFolder"/> для модов, скачанных в самой игре
+/// из репозитория BeamNG; null — корень mods или папка выключенных.</param>
+public sealed record DiskMod(string FileName, bool Enabled, long SizeBytes, string? SubFolder = null)
+{
+    /// <summary>Мод из репозитория игры: файлом управляет игра, менеджер его не переносит и не заменяет.</summary>
+    public bool FromGameRepo => SubFolder is not null;
+}
 
 /// <summary>Итог обновления мода: установка новой версии и судьба старого файла.</summary>
 public sealed record UpdateResult(InstallResult Install, bool OldRemoved, bool WasEnabled)
@@ -328,24 +334,51 @@ public sealed class ModInstaller
         return list.OrderBy(x => x.Item1, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>Установленные архивы с размером. Снимок делается под общей блокировкой: установка в этот момент не разорвёт картину.</summary>
+    /// <summary>Подпапка mods, куда игра кладёт моды, скачанные из её репозитория.</summary>
+    public const string RepoFolder = "repo";
+
+    /// <summary>
+    /// Установленные архивы с размером: корень mods, выключенные менеджером и mods/repo (скачанные в самой игре).
+    /// Снимок делается под общей блокировкой: установка в этот момент не разорвёт картину.
+    /// </summary>
     public IReadOnlyList<DiskMod> ScanDetailed()
     {
         lock (Gate)
         {
             var result = new List<DiskMod>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (name, on) in Scan())
             {
                 try
                 {
                     var fi = new FileInfo(Path.Combine(on ? _layout.ModsDir : _layout.DisabledDir, name));
-                    if (fi.Exists) result.Add(new DiskMod(name, on, fi.Length));
+                    if (fi.Exists && seen.Add(name)) result.Add(new DiskMod(name, on, fi.Length));
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* файл исчез или занят: в этот раз пропускаем */ }
             }
-            return result;
+            // игра различает моды по имени файла без папки, поэтому архив с тем же именем в корне главнее
+            var repo = Path.Combine(_layout.ModsDir, RepoFolder);
+            if (Directory.Exists(repo))
+            {
+                try
+                {
+                    foreach (var f in Directory.EnumerateFiles(repo, "*.zip").Order(StringComparer.OrdinalIgnoreCase))
+                    {
+                        var name = Path.GetFileName(f);
+                        if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || !seen.Add(name)) continue;
+                        try { result.Add(new DiskMod(name, true, new FileInfo(f).Length, RepoFolder)); }
+                        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                    }
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            }
+            return result.OrderBy(d => d.FileName, StringComparer.OrdinalIgnoreCase).ToList();
         }
     }
+
+    /// <summary>Где лежит архив на диске.</summary>
+    public string PathOf(DiskMod d) =>
+        d.SubFolder is { } sub ? Path.Combine(_layout.ModsDir, sub, d.FileName) : Path.Combine(d.Enabled ? _layout.ModsDir : _layout.DisabledDir, d.FileName);
 
     /// <summary>Папки, с которыми работает установщик.</summary>
     public ModLayout Layout => _layout;

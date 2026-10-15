@@ -81,6 +81,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
             GameDbSync.ApplyRepoInfo(_store, db);
         }
 
+        var disk = _installer.ScanDetailed().ToDictionary(d => d.FileName, StringComparer.OrdinalIgnoreCase);
         var updates = UpdateCheckService.Pending(_store, includeDismissed: true).ToDictionary(f => f.ModId);
         var bindings = _store.Bindings().Where(b => b.Confirmed).ToLookup(b => b.ModId);
         var result = new List<GarageMod>();
@@ -91,7 +92,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
             var b = bindings[m.Id].FirstOrDefault();
             var c = b is null ? null : _store.GetCheck(m.Id, b.Source);
             if (c is not null && (lastAll is null || c.LastCheckedUtc > lastAll)) lastAll = c.LastCheckedUtc;
-            var path = ArchivePath(m);
+            var path = ArchivePath(m, disk);
             string? preview = null;
             if (path is not null)
             {
@@ -122,14 +123,6 @@ public sealed class LibraryGarageBackend : IGarageBackend
 
     private bool _pruned;
 
-    private string? ArchivePath(InstalledMod m)
-    {
-        var l = _installer.Layout;
-        foreach (var dir in m.Enabled ? new[] { l.ModsDir, l.DisabledDir } : new[] { l.DisabledDir, l.ModsDir })
-        {
-            var p = Path.Combine(dir, m.FileName);
-            if (File.Exists(p)) return p;
-        }
-        return null;
-    }
+    private string? ArchivePath(InstalledMod m, IReadOnlyDictionary<string, DiskMod> disk) =>
+        disk.TryGetValue(m.FileName, out var d) ? _installer.PathOf(d) : null;
 }
