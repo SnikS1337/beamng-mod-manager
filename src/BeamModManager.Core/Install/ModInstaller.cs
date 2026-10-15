@@ -374,19 +374,22 @@ public sealed class ModInstaller
     {
         var root = _layout.ModsDir;
         if (!Directory.Exists(root)) yield break;
-        var stack = new Stack<string>();
-        try { foreach (var d in Directory.EnumerateDirectories(root).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase)) stack.Push(d); }
+        // ссылки на папки (junction, symlink) не обходим: петля на родителя увела бы обход в бесконечность; глубина ограничена
+        static bool Plain(string d) { try { return (File.GetAttributes(d) & FileAttributes.ReparsePoint) == 0; } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; } }
+        const int MaxDepth = 8;
+        var stack = new Stack<(string Dir, int Depth)>();
+        try { foreach (var d in Directory.EnumerateDirectories(root).Where(Plain).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase)) stack.Push((d, 1)); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { yield break; }
         while (stack.Count > 0)
         {
-            var dir = stack.Pop();
+            var (dir, depth) = stack.Pop();
             var rel = Path.GetRelativePath(root, dir).Replace('\\', '/');
             if (string.Equals(rel, "unpacked", StringComparison.OrdinalIgnoreCase) || rel.StartsWith("unpacked/", StringComparison.OrdinalIgnoreCase)) continue;
             List<string> files, dirs;
             try
             {
                 files = Directory.EnumerateFiles(dir, "*.zip").Order(StringComparer.OrdinalIgnoreCase).ToList();
-                dirs = Directory.EnumerateDirectories(dir).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+                dirs = depth >= MaxDepth ? new List<string>() : Directory.EnumerateDirectories(dir).Where(Plain).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).ToList();
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
             foreach (var f in files)
@@ -394,7 +397,7 @@ public sealed class ModInstaller
                 var name = Path.GetFileName(f);
                 if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) yield return (name, rel, f);
             }
-            foreach (var d in dirs) stack.Push(d);
+            foreach (var d in dirs) stack.Push((d, depth + 1));
         }
     }
 

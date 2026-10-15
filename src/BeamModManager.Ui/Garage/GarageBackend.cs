@@ -91,8 +91,8 @@ public sealed class LibraryGarageBackend : IGarageBackend
         GameDbReadResult db;
         using ((_store as JsonLibraryStore)?.Batch())
         {
-            GameDbSync.Reconcile(_store, _installer);
-            db = GameModDb.Read(GameModDb.PathIn(_installer.Layout.ModsDir));
+            db = GameModDb.ReadStable(GameModDb.PathIn(_installer.Layout.ModsDir));
+            GameDbSync.Reconcile(_store, _installer, db);
             GameDbSync.ApplyRepoInfo(_store, db);
         }
 

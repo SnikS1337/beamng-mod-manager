@@ -111,7 +111,12 @@ public partial class MainWindow : Window
             Native.StyleWindow(this);
             // фото карточек декодируются под масштаб Windows: на 150 % нужно в полтора раза больше пикселей
             ImageCache.DecodeHeight = (int)Math.Ceiling(260 * VisualTreeHelper.GetDpi(this).DpiScaleY);
-            SnapLayouts.Attach(this, MaxButton, over => { if (over) CapButton_MouseEnter(MaxButton, null); else if (!Caption.IsMouseOver) HideCapDrop(); },
+            // уход с «Развернуть» на соседнюю кнопку: WPF узнаёт о новой кнопке чуть позже — проверяем после него, иначе капля мигнёт
+            SnapLayouts.Attach(this, MaxButton, over =>
+                {
+                    if (over) CapButton_MouseEnter(MaxButton, null);
+                    else Dispatcher.BeginInvoke(() => { if (!Caption.IsMouseOver) HideCapDrop(); }, DispatcherPriority.Input);
+                },
                 () => Max_Click(MaxButton, new RoutedEventArgs()));
         };
         Root.SizeChanged += (_, _) => ApplyWidthClass();
