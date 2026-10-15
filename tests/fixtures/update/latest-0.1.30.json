@@ -1,0 +1,8 @@
+{
+  "version": "0.1.30",
+  "url": "https://github.com/SnikS1337/ModManagerBeamNG/releases/download/v0.1.30/ModManagerBeamNG.zip",
+  "size": 59905820,
+  "sha256": "d87f74bf7001575f8576a6103347bb2324b74b30cd600d1740b048a4b01ad10c",
+  "notes": "Самообновление программы: проверка при запуске, «Обновить» → загрузка с проверкой → подмена exe → перезапуск",
+  "published": "2026-10-15T13:41:50Z"
+}

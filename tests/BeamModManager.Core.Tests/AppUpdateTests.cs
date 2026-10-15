@@ -95,6 +95,17 @@ public static class AppUpdateTests
             Assert.Eq("0.1.30", AppVersion.Display(m.Version));
         });
 
+        t.Run("настоящий latest.json со сборочной машины (0.1.30) разбирается", () =>
+        {
+            var dir = AppContext.BaseDirectory;
+            while (dir != null && !Directory.Exists(Path.Combine(dir, "tests", "fixtures"))) dir = Path.GetDirectoryName(dir);
+            var (m, e) = UpdateManifest.Parse(File.ReadAllText(Path.Combine(dir!, "tests", "fixtures", "update", "latest-0.1.30.json")));
+            Assert.True(e is null, e ?? "");
+            Assert.Eq("0.1.30", AppVersion.Display(m!.Version));
+            Assert.Eq("https://github.com/SnikS1337/ModManagerBeamNG/releases/download/v0.1.30/ModManagerBeamNG.zip", m.Url.ToString());
+            Assert.True(m.Size > UpdateManifest.MinSize && m.Published is not null, "размер и дата");
+        });
+
         t.Run("недоверенное описание отклоняется: http, чужой сайт, нет суммы, неправдоподобный размер, мусор", () =>
         {
             var zip = ReleaseZip();
