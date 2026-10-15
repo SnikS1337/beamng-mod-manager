@@ -100,6 +100,8 @@ public partial class MainWindow : Window
         };
         Root.SizeChanged += (_, _) => ApplyWidthClass();
         TopBar.SizeChanged += (_, _) => AdaptTopBar();
+        FilterBox.SizeChanged += (_, _) => AdaptTopBar();
+        Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, AdaptTopBar);
         Loaded += OnLoaded;
         Loaded += (_, _) => FitMaximized();
         StateChanged += (_, _) => { FitMaximized(); UpdateMotion(); };
