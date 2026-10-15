@@ -235,6 +235,11 @@
 
             <ScrollViewer x:Name="Scroller" Margin="116,0,360,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                           Focusable="False" PanningMode="VerticalOnly">
+                <ScrollViewer.Resources>
+                    <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
+                        <Setter Property="Margin" Value="0,84,0,16"/>
+                    </Style>
+                </ScrollViewer.Resources>
                 <StackPanel Margin="0,84,0,28">
                     <Border CornerRadius="20" Height="40" Background="#1FFFFFFF" Margin="0,0,0,20" Padding="18,0,10,0"
                             Visibility="{Binding ManyEnabledBanner, Converter={StaticResource NullToCollapsed}}">
@@ -260,7 +265,7 @@
             </ScrollViewer>
 
             <!-- под верхней панелью карточки уходят в тень, чтобы подписи панели читались -->
-            <Border IsHitTestVisible="False" VerticalAlignment="Top" Height="98" Margin="104,0,348,0">
+            <Border x:Name="TopFade" IsHitTestVisible="False" VerticalAlignment="Top" Height="98" Margin="104,0,348,0">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                         <GradientStop Color="#94080E1C" Offset="0"/>
@@ -326,9 +331,9 @@
                  VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
             <DockPanel Margin="22,0,12,0">
                 <TextBlock x:Name="SectionTitle" Text="Гараж" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <TextBlock Text="{Binding CountText}" Foreground="{StaticResource Text3}" FontSize="13" Margin="14,1,0,0" VerticalAlignment="Center"/>
+                <TextBlock x:Name="CountLabel" Text="{Binding CountText}" Foreground="{StaticResource Text3}" FontSize="13" Margin="14,1,0,0" VerticalAlignment="Center"/>
 
-                <Border DockPanel.Dock="Right" Width="200" Height="34" CornerRadius="17" Background="#1FFFFFFF" Margin="14,0,0,0"
+                <Border x:Name="SearchField" DockPanel.Dock="Right" Width="200" Height="34" CornerRadius="17" Background="#1FFFFFFF" Margin="14,0,0,0"
                         WindowChrome.IsHitTestVisibleInChrome="True">
                     <Grid Margin="12,0">
                         <Path Data="{StaticResource IconSearch}" Stroke="#B8FFFFFF" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
@@ -344,7 +349,7 @@
                 </Border>
 
                 <!-- фильтры: активен один, под активным — капля -->
-                <Border DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="#57080E1C" VerticalAlignment="Center"
+                <Border x:Name="FilterBox" DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="#57080E1C" VerticalAlignment="Center"
                         WindowChrome.IsHitTestVisibleInChrome="True">
                     <Grid>
                         <Canvas>
@@ -368,9 +373,13 @@
             </DockPanel>
         </c:Glass>
 
+        <!-- узкое окно: правая панель выезжает поверх сетки, под ней затемнение; щелчок по нему закрывает панель -->
+        <Border x:Name="Dim" Background="#7A060A14" Visibility="Collapsed" MouseLeftButtonDown="Dim_MouseDown"/>
+
         <!-- Правая панель: x 1096, y 64 (под капсулой кнопок окна), 328 × 880 -->
         <c:Glass x:Name="Inspector" Source="{Binding ElementName=Scene}" Corner="32" Blur="14" Tint="#800E182C"
                  HorizontalAlignment="Right" Width="328" Margin="0,64,16,16">
+            <c:Glass.RenderTransform><TranslateTransform x:Name="InspectorMove"/></c:Glass.RenderTransform>
             <Grid>
                 <StackPanel VerticalAlignment="Center" Margin="28,0" Visibility="{Binding Details, Converter={StaticResource NullToVisible}}">
                     <TextBlock Text="Выберите мод" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>

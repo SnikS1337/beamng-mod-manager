@@ -41,7 +41,7 @@ public partial class MainWindow : Window
     private readonly GarageViewModel _vm;
     private readonly WindowHost _host;
     private readonly SpringDriver _springs = new();
-    private readonly Spring _navDrop, _filterX, _filterW, _capX, _capScale;
+    private readonly Spring _navDrop, _filterX, _filterW, _capX, _capScale, _inspX;
     private readonly BackgroundMotion _motion;
     private readonly DispatcherTimer _gameTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(6) };
@@ -71,6 +71,12 @@ public partial class MainWindow : Window
         _filterW = _springs.Add(new Spring(0.5, 0.15, 60), v => FilterDrop.Width = Math.Max(20, v));
         _capX = _springs.Add(new Spring(0.5, 0.15, -1), v => CapDropMove.X = v);
         _capScale = _springs.Add(new Spring(0.35, 0.15, 0.6), v => { CapDropScale.ScaleX = v; CapDropScale.ScaleY = v; });
+        _inspX = _springs.Add(new Spring(0.5, 0, 0), v => InspectorMove.X = v);
+
+        // на экране меньше 1440 × 960 окно открывается по размеру экрана минус рамка (DESIGN_FLOWS раздел 2)
+        var work = SystemParameters.WorkArea;
+        if (Width > work.Width - 16) Width = Math.Max(MinWidth, work.Width - 16);
+        if (Height > work.Height - 16) Height = Math.Max(MinHeight, work.Height - 16);
 
         if (host.StartWidth >= MinWidth && host.StartHeight >= MinHeight)
         {
@@ -87,7 +93,13 @@ public partial class MainWindow : Window
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); };
         _gameTimer.Tick += (_, _) => CheckGame();
 
-        SourceInitialized += (_, _) => Native.StyleWindow(this);
+        SourceInitialized += (_, _) =>
+        {
+            Native.StyleWindow(this);
+            SnapLayouts.Attach(this, MaxButton, over => { if (over) CapButton_MouseEnter(MaxButton, null); }, () => Max_Click(MaxButton, new RoutedEventArgs()));
+        };
+        Root.SizeChanged += (_, _) => ApplyWidthClass();
+        TopBar.SizeChanged += (_, _) => AdaptTopBar();
         Loaded += OnLoaded;
         Loaded += (_, _) => FitMaximized();
         StateChanged += (_, _) => { FitMaximized(); UpdateMotion(); };
@@ -155,6 +167,7 @@ public partial class MainWindow : Window
                 break;
             case nameof(GarageViewModel.Selected):
                 ScrollToSelected();
+                PlaceInspector();
                 break;
         }
     }
@@ -188,6 +201,71 @@ public partial class MainWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(MaxButton, (string)MaxButton.ToolTip);
     }
 
+    // ───────────── классы ширины (DESIGN_FLOWS раздел 2) ─────────────
+
+    private bool _narrow;
+
+    /// <summary>1100 и шире: правая панель на месте. 1000–1099: она закрыта и выезжает поверх сетки при выборе мода.</summary>
+    private void ApplyWidthClass()
+    {
+        var narrow = Root.ActualWidth < 1100;
+        if (narrow == _narrow && IsLoaded) return;
+        _narrow = narrow;
+        var right = narrow ? 16 : 360;
+        Scroller.Margin = new Thickness(116, 0, right, 0);
+        EmptyBox.Margin = SoonBox.Margin = new Thickness(116, 84, right, 0);
+        ToastBox.Margin = new Thickness(116, 0, right, 28);
+        TopFade.Margin = new Thickness(104, 0, right - 12, 0);
+        TopBar.Margin = new Thickness(116, 16, narrow ? 132 + 16 + 16 : 360, 0);
+        PlaceInspector(instant: true);
+    }
+
+    private void PlaceInspector(bool instant = false)
+    {
+        if (!_narrow)
+        {
+            Dim.Visibility = Visibility.Collapsed;
+            Inspector.Visibility = Visibility.Visible;
+            _springs.To(_inspX, 0, instant: true);
+            return;
+        }
+        var open = _vm.Selected is not null;
+        Dim.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        if (open) Inspector.Visibility = Visibility.Visible;
+        _springs.To(_inspX, open ? 0 : 344, instant);
+        if (!open && instant) Inspector.Visibility = Visibility.Collapsed;
+    }
+
+    private void Dim_MouseDown(object sender, MouseButtonEventArgs e) => _vm.Selected = null;
+
+    /// <summary>
+    /// Верхняя панель сжимается по шагам, когда не хватает места: убирается число модов (оно есть в правой панели),
+    /// поиск сужается, затем убирается заголовок (активный пункт левой панели и так говорит, где мы).
+    /// </summary>
+    private void AdaptTopBar()
+    {
+        var avail = TopBar.ActualWidth - 34;
+        if (avail <= 0) return;
+        FilterBox.Measure(new Size(double.PositiveInfinity, 52));
+        SectionTitle.Measure(new Size(double.PositiveInfinity, 52));
+        CountLabel.Measure(new Size(double.PositiveInfinity, 52));
+        var filters = FilterBox.DesiredSize.Width;
+        var title = SectionTitle.DesiredSize.Width;
+        var count = CountLabel.DesiredSize.Width + 14;
+        bool Fits(double search, bool withTitle, bool withCount) =>
+            filters + 14 + search + (withTitle ? title + 14 : 0) + (withCount ? count : 0) <= avail;
+
+        (double s, bool ti, bool co) = Fits(200, true, true) ? (200, true, true)
+            : Fits(200, true, false) ? (200, true, false)
+            : Fits(150, true, false) ? (150, true, false)
+            : Fits(150, false, false) ? (150, false, false)
+            : (Math.Max(110, avail - filters - 14), false, false);
+        SearchField.Width = s;
+        SectionTitle.Visibility = ti ? Visibility.Visible : Visibility.Collapsed;
+        CountLabel.Visibility = co ? Visibility.Visible : Visibility.Collapsed;
+        SearchHint.Text = s >= 150 ? "Найти в гараже" : "Найти";
+    }
+
     private void Min_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
 
     private void Max_Click(object sender, RoutedEventArgs e)
@@ -199,7 +277,7 @@ public partial class MainWindow : Window
     private void Close_Click(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
 
     /// <summary>Капля перетекает под кнопку, на которую навели; под «Закрыть» она красная.</summary>
-    private void CapButton_MouseEnter(object sender, MouseEventArgs e)
+    private void CapButton_MouseEnter(object sender, MouseEventArgs? e)
     {
         var i = sender == MinButton ? 0 : sender == MaxButton ? 1 : 2;
         var appearing = CapDrop.Opacity < 0.5;
