@@ -77,7 +77,11 @@ public partial class MainWindow : Window
         _filterW = _springs.Add(new Spring(0.5, 0.15, 60), v => FilterDrop.Width = Math.Max(20, v));
         _capX = _springs.Add(new Spring(0.5, 0.15, -1), v => CapDropMove.X = v);
         _capScale = _springs.Add(new Spring(0.35, 0.15, 0.6), v => { CapDropScale.ScaleX = v; CapDropScale.ScaleY = v; });
-        _inspX = _springs.Add(new Spring(0.5, 0, 0), v => InspectorMove.X = v);
+        _inspX = _springs.Add(new Spring(0.5, 0, 344), v =>
+        {
+            InspectorMove.X = v;
+            if (v >= 343 && _vm.Selected is null) Inspector.Visibility = Visibility.Collapsed; // уехала: стекло не считаем зря
+        });
 
         // на экране меньше 1440 × 960 окно открывается по размеру экрана минус рамка (DESIGN_FLOWS раздел 2)
         var work = SystemParameters.WorkArea;
@@ -104,16 +108,20 @@ public partial class MainWindow : Window
             Native.StyleWindow(this);
             // фото карточек декодируются под масштаб Windows: на 150 % нужно в полтора раза больше пикселей
             ImageCache.DecodeHeight = (int)Math.Ceiling(260 * VisualTreeHelper.GetDpi(this).DpiScaleY);
-            SnapLayouts.Attach(this, MaxButton, over => { if (over) CapButton_MouseEnter(MaxButton, null); }, () => Max_Click(MaxButton, new RoutedEventArgs()));
+            SnapLayouts.Attach(this, MaxButton, over => { if (over) CapButton_MouseEnter(MaxButton, null); else if (!Caption.IsMouseOver) HideCapDrop(); },
+                () => Max_Click(MaxButton, new RoutedEventArgs()));
         };
         Root.SizeChanged += (_, _) => ApplyWidthClass();
         TopBar.SizeChanged += (_, _) => AdaptTopBar();
-        FilterBox.SizeChanged += (_, _) => AdaptTopBar();
+        // числа в фильтрах меняют их ширину: пересчитываем панель, когда они меняются
+        foreach (var f in vm.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+        vm.PropertyChanged += (_, a) => { if (a.PropertyName == nameof(GarageViewModel.CountText)) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded); };
         Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, AdaptTopBar);
         Loaded += OnLoaded;
         Loaded += (_, _) => FitMaximized();
-        StateChanged += (_, _) => { FitMaximized(); UpdateMotion(); };
-        Activated += (_, _) => { UpdateMotion(); RefreshIfStale(); };
+        // свернули или развернули окно: Windows не сообщает, что мышь ушла с кнопки, и капля осталась бы висеть
+        StateChanged += (_, _) => { FitMaximized(); UpdateMotion(); HideCapDrop(instant: true); };
+        Activated += (_, _) => { UpdateMotion(); RefreshIfStale(); if (!Caption.IsMouseOver) HideCapDrop(instant: true); };
         Deactivated += (_, _) => UpdateMotion();
         IsVisibleChanged += (_, _) => UpdateMotion();
         Closing += OnClosing;
@@ -176,8 +184,9 @@ public partial class MainWindow : Window
                 PlaceFilterDrop(instant: false);
                 break;
             case nameof(GarageViewModel.Selected):
-                ScrollToSelected();
                 PlaceInspector();
+                // сетка могла перестроиться (панель заняла место): докручиваем, когда раскладка готова
+                Dispatcher.BeginInvoke(ScrollToSelected, DispatcherPriority.Loaded);
                 break;
         }
     }
@@ -220,35 +229,34 @@ public partial class MainWindow : Window
 
     private bool _narrow;
 
-    /// <summary>1100 и шире: правая панель на месте. 1000–1099: она закрыта и выезжает поверх сетки при выборе мода.</summary>
+    /// <summary>
+    /// Правая панель есть, только когда выбран мод; без выбора её место отдаётся сетке. Шире 1100 она стоит рядом с сеткой,
+    /// на 1000–1099 выезжает поверх неё с затемнением (DESIGN_FLOWS раздел 2).
+    /// </summary>
     private void ApplyWidthClass()
     {
-        var narrow = Root.ActualWidth < 1100;
-        if (narrow == _narrow && IsLoaded) return;
-        _narrow = narrow;
-        var right = narrow ? 16 : 360;
-        Scroller.Margin = new Thickness(116, 0, right, 0);
-        EmptyBox.Margin = SoonBox.Margin = new Thickness(116, 84, right, 0);
-        ToastBox.Margin = new Thickness(116, 0, right, 28);
-        TopFade.Margin = new Thickness(104, 0, right - 12, 0);
-        TopBar.Margin = new Thickness(116, 16, narrow ? 132 + 16 + 16 : 360, 0);
-        PlaceInspector(instant: true);
+        _narrow = Root.ActualWidth < 1100;
+        PlaceInspector(instant: !IsLoaded);
     }
 
     private void PlaceInspector(bool instant = false)
     {
-        if (!_narrow)
-        {
-            Dim.Visibility = Visibility.Collapsed;
-            Inspector.Visibility = Visibility.Visible;
-            _springs.To(_inspX, 0, instant: true);
-            return;
-        }
         var open = _vm.Selected is not null;
-        Dim.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        var beside = open && !_narrow; // панель занимает место рядом с сеткой
+        var right = beside ? 360 : 16;
+        var gridMargin = new Thickness(116, 0, right, 0);
+        if (Scroller.Margin != gridMargin)
+        {
+            Scroller.Margin = gridMargin;
+            EmptyBox.Margin = SoonBox.Margin = new Thickness(116, 84, right, 0);
+            ToastBox.Margin = new Thickness(116, 0, right, 28);
+            TopFade.Margin = new Thickness(104, 0, right - 12, 0);
+            TopBar.Margin = new Thickness(116, 16, beside ? 360 : 132 + 16 + 16, 0);
+        }
+        Dim.Visibility = open && _narrow ? Visibility.Visible : Visibility.Collapsed;
         if (open) Inspector.Visibility = Visibility.Visible;
         _springs.To(_inspX, open ? 0 : 344, instant);
-        if (!open && instant) Inspector.Visibility = Visibility.Collapsed;
+        if (!open && (instant || SpringDriver.ReducedMotion)) Inspector.Visibility = Visibility.Collapsed;
     }
 
     private void Dim_MouseDown(object sender, MouseButtonEventArgs e)
@@ -275,12 +283,12 @@ public partial class MainWindow : Window
     {
         var avail = TopBar.ActualWidth - 34;
         if (avail <= 0) return;
+        // ширины меряем по тексту, а не по раскладке: у скрытого элемента она нулевая, и панель прыгала бы
+        // между «влезает» и «не влезает» (заголовок то показывается, то прячется)
         FilterBox.Measure(new Size(double.PositiveInfinity, 52));
-        SectionTitle.Measure(new Size(double.PositiveInfinity, 52));
-        CountLabel.Measure(new Size(double.PositiveInfinity, 52));
         var filters = FilterBox.DesiredSize.Width;
-        var title = SectionTitle.DesiredSize.Width;
-        var count = CountLabel.DesiredSize.Width + 14;
+        var title = TextWidth(SectionTitle);
+        var count = TextWidth(CountLabel) + 14;
         bool Fits(double search, bool withTitle, bool withCount) =>
             filters + 14 + search + (withTitle ? title + 14 : 0) + (withCount ? count : 0) <= avail;
 
@@ -289,16 +297,32 @@ public partial class MainWindow : Window
             : Fits(150, true, false) ? (150, true, false)
             : Fits(150, false, false) ? (150, false, false)
             : (Math.Max(110, avail - filters - 14), false, false);
-        SearchField.Width = s;
-        SectionTitle.Visibility = ti ? Visibility.Visible : Visibility.Collapsed;
-        CountLabel.Visibility = co ? Visibility.Visible : Visibility.Collapsed;
-        SearchHint.Text = s >= 150 ? "Найти в гараже" : "Найти";
+        if (SearchField.Width != s) SearchField.Width = s;
+        var tv = ti ? Visibility.Visible : Visibility.Collapsed;
+        if (SectionTitle.Visibility != tv) SectionTitle.Visibility = tv;
+        var cv = co ? Visibility.Visible : Visibility.Collapsed;
+        if (CountLabel.Visibility != cv) CountLabel.Visibility = cv;
+        var hint = s >= 150 ? "Найти в гараже" : "Найти";
+        if (SearchHint.Text != hint) SearchHint.Text = hint;
     }
 
-    private void Min_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+    private double TextWidth(TextBlock tb)
+    {
+        var ft = new FormattedText(tb.Text ?? "", System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface(tb.FontFamily, tb.FontStyle, tb.FontWeight, tb.FontStretch), tb.FontSize, Brushes.White,
+            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        return Math.Ceiling(ft.WidthIncludingTrailingWhitespace) + tb.Margin.Left + tb.Margin.Right;
+    }
+
+    private void Min_Click(object sender, RoutedEventArgs e)
+    {
+        HideCapDrop(instant: true);
+        SystemCommands.MinimizeWindow(this);
+    }
 
     private void Max_Click(object sender, RoutedEventArgs e)
     {
+        HideCapDrop(instant: true);
         if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
         else SystemCommands.MaximizeWindow(this);
     }
@@ -317,10 +341,12 @@ public partial class MainWindow : Window
         CapDrop.BorderBrush = i == 2 ? RedDropRim : (Brush)FindResource("DropRim");
     }
 
-    private void Caption_MouseLeave(object sender, MouseEventArgs e)
+    private void Caption_MouseLeave(object sender, MouseEventArgs e) => HideCapDrop();
+
+    private void HideCapDrop(bool instant = false)
     {
-        _springs.To(_capScale, 0.6);
-        Fade(CapDrop, 0, 0.2);
+        _springs.To(_capScale, 0.6, instant);
+        Fade(CapDrop, 0, instant ? 0 : 0.2);
     }
 
     private static readonly Brush RedDrop = Frozen(new LinearGradientBrush(new GradientStopCollection
@@ -332,7 +358,7 @@ public partial class MainWindow : Window
 
     private static void Fade(UIElement el, double to, double seconds)
     {
-        if (SpringDriver.ReducedMotion) { el.BeginAnimation(OpacityProperty, null); el.Opacity = to; return; }
+        if (SpringDriver.ReducedMotion || seconds <= 0) { el.BeginAnimation(OpacityProperty, null); el.Opacity = to; return; }
         el.BeginAnimation(OpacityProperty, new DoubleAnimation(to, TimeSpan.FromSeconds(seconds)));
     }
 
@@ -391,7 +417,8 @@ public partial class MainWindow : Window
 
     private void Card_Click(object sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is ModCard c) _vm.Selected = c;
+        // щелчок по уже выбранной карточке закрывает правую панель
+        if (((FrameworkElement)sender).DataContext is ModCard c) _vm.Selected = ReferenceEquals(_vm.Selected, c) ? null : c;
     }
 
     private void ScrollToSelected()

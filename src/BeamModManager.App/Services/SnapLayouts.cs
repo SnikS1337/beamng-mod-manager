@@ -11,7 +11,7 @@ namespace BeamModManager.App.Services;
 /// </summary>
 internal static class SnapLayouts
 {
-    private const int WM_NCHITTEST = 0x0084, WM_NCMOUSEMOVE = 0x00A0, WM_NCLBUTTONDOWN = 0x00A1, WM_NCLBUTTONUP = 0x00A2;
+    private const int WM_NCHITTEST = 0x0084, WM_NCMOUSEMOVE = 0x00A0, WM_NCLBUTTONDOWN = 0x00A1, WM_NCLBUTTONUP = 0x00A2, WM_NCMOUSELEAVE = 0x02A2;
     private const int HTMAXBUTTON = 9;
 
     public static void Attach(Window w, FrameworkElement maxButton, Action<bool> hover, Action click)
@@ -25,8 +25,12 @@ internal static class SnapLayouts
                 case WM_NCHITTEST:
                     if (Over(maxButton, lParam)) { handled = true; return HTMAXBUTTON; }
                     break;
-                case WM_NCMOUSEMOVE when wParam == HTMAXBUTTON:
-                    hover(true);
+                case WM_NCMOUSEMOVE:
+                    hover(wParam == HTMAXBUTTON);
+                    break;
+                case WM_NCMOUSELEAVE:
+                    pressed = false;
+                    hover(false);
                     break;
                 case WM_NCLBUTTONDOWN when wParam == HTMAXBUTTON:
                     pressed = true;
