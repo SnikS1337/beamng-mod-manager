@@ -5,6 +5,8 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
+                <!-- первым — цвета оформления: окно заменяет его на Palette.Light.xaml и обратно -->
+                <ResourceDictionary Source="Palette.Dark.xaml"/>
                 <ResourceDictionary Source="Theme.xaml"/>
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>

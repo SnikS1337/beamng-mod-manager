@@ -147,6 +147,7 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) =>
         {
             Native.StyleWindow(this);
+            Native.SetDarkFrame(this, _light != true);
             // фото карточек декодируются под масштаб Windows: на 150 % нужно в полтора раза больше пикселей
             ImageCache.DecodeHeight = (int)Math.Ceiling(260 * VisualTreeHelper.GetDpi(this).DpiScaleY);
             // уход с «Развернуть» на соседнюю кнопку: WPF узнаёт о новой кнопке чуть позже — проверяем после него, иначе капля мигнёт
@@ -157,7 +158,7 @@ public partial class MainWindow : Window
                 },
                 () => Max_Click(MaxButton, new RoutedEventArgs()));
         };
-        Root.SizeChanged += (_, _) => ApplyWidthClass();
+        Root.SizeChanged += (_, _) => { ApplyWidthClass(); PlaceBlobs(TimeSpan.Zero); };
         TopBar.SizeChanged += (_, _) => AdaptTopBar();
         // числа в фильтрах меняют их ширину: пересчитываем панель, когда они меняются
         foreach (var f in vm.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
@@ -361,7 +362,8 @@ public partial class MainWindow : Window
 
     private readonly (Glass G, Brush Tint)[] _glass;
     private string _folderKey;
-    private BackgroundTheme? _theme;
+    private ThemePalette? _palette;
+    private bool? _light;
     private double _frost = -1;
 
     /// <summary>
@@ -370,29 +372,56 @@ public partial class MainWindow : Window
     /// </summary>
     private bool WeakGraphics() => _host.ShotPath is null && (RenderCapability.Tier >> 16) < 2;
 
-    /// <summary>Матовое стекло (DESIGN.md 3.2): размытие 26 px, плотная подложка.</summary>
+    /// <summary>Матовое стекло (DESIGN.md 3.2): размытие 26 px, плотная подложка; в светлом оформлении — молочно-белая.</summary>
     private static readonly Brush MatteTint = Frozen(new SolidColorBrush(Color.FromArgb(0xA8, 34, 46, 68)));
-    /// <summary>Плоское стекло: сплошная заливка #2a3446.</summary>
+    private static readonly Brush MatteTintLight = Frozen(new SolidColorBrush(Color.FromArgb(0xD1, 0xEE, 0xF2, 0xF8)));
+    /// <summary>Плоское стекло: сплошная заливка #2a3446 (светлое — #eef1f6).</summary>
     private static readonly Brush FlatTint = Frozen(new SolidColorBrush(Color.FromRgb(0x2A, 0x34, 0x46)));
+    private static readonly Brush FlatTintLight = Frozen(new SolidColorBrush(Color.FromRgb(0xEE, 0xF1, 0xF6)));
+    private readonly Dictionary<Glass, Brush> _lightTints = new();
+
+    /// <summary>
+    /// Подложка жидкого стекла в светлом оформлении: та же панель, но белая и чуть плотнее тёмной (на светлом фоне без
+    /// этого тёмный текст терял бы контраст): 0,44 → 0,56, 0,50 → 0,62, у тоста 0,70 → 0,82.
+    /// </summary>
+    private Brush LightTint(Glass g, Brush dark)
+    {
+        if (_lightTints.TryGetValue(g, out var b)) return b;
+        var a = dark is SolidColorBrush sc ? sc.Color.A / 255.0 : 0.44;
+        b = Frozen(new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Min(0.9, a + 0.12) * 255), 0xF5, 0xF8, 0xFC)));
+        _lightTints[g] = b;
+        return b;
+    }
 
     // число копий в ключ не входит: установщик читает его сам при каждой уборке, перечитывать папку не нужно
     private static string FolderKey(AppSettings s) => $"{s.ModsFolder}|{s.UserFolder}";
 
+    /// <summary>В Windows переключили светлый режим, прозрачность или анимацию: применяем сразу, без перезапуска.</summary>
     private void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e) =>
         Dispatcher.BeginInvoke(() => { if (IsLoaded) ApplyLook(_host.Settings.Current); });
 
     private void OnSettingsChanged(AppSettings s)
     {
-        ApplyLook(s);
+        ApplyLook(s, _revealFrom);
+        _revealFrom = null;
         _vm.ManyEnabledThreshold = s.ActiveModsWarnAbove;
         // папку уже переключила программа (App подписана раньше окна): перечитываем моды
         var key = FolderKey(s);
         if (key != _folderKey) { _folderKey = key; if (IsLoaded) Refresh(); }
     }
 
-    /// <summary>Применяет внешний вид сразу, без перезапуска: стекло, иней, тема фона, движение.</summary>
-    private void ApplyLook(AppSettings s)
+    /// <summary>
+    /// Применяет внешний вид сразу, без перезапуска: оформление (тёмное/светлое), стекло, иней, тема фона, движение.
+    /// <paramref name="origin"/> — откуда раскрывается новое оформление (место нажатия); null — из центра окна.
+    /// </summary>
+    private void ApplyLook(AppSettings s, Point? origin = null)
     {
+        var systemLight = Native.SystemLight();
+        _host.Settings.SystemLight = systemLight;
+        var light = SettingsViewModel.LightFor(s, systemLight);
+        var modeSwitch = _light is not null && _light != light;
+        if (_light != light) SwitchPalette(light, origin);
+
         SpringDriver.AnimationsOff = !s.UiAnimations;
         // ресурс меняем, только если значение другое: замена ресурса обходит всё дерево окна (сотни карточек)
         var frost = s.Frost ? s.FrostStrength switch { 0 => 0.55, 2 => 1.0, _ => 0.95 } : 0.0; // на доске иней на карточке .95
@@ -403,37 +432,153 @@ public partial class MainWindow : Window
         var ice = s.Frost ? s.FrostStrength switch { 0 => 0.5, 2 => 1.8, _ => 1.0 } : 0.0; // --k на доске
         foreach (var (g, tint) in _glass)
         {
-            g.SetLook(mode, ice, s.FrostSparks);
-            // у тоста своя, ещё более плотная подложка
-            g.Tint = mode switch { GlassMode.Flat => FlatTint, GlassMode.Matte when g != ToastBox => MatteTint, _ => tint };
+            g.SetLook(mode, ice, s.FrostSparks, light);
+            g.Tint = (mode, light) switch
+            {
+                (GlassMode.Flat, false) => FlatTint,
+                (GlassMode.Flat, true) => FlatTintLight,
+                (GlassMode.Matte, _) when g == ToastBox => light ? LightTint(g, tint) : tint, // у тоста своя, плотная подложка
+                (GlassMode.Matte, false) => MatteTint,
+                (GlassMode.Matte, true) => MatteTintLight,
+                (_, true) => LightTint(g, tint),
+                _ => tint,
+            };
         }
 
         Flies.Visibility = s.Fireflies ? Visibility.Visible : Visibility.Collapsed;
-        if (_theme != s.Theme) ApplyTheme(BackgroundThemes.Of(s.Theme), animate: _theme is not null && IsLoaded);
-        _theme = s.Theme;
+        Flies.Opacity = light ? 0.7 : 1; // белые огоньки на светлом фоне тише, иначе рябят
+        var palette = BackgroundThemes.Of(s.Theme, light);
+        // смена оформления закрыта раскрытием: под ним фон встаёт сразу; смена темы — плавное перетекание
+        if (palette != _palette) ApplyTheme(palette, animate: _palette is not null && IsLoaded && !modeSwitch);
         UpdateMotion();
     }
 
+    // ───────────── тёмное и светлое оформление ─────────────
+
+    /// <summary>Откуда раскрывать следующее оформление: место последнего нажатия в настройках.</summary>
+    private Point? _revealFrom;
+    private int _revealGen;
+
     /// <summary>
-    /// Тема фона: цвета основы, полосы и пятен перетекают в новые за 0,8 с по мягкой S-кривой — все слои одновременно и
-    /// с одной скоростью, поэтому промежуточные кадры тоже тёмные и цельные, без вспышки. Без анимаций — 0,25 с.
+    /// Меняет словарь цветов (Palette.Dark / Palette.Light): всё, что взято через DynamicResource, перекрашивается сразу.
+    /// Чтобы смена не была резкой, сначала снимается кадр прежнего вида; он лежит поверх и «раскрывается» кругом от места
+    /// нажатия с мягким краем — новое оформление проступает изнутри наружу за 0,9 с.
+    /// </summary>
+    private void SwitchPalette(bool light, Point? origin)
+    {
+        var shot = IsLoaded && _light is not null && !SpringDriver.ReducedMotion && _host.ShotPath is null ? SnapRoot() : null;
+        var dicts = Application.Current.Resources.MergedDictionaries;
+        var palette = new ResourceDictionary { Source = new Uri($"pack://application:,,,/Palette.{(light ? "Light" : "Dark")}.xaml", UriKind.Absolute) };
+        if (dicts.Count > 0 && dicts[0].Source?.OriginalString.Contains("Palette.", StringComparison.Ordinal) == true) dicts[0] = palette;
+        else dicts.Insert(0, palette);
+        _light = light;
+        Native.SetDarkFrame(this, !light);
+        if (shot is not null) Reveal(shot, origin ?? new Point(Root.ActualWidth / 2, Root.ActualHeight / 2));
+    }
+
+    /// <summary>Кадр всего окна в пикселях экрана (с уже идущим раскрытием, если оно не закончилось).</summary>
+    private BitmapSource? SnapRoot()
+    {
+        var w = Root.ActualWidth; var h = Root.ActualHeight;
+        if (w < 1 || h < 1) return null;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var rt = new RenderTargetBitmap((int)Math.Ceiling(w * dpi.DpiScaleX), (int)Math.Ceiling(h * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+        // через кисть, а не Render(Root): у развёрнутого окна у Root есть отступ, и прямой снимок съехал бы на его величину
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+            dc.DrawRectangle(new VisualBrush(Root) { ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, w, h) }, null, new Rect(0, 0, w, h));
+        rt.Render(dv);
+        rt.Freeze();
+        return rt;
+    }
+
+    private void Reveal(BitmapSource old, Point origin)
+    {
+        var gen = ++_revealGen;
+        var w = Root.ActualWidth; var h = Root.ActualHeight;
+        // до самого дальнего угла и ещё на ширину мягкого края
+        var far = new[] { new Point(0, 0), new Point(w, 0), new Point(0, h), new Point(w, h) }.Max(c => (c - origin).Length);
+        const double edge = 0.82; // доля радиуса, где кончается прозрачное «окно» и начинается мягкий край
+        var mask = new RadialGradientBrush
+        {
+            MappingMode = BrushMappingMode.Absolute,
+            Center = origin, GradientOrigin = origin, RadiusX = 0, RadiusY = 0,
+            GradientStops = { new GradientStop(Colors.Transparent, 0), new GradientStop(Colors.Transparent, edge), new GradientStop(Colors.Black, 1) },
+        };
+        ModeVeil.Source = old;
+        ModeVeil.OpacityMask = mask;
+        ModeVeil.Visibility = Visibility.Visible;
+        var time = TimeSpan.FromSeconds(1.2); // пружина без отскока: ощущается ≈0,75 с (длительность ×1,6, Motion/Spring.cs)
+        var grow = new DoubleAnimation(0, far / edge + 40, time) { EasingFunction = Anim.Smooth };
+        grow.Completed += (_, _) =>
+        {
+            if (gen != _revealGen) return; // уже идёт следующее раскрытие
+            ModeVeil.Visibility = Visibility.Collapsed;
+            ModeVeil.Source = null;
+            ModeVeil.OpacityMask = null;
+        };
+        mask.BeginAnimation(RadialGradientBrush.RadiusXProperty, grow);
+        mask.BeginAnimation(RadialGradientBrush.RadiusYProperty, grow.Clone());
+    }
+
+    // ───────────── тема фона ─────────────
+
+    /// <summary>
+    /// Тема фона: цвета основы, полосы, вуали и пятен перетекают в новые за 0,8 с по мягкой S-кривой, а пятна плавно
+    /// переезжают на свои места, — все слои одновременно и с одной скоростью, без вспышки. Без анимаций — 0,25 с.
     /// </summary>
     private void ApplyTheme(ThemePalette p, bool animate)
     {
+        _palette = p;
         var time = !animate ? TimeSpan.Zero : TimeSpan.FromSeconds(SpringDriver.ReducedMotion ? 0.25 : 0.8);
-        void To(GradientStop stop, uint argb)
+        void To(GradientStop stop, Color c)
         {
-            var c = ThemeSwatchConverter.ToColor(argb);
             if (time == TimeSpan.Zero) { stop.BeginAnimation(GradientStop.ColorProperty, null); stop.Color = c; return; }
             stop.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(c, time) { EasingFunction = ThemeEase }, HandoffBehavior.SnapshotAndReplace);
         }
-        for (var i = 0; i < Math.Min(BaseBrush.GradientStops.Count, p.Base.Count); i++) To(BaseBrush.GradientStops[i], p.Base[i]);
-        for (var i = 0; i < Math.Min(Grade.GradientStops.Count, p.Grade.Count); i++) To(Grade.GradientStops[i], p.Grade[i]);
+        static Color C(uint argb) => ThemeSwatchConverter.ToColor(argb);
+        static Color WithAlpha(uint argb, double a) => Color.FromArgb((byte)Math.Round(Math.Clamp(a, 0, 1) * 255), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
+
+        for (var i = 0; i < Math.Min(BaseBrush.GradientStops.Count, p.Base.Count); i++) To(BaseBrush.GradientStops[i], C(p.Base[i]));
+        for (var i = 0; i < Math.Min(Grade.GradientStops.Count, p.Grade.Count); i++) To(Grade.GradientStops[i], C(p.Grade[i]));
+        if (VeilBrush.GradientStops.Count >= 2)
+        {
+            To(VeilBrush.GradientStops[0], WithAlpha(p.Veil, p.VeilTop));
+            To(VeilBrush.GradientStops[1], WithAlpha(p.Veil, p.VeilBottom));
+        }
+        var fall = BackgroundThemes.Falloff;
         for (var i = 0; i < _motion.Blobs.Count && i < p.Blobs.Count; i++)
         {
-            To(_motion.Blobs[i].GradientStops[0], p.Blobs[i]);
-            To(_motion.Blobs[i].GradientStops[1], p.Blobs[i] & 0x00FFFFFF); // край пятна: тот же цвет, прозрачный
+            var stops = _motion.Blobs[i].Brush.GradientStops;
+            var a = BackgroundThemes.Alpha(p.Blobs[i].Color);
+            for (var k = 0; k < Math.Min(stops.Count, fall.Count); k++) To(stops[k], WithAlpha(p.Blobs[i].Color, a * fall[k].Alpha));
         }
+        PlaceBlobs(time);
+    }
+
+    /// <summary>Пятна на места темы под текущий размер окна; при смене темы — переезд за то же время, что и цвет.</summary>
+    private void PlaceBlobs(TimeSpan time)
+    {
+        if (_palette is not { } p) return;
+        var w = Math.Max(1, Root.ActualWidth > 0 ? Root.ActualWidth : Width);
+        var h = Math.Max(1, Root.ActualHeight > 0 ? Root.ActualHeight : Height);
+        void Set(UIElement e, DependencyProperty prop, double v)
+        {
+            if (time == TimeSpan.Zero) { e.BeginAnimation(prop, null); e.SetValue(prop, v); return; }
+            e.BeginAnimation(prop, new DoubleAnimation(v, time) { EasingFunction = ThemeEase }, HandoffBehavior.SnapshotAndReplace);
+        }
+        for (var i = 0; i < _motion.Blobs.Count && i < p.Blobs.Count; i++)
+        {
+            var b = p.Blobs[i];
+            var size = 2 * b.R * Math.Max(w, h);
+            var e = _motion.Blobs[i].Shape;
+            Set(e, WidthProperty, size);
+            Set(e, HeightProperty, size);
+            Set(e, Canvas.LeftProperty, b.X * w - size / 2);
+            Set(e, Canvas.TopProperty, b.Y * h - size / 2);
+        }
+        _motion.LayoutFlies(w, h);
     }
 
     private static readonly IEasingFunction ThemeEase = Frozen(new SineEase { EasingMode = EasingMode.EaseInOut });
@@ -772,6 +917,8 @@ public partial class MainWindow : Window
     }
 
     private void ResetLook_Click(object sender, RoutedEventArgs e) => _host.Settings.ResetAppearance();
+    // новое оформление раскрывается от того места, где нажали (с клавиатуры — из центра окна)
+    private void Mode_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _revealFrom = e.GetPosition(Root);
     private void LessWarn_Click(object sender, RoutedEventArgs e) => _host.Settings.LessWarn();
     private void MoreWarn_Click(object sender, RoutedEventArgs e) => _host.Settings.MoreWarn();
     private void LessBackups_Click(object sender, RoutedEventArgs e) => _host.Settings.LessBackups();

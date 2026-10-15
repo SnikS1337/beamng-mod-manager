@@ -588,6 +588,39 @@ public static class CoreFixesTests
             Assert.Eq(want with { DisabledSources = r.Settings.DisabledSources }, r.Settings);
         });
 
+        t.Run("каждая настройка переживает перезапуск: любое поле, изменённое по отдельности, читается обратно", () =>
+        {
+            // защита на будущее: новое поле в AppSettings, которое забыли прочитать в SettingsStore, уронит этот тест
+            var p = Path.Combine(Tmp(), "settings.json");
+            var st = new SettingsStore(p);
+            var baseline = new AppSettings();
+            foreach (var prop in typeof(AppSettings).GetProperties().Where(x => x.CanWrite && x.Name != nameof(AppSettings.SchemaVersion)))
+            {
+                object changed = prop.PropertyType switch
+                {
+                    var tp when tp == typeof(bool) => !(bool)prop.GetValue(baseline)!,
+                    var tp when tp == typeof(int) => prop.Name switch
+                    {
+                        nameof(AppSettings.WindowWidth) => 1234, nameof(AppSettings.WindowHeight) => 777,
+                        nameof(AppSettings.AutoCheckEveryHours) => 12, nameof(AppSettings.FrostStrength) => 2,
+                        _ => (int)prop.GetValue(baseline)! + 3,
+                    },
+                    var tp when tp == typeof(string) => @"D:\Игры\mods",
+                    var tp when tp.IsEnum => Enum.GetValues(tp).Cast<object>().Last(),
+                    var tp when tp == typeof(IReadOnlyList<string>) => new List<string> { "stmods" },
+                    _ => throw new InvalidOperationException($"тест не умеет менять поле {prop.Name} ({prop.PropertyType})"),
+                };
+                var want = baseline with { };
+                prop.SetValue(want, changed);
+                st.Save(want);
+                var got = st.Load();
+                Assert.False(got.HadProblems, $"{prop.Name}: без предупреждений");
+                var back = prop.GetValue(got.Settings);
+                var ok = back is IEnumerable<string> list ? list.SequenceEqual((IEnumerable<string>)changed) : Equals(back, prop.GetValue(want.Normalize()));
+                Assert.True(ok, $"{prop.Name}: записано {changed}, прочитано {back}");
+            }
+        });
+
         t.Run("старый файл без новых полей читается с значениями по умолчанию", () =>
         {
             var p = Path.Combine(Tmp(), "settings.json");

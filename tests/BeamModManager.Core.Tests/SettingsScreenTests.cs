@@ -156,6 +156,27 @@ public static class SettingsScreenTests
             finally { File.Delete(p); }
         });
 
+        t.Run("оформление: тёмное, светлое, как в Windows; плитки тем показывают палитру текущего оформления", () =>
+        {
+            var vm = new SettingsViewModel(new AppSettings());
+            Assert.True(vm.ModeDark && !vm.EffectiveLight, "по умолчанию тёмное");
+            Assert.False(vm.Themes[0].Palette.Light, "плитка тёмная");
+            var raised = new List<string?>();
+            vm.Themes[0].PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+            vm.ModeLight = true;
+            Assert.True(vm.EffectiveLight && vm.Current.Mode == UiMode.Light, "светлое");
+            Assert.True(vm.Themes[0].Palette.Light, "плитка светлая");
+            Assert.True(raised.Contains(nameof(ThemeTile.Palette)), "окно узнаёт о смене палитры плитки");
+            vm.ModeSystem = true;
+            Assert.False(vm.EffectiveLight, "в Windows тёмное");
+            vm.SystemLight = true;
+            Assert.True(vm.EffectiveLight, "в Windows стало светлое");
+            vm.ApplyPreset(AppearancePreset.Light);
+            Assert.True(vm.Current.Mode == UiMode.System, "набор оформление не трогает");
+            vm.ModeDark = false; // снятие отметки — не изменение
+            Assert.True(vm.Current.Mode == UiMode.System, "осталось");
+        });
+
         t.Run("разделы: заголовок следует за выбором", () =>
         {
             var vm = new SettingsViewModel(new AppSettings());

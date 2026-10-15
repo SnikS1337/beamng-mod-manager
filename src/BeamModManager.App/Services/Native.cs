@@ -20,21 +20,34 @@ internal static class Native
         if (h == IntPtr.Zero) return;
         var round = DWMWCP_ROUND;
         _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
-        var dark = 1;
-        _ = DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+        SetDarkFrame(w, true);
+    }
+
+    /// <summary>Тёмная или светлая системная рамка окна (тонкая кромка и тень Windows 11) — под оформление программы.</summary>
+    public static void SetDarkFrame(Window w, bool dark)
+    {
+        var h = new WindowInteropHelper(w).Handle;
+        if (h == IntPtr.Zero) return;
+        var v = dark ? 1 : 0;
+        _ = DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, ref v, sizeof(int));
     }
 
     /// <summary>
     /// В Windows выключены «Эффекты прозрачности» (Параметры → Персонализация → Цвета). Тогда стекло плоское.
     /// Нет ключа или нет прав — считаем, что прозрачность включена.
     /// </summary>
-    public static bool TransparencyOff()
+    public static bool TransparencyOff() => PersonalizeValue("EnableTransparency") == 0;
+
+    /// <summary>В Windows выбран светлый режим приложений (для оформления «Как в Windows»).</summary>
+    public static bool SystemLight() => PersonalizeValue("AppsUseLightTheme") == 1;
+
+    private static int? PersonalizeValue(string name)
     {
         try
         {
             using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            return k?.GetValue("EnableTransparency") is int v && v == 0;
+            return k?.GetValue(name) is int v ? v : null;
         }
-        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or System.IO.IOException) { return false; }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or System.IO.IOException) { return null; }
     }
 }

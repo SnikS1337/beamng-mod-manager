@@ -96,12 +96,14 @@ public class Glass : ContentControl
     private double _iceFactor = 1;
     private bool _sparksOn = true;
     private bool _live;
+    private bool _light;
 
-    /// <summary>Режим стекла, сила инея (0 — без инея; 0,5 / 1 / 1,8 — слабо, средне, сильно) и искры.</summary>
-    public void SetLook(GlassMode mode, double iceFactor, bool sparks)
+    /// <summary>Режим стекла, сила инея (0 — без инея; 0,5 / 1 / 1,8 — слабо, средне, сильно), искры и оформление.</summary>
+    public void SetLook(GlassMode mode, double iceFactor, bool sparks, bool light = false)
     {
         var modeChanged = mode != _mode;
         _mode = mode;
+        _light = light;
         _iceFactor = iceFactor;
         _sparksOn = sparks;
         if (modeChanged) { _lastBlur = -1; _lastBox = Rect.Empty; Sync(); }
@@ -222,7 +224,8 @@ public class Glass : ContentControl
             _refraction.Strength = Refraction;
             _refraction.Lens = Lens;
             _refraction.Radius = Corner;
-            _refraction.Brightness = Brightness;
+            // в светлом оформлении копия сцены под стеклом не притемняется, а чуть высветляется: светлое стекло
+            _refraction.Brightness = _light ? Math.Min(1.06, Brightness + 0.42) : Brightness;
             _refraction.Size = new Size(Math.Max(1, ActualWidth), Math.Max(1, ActualHeight));
             if (!ReferenceEquals(_lens.Effect, _refraction)) _lens.Effect = _refraction;
         }
@@ -231,11 +234,12 @@ public class Glass : ContentControl
         // у матового стекла ровная кромка 1 px и нет блика; у жидкого — яркая кромка по карте и блик сверху слева
         if (_rim is not null) _rim.Visibility = liquid ? Visibility.Visible : Visibility.Collapsed;
         if (_highlight is not null) _highlight.Visibility = liquid ? Visibility.Visible : Visibility.Collapsed;
-        if (_contour is not null) _contour.BorderBrush = liquid ? ContourLiquid : ContourMatte;
+        if (_contour is not null) _contour.BorderBrush = _light ? ContourLight : liquid ? ContourLiquid : ContourMatte;
     }
 
     private static readonly Brush ContourLiquid = Frozen(new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
     private static readonly Brush ContourMatte = Frozen(new SolidColorBrush(Color.FromArgb(0x42, 0xFF, 0xFF, 0xFF)));
+    private static readonly Brush ContourLight = Frozen(new SolidColorBrush(Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF)));
 
     private void ApplyIce()
     {

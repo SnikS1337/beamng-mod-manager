@@ -15,10 +15,10 @@ public sealed class BackgroundMotion
 {
     private readonly Part _bg, _flies;
     private readonly FrameworkElement _owner;
-    private readonly List<RadialGradientBrush> _blobs = new();
+    private readonly List<(Ellipse Shape, RadialGradientBrush Brush)> _blobs = new();
 
-    /// <summary>Кисти трёх пятен (не заморожены): их цвет меняется вместе с темой фона.</summary>
-    public IReadOnlyList<RadialGradientBrush> Blobs => _blobs;
+    /// <summary>Три пятна: фигура (место и размер ставит окно по теме) и её кисть (не заморожена: цвет меняется с темой).</summary>
+    public IReadOnlyList<(Ellipse Shape, RadialGradientBrush Brush)> Blobs => _blobs;
 
     /// <summary>Одна история со своим состоянием: ещё не начата, идёт, на паузе.</summary>
     private sealed class Part
@@ -53,31 +53,37 @@ public sealed class BackgroundMotion
 
         Anim(gradeMove, TranslateTransform.XProperty, 0, 1, 48, reverse: false);
 
-        // три светлых пятна (200°, 250°, 30°) со сдвигом фазы
-        (double X, double Y, double R, Color C, double Dx, double Dy, double Delay)[] blobs =
+        // три размытых пятна света: места и цвета задаёт тема (окно, PlaceBlobs); здесь — их тихое движение.
+        // Дрейф по 48 с со сдвигом фазы 0 / 12 / 24 с и «дыхание» (масштаб 1 → 1,14) с разными периодами,
+        // поэтому пятна никогда не двигаются в такт и узор не повторяется заметно.
+        (double Dx, double Dy, double Delay, double Breath)[] drift =
         {
-            (-220, 380, 380, Color.FromArgb(0x57, 0x58, 0xA9, 0xD6), 140, -90, 0),
-            (760, -300, 430, Color.FromArgb(0x4D, 0x8E, 0x82, 0xD8), -160, 110, 12),
-            (380, 560, 320, Color.FromArgb(0x42, 0xE6, 0xA0, 0x60), 180, -120, 24),
+            (140, -90, 0, 34), (-160, 110, 12, 41), (180, -120, 24, 47),
         };
-        foreach (var b in blobs)
+        foreach (var d in drift)
         {
-            RadialGradientBrush blob;
+            var brush = new RadialGradientBrush { GradientOrigin = new Point(0.5, 0.5) };
+            foreach (var (at, _) in BeamModManager.Ui.Look.BackgroundThemes.Falloff)
+                brush.GradientStops.Add(new GradientStop(Colors.Transparent, at));
             var e = new Ellipse
             {
-                Width = b.R * 2, Height = b.R * 2,
-                Fill = blob = new RadialGradientBrush(b.C, Color.FromArgb(0, b.C.R, b.C.G, b.C.B)) { GradientOrigin = new Point(0.5, 0.5) },
+                Fill = brush,
                 IsHitTestVisible = false,
+                RenderTransformOrigin = new Point(0.5, 0.5),
+                // размытие поверх мягкого края: пятно — это свет, а не круг. Кэш хранит уже размытую картинку,
+                // и сдвиг с масштабом её не перерисовывают
+                Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 48, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance },
                 CacheMode = new BitmapCache(0.5),
             };
-            var t = new TranslateTransform();
-            e.RenderTransform = t;
-            Canvas.SetLeft(e, b.X);
-            Canvas.SetTop(e, b.Y);
+            var move = new TranslateTransform();
+            var scale = new ScaleTransform(1, 1);
+            e.RenderTransform = new TransformGroup { Children = { scale, move } };
             lights.Children.Add(e);
-            _blobs.Add(blob);
-            Anim(t, TranslateTransform.XProperty, 0, b.Dx, 48, delay: b.Delay);
-            Anim(t, TranslateTransform.YProperty, 0, b.Dy, 48, delay: b.Delay);
+            _blobs.Add((e, brush));
+            Anim(move, TranslateTransform.XProperty, 0, d.Dx, 48, delay: d.Delay);
+            Anim(move, TranslateTransform.YProperty, 0, d.Dy, 48, delay: d.Delay);
+            Anim(scale, ScaleTransform.ScaleXProperty, 1, 1.14, d.Breath, delay: d.Delay);
+            Anim(scale, ScaleTransform.ScaleYProperty, 1, 1.14, d.Breath, delay: d.Delay);
         }
 
         // светлячки: 18 мягких огоньков 3–8 px, дрейф 14–30 с, мерцание 2,5–6,5 с; одно зерно — один и тот же рисунок
@@ -101,14 +107,26 @@ public sealed class BackgroundMotion
             };
             var t = new TranslateTransform();
             e.RenderTransform = t;
-            Canvas.SetLeft(e, 100 + rnd.NextDouble() * 1300);
-            Canvas.SetTop(e, 60 + rnd.NextDouble() * 860);
+            // место — доля окна (по доске 1440 × 960: x 100…1400, y 60…920); окно ставит его в LayoutFlies
+            _flyAt.Add((e, (100 + rnd.NextDouble() * 1300) / 1440, (60 + rnd.NextDouble() * 860) / 960));
             flies.Children.Add(e);
             var drift = 14 + rnd.NextDouble() * 16;
             Anim(t, TranslateTransform.XProperty, 0, rnd.Next(-90, 90), drift, delay: rnd.NextDouble() * drift);
             Anim(t, TranslateTransform.YProperty, 0, rnd.Next(-110, 60), drift, delay: rnd.NextDouble() * drift);
             var tw = 2.5 + rnd.NextDouble() * 4;
             Anim(e, UIElement.OpacityProperty, 0.15, 0.95, tw / 2, delay: rnd.NextDouble() * tw);
+        }
+    }
+
+    private readonly List<(UIElement Fly, double X, double Y)> _flyAt = new();
+
+    /// <summary>Огоньки по всему окну любого размера (а не только в углу 1440 × 960).</summary>
+    public void LayoutFlies(double width, double height)
+    {
+        foreach (var (fly, x, y) in _flyAt)
+        {
+            Canvas.SetLeft(fly, x * width);
+            Canvas.SetTop(fly, y * height);
         }
     }
 
