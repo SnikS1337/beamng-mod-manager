@@ -14,7 +14,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\frost-card.png"/>
     <!-- Шейдер преломления (DESIGN.md 3.2). Glass.ps собирает цель CompileGlassShader ниже; элемент без звёздочки
          остаётся в списке, даже если файла ещё нет. -->
     <Resource Include="Shaders\Glass.ps"/>

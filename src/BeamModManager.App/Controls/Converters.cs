@@ -180,12 +180,12 @@ public sealed class EnumToBoolConverter : IValueConverter
 /// </summary>
 public sealed class ThemeSwatchConverter : IValueConverter
 {
-    private static readonly Dictionary<(BeamModManager.Core.Settings.BackgroundTheme, string), Brush> Cache = new();
+    private static readonly Dictionary<(BeamModManager.Core.Settings.BackgroundTheme, bool, string), Brush> Cache = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is not BeamModManager.Ui.Look.ThemePalette p || parameter is not string part) return null;
-        if (Cache.TryGetValue((p.Theme, part), out var cached)) return cached;
+        if (Cache.TryGetValue((p.Theme, p.Light, part), out var cached)) return cached;
         Brush b;
         switch (part)
         {
@@ -196,20 +196,23 @@ public sealed class ThemeSwatchConverter : IValueConverter
                 }, new Point(0, 0), new Point(0.4, 1));
                 break;
             case "blob0":
+            case "blob1":
             case "blob2":
-                var c = ToColor(p.Blobs[part == "blob0" ? 0 : 2]);
+                // пятно на своём месте темы: плитка — уменьшенная копия фона
+                var blob = p.Blobs[part[^1] - '0'];
+                var c = ToColor(blob.Color);
                 var full = Color.FromArgb((byte)Math.Min(255, c.A * 2), c.R, c.G, c.B); // в маленькой плитке пятно ярче, иначе его не видно
                 b = new RadialGradientBrush(full, Color.FromArgb(0, c.R, c.G, c.B))
                 {
-                    Center = part == "blob0" ? new Point(0.15, 0.2) : new Point(0.85, 0.95),
-                    GradientOrigin = part == "blob0" ? new Point(0.15, 0.2) : new Point(0.85, 0.95),
-                    RadiusX = 0.75, RadiusY = 0.9,
+                    Center = new Point(blob.X, blob.Y),
+                    GradientOrigin = new Point(blob.X, blob.Y),
+                    RadiusX = blob.R * 2.2, RadiusY = blob.R * 2.2 * 1.5, // плитка вытянута по ширине: круг, а не овал
                 };
                 break;
             default: return null;
         }
         b.Freeze();
-        Cache[(p.Theme, part)] = b;
+        Cache[(p.Theme, p.Light, part)] = b;
         return b;
     }
 

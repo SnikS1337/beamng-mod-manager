@@ -56,11 +56,11 @@ public sealed class BackgroundMotion
         // три размытых пятна света: места и цвета задаёт тема (окно, PlaceBlobs); здесь — их тихое движение.
         // Дрейф по 48 с со сдвигом фазы 0 / 12 / 24 с и «дыхание» (масштаб 1 → 1,14) с разными периодами,
         // поэтому пятна никогда не двигаются в такт и узор не повторяется заметно.
-        (double Dx, double Dy, double Delay, double Breath)[] drift =
+        (double Dx, double Dy, double Delay, double Breath)[] paths =
         {
             (140, -90, 0, 34), (-160, 110, 12, 41), (180, -120, 24, 47),
         };
-        foreach (var d in drift)
+        foreach (var d in paths)
         {
             var brush = new RadialGradientBrush { GradientOrigin = new Point(0.5, 0.5) };
             foreach (var (at, _) in BeamModManager.Ui.Look.BackgroundThemes.Falloff)
