@@ -26,6 +26,10 @@ public sealed record GameModEntry(
 {
     /// <summary>Мод лежит прямо в папке mods (а не в mods/repo, mods/unpacked и т. п.).</summary>
     public bool InModsRoot => FullPath is null || string.Equals(FullPath, "/mods/" + FileName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Эта запись про архив в этой подпапке mods (null — корень). Без fullpath считаем, что совпадает.</summary>
+    public bool IsAt(string? subFolder) =>
+        FullPath is null || string.Equals(FullPath, "/mods/" + (subFolder is null ? "" : subFolder + "/") + FileName, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record GameDbReadResult(bool Exists, double? FormatVersion, IReadOnlyList<GameModEntry> Mods, IReadOnlyList<string> Warnings)
@@ -237,10 +241,14 @@ public static class GameModDb
     private static DateTimeOffset? Unix(long? s) => s is > 0 and < 32503680000 ? DateTimeOffset.FromUnixTimeSeconds(s.Value) : null;
 }
 
-/// <summary>Запущена ли игра. Имена процессов проверены на 0.39.4: BeamNG.drive.x64 (игра) и BeamNG.drive (лаунчер).</summary>
+/// <summary>
+/// Запущена ли игра. На 0.39.4 игра — это несколько процессов Bin64\BeamNG.drive.x64.exe; корневой BeamNG.drive.exe —
+/// лаунчер, он работает рядом с игрой и может остаться открытым после выхода из неё. Лаунчер db.json не держит, поэтому
+/// не считается: иначе отложенные переключения ждали бы, пока закроют и его.
+/// </summary>
 public static class GameProcess
 {
-    private static readonly string[] Names = { "BeamNG.drive.x64", "BeamNG.drive", "BeamNG.tech.x64" };
+    private static readonly string[] Names = { "BeamNG.drive.x64", "BeamNG.tech.x64" };
 
     public static bool IsRunning()
     {

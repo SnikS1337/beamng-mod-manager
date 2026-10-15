@@ -290,3 +290,62 @@ public static class GameDbTests
         });
     }
 }
+
+public static class GameRepoFolderTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("Моды, скачанные в самой игре (mods/repo)");
+
+        t.Run("видны в гараже, флажок из db.json учитывается по полному пути, выключение пишет флажок, файл не трогается", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var repo = Path.Combine(g.Mods, "repo");
+            Directory.CreateDirectory(repo);
+            File.WriteAllBytes(Path.Combine(repo, "civic_ek9.zip"), new byte[] { 1, 2, 3 });
+            // игра записала мод из репозитория выключенным
+            var db = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(g.Db))!.AsObject();
+            db["mods"]!.AsObject()["civic_ek9"] = System.Text.Json.Nodes.JsonNode.Parse(
+                """{"active":false,"filename":"civic_ek9.zip","fullpath":"/mods/repo/civic_ek9.zip","modType":"vehicle","dateAdded":1760000000,"stat":{"filesize":3}}""");
+            File.WriteAllText(g.Db, db.ToJsonString());
+
+            var disk = g.Inst.ScanDetailed();
+            var civic = disk.Single(d => d.FileName == "civic_ek9.zip");
+            Assert.True(civic.FromGameRepo, "из репозитория");
+            Assert.Eq(Path.Combine(repo, "civic_ek9.zip"), g.Inst.PathOf(civic));
+
+            var dbr = GameModDb.Read(g.Db);
+            Assert.False(GameDbSync.Overlay(disk, dbr).Single(d => d.FileName == "civic_ek9.zip").Enabled, "выключен флажком");
+
+            GameDbSync.Reconcile(g.Store, g.Inst);
+            Assert.False(g.Store.Mods().Single(m => m.FileName == "civic_ek9.zip").Enabled, "в библиотеке выключен");
+
+            var r = GameDbSync.SetEnabled(g.Inst, "civic_ek9.zip", true, () => false);
+            Assert.True(r.Success && r.Way == ToggleWay.GameDb, r.Message);
+            Assert.True(GameModDb.Read(g.Db).Find("civic_ek9.zip")!.Active, "включён в db.json");
+            Assert.True(File.Exists(Path.Combine(repo, "civic_ek9.zip")), "файл на месте");
+        });
+
+        t.Run("игра ещё не видела мод из репозитория: выключить нельзя, файл не уносится", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var repo = Path.Combine(g.Mods, "repo");
+            Directory.CreateDirectory(repo);
+            File.WriteAllBytes(Path.Combine(repo, "new_map.zip"), new byte[] { 1 });
+            var r = GameDbSync.SetEnabled(g.Inst, "new_map.zip", false, () => false);
+            Assert.False(r.Success, "не выключен");
+            Assert.True(File.Exists(Path.Combine(repo, "new_map.zip")), "файл на месте");
+        });
+
+        t.Run("архив с тем же именем в корне главнее, повтора нет", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var repo = Path.Combine(g.Mods, "repo");
+            Directory.CreateDirectory(repo);
+            File.WriteAllBytes(Path.Combine(repo, "w164_kenemation_2.7.zip"), new byte[] { 1 });
+            var w = g.Inst.ScanDetailed().Where(d => d.FileName.Equals("w164_kenemation_2.7.zip", StringComparison.OrdinalIgnoreCase)).ToList();
+            Assert.Eq(1, w.Count);
+            Assert.False(w[0].FromGameRepo, "из корня");
+        });
+    }
+}

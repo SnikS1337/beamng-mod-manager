@@ -28,7 +28,7 @@ public static class GameDbSync
 {
     /// <summary>Снимок папки с учётом db.json: архив в mods считается выключенным, если игра записала active: false.</summary>
     public static IReadOnlyList<DiskMod> Overlay(IReadOnlyList<DiskMod> disk, GameDbReadResult db) =>
-        disk.Select(d => d.Enabled && db.Find(d.FileName) is { InModsRoot: true } e && !e.Active ? d with { Enabled = false } : d).ToList();
+        disk.Select(d => d.Enabled && db.Find(d.FileName) is { } e && e.IsAt(d.SubFolder) && !e.Active ? d with { Enabled = false } : d).ToList();
 
     /// <summary>Сверка библиотеки с папкой и db.json разом.</summary>
     public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer)
@@ -101,6 +101,8 @@ public static class GameDbSync
             case SetActiveOutcome.NotInDb:
             case SetActiveOutcome.NoDb:
                 if (enabled) return new(true, ToggleWay.None, "Включён: игра подхватит его при запуске.");
+                // папкой репозитория управляет игра: файлы оттуда не уносим
+                if (onDisk.FromGameRepo) return new(false, ToggleWay.Failed, "Игра ещё не знает этот мод. Запустите игру один раз, потом выключите.");
                 var mv = installer.Disable(onDisk.FileName);
                 return mv.Success
                     ? new(true, ToggleWay.MoveFile, "Выключен. Игра ещё не видела этот мод, поэтому файл убран в папку менеджера.")
