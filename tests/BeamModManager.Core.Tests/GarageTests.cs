@@ -184,7 +184,7 @@ public static class GarageTests
             Assert.Eq(MainAction.FindReplacement, vm.Details!.Action);
             vm.Selected = vm.Cards[2];
             Assert.Eq(MainAction.Enable, vm.Details!.Action);
-            Assert.Eq("Включить", vm.Details.ToggleLabel);
+            Assert.True(vm.Details.ToggleLabel is null, "«Включить» уже главная кнопка, внизу не дублируем");
             vm.Selected = vm.Cards[3];
             Assert.Eq(MainAction.None, vm.Details!.Action);
             Assert.True(vm.Details.Facts.Contains(new Fact("Следим на", "Страница не указана")), "без страницы");
@@ -197,7 +197,7 @@ public static class GarageTests
             {
                 vm.Selected = c;
                 var d = vm.Details!;
-                Assert.False(string.Join(" ", new[] { d.ActionLabel, d.ActionHint, d.ToggleLabel }).Contains("Игра", StringComparison.OrdinalIgnoreCase), "без кнопки игры");
+                Assert.False(string.Join(" ", new[] { d.ActionLabel, d.ActionHint, d.ToggleLabel ?? "" }).Contains("Игра", StringComparison.OrdinalIgnoreCase), "без кнопки игры");
             }
             Assert.False(Enum.GetNames<MainAction>().Any(n => n.Contains("Play")), "и в действиях");
         });
