@@ -294,9 +294,10 @@ public sealed class GarageViewModel : Observable
         var before = card.Enabled;
         if (before == want) return;
 
-        if (_backend.IsGameRunning() || _pending.ContainsKey(file))
+        var running = _backend.IsGameRunning();
+        if (running)
         {
-            if (_backend.IsGameRunning() && _backend.LiveAvailable)
+            if (_backend.LiveAvailable)
             {
                 // помощник в игре: переключаем сразу, как меню модов самой игры
                 _pending[file] = want;
@@ -310,6 +311,8 @@ public sealed class GarageViewModel : Observable
         }
         else
         {
+            // игра закрыта: пишем сразу; старое ожидание для этого мода (с прошлого раза) больше не нужно
+            if (_pending.Remove(file)) Raise(nameof(HasPending));
             var r = _backend.SetEnabled(file, want);
             if (!r.Success && _backend.IsGameRunning()) Queue(file, want, card); // игру запустили между проверкой и записью
             else if (!r.Success) { ShowToast(r.Message, null); return; }

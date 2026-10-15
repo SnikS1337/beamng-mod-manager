@@ -149,7 +149,8 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-
+        // переключения, отложенные до закрытия игры в прошлый раз (менеджер закрыли раньше игры)
+        if (_host.LoadPending?.Invoke() is { Count: > 0 } pending) _vm.RestorePending(pending);
         Refresh();
         _gameTimer.Start();
         CheckGame();
@@ -410,6 +411,7 @@ public partial class MainWindow : Window
         var rb = (RadioButton)sender;
         _springs.To(_navDrop, Canvas.GetTop(rb), instant: !IsLoaded);
         var garage = rb == NavGarage;
+        if (!garage) _vm.Selected = null; // правая панель — про мод из гаража, в других разделах ей не место
         SectionTitle.Text = (string)rb.Content;
         Scroller.Visibility = garage ? Visibility.Visible : Visibility.Collapsed;
         EmptyBox.Visibility = garage && _vm.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
@@ -448,8 +450,10 @@ public partial class MainWindow : Window
 
     private void Card_Click(object sender, RoutedEventArgs e)
     {
-        // щелчок по уже выбранной карточке закрывает правую панель
-        if (((FrameworkElement)sender).DataContext is ModCard c) _vm.Selected = ReferenceEquals(_vm.Selected, c) ? null : c;
+        // щелчок мышью по уже выбранной карточке закрывает правую панель; Enter с клавиатуры — только открывает
+        if (((FrameworkElement)sender).DataContext is not ModCard c) return;
+        var byKeyboard = InputManager.Current.MostRecentInputDevice is KeyboardDevice;
+        _vm.Selected = ReferenceEquals(_vm.Selected, c) && !byKeyboard ? null : c;
     }
 
     private void ScrollToSelected()

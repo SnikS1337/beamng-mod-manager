@@ -72,7 +72,24 @@ public sealed class LibraryGarageBackend : IGarageBackend
         _gameRunning = gameRunning ?? GameProcess.IsRunning;
     }
 
-    public bool IsGameRunning() => _gameRunning();
+    /// <summary>
+    /// Поиск процесса игры занимает десятки миллисекунд, а при переключении мода его спрашивают несколько раз подряд:
+    /// ответ держится секунду.
+    /// </summary>
+    public bool IsGameRunning()
+    {
+        lock (_runningGate)
+        {
+            if (Environment.TickCount64 - _runningAt < 1000) return _running;
+        }
+        var r = _gameRunning();
+        lock (_runningGate) { _running = r; _runningAt = Environment.TickCount64; }
+        return r;
+    }
+
+    private readonly object _runningGate = new();
+    private bool _running;
+    private long _runningAt = long.MinValue / 2;
 
     public ToggleResult SetEnabled(string fileName, bool enabled) => GameDbSync.SetEnabled(_installer, fileName, enabled, _gameRunning);
 

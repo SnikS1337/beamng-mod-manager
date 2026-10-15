@@ -320,6 +320,18 @@ public static class GarageTests
             Assert.Eq(("a.zip", false), b.Calls.Single());
         });
 
+        t.Run("ожидание с прошлого раза, игра уже закрыта: нажатие пишет сразу, а не встаёт в очередь", () =>
+        {
+            var (vm, b) = Make(Mod("A"));
+            vm.RestorePending(new Dictionary<string, bool> { ["a.zip"] = false });
+            Assert.Eq("Выключится, когда закроете игру", vm.Cards[0].PendingText);
+            vm.Toggle(vm.Cards[0]); // карточка показана выключенной — нажали «Включить»
+            Assert.Eq(("a.zip", true), b.Calls.Single()); // сразу, без очереди (настоящий db.json при этом не меняется: «без изменений»)
+            Assert.True(!vm.HasPending && vm.Cards[0].Enabled && vm.Cards[0].PendingText is null, "ожидание снято");
+            vm.Toggle(vm.Cards[0]);
+            Assert.Eq(("a.zip", false), b.Calls[1]);
+        });
+
         t.Run("порог «много включённых» из настроек; 0 — не показывать", () =>
         {
             var (vm, _) = Make(Enumerable.Range(0, 12).Select(i => Mod("M" + i)).ToArray());
@@ -542,5 +554,39 @@ public static class GarageCardTests
         var bnd = tracked ? new ModBinding(name, "modland", "1", new Uri("https://modland.net/x"), true) : null;
         var u = latest is null ? null : new UpdateFinding(name, name, "modland", UpdateStatus.Likely, ver, latest, bnd!.Url);
         return new GarageMod(m, u, bnd, null, false, false, null, null, "vehicle", null);
+    }
+}
+
+public static class SwitchingBackendTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("Гараж: обёртка над сменяемым бэкендом");
+
+        t.Run("обёртка передаёт каждый метод интерфейса сама, без заглушек по умолчанию (и будущие тоже)", () =>
+        {
+            var map = typeof(SwitchingBackend).GetInterfaceMap(typeof(IGarageBackend));
+            for (var i = 0; i < map.InterfaceMethods.Length; i++)
+                Assert.True(map.TargetMethods[i].DeclaringType == typeof(SwitchingBackend), "не передан: " + map.InterfaceMethods[i].Name);
+        });
+
+        t.Run("переключение на ходу проходит через обёртку", () =>
+        {
+            var sent = new List<IReadOnlyDictionary<string, bool>>();
+            var inner = new LiveStub(sent);
+            var sw = new SwitchingBackend { Inner = inner };
+            Assert.True(sw.LiveAvailable, "помощник виден");
+            Assert.True(sw.TrySendLive(new Dictionary<string, bool> { ["a.zip"] = false }), "отправлено");
+            Assert.Eq(1, sent.Count);
+        });
+    }
+
+    private sealed class LiveStub(List<IReadOnlyDictionary<string, bool>> sent) : IGarageBackend
+    {
+        public GarageSnapshot Load() => GarageSnapshot.NoFolder;
+        public bool IsGameRunning() => true;
+        public ToggleResult SetEnabled(string fileName, bool enabled) => new(false, ToggleWay.Failed, "");
+        public bool LiveAvailable => true;
+        public bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) { sent.Add(wanted); return true; }
     }
 }

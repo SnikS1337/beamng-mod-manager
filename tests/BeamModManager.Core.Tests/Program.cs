@@ -43,6 +43,7 @@ PreviewTests.Register(t);
 PreviewLoaderTests.Register(t);
 GarageTests.Register(t);
 GarageCardTests.Register(t);
+SwitchingBackendTests.Register(t);
 
 
 return t.Summary();
