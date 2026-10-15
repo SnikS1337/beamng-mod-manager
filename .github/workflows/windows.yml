@@ -46,7 +46,9 @@ jobs:
           }
           Shot 'garage' @('--select', '"Dacia Sandero Stepway"')
           Shot 'garage-empty-panel' @()
-          Shot 'garage-1100' @('--width', '1100')
+          Shot 'garage-1360' @('--width', '1360', '--select', '"Ford Mustang Shelby GT500"')
+          Shot 'garage-1100' @('--width', '1100', '--height', '760')
+          Shot 'garage-1000-open' @('--width', '1000', '--height', '700', '--select', '"Заправка Diesel"')
           Get-ChildItem shots
       - name: Отправить снимки
         if: always()
