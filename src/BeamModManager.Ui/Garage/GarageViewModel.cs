@@ -208,7 +208,7 @@ public sealed class GarageViewModel : Observable
         Filters[2].Count = all.Count(c => c.Data.NeedsUpdate);
         Filters[3].Count = all.Count(c => !c.Data.Tracked);
 
-        var tokens = Ru.Fold(_search).Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var tokens = Ru.Words(_search);
         var visible = all.Where(c => Pass(c, _filter) && Matches(c, tokens)).ToList();
         Cards.SyncTo(visible);
 
@@ -217,7 +217,7 @@ public sealed class GarageViewModel : Observable
         Summary = all.Count == 0 ? "Модов пока нет"
             : upd == 0 ? Ru.Mods(all.Count)
             : $"{Ru.Mods(all.Count)}, {upd} {Ru.Plural(upd, "ждёт", "ждут", "ждут")} обновления";
-        Empty = EmptyFor(all.Count, visible.Count, tokens.Length > 0);
+        Empty = EmptyFor(all.Count, visible.Count, tokens.Count > 0);
 
         var enabled = Filters[1].Count;
         ManyEnabledBanner = !_bannerDismissed && ManyEnabledThreshold > 0 && enabled > ManyEnabledThreshold
@@ -235,11 +235,12 @@ public sealed class GarageViewModel : Observable
         _ => true,
     };
 
-    private static bool Matches(ModCard c, string[] tokens)
+    /// <summary>Каждое слово запроса — начало какого-нибудь слова в названии или имени файла: «b» найдёт BMW, но не Subaru.</summary>
+    private static bool Matches(ModCard c, IReadOnlyList<string> tokens)
     {
-        if (tokens.Length == 0) return true;
-        var hay = Ru.Fold(c.Name + " " + c.FileName).Replace('_', ' ');
-        return tokens.All(hay.Contains);
+        if (tokens.Count == 0) return true;
+        var words = Ru.Words(c.Name + " " + c.FileName);
+        return tokens.All(tok => words.Any(w => w.StartsWith(tok, StringComparison.Ordinal)));
     }
 
     private EmptyState? EmptyFor(int total, int visible, bool searching)

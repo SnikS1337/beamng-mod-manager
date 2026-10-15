@@ -42,4 +42,24 @@ public static class Ru
 
     /// <summary>Для поиска: регистр и «ё» не важны.</summary>
     public static string Fold(string s) => s.ToLowerInvariant().Replace('ё', 'е');
+
+    /// <summary>
+    /// Слова для поиска: разделители — всё, кроме букв и цифр, а также переход со строчной на заглавную
+    /// («TrafficReborn_Free.zip» → traffic, reborn, free, zip). Регистр и «ё» не важны.
+    /// </summary>
+    public static IReadOnlyList<string> Words(string s)
+    {
+        var result = new List<string>();
+        var cur = new System.Text.StringBuilder();
+        void Flush() { if (cur.Length > 0) { result.Add(Fold(cur.ToString())); cur.Clear(); } }
+        for (var i = 0; i < s.Length; i++)
+        {
+            var ch = s[i];
+            if (!char.IsLetterOrDigit(ch)) { Flush(); continue; }
+            if (i > 0 && char.IsUpper(ch) && char.IsLower(s[i - 1])) Flush();
+            cur.Append(ch);
+        }
+        Flush();
+        return result;
+    }
 }

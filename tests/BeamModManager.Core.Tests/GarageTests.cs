@@ -108,6 +108,12 @@ public static class GarageTests
             Assert.Eq(1, vm.Cards.Count);
             vm.SearchText = "bmw_m2";
             Assert.Eq("BMW M2 G87", vm.Cards.Single().Name);
+            vm.SearchText = "a";
+            Assert.Eq(0, vm.Cards.Count); // «a» есть внутри «Lada» и «Racing», но ни одно слово с неё не начинается
+            vm.SearchText = "l";
+            Assert.Eq("Lada", vm.Cards.Single().Name);
+            vm.SearchText = "b";
+            Assert.Eq("BMW M2 G87", vm.Cards.Single().Name);
             vm.SearchText = "audi";
             Assert.Eq(0, vm.Cards.Count);
             Assert.Eq("Нет такого мода", vm.Empty!.Title);
@@ -400,6 +406,13 @@ public static class GarageTests
         });
 
         t.Group("Русские подписи");
+
+        t.Run("слова для поиска: разделители, заглавные внутри слова, «ё»", () =>
+        {
+            Assert.Eq("traffic|reborn|free|v1|7|0|0|zip", string.Join("|", Ru.Words("TrafficReborn_Free_v1.7.0.0.zip")));
+            Assert.Eq("елка|racing", string.Join("|", Ru.Words("Ёлка Racing")));
+            Assert.Eq("bmw|m2|g87", string.Join("|", Ru.Words("BMW M2-G87")));
+        });
 
         t.Run("числа, время и размер", () =>
         {

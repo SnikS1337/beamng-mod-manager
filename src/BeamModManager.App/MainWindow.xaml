@@ -137,6 +137,16 @@
                                     </LinearGradientBrush>
                                 </Border.BorderBrush>
                             </Border>
+                            <!-- наведение: мягко проявляется светлая окантовка, видно, на какой карточке мышь -->
+                            <Border x:Name="RimHover" CornerRadius="26" BorderThickness="1.5" IsHitTestVisible="False" Opacity="0">
+                                <Border.BorderBrush>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#D9FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#99DCEBFF" Offset="0.5"/>
+                                        <GradientStop Color="#73FFFFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.BorderBrush>
+                            </Border>
                             <!-- у выбранной кромка ярче -->
                             <Border x:Name="RimBright" CornerRadius="26" BorderThickness="1" IsHitTestVisible="False" Opacity="0">
                                 <Border.BorderBrush>
@@ -184,6 +194,7 @@
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-5" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
                                             <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.45" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.EnterActions>
@@ -192,6 +203,7 @@
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
                                             <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
@@ -431,8 +443,8 @@
 
         <!-- Правая панель: x 1096, y 64 (под капсулой кнопок окна), 328 × 880 -->
         <c:Glass x:Name="Inspector" Source="{Binding ElementName=Scene}" Corner="32" Blur="14" Tint="#800E182C"
-                 HorizontalAlignment="Right" Width="328" Margin="0,64,16,16">
-            <c:Glass.RenderTransform><TranslateTransform x:Name="InspectorMove"/></c:Glass.RenderTransform>
+                 HorizontalAlignment="Right" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
+            <c:Glass.RenderTransform><TranslateTransform x:Name="InspectorMove" X="344"/></c:Glass.RenderTransform>
             <Grid>
                 <StackPanel VerticalAlignment="Center" Margin="28,0" Visibility="{Binding Details, Converter={StaticResource NullToVisible}}">
                     <TextBlock Text="Выберите мод" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
@@ -494,15 +506,20 @@
                             </StackPanel>
 
                             <Border CornerRadius="16" Background="{StaticResource DataBlock}" BorderBrush="#14FFFFFF" BorderThickness="1" Margin="0,18,0,0">
-                                <ItemsControl ItemsSource="{Binding Details.Facts}" Focusable="False">
+                                <ItemsControl ItemsSource="{Binding Details.Facts}" Focusable="False" AlternationCount="1000">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type g:Fact}">
-                                            <Border BorderBrush="{StaticResource DataLine}" BorderThickness="0,0,0,1" Padding="14,10">
+                                            <Border x:Name="Row" BorderBrush="{StaticResource DataLine}" BorderThickness="0,1,0,0" Padding="14,10">
                                                 <DockPanel>
                                                     <TextBlock Style="{StaticResource FactLabel}" Text="{Binding Label}"/>
                                                     <TextBlock Text="{Binding Value}" FontWeight="Medium" Margin="12,0,0,0" TextWrapping="Wrap"/>
                                                 </DockPanel>
                                             </Border>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ContentPresenter}}" Value="0">
+                                                    <Setter TargetName="Row" Property="BorderThickness" Value="0"/>
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
