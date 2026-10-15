@@ -77,12 +77,17 @@ public sealed class ModCard : Observable
     private bool _isSelected;
     public bool IsSelected { get => _isSelected; internal set => Set(ref _isSelected, value); }
 
+    private string? _previewKey;
+
     internal void Apply(GarageMod d, bool? pending)
     {
         Data = d;
         Name = d.Mod.Name;
         FileName = d.Mod.FileName;
-        if (d.PreviewPath is not null || PreviewPath is null) PreviewPath = d.PreviewPath;
+        // картинку, догруженную в фоне, не сбрасываем, пока архив тот же; обновили архив — берём новую
+        var key = $"{d.ArchivePath}|{d.Mod.SizeBytes}|{d.Mod.FileName}";
+        if (key != _previewKey) { _previewKey = key; PreviewPath = d.PreviewPath; }
+        else if (d.PreviewPath is not null) PreviewPath = d.PreviewPath;
         Placeholder = PlaceholderOf(d);
 
         var enabled = pending ?? d.Mod.Enabled;

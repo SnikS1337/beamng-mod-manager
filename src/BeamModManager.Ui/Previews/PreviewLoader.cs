@@ -21,6 +21,12 @@ public sealed class PreviewLoader
     /// <summary>Путь к картинке в кэше или null (картинок нет, архив не читается). Повторный вызов ничего не читает.</summary>
     public string? Ensure(string zipPath)
     {
+        try { return EnsureCore(zipPath); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; } // кэш занят или диск полон: без картинки
+    }
+
+    private string? EnsureCore(string zipPath)
+    {
         ArchiveStamp stamp;
         try { stamp = ArchiveStamp.Of(zipPath); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }

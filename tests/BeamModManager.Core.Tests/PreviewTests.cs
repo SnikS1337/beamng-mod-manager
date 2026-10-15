@@ -195,7 +195,10 @@ public static class PreviewTests
             c.PutImage(gone, new byte[] { 1 });
             File.WriteAllText(Path.Combine(dir, "readme.txt"), "");
             File.WriteAllText(Path.Combine(dir, "x.jpg.123.tmp"), "");
+            File.SetLastWriteTimeUtc(Path.Combine(dir, "x.jpg.123.tmp"), DateTime.UtcNow.AddHours(-1)); // брошенный
+            File.WriteAllText(Path.Combine(dir, "y.jpg.456.tmp"), ""); // ещё пишется
             Assert.Eq(2, c.Prune(new[] { live }));
+            Assert.True(File.Exists(Path.Combine(dir, "y.jpg.456.tmp")), "свежий временный не трогаем");
             Assert.Eq(CacheState.Image, c.State(live));
             Assert.Eq(CacheState.Missing, c.State(gone));
             Assert.True(File.Exists(Path.Combine(dir, "readme.txt")), "чужой файл цел");
