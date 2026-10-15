@@ -332,7 +332,7 @@ public partial class MainWindow : Window
         if (SectionTitle.Visibility != tv) SectionTitle.Visibility = tv;
         var cv = co ? Visibility.Visible : Visibility.Collapsed;
         if (CountLabel.Visibility != cv) CountLabel.Visibility = cv;
-        var hint = s >= 150 ? "Найти в гараже" : "Найти";
+        var hint = s >= 150 ? "Найти мод" : "Найти";
         if (SearchHint.Text != hint) SearchHint.Text = hint;
     }
 

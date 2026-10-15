@@ -114,7 +114,7 @@ public sealed class GarageViewModel : Observable
     }
 
     private string _search = "";
-    /// <summary>«Найти в гараже»: только среди своих модов, по названию и имени файла.</summary>
+    /// <summary>«Найти мод»: только среди своих модов, по названию и имени файла.</summary>
     public string SearchText
     {
         get => _search;
@@ -246,7 +246,7 @@ public sealed class GarageViewModel : Observable
     private EmptyState? EmptyFor(int total, int visible, bool searching)
     {
         if (!_snap.FolderAvailable) return new("Не нашли папку с модами", "Укажите её, и моды появятся здесь", "Указать папку", EmptyAction.PickFolder);
-        if (total == 0) return new("В гараже пока пусто", "Найдите первый мод в поиске", "Перейти в поиск", EmptyAction.OpenSearch);
+        if (total == 0) return new("Модов пока нет", "Найдите первый мод в поиске", "Перейти в поиск", EmptyAction.OpenSearch);
         if (visible > 0) return null;
         if (searching) return new("Нет такого мода", "Проверьте написание. Ищем только среди ваших модов", "Искать на сайтах", EmptyAction.SearchSites);
         return _filter switch

@@ -399,8 +399,8 @@
                 <Border x:Name="NavDrop" Style="{StaticResource Drop}" CornerRadius="24" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
                     <Border.RenderTransform><TranslateTransform x:Name="NavDropMove" Y="14"/></Border.RenderTransform>
                 </Border>
-                <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="14" Content="Гараж" Tag="{StaticResource IconGarage}"
-                             IsChecked="True" Checked="Nav_Checked" ToolTip="Гараж (Ctrl+1)"/>
+                <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="14" Content="Моды" Tag="{StaticResource IconMods}"
+                             IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
                 <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
                              Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
                 <Border Canvas.Left="57" Canvas.Top="79" MinWidth="18" Height="18" CornerRadius="9" Background="White" Padding="5,0" IsHitTestVisible="False"
@@ -419,7 +419,7 @@
         <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="26" Blur="7" Tint="#700E182C"
                  VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
             <DockPanel Margin="22,0,12,0">
-                <TextBlock x:Name="SectionTitle" Text="Гараж" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock x:Name="SectionTitle" Text="Моды" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 <TextBlock x:Name="CountLabel" Text="{Binding CountText}" Foreground="{StaticResource Text3}" FontSize="13" Margin="14,1,0,0" VerticalAlignment="Center"/>
 
                 <Border x:Name="SearchField" DockPanel.Dock="Right" Width="200" Height="34" CornerRadius="17" Background="#1FFFFFFF" Margin="14,0,0,0"
@@ -429,7 +429,7 @@
                               Width="22" Height="22" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-4,0,0,0" RenderTransformOrigin="0.5,0.5">
                             <Path.RenderTransform><ScaleTransform ScaleX="0.75" ScaleY="0.75"/></Path.RenderTransform>
                         </Path>
-                        <TextBlock x:Name="SearchHint" Text="Найти в гараже" Foreground="#9EFFFFFF" FontSize="13" Margin="24,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                        <TextBlock x:Name="SearchHint" Text="Найти мод" Foreground="#9EFFFFFF" FontSize="13" Margin="24,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
                         <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Margin="22,0,0,0"
                                  Background="Transparent" BorderThickness="0" Foreground="White" CaretBrush="White" FontSize="13"
                                  VerticalAlignment="Center" AutomationProperties.Name="Найти среди установленных модов"
