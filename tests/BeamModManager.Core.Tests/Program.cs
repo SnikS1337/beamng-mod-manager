@@ -47,4 +47,5 @@ SwitchingBackendTests.Register(t);
 SettingsScreenTests.Register(t);
 
 
+GlassTextureTests.Register(t);
 return t.Summary();
