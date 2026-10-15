@@ -70,13 +70,14 @@ jobs:
           git commit -q -m "Снимки для $env:GITHUB_SHA"
           git push -f -q origin HEAD:ci-shots
 
-  # Готовая программа: один exe без установки .NET (self-contained).
+  # Готовая программа: один exe без установки .NET (self-contained). Только по команде: пометка [release] в описании
+  # коммита или «Run workflow» на странице Actions. Обычные изменения выпусков не создают (решено 2026-10-15).
   # 1) выпуск «latest» в этом (закрытом) репозитории — как раньше;
   # 2) выпуск v<версия> в публичном SnikS1337/ModManagerBeamNG c latest.json — оттуда программа обновляется сама.
   #    Нужен секрет RELEASES_TOKEN (токен с правом Contents: write на публичный репозиторий); без него шаг пропускается.
   release:
     needs: [build, app, lua]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: windows-latest
     # выпуски по одному: более старая сборка, закончившая позже, не должна стать «последней»
     concurrency:
