@@ -1,0 +1,470 @@
+<Window x:Class="BeamModManager.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="clr-namespace:BeamModManager.App.Controls"
+        xmlns:g="clr-namespace:BeamModManager.Ui.Garage;assembly=BeamModManager.Ui"
+        Title="ModManager BeamNG" Width="1440" Height="960" MinWidth="1000" MinHeight="680"
+        WindowStyle="None" ResizeMode="CanResize" Background="#1D2533"
+        FontFamily="{StaticResource Font}" Foreground="{StaticResource Text}" FontSize="14"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal" WindowStartupLocation="CenterScreen">
+
+    <!-- Своя верхушка окна: полосы Windows нет, фон до самого верха (DESIGN_FLOWS раздел 2). Тянуть окно можно за верхние 64 px. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="64" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <Style x:Key="CardFocus">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Border BorderBrush="White" BorderThickness="3" CornerRadius="29" Margin="-3"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Карточка мода (DESIGN.md раздел 4, доска «Гараж»): фото на всю подложку, подпись внизу поверх затемнения -->
+        <Style x:Key="Card" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource CardFocus}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid x:Name="Lift">
+                            <Grid.RenderTransform>
+                                <TransformGroup>
+                                    <TranslateTransform x:Name="Hover"/>
+                                    <TranslateTransform x:Name="Pick"/>
+                                </TransformGroup>
+                            </Grid.RenderTransform>
+                            <Border x:Name="Glow" CornerRadius="26" Background="#1D2533" Opacity="0">
+                                <Border.Effect>
+                                    <DropShadowEffect BlurRadius="46" ShadowDepth="0" Color="#96C8FF" Opacity="0.34" RenderingBias="Performance"/>
+                                </Border.Effect>
+                            </Border>
+                            <Border CornerRadius="26" Background="#1D2533">
+                                <Border.Effect>
+                                    <DropShadowEffect BlurRadius="32" ShadowDepth="14" Direction="270" Color="#040814" Opacity="0.5" RenderingBias="Performance"/>
+                                </Border.Effect>
+                            </Border>
+
+                            <!-- заглушка, когда картинки нет: значок типа мода, без нарисованных машин -->
+                            <Border CornerRadius="26">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#2A3446" Offset="0"/>
+                                        <GradientStop Color="#1B2232" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <Viewbox Width="56" Height="56" Opacity="0.42" Margin="0,0,0,40">
+                                    <Path Data="{Binding Placeholder, Converter={StaticResource PlaceholderIcon}}" Stroke="White" StrokeThickness="1.4"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="22" Height="22"/>
+                                </Viewbox>
+                            </Border>
+
+                            <Border CornerRadius="26">
+                                <Border.Background>
+                                    <MultiBinding Converter="{StaticResource PreviewBrush}">
+                                        <Binding Path="PreviewPath"/>
+                                        <Binding Path="Enabled"/>
+                                    </MultiBinding>
+                                </Border.Background>
+                            </Border>
+                            <!-- выключенный мод: холодный налёт поверх серого фото -->
+                            <Border CornerRadius="26" Visibility="{Binding Enabled, Converter={StaticResource BoolToCollapsed}}">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#4D96C3EB" Offset="0"/>
+                                        <GradientStop Color="#3378A5D7" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                            <Border CornerRadius="26">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#2E080E1C" Offset="0"/>
+                                        <GradientStop Color="#00080E1C" Offset="0.26"/>
+                                        <GradientStop Color="#00080E1C" Offset="0.5"/>
+                                        <GradientStop Color="#A8080E1C" Offset="0.8"/>
+                                        <GradientStop Color="#E6080E1C" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+
+                            <Border Style="{StaticResource Chip}" Visibility="{Binding ChipText, Converter={StaticResource NullToCollapsed}}">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse x:Name="Dot" Width="7" Height="7" Margin="0,0,7,0" Fill="{Binding Chip, Converter={StaticResource ChipDot}}"/>
+                                    <Path x:Name="Snow" Data="{StaticResource IconSnow}" Stroke="White" StrokeThickness="1.3" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          Width="11" Height="11" Margin="0,0,6,0" Visibility="Collapsed"/>
+                                    <TextBlock Text="{Binding ChipText}" FontSize="12" FontWeight="SemiBold" Foreground="White"/>
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel VerticalAlignment="Bottom" Margin="20,0,20,14">
+                                <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="Sub" Text="{Binding Subtitle}" FontSize="12.5" Foreground="#E0FFFFFF" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+
+                            <Border CornerRadius="26" BorderThickness="1" IsHitTestVisible="False">
+                                <Border.BorderBrush>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#8CFFFFFF" Offset="0"/>
+                                        <GradientStop Color="#38FFFFFF" Offset="0.12"/>
+                                        <GradientStop Color="#1FFFFFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.BorderBrush>
+                            </Border>
+                            <!-- у выбранной кромка ярче -->
+                            <Border x:Name="RimBright" CornerRadius="26" BorderThickness="1" IsHitTestVisible="False" Opacity="0">
+                                <Border.BorderBrush>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#C0FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#6BFFFFFF" Offset="0.12"/>
+                                        <GradientStop Color="#29FFFFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.BorderBrush>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Chip}" Value="{x:Static g:ChipKind.Disabled}">
+                                <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="Snow" Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding SubtitleStrong}" Value="True">
+                                <Setter TargetName="Sub" Property="Foreground" Value="White"/>
+                                <Setter TargetName="Sub" Property="FontWeight" Value="SemiBold"/>
+                            </DataTrigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-5" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.65" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <!-- выбранная: без обводки, приподнята на 4 px, кромка ярче, мягкое холодное свечение (решено 2026-10-14) -->
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter TargetName="RimBright" Property="Opacity" Value="1"/>
+                                <DataTrigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="-4" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.EnterActions>
+                                <DataTrigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.ExitActions>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FactLabel" TargetType="TextBlock">
+            <Setter Property="Width" Value="88"/>
+            <Setter Property="Foreground" Value="{StaticResource Text3}"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="Root" ClipToBounds="True">
+
+        <!-- ═════ Сцена: всё, что видно сквозь стекло ═════ -->
+        <Grid x:Name="Scene">
+            <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True">
+                <Border>
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0.4,1">
+                            <GradientStop Color="#101B33" Offset="0"/>
+                            <GradientStop Color="#1D2533" Offset="0.55"/>
+                            <GradientStop Color="#2A2032" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
+                <Image x:Name="Wall" Stretch="UniformToFill" Margin="-70" RenderTransformOrigin="0.5,0.5" Visibility="Collapsed">
+                    <Image.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform x:Name="WallScale" ScaleX="1.04" ScaleY="1.04"/>
+                            <TranslateTransform x:Name="WallMove"/>
+                        </TransformGroup>
+                    </Image.RenderTransform>
+                </Image>
+                <!-- плавающий градиент: подкрашивает фото (вместо «мягкого света» — прозрачность) -->
+                <Border Opacity="0.30">
+                    <Border.Background>
+                        <LinearGradientBrush x:Name="Grade" StartPoint="0,0" EndPoint="1,0.36" SpreadMethod="Repeat">
+                            <LinearGradientBrush.RelativeTransform>
+                                <TranslateTransform x:Name="GradeMove"/>
+                            </LinearGradientBrush.RelativeTransform>
+                            <GradientStop Color="#9E2F86E0" Offset="0"/>
+                            <GradientStop Color="#85845BC8" Offset="0.25"/>
+                            <GradientStop Color="#80F08A4A" Offset="0.5"/>
+                            <GradientStop Color="#852BB8D6" Offset="0.75"/>
+                            <GradientStop Color="#9E2F86E0" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
+                <Border>
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#4D0C1220" Offset="0"/>
+                            <GradientStop Color="#850C1220" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
+                <Canvas x:Name="Lights"/>
+            </Grid>
+
+            <ScrollViewer x:Name="Scroller" Margin="116,0,360,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Focusable="False" PanningMode="VerticalOnly">
+                <StackPanel Margin="0,84,0,28">
+                    <Border CornerRadius="20" Height="40" Background="#1FFFFFFF" Margin="0,0,0,20" Padding="18,0,10,0"
+                            Visibility="{Binding ManyEnabledBanner, Converter={StaticResource NullToCollapsed}}">
+                        <DockPanel VerticalAlignment="Center">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource Link}" Content="Понятно" Click="DismissBanner_Click"/>
+                            <TextBlock Text="{Binding ManyEnabledBanner}" VerticalAlignment="Center" FontSize="13.5"/>
+                        </DockPanel>
+                    </Border>
+                    <ItemsControl x:Name="Cards" ItemsSource="{Binding Cards}" Focusable="False" KeyboardNavigation.TabNavigation="Once">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <c:CardGridPanel Loaded="CardPanel_Loaded"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type g:ModCard}">
+                                <Button Style="{StaticResource Card}" Click="Card_Click" AutomationProperties.Name="{Binding Name}"
+                                        AutomationProperties.HelpText="{Binding Subtitle}" ToolTipService.IsEnabled="False"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- под верхней панелью карточки уходят в тень, чтобы подписи панели читались -->
+            <Border IsHitTestVisible="False" VerticalAlignment="Top" Height="98" Margin="104,0,348,0">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#94080E1C" Offset="0"/>
+                        <GradientStop Color="#94080E1C" Offset="0.52"/>
+                        <GradientStop Color="#00080E1C" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Border.OpacityMask>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                        <GradientStop Color="#00000000" Offset="0"/>
+                        <GradientStop Color="#FF000000" Offset="0.05"/>
+                        <GradientStop Color="#FF000000" Offset="0.95"/>
+                        <GradientStop Color="#00000000" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.OpacityMask>
+            </Border>
+        </Grid>
+
+        <!-- пустое состояние: приглашение к действию по центру области сетки (DESIGN_FLOWS раздел 4) -->
+        <StackPanel x:Name="EmptyBox" Margin="116,84,360,0" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420"
+                    Visibility="{Binding Empty, Converter={StaticResource NullToCollapsed}}">
+            <TextBlock Text="{Binding Empty.Title}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+            <TextBlock Text="{Binding Empty.Text}" Foreground="{StaticResource Text2}" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+            <Button Style="{StaticResource Secondary}" Margin="0,16,0,0" HorizontalAlignment="Center" MinWidth="170" Padding="18,0"
+                    Content="{Binding Empty.ActionLabel}" Click="EmptyAction_Click"
+                    Visibility="{Binding Empty.ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
+        </StackPanel>
+
+        <!-- раздел ещё не сделан в этой сборке -->
+        <StackPanel x:Name="SoonBox" Margin="116,84,360,0" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed">
+            <TextBlock x:Name="SoonTitle" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+            <TextBlock Text="Этот раздел появится в следующей сборке" Foreground="{StaticResource Text2}" Margin="0,6,0,0" HorizontalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- ═════ Стекло ═════ -->
+
+        <!-- Левая панель: x 16, y 16, 84 × 284 -->
+        <c:Glass x:Name="Nav" Source="{Binding ElementName=Scene}" Corner="36" Blur="7" Tint="#700E182C"
+                 HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0" Width="84" Height="284"
+                 WindowChrome.IsHitTestVisibleInChrome="True">
+            <Canvas>
+                <Border x:Name="NavDrop" Style="{StaticResource Drop}" CornerRadius="24" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
+                    <Border.RenderTransform><TranslateTransform x:Name="NavDropMove" Y="14"/></Border.RenderTransform>
+                </Border>
+                <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="14" Content="Гараж" Tag="{StaticResource IconGarage}"
+                             IsChecked="True" Checked="Nav_Checked" ToolTip="Гараж (Ctrl+1)"/>
+                <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
+                             Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
+                <Border Canvas.Left="57" Canvas.Top="79" MinWidth="18" Height="18" CornerRadius="9" Background="White" Padding="5,0" IsHitTestVisible="False"
+                        Visibility="{Binding Filters[2].ShowCount, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding Filters[2].Count}" Foreground="#111" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="138" Content="Поиск" Tag="{StaticResource IconSearch}"
+                             Checked="Nav_Checked" ToolTip="Поиск (Ctrl+3)"/>
+                <Rectangle Canvas.Left="22" Canvas.Top="200" Width="40" Height="1" Fill="#3DFFFFFF"/>
+                <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="212" Content="Настройки" Tag="{StaticResource IconSettings}"
+                             Checked="Nav_Checked" ToolTip="Настройки (Ctrl+,)"/>
+            </Canvas>
+        </c:Glass>
+
+        <!-- Верхняя панель: x 116, y 16, высота 52, до правой панели -->
+        <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="26" Blur="7" Tint="#700E182C"
+                 VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
+            <DockPanel Margin="22,0,12,0">
+                <TextBlock x:Name="SectionTitle" Text="Гараж" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding CountText}" Foreground="{StaticResource Text3}" FontSize="13" Margin="14,1,0,0" VerticalAlignment="Center"/>
+
+                <Border DockPanel.Dock="Right" Width="200" Height="34" CornerRadius="17" Background="#1FFFFFFF" Margin="14,0,0,0"
+                        WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Grid Margin="12,0">
+                        <Path Data="{StaticResource IconSearch}" Stroke="#B8FFFFFF" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              Width="22" Height="22" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-4,0,0,0" RenderTransformOrigin="0.5,0.5">
+                            <Path.RenderTransform><ScaleTransform ScaleX="0.75" ScaleY="0.75"/></Path.RenderTransform>
+                        </Path>
+                        <TextBlock x:Name="SearchHint" Text="Найти в гараже" Foreground="#9EFFFFFF" FontSize="13" Margin="24,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                        <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Margin="22,0,0,0"
+                                 Background="Transparent" BorderThickness="0" Foreground="White" CaretBrush="White" FontSize="13"
+                                 VerticalAlignment="Center" AutomationProperties.Name="Найти среди установленных модов"
+                                 TextChanged="SearchBox_TextChanged" FocusVisualStyle="{x:Null}"/>
+                    </Grid>
+                </Border>
+
+                <!-- фильтры: активен один, под активным — капля -->
+                <Border DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="#57080E1C" VerticalAlignment="Center"
+                        WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Grid>
+                        <Canvas>
+                            <Border x:Name="FilterDrop" Style="{StaticResource Drop}" CornerRadius="17" Height="34" Canvas.Top="-2" Width="60">
+                                <Border.RenderTransform><TranslateTransform x:Name="FilterDropMove" X="-3"/></Border.RenderTransform>
+                            </Border>
+                        </Canvas>
+                        <ItemsControl x:Name="FilterList" ItemsSource="{Binding Filters}" Focusable="False">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type g:FilterItem}">
+                                    <Button Style="{StaticResource FilterItem}" Click="Filter_Click" AutomationProperties.Name="{Binding Label}"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+                </Border>
+                <Border/>
+            </DockPanel>
+        </c:Glass>
+
+        <!-- Правая панель: x 1096, y 64 (под капсулой кнопок окна), 328 × 880 -->
+        <c:Glass x:Name="Inspector" Source="{Binding ElementName=Scene}" Corner="32" Blur="14" Tint="#800E182C"
+                 HorizontalAlignment="Right" Width="328" Margin="0,64,16,16">
+            <Grid>
+                <StackPanel VerticalAlignment="Center" Margin="28,0" Visibility="{Binding Details, Converter={StaticResource NullToVisible}}">
+                    <TextBlock Text="Выберите мод" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding Summary}" Foreground="{StaticResource Text2}" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <DockPanel Margin="22,22,22,24" Visibility="{Binding Details, Converter={StaticResource NullToCollapsed}}">
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
+                        <TextBlock Text="{Binding Details.PendingText}" Foreground="{StaticResource Text2}" FontSize="12.5" Margin="6,0,6,10" TextWrapping="Wrap"
+                                   Visibility="{Binding Details.PendingText, Converter={StaticResource NullToCollapsed}}"/>
+                        <UniformGrid Rows="1">
+                            <Button x:Name="OpenPage" Style="{StaticResource Secondary}" Content="Открыть страницу" Margin="0,0,5,0" Click="OpenPage_Click"
+                                    Visibility="{Binding Details.PageUrl, Converter={StaticResource NullToCollapsed}}"/>
+                            <Button Style="{StaticResource Secondary}" Content="{Binding Details.ToggleLabel}" Margin="5,0,0,0" Click="Toggle_Click"
+                                    ToolTip="Пробел"/>
+                        </UniformGrid>
+                    </StackPanel>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                        <StackPanel>
+                            <Border Height="132" CornerRadius="20" BorderBrush="#33FFFFFF" BorderThickness="1">
+                                <Border.Background>
+                                    <MultiBinding Converter="{StaticResource PreviewBrush}">
+                                        <Binding Path="Selected.PreviewPath"/>
+                                        <Binding Path="Selected.Enabled"/>
+                                    </MultiBinding>
+                                </Border.Background>
+                            </Border>
+                            <TextBlock Text="{Binding Details.Name}" FontSize="24" FontWeight="Bold" Margin="0,18,0,0" TextWrapping="Wrap" LineHeight="28"/>
+                            <TextBlock Text="{Binding Details.Author}" Foreground="{StaticResource Text2}" Margin="0,3,0,0"
+                                       Visibility="{Binding Details.Author, Converter={StaticResource NullToCollapsed}}"/>
+
+                            <StackPanel Margin="0,18,0,0" Visibility="{Binding Details.ActionLabel, Converter={StaticResource NullToCollapsed}}">
+                                <Button Style="{StaticResource Primary}" Content="{Binding Details.ActionLabel}" Click="MainAction_Click"/>
+                                <TextBlock Text="{Binding Details.ActionHint}" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="0,8,0,0"
+                                           TextAlignment="Center" TextWrapping="Wrap"
+                                           Visibility="{Binding Details.ActionHint, Converter={StaticResource NullToCollapsed}}"/>
+                            </StackPanel>
+
+                            <Border CornerRadius="16" Background="{StaticResource DataBlock}" BorderBrush="#14FFFFFF" BorderThickness="1" Margin="0,18,0,0">
+                                <ItemsControl ItemsSource="{Binding Details.Facts}" Focusable="False">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type g:Fact}">
+                                            <Border BorderBrush="{StaticResource DataLine}" BorderThickness="0,0,0,1" Padding="14,10">
+                                                <DockPanel>
+                                                    <TextBlock Style="{StaticResource FactLabel}" Text="{Binding Label}"/>
+                                                    <TextBlock Text="{Binding Value}" FontWeight="Medium" Margin="12,0,0,0" TextWrapping="Wrap"/>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Grid>
+        </c:Glass>
+
+        <!-- Капсула кнопок окна 132 × 36 в правом верхнем углу; при наведении появляется капля, под «Закрыть» красная -->
+        <c:Glass x:Name="Caption" Source="{Binding ElementName=Scene}" Corner="18" Blur="4" Tint="#700E182C"
+                 HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0" Width="132" Height="36"
+                 WindowChrome.IsHitTestVisibleInChrome="True" MouseLeave="Caption_MouseLeave">
+            <Grid>
+                <Canvas>
+                    <Border x:Name="CapDrop" Style="{StaticResource Drop}" CornerRadius="17" Width="46" Height="34" Canvas.Top="1" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                        <Border.RenderTransform>
+                            <TransformGroup>
+                                <ScaleTransform x:Name="CapDropScale" ScaleX="0.6" ScaleY="0.6"/>
+                                <TranslateTransform x:Name="CapDropMove" X="-1"/>
+                            </TransformGroup>
+                        </Border.RenderTransform>
+                    </Border>
+                </Canvas>
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Tag="{StaticResource IconMin}" Click="Min_Click" MouseEnter="CapButton_MouseEnter"
+                            AutomationProperties.Name="Свернуть" ToolTip="Свернуть"/>
+                    <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Tag="{StaticResource IconMax}" Click="Max_Click" MouseEnter="CapButton_MouseEnter"
+                            AutomationProperties.Name="Развернуть" ToolTip="Развернуть"/>
+                    <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Tag="{StaticResource IconClose}" Click="Close_Click" MouseEnter="CapButton_MouseEnter"
+                            AutomationProperties.Name="Закрыть" ToolTip="Закрыть"/>
+                </StackPanel>
+            </Grid>
+        </c:Glass>
+
+        <!-- Тост: что сделано и «Отменить» -->
+        <c:Glass x:Name="ToastBox" Source="{Binding ElementName=Scene}" Corner="24" Blur="14" Tint="#B30E182C"
+                 VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="116,0,360,28" Height="48" Padding="20,0,12,0"
+                 Visibility="{Binding Toast, Converter={StaticResource NullToCollapsed}}">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{Binding Toast.Text}" FontSize="13.5" VerticalAlignment="Center"/>
+                <Button Style="{StaticResource Link}" Content="Отменить" Margin="14,0,0,0" Click="Undo_Click"
+                        Visibility="{Binding Toast.CanUndo, Converter={StaticResource BoolToVis}}"/>
+            </StackPanel>
+        </c:Glass>
+    </Grid>
+</Window>

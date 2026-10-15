@@ -177,9 +177,9 @@ public static class GarageTests
             var (vm, _) = Make(Mod("A", latest: "1.5"), Mod("B", missing: true), Mod("C", on: false), Mod("D", tracked: false));
             vm.Selected = vm.Cards[0];
             Assert.Eq("Обновить до 1.5", vm.Details!.ActionLabel);
-            Assert.True(vm.Details.Facts.Contains(("Следим на", "beamng.com")), "сайт без www");
-            Assert.True(vm.Details.Facts.Contains(("Проверен", "18 минут назад")), "когда проверен");
-            Assert.True(vm.Details.Facts.Contains(("Размер", "300 МБ")), "размер");
+            Assert.True(vm.Details.Facts.Contains(new Fact("Следим на", "beamng.com")), "сайт без www");
+            Assert.True(vm.Details.Facts.Contains(new Fact("Проверен", "18 минут назад")), "когда проверен");
+            Assert.True(vm.Details.Facts.Contains(new Fact("Размер", "300 МБ")), "размер");
             vm.Selected = vm.Cards[1];
             Assert.Eq(MainAction.FindReplacement, vm.Details!.Action);
             vm.Selected = vm.Cards[2];
@@ -187,7 +187,7 @@ public static class GarageTests
             Assert.Eq("Включить", vm.Details.ToggleLabel);
             vm.Selected = vm.Cards[3];
             Assert.Eq(MainAction.None, vm.Details!.Action);
-            Assert.True(vm.Details.Facts.Contains(("Следим на", "Страница не указана")), "без страницы");
+            Assert.True(vm.Details.Facts.Contains(new Fact("Следим на", "Страница не указана")), "без страницы");
         });
 
         t.Run("нигде нет «Играть»", () =>

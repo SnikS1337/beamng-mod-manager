@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Окно на WPF. Собирается только на Windows (GitHub Actions, windows.yml), логика вся в BeamModManager.Ui. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BeamModManager</AssemblyName>
+    <RootNamespace>BeamModManager.App</RootNamespace>
+    <Product>ModManager BeamNG</Product>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BeamModManager.Ui\BeamModManager.Ui.csproj" />
+  </ItemGroup>
+
+</Project>
