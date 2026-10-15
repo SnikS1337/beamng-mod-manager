@@ -236,7 +236,7 @@
         </Setter>
     </Style>
 
-    <!-- Вторичная кнопка-таблетка в правой панели -->
+    <!-- Вторичная кнопка-таблетка в правой панели; нажатая сжимается до 97 % от центра, как главная (DESIGN.md 6) -->
     <Style x:Key="Secondary" TargetType="Button">
         <Setter Property="Height" Value="38"/>
         <Setter Property="FontSize" Value="13"/>
@@ -244,6 +244,8 @@
         <Setter Property="Foreground" Value="White"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+        <Setter Property="RenderTransform"><Setter.Value><ScaleTransform/></Setter.Value></Setter>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -252,7 +254,10 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#38FFFFFF"/></Trigger>
-                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Background" Value="#1AFFFFFF"/></Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="#1AFFFFFF"/>
+                            <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.97" ScaleY="0.97"/></Setter.Value></Setter>
+                        </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -570,7 +575,10 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#38FFFFFF"/></Trigger>
-                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Background" Value="#1AFFFFFF"/></Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="#1AFFFFFF"/>
+                            <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.97" ScaleY="0.97"/></Setter.Value></Setter>
+                        </Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.35"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
