@@ -114,6 +114,11 @@ public partial class MainWindow : Window
         }
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
+        // иней выключенных карточек: тот же генератор, что у панелей, размер карточки ×2 (чётко до масштаба 200 %);
+        // ~60 мс один раз вместо картинки на 300 КБ в программе
+        var frostPx = BeamModManager.Ui.Glass.GlassTextures.Ice(616, 472, 52, 120, 15);
+        var frostImg = BitmapSource.Create(616, 472, 96, 96, PixelFormats.Pbgra32, null, frostPx, 616 * 4);
+        Resources["CardFrost"] = Frozen(new ImageBrush(Frozen(frostImg)) { Stretch = Stretch.Fill });
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
         _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         SettingsPanel.DataContext = host.Settings;

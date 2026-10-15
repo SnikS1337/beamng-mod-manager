@@ -519,13 +519,12 @@
 | `design/mockup/tools/build_ui.py` | Собирает `Main` (Гараж), `MainMatte` (без жидкого стекла), `Settings` (внешний вид) и общие детали |
 | `design/mockup/tools/gen_ice.py`, `build_ice.py`, `build_ice_screens.py`, `contrast.py` | Вариант «ледяное стекло» (понравился, решение по замене основного стиля ещё не принято). Доски `*Ice`: 8 экранов рядом с исходными. Принципы: стекло почти прозрачное, иней только по кромкам и на малых поверхностях, подписи карточек на градиенте, один материал для панелей, вторичный текст не бледнее 0,9. Проверка читаемости: `python3 contrast.py <файл>` и `STRESS=1 ...` (белое под стеклом), порог 4,5. В приложении затемнение под панелью считается по яркости фона |
 | `design/mockup/tools/build_final.py` | Доска `GarageFinal` «Гараж: финальный вид»: ледяной гараж плюс заголовок окна Windows, без самостоятельных пульсов (запускать после `build_ice.py`) |
-| `design/mockup/tools/build_m3.py` | Одна доска «Гараж в Material 3» для сравнения стилей (не часть дизайна, ничего не заменяет) |
 | `design/mockup/tools/build_screens.py` | Собирает `Updates`, `Search`, `Download`, `DownloadChecked`, `SettingsDownload`, `SettingsSites` |
 
 Сборка из папки `tools` (запускать из неё самой): положить в `photos/` файлы `wall.jpg` (фон, 1500 × 1000) и
 `mustang`, `dacia`, `tractor`, `truck`, `station`, `traffic`, `coupe`, `lebedka`, `lambo` (`.jpg`,
 616 × 356), затем `python3 gen.py`, `python3 build_ui.py`, `python3 build_screens.py`, для льда ещё `python3 gen_ice.py`,
-`python3 build_ice.py`, `python3 build_ice_screens.py`, `python3 build_final.py` (и `python3 build_m3.py` для доски Material 3). Результат в `out/*.dc.html`,
+`python3 build_ice.py`, `python3 build_ice_screens.py`, `python3 build_final.py`. Результат в `out/*.dc.html`,
 их можно открыть в браузере. Фотографии в репозиторий не кладём (чужие образцы).
 
 Макет опубликован как дизайн-артефакт в claude.ai. В нём 8 досок: «Гараж» (`GarageFinal`),

@@ -95,14 +95,11 @@
                                     </Border.Background>
                                 </Border>
                             </Grid>
-                            <!-- иней: наша текстура из design/mockup/tools/gen_ice.py. Включили мод — тает от краёв к центру,
+                            <!-- иней: текстура считается при запуске окна (GlassTextures.Ice, как ice_card из design/mockup/tools/gen_ice.py). Включили мод — тает от краёв к центру,
                                  выключили — нарастает от краёв внутрь (DESIGN_MOTION 3.1). Маска: непрозрачно до стопа 0, прозрачно
                                  между стопами 1 и 2, снова непрозрачно после стопа 3. Растаял: 0, 0, 1, 1. Покрыт: 1, 1, 1, 1. -->
-                            <Border x:Name="Frost" CornerRadius="26" RenderTransformOrigin="0.5,0.5" Opacity="{DynamicResource FrostOpacity}"
+                            <Border x:Name="Frost" CornerRadius="26" RenderTransformOrigin="0.5,0.5" Opacity="{DynamicResource FrostOpacity}" Background="{DynamicResource CardFrost}"
                                     IsHitTestVisible="False" Visibility="Collapsed">
-                                <Border.Background>
-                                    <ImageBrush ImageSource="pack://application:,,,/Assets/frost-card.png" Stretch="Fill"/>
-                                </Border.Background>
                                 <Border.RenderTransform><ScaleTransform x:Name="FrostScale" ScaleX="1.03" ScaleY="1.03"/></Border.RenderTransform>
                                 <Border.OpacityMask>
                                     <RadialGradientBrush Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.75" RadiusY="0.75">
