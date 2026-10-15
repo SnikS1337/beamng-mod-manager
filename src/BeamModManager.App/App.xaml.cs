@@ -51,13 +51,22 @@ public partial class App : Application
         if (demo is null)
         {
             // непредвиденная ошибка: записать в журнал и сказать, а не исчезнуть молча
+            var shown = 0;
             DispatcherUnhandledException += (_, a) =>
             {
                 var log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager", "errors.log");
-                try { File.AppendAllText(log, $"{DateTimeOffset.Now:u}\n{a.Exception}\n\n"); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                MessageBox.Show($"Что-то пошло не так: {a.Exception.Message}\n\nПодробности записаны в {log}. Моды и библиотека не тронуты.",
-                    "ModManager BeamNG", MessageBoxButton.OK, MessageBoxImage.Warning);
+                try
+                {
+                    // журнал не растёт бесконечно: больше мегабайта — начинаем заново
+                    if (File.Exists(log) && new FileInfo(log).Length > 1024 * 1024) File.Delete(log);
+                    File.AppendAllText(log, $"{DateTimeOffset.Now:u}\n{a.Exception}\n\n");
+                }
+                catch (IOException) { } catch (UnauthorizedAccessException) { }
                 a.Handled = true;
+                // повторяющаяся ошибка не должна засыпать окнами: три сообщения за запуск, дальше только журнал
+                if (++shown <= 3)
+                    MessageBox.Show($"Что-то пошло не так: {a.Exception.Message}\n\nПодробности записаны в {log}. Моды и библиотека не тронуты.",
+                        "ModManager BeamNG", MessageBoxButton.OK, MessageBoxImage.Warning);
             };
             _single = new Mutex(true, @"Local\BeamModManager.Single", out var first);
             if (!first)
@@ -229,7 +238,8 @@ public partial class App : Application
             SaveWindow = w =>
             {
                 var max = w.WindowState == WindowState.Maximized;
-                var b = max ? w.RestoreBounds : new Rect(w.Left, w.Top, w.ActualWidth, w.ActualHeight);
+                // свёрнутое или развёрнутое окно: обычный размер знает только RestoreBounds
+                var b = w.WindowState != WindowState.Normal ? w.RestoreBounds : new Rect(w.Left, w.Top, w.ActualWidth, w.ActualHeight);
                 settings = settings with { WindowMaximized = max, WindowWidth = (int)b.Width, WindowHeight = (int)b.Height };
                 try { settingsStore.Save(settings); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             },
@@ -263,13 +273,4 @@ internal static class PendingFile
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
-}
-
-/// <summary>Гараж поверх бэкенда, который можно заменить (пользователь указал другую папку).</summary>
-internal sealed class SwitchingBackend : IGarageBackend
-{
-    public IGarageBackend Inner { get; set; } = null!;
-    public GarageSnapshot Load() => Inner.Load();
-    public bool IsGameRunning() => Inner.IsGameRunning();
-    public ToggleResult SetEnabled(string fileName, bool enabled) => Inner.SetEnabled(fileName, enabled);
 }
