@@ -102,7 +102,10 @@ public partial class App : Application
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
                 // настройки в демо живут только в памяти: файл пользователя не трогаем
-                Settings = new SettingsViewModel(new AppSettings()) { ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")) },
+                Settings = new SettingsViewModel(new AppSettings { BackgroundImage = Path.GetFullPath(Path.Combine(demo, "wall.jpg")) })
+                {
+                    ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")),
+                },
                 StartPage = Arg("--page"),
                 StartSection = Enum.TryParse<SettingsSection>(Arg("--section"), true, out var sec) ? sec : SettingsSection.Appearance,
             };
