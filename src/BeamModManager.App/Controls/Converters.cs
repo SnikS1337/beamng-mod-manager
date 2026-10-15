@@ -86,15 +86,17 @@ public static class ImageCache
     }
 }
 
-/// <summary>[путь к картинке, включён] → кисть фото (цветная или серая); null, если картинки нет.</summary>
+/// <summary>
+/// [путь к картинке, рядом с видимой частью?] → кисть фото; параметр «gray» — серое фото выключенного мода.
+/// null, если картинки нет или карточка далеко от видимой части (картинку не держим).
+/// </summary>
 public sealed class PreviewBrushConverter : IMultiValueConverter
 {
     public object? Convert(object[] values, Type targetType, object? parameter, CultureInfo culture)
     {
         var path = values.Length > 0 ? values[0] as string : null;
-        var enabled = values.Length < 2 || values[1] is not bool b || b;
-        if (values.Length > 2 && values[2] is false) return null; // карточка далеко от видимой части: картинку не держим
-        var img = enabled ? ImageCache.Load(path) : ImageCache.LoadGray(path);
+        if (values.Length > 1 && values[1] is false) return null;
+        var img = parameter as string == "gray" ? ImageCache.LoadGray(path) : ImageCache.Load(path);
         if (img is null) return null;
         var brush = new ImageBrush(img) { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Center, AlignmentY = AlignmentY.Center };
         brush.Freeze();

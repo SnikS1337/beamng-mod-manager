@@ -251,7 +251,21 @@ public partial class MainWindow : Window
         if (!open && instant) Inspector.Visibility = Visibility.Collapsed;
     }
 
-    private void Dim_MouseDown(object sender, MouseButtonEventArgs e) => _vm.Selected = null;
+    private void Dim_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _vm.Selected = null;
+        e.Handled = true; // иначе щелчок дойдёт до окна и начнёт его перетаскивать
+    }
+
+    /// <summary>
+    /// Окно перетаскивается за любое пустое место (DESIGN_FLOWS раздел 2). Кнопки, поле поиска и полоса прокрутки
+    /// обрабатывают нажатие сами, сюда оно от них не доходит.
+    /// </summary>
+    private void Root_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_host.ShotPath is not null || e.ClickCount != 1 || e.ButtonState != MouseButtonState.Pressed) return;
+        try { DragMove(); } catch (InvalidOperationException) { } // кнопку уже отпустили
+    }
 
     /// <summary>
     /// Верхняя панель сжимается по шагам, когда не хватает места: убирается число модов (оно есть в правой панели),
@@ -387,6 +401,15 @@ public partial class MainWindow : Window
             el.BringIntoView(new Rect(0, -84, el.ActualWidth, el.ActualHeight + 84 + 20)); // не прятать под верхнюю панель
     }
 
+    /// <summary>Фокус с клавиатуры идёт за выбором: иначе белая рамка осталась бы на прежней карточке.</summary>
+    private void FocusSelected()
+    {
+        if (_vm.Selected is not { } c) return;
+        if (Cards.ItemContainerGenerator.ContainerFromItem(c) is DependencyObject cp && VisualTreeHelper.GetChildrenCount(cp) > 0 &&
+            VisualTreeHelper.GetChild(cp, 0) is UIElement btn)
+            btn.Focus();
+    }
+
     private void Toggle_Click(object sender, RoutedEventArgs e) => _vm.ToggleSelected();
     private void Undo_Click(object sender, RoutedEventArgs e) => _vm.Undo();
     private void DismissBanner_Click(object sender, RoutedEventArgs e) => _vm.DismissBanner();
@@ -430,6 +453,13 @@ public partial class MainWindow : Window
     {
         var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         var typing = Keyboard.FocusedElement is TextBox;
+        // Alt+Пробел — системное меню окна, как у обычных окон Windows
+        if (e.Key == Key.System && e.SystemKey == Key.Space && (Keyboard.Modifiers & ModifierKeys.Alt) != 0)
+        {
+            SystemCommands.ShowSystemMenu(this, PointToScreen(new Point(16, 16)));
+            e.Handled = true;
+            return;
+        }
         if (ctrl && e.Key == Key.F) { NavGarage.IsChecked = true; SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.D1) { NavGarage.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D2) { NavUpdates.IsChecked = true; e.Handled = true; return; }
@@ -457,6 +487,7 @@ public partial class MainWindow : Window
             default: return;
         }
         e.Handled = true;
+        FocusSelected();
     }
 
     // ───────────── снимок для сборочной машины ─────────────

@@ -349,3 +349,22 @@ public static class GameRepoFolderTests
         });
     }
 }
+
+public static class GameDateAddedTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("Дата установки из db.json");
+
+        t.Run("уже лежавший мод получает дату, когда его добавила игра; новый для игры — день сверки", () =>
+        {
+            using var g = new GameDbTests.Game();
+            File.WriteAllBytes(Path.Combine(g.Mods, "fresh.zip"), new byte[] { 1 });
+            GameDbSync.Reconcile(g.Store, g.Inst);
+            var bmw = g.Store.Mods().Single(m => m.FileName == "BMW_M2_G87_inf.zip");
+            var dbDate = GameModDb.Read(g.Db).Find("BMW_M2_G87_inf.zip")!.DateAdded!.Value;
+            Assert.Eq(dbDate, bmw.InstalledAtUtc);
+            Assert.True(g.Store.Mods().Single(m => m.FileName == "fresh.zip").InstalledAtUtc > DateTimeOffset.UtcNow.AddMinutes(-5), "новый — сейчас");
+        });
+    }
+}
