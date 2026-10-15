@@ -120,6 +120,19 @@ public partial class MainWindow : Window
         ApplyLook(host.Settings.Current);
         SettingsPanel.SizeChanged += (_, _) => AdaptSettings();
 
+        // вход окна (DESIGN.md 6 «Один вход»): не в снимках сборочной машины и не при выключенных анимациях.
+        // Начальное положение ставим сразу, до первого кадра; сами анимации — в OnLoaded, карточки — в CardGridPanel.
+        _entrance = host.ShotPath is null && !SpringDriver.ReducedMotion;
+        if (_entrance)
+        {
+            TopBar.Opacity = 0;
+            Anim.Mover(TopBar).Y = EnterTop;
+            Nav.Opacity = 0;
+            Anim.Mover(Nav).X = EnterLeft;
+            CardGridPanel.SetRise(Cards, 24);
+        }
+        UpdatesBadge.IsVisibleChanged += (_, _) => UpdateBadgePulse();
+
         vm.PropertyChanged += Vm_PropertyChanged;
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); };
         _gameTimer.Tick += (_, _) => CheckGame();
@@ -167,6 +180,7 @@ public partial class MainWindow : Window
         _gameTimer.Start();
         CheckGame();
         UpdateMotion();
+        if (_entrance) PlayEntrance();
         if (_host.StartupToast is { } toast) _vm.Notify(toast);
         if (_host.Banner is { } banner)
         {
@@ -182,6 +196,35 @@ public partial class MainWindow : Window
         if (_host.StartPage == "settings") NavSettings.IsChecked = true;
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
         if (_host.ShotPath is not null) Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, TakeShot);
+    }
+
+    // ───────────── вход окна (DESIGN.md 6 «Один вход», доска: dropin, leftin) ─────────────
+
+    private readonly bool _entrance;
+    private const double EnterTop = -18, EnterLeft = -24;
+
+    /// <summary>
+    /// Один раз при открытии: верхняя панель опускается, левая выезжает слева, обе проявляются (0,9 с, пружина без отскока).
+    /// Карточки всплывают сами (CardGridPanel, свойство Rise), правая панель выезжает как обычно.
+    /// </summary>
+    private void PlayEntrance()
+    {
+        Enter(TopBar, TranslateTransform.YProperty, EnterTop, 0.15);
+        Enter(Nav, TranslateTransform.XProperty, EnterLeft, 0.05);
+    }
+
+    /// <summary>
+    /// Начальное значение остаётся обычным значением, анимация держит конец: так нет кадра с панелью сразу на месте.
+    /// Стекло берёт фон под собой по своему месту только после раскладки, поэтому на каждом кадре сдвига просим её.
+    /// </summary>
+    private static void Enter(Glass g, DependencyProperty axis, double from, double delay)
+    {
+        var start = TimeSpan.FromSeconds(delay);
+        var time = TimeSpan.FromSeconds(0.9);
+        var move = Anim.Hold(from, 0, start, time, Anim.Smooth);
+        move.CurrentTimeInvalidated += (_, _) => g.InvalidateArrange();
+        Anim.Mover(g).BeginAnimation(axis, move);
+        g.BeginAnimation(OpacityProperty, Anim.Hold(0, 1, start, time, Anim.Smooth));
     }
 
     // ───────────── данные ─────────────
@@ -263,6 +306,44 @@ public partial class MainWindow : Window
         var live = IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && _host.ShotPath is null;
         _motion.SetRunning(live && s.AnimatedBackground, live && s.Fireflies);
         foreach (var (g, _) in _glass) g.SetLive(live); // искры льда мерцают в том же ритме, что и фон
+        _motionLive = live;
+        UpdateBadgePulse();
+    }
+
+    // ───────────── бейдж «Обновления»: пульс в ритме 6 с, пока не открывали (DESIGN.md 6, DESIGN_MOTION 3.6) ─────────────
+
+    private bool _motionLive, _updatesSeen, _badgeRunning;
+    private Storyboard? _badgePulse;
+
+    private void UpdateBadgePulse()
+    {
+        var run = _motionLive && !_updatesSeen && !SpringDriver.ReducedMotion && UpdatesBadge.IsVisible;
+        if (run == _badgeRunning) return;
+        _badgeRunning = run;
+        if (run) (_badgePulse ??= MakeBadgePulse()).Begin(this, true);
+        else _badgePulse?.Stop(this);
+    }
+
+    /// <summary>Как .pulse на доске: на 40–75 % удара от бейджа расходится и гаснет светлое кольцо. Сам бейдж с числом не двигается.</summary>
+    private Storyboard MakeBadgePulse()
+    {
+        var sb = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
+        Timeline.SetDesiredFrameRate(sb, 30);
+        sb.Children.Add(Beat(BadgeRing, OpacityProperty, 0, 0.55, 0));
+        sb.Children.Add(Beat(BadgeRingScale, ScaleTransform.ScaleXProperty, 1, 1, 1.6));
+        sb.Children.Add(Beat(BadgeRingScale, ScaleTransform.ScaleYProperty, 1, 1, 1.6));
+        return sb;
+    }
+
+    private static DoubleAnimationUsingKeyFrames Beat(DependencyObject target, DependencyProperty prop, double rest, double from, double to)
+    {
+        var a = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromSeconds(6) };
+        a.KeyFrames.Add(new DiscreteDoubleKeyFrame(rest, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        a.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(2.4))));
+        a.KeyFrames.Add(new EasingDoubleKeyFrame(to, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(4.5)), Anim.Smooth));
+        Storyboard.SetTarget(a, target);
+        Storyboard.SetTargetProperty(a, new PropertyPath(prop));
+        return a;
     }
 
     // ───────────── внешний вид из настроек (DESIGN.md 5.1) ─────────────
@@ -520,6 +601,23 @@ public partial class MainWindow : Window
         FilterBox.Visibility = SearchField.Visibility = CountLabel.Visibility = gv;
         if (garage) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         if (garage) EmptyBox.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(GarageViewModel.Empty)) { Converter = (System.Windows.Data.IValueConverter)FindResource("NullToCollapsed") });
+        // раздел «Обновления» открыли: найденное просмотрено, бейдж больше не пульсирует до конца сеанса
+        if (rb == NavUpdates && !_updatesSeen) { _updatesSeen = true; UpdateBadgePulse(); }
+        // сменился раздел: двигается только содержимое, оно проявляется с лёгким подъёмом; капля уже перетекает
+        if (IsLoaded)
+        {
+            if (garage) { Arrive(Scroller, Scroller); Arrive(EmptyBox, EmptyBox); }
+            else if (settings) Arrive(SettingsPanel, SettingsBody); // стекло только проявляется: его фон берётся по месту
+            else Arrive(SoonBox, SoonBox);
+        }
+    }
+
+    /// <summary>Новое содержимое раздела: проявление и подъём на 10 px (≈0,35 с, пружина без отскока).</summary>
+    private void Arrive(UIElement fade, UIElement rise)
+    {
+        if (SpringDriver.ReducedMotion || _host.ShotPath is not null) return;
+        fade.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.55, Anim.Smooth));
+        Anim.Mover(rise).BeginAnimation(TranslateTransform.YProperty, Anim.Go(10, 0, 0.55, Anim.Smooth));
     }
 
     // ───────────── фильтры и поиск ─────────────
@@ -548,14 +646,71 @@ public partial class MainWindow : Window
 
     // ───────────── сетка и правая панель ─────────────
 
-    private void CardPanel_Loaded(object sender, RoutedEventArgs e) => _panel = (CardGridPanel)sender;
+    private void CardPanel_Loaded(object sender, RoutedEventArgs e)
+    {
+        _panel = (CardGridPanel)sender;
+        _panel.Animated = _host.ShotPath is null; // снимку нужно конечное положение сразу
+    }
 
     private void Card_Click(object sender, RoutedEventArgs e)
     {
         // щелчок мышью по уже выбранной карточке закрывает правую панель; Enter с клавиатуры — только открывает
         if (((FrameworkElement)sender).DataContext is not ModCard c) return;
         var byKeyboard = InputManager.Current.MostRecentInputDevice is KeyboardDevice;
-        _vm.Selected = ReferenceEquals(_vm.Selected, c) && !byKeyboard ? null : c;
+        ChangeSelection(() => _vm.Selected = ReferenceEquals(_vm.Selected, c) && !byKeyboard ? null : c);
+    }
+
+    // ───────────── смена выбора при открытой панели (DESIGN_MOTION 3.5) ─────────────
+
+    private int _ghostGen;
+
+    /// <summary>
+    /// Панель уже открыта и выбран другой мод: она не выезжает заново, прежнее содержимое тает поверх нового.
+    /// Снимок прежнего делается до смены, пока на экране ещё оно.
+    /// </summary>
+    private void ChangeSelection(Action change)
+    {
+        var before = _vm.Selected;
+        var shot = SnapInspector();
+        change();
+        if (shot is not null && _vm.Selected is not null && !ReferenceEquals(before, _vm.Selected)) CrossFadeInspector(shot);
+    }
+
+    /// <summary>Снимок содержимого правой панели в пикселях экрана; null — панель не стоит открытой или анимации выключены.</summary>
+    private BitmapSource? SnapInspector()
+    {
+        if (_host.ShotPath is not null || SpringDriver.ReducedMotion || _vm.Selected is null) return null;
+        if (!Inspector.IsVisible || _inspX.Target != 0 || Math.Abs(_inspX.Value) > 1) return null; // выезжает или уезжает
+        var w = InspectorBody.ActualWidth;
+        var h = InspectorBody.ActualHeight;
+        if (w < 1 || h < 1) return null;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var rt = new RenderTargetBitmap((int)Math.Ceiling(w * dpi.DpiScaleX), (int)Math.Ceiling(h * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+            dc.DrawRectangle(new VisualBrush(InspectorBody) { ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, w, h) },
+                null, new Rect(0, 0, w, h));
+        rt.Render(dv);
+        rt.Freeze();
+        return rt;
+    }
+
+    /// <summary>Прежнее содержимое (снимок) гаснет, новое проявляется: быстро, ≈0,2 с, без сдвига, текст не расплывается.</summary>
+    private void CrossFadeInspector(BitmapSource old)
+    {
+        var gen = ++_ghostGen;
+        InspectorGhost.Source = old;
+        InspectorGhost.Visibility = Visibility.Visible;
+        var fadeOut = Anim.Go(1, 0, 0.3, Anim.Smooth);
+        fadeOut.Completed += (_, _) =>
+        {
+            if (gen != _ghostGen) return; // уже идёт следующая смена
+            InspectorGhost.Visibility = Visibility.Collapsed;
+            InspectorGhost.Source = null;
+        };
+        InspectorGhost.BeginAnimation(OpacityProperty, fadeOut);
+        InspectorBody.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.35, Anim.Smooth));
     }
 
     private void ScrollToSelected()
@@ -709,10 +864,10 @@ public partial class MainWindow : Window
         var cols = _panel?.Columns ?? 3;
         switch (e.Key)
         {
-            case Key.Left: _vm.MoveSelection(-1, 0, cols); break;
-            case Key.Right: _vm.MoveSelection(1, 0, cols); break;
-            case Key.Up: _vm.MoveSelection(0, -1, cols); break;
-            case Key.Down: _vm.MoveSelection(0, 1, cols); break;
+            case Key.Left: ChangeSelection(() => _vm.MoveSelection(-1, 0, cols)); break;
+            case Key.Right: ChangeSelection(() => _vm.MoveSelection(1, 0, cols)); break;
+            case Key.Up: ChangeSelection(() => _vm.MoveSelection(0, -1, cols)); break;
+            case Key.Down: ChangeSelection(() => _vm.MoveSelection(0, 1, cols)); break;
             case Key.Space: _vm.ToggleSelected(); break;
             default: return;
         }

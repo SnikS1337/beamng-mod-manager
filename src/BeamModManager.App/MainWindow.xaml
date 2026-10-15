@@ -94,14 +94,25 @@
                                         </LinearGradientBrush>
                                     </Border.Background>
                                 </Border>
-                                <!-- иней: наша текстура из design/mockup/tools/gen_ice.py -->
-                                <Border CornerRadius="26" RenderTransformOrigin="0.5,0.5" Opacity="{DynamicResource FrostOpacity}">
-                                    <Border.Background>
-                                        <ImageBrush ImageSource="pack://application:,,,/Assets/frost-card.png" Stretch="Fill"/>
-                                    </Border.Background>
-                                    <Border.RenderTransform><ScaleTransform x:Name="FrostScale" ScaleX="1.03" ScaleY="1.03"/></Border.RenderTransform>
-                                </Border>
                             </Grid>
+                            <!-- иней: наша текстура из design/mockup/tools/gen_ice.py. Включили мод — тает от краёв к центру,
+                                 выключили — нарастает от краёв внутрь (DESIGN_MOTION 3.1). Маска: непрозрачно до стопа 0, прозрачно
+                                 между стопами 1 и 2, снова непрозрачно после стопа 3. Растаял: 0, 0, 1, 1. Покрыт: 1, 1, 1, 1. -->
+                            <Border x:Name="Frost" CornerRadius="26" RenderTransformOrigin="0.5,0.5" Opacity="{DynamicResource FrostOpacity}"
+                                    IsHitTestVisible="False" Visibility="Collapsed">
+                                <Border.Background>
+                                    <ImageBrush ImageSource="pack://application:,,,/Assets/frost-card.png" Stretch="Fill"/>
+                                </Border.Background>
+                                <Border.RenderTransform><ScaleTransform x:Name="FrostScale" ScaleX="1.03" ScaleY="1.03"/></Border.RenderTransform>
+                                <Border.OpacityMask>
+                                    <RadialGradientBrush Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.75" RadiusY="0.75">
+                                        <GradientStop Color="#FF000000" Offset="0"/>
+                                        <GradientStop Color="#00000000" Offset="0"/>
+                                        <GradientStop Color="#00000000" Offset="1"/>
+                                        <GradientStop Color="#FF000000" Offset="1"/>
+                                    </RadialGradientBrush>
+                                </Border.OpacityMask>
+                            </Border>
                             <Border CornerRadius="26">
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -163,14 +174,36 @@
                                 <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="Snow" Property="Visibility" Value="Visible"/>
                             </DataTrigger>
-                            <!-- выключили: иней нарастает медленно; включили: тает (DESIGN_MOTION 3.1) -->
+                            <!-- выключили: иней нарастает от краёв внутрь, медленно; включили: тает от краёв к центру (DESIGN_MOTION 3.1).
+                                 Серый налёт просто проявляется и гаснет. Если иней выключен в настройках (FrostOpacity 0), остаётся только он. -->
                             <DataTrigger Binding="{Binding Enabled}" Value="False">
                                 <DataTrigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:1.1" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:1.1" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:1.1" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:1.4" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:1.4" EasingFunction="{StaticResource Smooth}"/>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="Visibility">
+                                                <DiscreteObjectKeyFrame KeyTime="0:0:0" Value="{x:Static Visibility.Visible}"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                            <!-- остаток прерванного таяния в центре быстро уходит, иней идёт от краёв (стопы 2 и 3);
+                                                 в конце маска переходит в равный по виду вид «1, 1, 1, 1», от него и тает -->
+                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[0].(GradientStop.Offset)">
+                                                <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="0" EasingFunction="{StaticResource Smooth}"/>
+                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
+                                            </DoubleAnimationUsingKeyFrames>
+                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[1].(GradientStop.Offset)">
+                                                <EasingDoubleKeyFrame KeyTime="0:0:0.15" Value="0" EasingFunction="{StaticResource Smooth}"/>
+                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
+                                            </DoubleAnimationUsingKeyFrames>
+                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[2].(GradientStop.Offset)">
+                                                <EasingDoubleKeyFrame KeyTime="0:0:1.1" Value="0" EasingFunction="{StaticResource Smooth}"/>
+                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
+                                            </DoubleAnimationUsingKeyFrames>
+                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[3].(GradientStop.Offset)">
+                                                <EasingDoubleKeyFrame KeyTime="0:0:1.4" Value="0" EasingFunction="{StaticResource Smooth}"/>
+                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
+                                            </DoubleAnimationUsingKeyFrames>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.EnterActions>
@@ -178,8 +211,21 @@
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1.03" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1.03" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1.03" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1.03" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
+                                            <!-- край прозрачности (стоп 1) идёт за непрозрачным (стоп 0) — мягкая кромка таяния;
+                                                 прерванное нарастание (стопы 2 и 3) уходит обратно к краям -->
+                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[0].(GradientStop.Offset)"
+                                                             To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[1].(GradientStop.Offset)"
+                                                             To="0" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[2].(GradientStop.Offset)"
+                                                             To="1" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[3].(GradientStop.Offset)"
+                                                             To="1" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="Visibility">
+                                                <DiscreteObjectKeyFrame KeyTime="0:0:1" Value="{x:Static Visibility.Collapsed}"/>
+                                            </ObjectAnimationUsingKeyFrames>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.ExitActions>
@@ -399,10 +445,16 @@
                              IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
                 <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
                              Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
-                <Border Canvas.Left="57" Canvas.Top="79" MinWidth="18" Height="18" CornerRadius="9" Background="White" Padding="5,0" IsHitTestVisible="False"
-                        Visibility="{Binding Filters[2].ShowCount, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Text="{Binding Filters[2].Count}" Foreground="#111" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
+                <!-- бейдж: пока «Обновления» не открывали, раз в 6 с от него расходится мягкое светлое кольцо (DESIGN.md 6 «Единый ритм») -->
+                <Grid x:Name="UpdatesBadge" Canvas.Left="57" Canvas.Top="79" IsHitTestVisible="False"
+                      Visibility="{Binding Filters[2].ShowCount, Converter={StaticResource BoolToVis}}">
+                    <Border x:Name="BadgeRing" CornerRadius="9" Background="White" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                        <Border.RenderTransform><ScaleTransform x:Name="BadgeRingScale"/></Border.RenderTransform>
+                    </Border>
+                    <Border MinWidth="18" Height="18" CornerRadius="9" Background="White" Padding="5,0">
+                        <TextBlock Text="{Binding Filters[2].Count}" Foreground="#111" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </Grid>
                 <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="138" Content="Поиск" Tag="{StaticResource IconSearch}"
                              Checked="Nav_Checked" ToolTip="Поиск (Ctrl+3)"/>
                 <Rectangle Canvas.Left="22" Canvas.Top="200" Width="40" Height="1" Fill="#3DFFFFFF"/>
@@ -464,7 +516,7 @@
         <c:Glass x:Name="SettingsPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="4" Tint="#700E182C"
                  Lens="56" Refraction="144" Brightness="0.66" Ice="0.13" IceReach="50" Sparks="12" Seed="16"
                  Margin="116,84,16,16" VerticalAlignment="Top" Visibility="Collapsed">
-            <Grid Margin="20,24,8,24">
+            <Grid x:Name="SettingsBody" Margin="20,24,8,24">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="200"/>
                     <ColumnDefinition Width="*"/>
@@ -668,87 +720,91 @@
                  HorizontalAlignment="Right" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
             <c:Glass.RenderTransform><TranslateTransform x:Name="InspectorMove" X="344"/></c:Glass.RenderTransform>
             <Grid>
-                <StackPanel VerticalAlignment="Center" Margin="28,0" Visibility="{Binding Details, Converter={StaticResource NullToVisible}}">
-                    <TextBlock Text="Выберите мод" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                    <TextBlock Text="{Binding Summary}" Foreground="{StaticResource Text2}" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
-                </StackPanel>
-
-                <DockPanel Margin="22,22,22,24" Visibility="{Binding Details, Converter={StaticResource NullToCollapsed}}">
-                    <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
-                        <TextBlock Text="{Binding Details.PendingText}" Foreground="{StaticResource Text2}" FontSize="12.5" Margin="6,0,6,10" TextWrapping="Wrap"
-                                   Visibility="{Binding Details.PendingText, Converter={StaticResource NullToCollapsed}}"/>
-                        <UniformGrid Rows="1">
-                            <Button x:Name="OpenPage" Style="{StaticResource Secondary}" Content="Открыть страницу" Margin="0,0,5,0" Click="OpenPage_Click"
-                                    Visibility="{Binding Details.OpenPageLink, Converter={StaticResource BoolToVis}}"/>
-                            <Button Style="{StaticResource Secondary}" Content="{Binding Details.ToggleLabel}" Margin="5,0,0,0" Click="Toggle_Click"
-                                    ToolTip="Пробел" Visibility="{Binding Details.ToggleLabel, Converter={StaticResource NullToCollapsed}}"/>
-                        </UniformGrid>
+                <!-- содержимое панели; при смене выбора поверх него на миг лежит снимок прежнего (InspectorGhost) и тает (DESIGN_MOTION 3.5) -->
+                <Grid x:Name="InspectorBody">
+                    <StackPanel VerticalAlignment="Center" Margin="28,0" Visibility="{Binding Details, Converter={StaticResource NullToVisible}}">
+                        <TextBlock Text="Выберите мод" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding Summary}" Foreground="{StaticResource Text2}" Margin="0,6,0,0" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
                     </StackPanel>
 
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-                        <StackPanel>
-                            <Grid Height="132">
-                                <Border CornerRadius="20">
-                                    <Border.Background>
-                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                            <GradientStop Color="#2A3446" Offset="0"/>
-                                            <GradientStop Color="#1B2232" Offset="1"/>
-                                        </LinearGradientBrush>
-                                    </Border.Background>
-                                    <Viewbox Width="44" Height="44" Opacity="0.42">
-                                        <Path Data="{Binding Selected.Placeholder, Converter={StaticResource PlaceholderIcon}}" Stroke="White" StrokeThickness="1.4"
-                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="22" Height="22"/>
-                                    </Viewbox>
-                                </Border>
-                                <Border CornerRadius="20">
-                                    <Border.Background>
-                                        <MultiBinding Converter="{StaticResource PreviewBrush}">
-                                            <Binding Path="Selected.PreviewPath"/>
-                                        </MultiBinding>
-                                    </Border.Background>
-                                </Border>
-                                <Border CornerRadius="20" Visibility="{Binding Selected.Enabled, Converter={StaticResource BoolToCollapsed}}">
-                                    <Border.Background>
-                                        <MultiBinding Converter="{StaticResource PreviewBrush}" ConverterParameter="gray">
-                                            <Binding Path="Selected.PreviewPath"/>
-                                        </MultiBinding>
-                                    </Border.Background>
-                                </Border>
-                                <Border CornerRadius="20" BorderBrush="#33FFFFFF" BorderThickness="1"/>
-                            </Grid>
-                            <TextBlock Text="{Binding Details.Name}" FontSize="24" FontWeight="Bold" Margin="0,18,0,0" TextWrapping="Wrap" LineHeight="28"/>
-                            <TextBlock Text="{Binding Details.Author}" Foreground="{StaticResource Text2}" Margin="0,3,0,0"
-                                       Visibility="{Binding Details.Author, Converter={StaticResource NullToCollapsed}}"/>
-
-                            <StackPanel Margin="0,18,0,0" Visibility="{Binding Details.ActionLabel, Converter={StaticResource NullToCollapsed}}">
-                                <Button Style="{StaticResource Primary}" Content="{Binding Details.ActionLabel}" Click="MainAction_Click"/>
-                                <TextBlock Text="{Binding Details.ActionHint}" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="0,8,0,0"
-                                           TextAlignment="Center" TextWrapping="Wrap"
-                                           Visibility="{Binding Details.ActionHint, Converter={StaticResource NullToCollapsed}}"/>
-                            </StackPanel>
-
-                            <Border CornerRadius="16" Background="{StaticResource DataBlock}" BorderBrush="#14FFFFFF" BorderThickness="1" Margin="0,18,0,0">
-                                <ItemsControl ItemsSource="{Binding Details.Facts}" Focusable="False" AlternationCount="1000">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate DataType="{x:Type g:Fact}">
-                                            <Border x:Name="Row" BorderBrush="{StaticResource DataLine}" BorderThickness="0,1,0,0" Padding="14,10">
-                                                <DockPanel>
-                                                    <TextBlock Style="{StaticResource FactLabel}" Text="{Binding Label}"/>
-                                                    <TextBlock Text="{Binding Value}" FontWeight="Medium" Margin="12,0,0,0" TextWrapping="Wrap"/>
-                                                </DockPanel>
-                                            </Border>
-                                            <DataTemplate.Triggers>
-                                                <DataTrigger Binding="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ContentPresenter}}" Value="0">
-                                                    <Setter TargetName="Row" Property="BorderThickness" Value="0"/>
-                                                </DataTrigger>
-                                            </DataTemplate.Triggers>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </Border>
+                    <DockPanel Margin="22,22,22,24" Visibility="{Binding Details, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
+                            <TextBlock Text="{Binding Details.PendingText}" Foreground="{StaticResource Text2}" FontSize="12.5" Margin="6,0,6,10" TextWrapping="Wrap"
+                                       Visibility="{Binding Details.PendingText, Converter={StaticResource NullToCollapsed}}"/>
+                            <UniformGrid Rows="1">
+                                <Button x:Name="OpenPage" Style="{StaticResource Secondary}" Content="Открыть страницу" Margin="0,0,5,0" Click="OpenPage_Click"
+                                        Visibility="{Binding Details.OpenPageLink, Converter={StaticResource BoolToVis}}"/>
+                                <Button Style="{StaticResource Secondary}" Content="{Binding Details.ToggleLabel}" Margin="5,0,0,0" Click="Toggle_Click"
+                                        ToolTip="Пробел" Visibility="{Binding Details.ToggleLabel, Converter={StaticResource NullToCollapsed}}"/>
+                            </UniformGrid>
                         </StackPanel>
-                    </ScrollViewer>
-                </DockPanel>
+
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                            <StackPanel>
+                                <Grid Height="132">
+                                    <Border CornerRadius="20">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                <GradientStop Color="#2A3446" Offset="0"/>
+                                                <GradientStop Color="#1B2232" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <Viewbox Width="44" Height="44" Opacity="0.42">
+                                            <Path Data="{Binding Selected.Placeholder, Converter={StaticResource PlaceholderIcon}}" Stroke="White" StrokeThickness="1.4"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="22" Height="22"/>
+                                        </Viewbox>
+                                    </Border>
+                                    <Border CornerRadius="20">
+                                        <Border.Background>
+                                            <MultiBinding Converter="{StaticResource PreviewBrush}">
+                                                <Binding Path="Selected.PreviewPath"/>
+                                            </MultiBinding>
+                                        </Border.Background>
+                                    </Border>
+                                    <Border CornerRadius="20" Visibility="{Binding Selected.Enabled, Converter={StaticResource BoolToCollapsed}}">
+                                        <Border.Background>
+                                            <MultiBinding Converter="{StaticResource PreviewBrush}" ConverterParameter="gray">
+                                                <Binding Path="Selected.PreviewPath"/>
+                                            </MultiBinding>
+                                        </Border.Background>
+                                    </Border>
+                                    <Border CornerRadius="20" BorderBrush="#33FFFFFF" BorderThickness="1"/>
+                                </Grid>
+                                <TextBlock Text="{Binding Details.Name}" FontSize="24" FontWeight="Bold" Margin="0,18,0,0" TextWrapping="Wrap" LineHeight="28"/>
+                                <TextBlock Text="{Binding Details.Author}" Foreground="{StaticResource Text2}" Margin="0,3,0,0"
+                                           Visibility="{Binding Details.Author, Converter={StaticResource NullToCollapsed}}"/>
+
+                                <StackPanel Margin="0,18,0,0" Visibility="{Binding Details.ActionLabel, Converter={StaticResource NullToCollapsed}}">
+                                    <Button Style="{StaticResource Primary}" Content="{Binding Details.ActionLabel}" Click="MainAction_Click"/>
+                                    <TextBlock Text="{Binding Details.ActionHint}" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="0,8,0,0"
+                                               TextAlignment="Center" TextWrapping="Wrap"
+                                               Visibility="{Binding Details.ActionHint, Converter={StaticResource NullToCollapsed}}"/>
+                                </StackPanel>
+
+                                <Border CornerRadius="16" Background="{StaticResource DataBlock}" BorderBrush="#14FFFFFF" BorderThickness="1" Margin="0,18,0,0">
+                                    <ItemsControl ItemsSource="{Binding Details.Facts}" Focusable="False" AlternationCount="1000">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type g:Fact}">
+                                                <Border x:Name="Row" BorderBrush="{StaticResource DataLine}" BorderThickness="0,1,0,0" Padding="14,10">
+                                                    <DockPanel>
+                                                        <TextBlock Style="{StaticResource FactLabel}" Text="{Binding Label}"/>
+                                                        <TextBlock Text="{Binding Value}" FontWeight="Medium" Margin="12,0,0,0" TextWrapping="Wrap"/>
+                                                    </DockPanel>
+                                                </Border>
+                                                <DataTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ContentPresenter}}" Value="0">
+                                                        <Setter TargetName="Row" Property="BorderThickness" Value="0"/>
+                                                    </DataTrigger>
+                                                </DataTemplate.Triggers>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Grid>
+                <Image x:Name="InspectorGhost" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" Visibility="Collapsed"/>
             </Grid>
         </c:Glass>
 
