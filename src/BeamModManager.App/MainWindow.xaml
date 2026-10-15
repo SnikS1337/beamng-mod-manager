@@ -68,6 +68,7 @@
                                     <MultiBinding Converter="{StaticResource PreviewBrush}">
                                         <Binding Path="PreviewPath"/>
                                         <Binding Path="Enabled"/>
+                                        <Binding Path="(c:CardGridPanel.InView)" RelativeSource="{RelativeSource Self}"/>
                                     </MultiBinding>
                                 </Border.Background>
                             </Border>

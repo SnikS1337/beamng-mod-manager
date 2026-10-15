@@ -8,17 +8,48 @@ using BeamModManager.Ui.Garage;
 
 namespace BeamModManager.App.Controls;
 
-/// <summary>Картинки карточек: читаются один раз, уменьшенными, и замораживаются (их можно рисовать без пересчёта).</summary>
+/// <summary>
+/// Картинки карточек: читаются уменьшенными до нужной высоты и замораживаются. Держим последние <see cref="Capacity"/>:
+/// картинки карточек, которые давно не видны, отдаются сборщику мусора.
+/// </summary>
 public static class ImageCache
 {
-    private static readonly Dictionary<string, BitmapSource?> ColorCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, BitmapSource?> Gray = new(StringComparer.OrdinalIgnoreCase);
+    public const int Capacity = 96;
+    private static readonly Dictionary<string, LinkedListNode<(string Key, BitmapSource? Img)>> Map = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly LinkedList<(string Key, BitmapSource? Img)> Order = new();
 
-    public static BitmapSource? Load(string? path, int decodeWidth = 616)
+    /// <summary>Высота декодирования: самая высокая карточка (340 × 260) при текущем масштабе Windows, с округлением вверх.</summary>
+    public static int DecodeHeight { get; set; } = 260;
+
+    private static bool TryGet(string key, out BitmapSource? img)
+    {
+        if (Map.TryGetValue(key, out var node))
+        {
+            Order.Remove(node);
+            Order.AddFirst(node);
+            img = node.Value.Img;
+            return true;
+        }
+        img = null;
+        return false;
+    }
+
+    private static void Put(string key, BitmapSource? img)
+    {
+        Map[key] = Order.AddFirst((key, img));
+        while (Order.Count > Capacity)
+        {
+            var last = Order.Last!;
+            Order.RemoveLast();
+            Map.Remove(last.Value.Key);
+        }
+    }
+
+    public static BitmapSource? Load(string? path)
     {
         if (string.IsNullOrEmpty(path)) return null;
-        var key = path + "|" + decodeWidth;
-        if (ColorCache.TryGetValue(key, out var hit)) return hit;
+        var key = "c|" + path;
+        if (TryGet(key, out var hit)) return hit;
         BitmapSource? img = null;
         try
         {
@@ -26,14 +57,14 @@ public static class ImageCache
             bi.BeginInit();
             bi.CacheOption = BitmapCacheOption.OnLoad; // файл не держим открытым: кэш можно чистить
             bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-            bi.DecodePixelWidth = decodeWidth;
+            bi.DecodePixelHeight = DecodeHeight; // фото режется по высоте карточки (cover), ширина подстроится
             bi.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
             bi.EndInit();
             bi.Freeze();
             img = bi;
         }
         catch (Exception e) when (e is IOException or NotSupportedException or UnauthorizedAccessException or ArgumentException or FileFormatException or UriFormatException) { }
-        ColorCache[key] = img;
+        Put(key, img);
         return img;
     }
 
@@ -41,7 +72,8 @@ public static class ImageCache
     public static BitmapSource? LoadGray(string? path)
     {
         if (string.IsNullOrEmpty(path)) return null;
-        if (Gray.TryGetValue(path, out var hit)) return hit;
+        var key = "g|" + path;
+        if (TryGet(key, out var hit)) return hit;
         BitmapSource? g = null;
         if (Load(path) is { } src)
         {
@@ -49,14 +81,8 @@ public static class ImageCache
             f.Freeze();
             g = f;
         }
-        Gray[path] = g;
+        Put(key, g);
         return g;
-    }
-
-    public static void Forget(string path)
-    {
-        foreach (var k in ColorCache.Keys.Where(k => k.StartsWith(path + "|", StringComparison.OrdinalIgnoreCase)).ToList()) ColorCache.Remove(k);
-        Gray.Remove(path);
     }
 }
 
@@ -67,6 +93,7 @@ public sealed class PreviewBrushConverter : IMultiValueConverter
     {
         var path = values.Length > 0 ? values[0] as string : null;
         var enabled = values.Length < 2 || values[1] is not bool b || b;
+        if (values.Length > 2 && values[2] is false) return null; // карточка далеко от видимой части: картинку не держим
         var img = enabled ? ImageCache.Load(path) : ImageCache.LoadGray(path);
         if (img is null) return null;
         var brush = new ImageBrush(img) { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Center, AlignmentY = AlignmentY.Center };

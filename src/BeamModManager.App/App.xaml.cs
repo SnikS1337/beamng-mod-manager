@@ -35,6 +35,15 @@ public partial class App : Application
         // два менеджера над одной библиотекой и одним db.json мешали бы друг другу
         if (demo is null)
         {
+            // непредвиденная ошибка: записать в журнал и сказать, а не исчезнуть молча
+            DispatcherUnhandledException += (_, a) =>
+            {
+                var log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager", "errors.log");
+                try { File.AppendAllText(log, $"{DateTimeOffset.Now:u}\n{a.Exception}\n\n"); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                MessageBox.Show($"Что-то пошло не так: {a.Exception.Message}\n\nПодробности записаны в {log}. Моды и библиотека не тронуты.",
+                    "ModManager BeamNG", MessageBoxButton.OK, MessageBoxImage.Warning);
+                a.Handled = true;
+            };
             _single = new Mutex(true, @"Local\BeamModManager.Single", out var first);
             if (!first)
             {
