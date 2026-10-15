@@ -93,11 +93,14 @@
                                 </LinearGradientBrush>
                             </Border.Background>
                         </Border>
-                        <Image x:Name="PART_Rim" Stretch="Fill" IsHitTestVisible="False"/>
                         <Border x:Name="PART_Contour" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" BorderThickness="1"
                                 BorderBrush="#1FFFFFFF" IsHitTestVisible="False"/>
-                        <Image x:Name="PART_Ice" Stretch="Fill" IsHitTestVisible="False"/>
-                        <Canvas x:Name="PART_Sparks" IsHitTestVisible="False" ClipToBounds="False"/>
+                        <!-- кромка, иней и искры: Rectangle не просит места у раскладки (картинка растянула бы панель) -->
+                        <Grid x:Name="PART_Deco" IsHitTestVisible="False" Opacity="0">
+                            <Rectangle x:Name="PART_Rim"/>
+                            <Rectangle x:Name="PART_Ice"/>
+                            <Canvas x:Name="PART_Sparks"/>
+                        </Grid>
                         <ContentPresenter Margin="{TemplateBinding Padding}"/>
                     </Grid>
                     <ControlTemplate.Triggers>

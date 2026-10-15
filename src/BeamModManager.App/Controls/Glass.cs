@@ -46,7 +46,7 @@ public class Glass : ContentControl
         nameof(Shadow), typeof(bool), typeof(Glass), new PropertyMetadata(true));
 
     public static readonly DependencyProperty LensProperty = DependencyProperty.Register(
-        nameof(Lens), typeof(double), typeof(Glass), new PropertyMetadata(30.0, (d, _) => ((Glass)d).ShapeChanged()));
+        nameof(Lens), typeof(double), typeof(Glass), new PropertyMetadata(30.0, (d, _) => { ((Glass)d).ShapeChanged(); ((Glass)d).ApplyMode(); }));
 
     public static readonly DependencyProperty RefractionProperty = DependencyProperty.Register(
         nameof(Refraction), typeof(double), typeof(Glass), new PropertyMetadata(0.0, (d, _) => ((Glass)d).ApplyMode()));
@@ -119,8 +119,9 @@ public class Glass : ContentControl
     private Border? _clip;
     private Grid? _lens;
     private Rectangle? _sample;
-    private Image? _rim, _ice;
+    private Rectangle? _rim, _ice;
     private Canvas? _sparks;
+    private Grid? _deco;
     private Border? _contour, _highlight;
     private readonly VisualBrush _brush = new()
     {
@@ -140,6 +141,7 @@ public class Glass : ContentControl
     {
         LayoutUpdated += (_, _) => Sync();
         SizeChanged += (_, _) => { Sync(); ShapeChanged(); };
+        IsVisibleChanged += (_, _) => RunSparks();
         RenderOptions.SetCachingHint(_brush, CachingHint.Unspecified);
         _texTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(120) };
         _texTimer.Tick += (_, _) => { _texTimer.Stop(); _ = RebuildTexturesAsync(); };
@@ -151,8 +153,9 @@ public class Glass : ContentControl
         _clip = GetTemplateChild("PART_Clip") as Border;
         _lens = GetTemplateChild("PART_Lens") as Grid;
         _sample = GetTemplateChild("PART_Sample") as Rectangle;
-        _rim = GetTemplateChild("PART_Rim") as Image;
-        _ice = GetTemplateChild("PART_Ice") as Image;
+        _rim = GetTemplateChild("PART_Rim") as Rectangle;
+        _ice = GetTemplateChild("PART_Ice") as Rectangle;
+        _deco = GetTemplateChild("PART_Deco") as Grid;
         _sparks = GetTemplateChild("PART_Sparks") as Canvas;
         _contour = GetTemplateChild("PART_Contour") as Border;
         _highlight = GetTemplateChild("PART_Highlight") as Border;
@@ -256,9 +259,13 @@ public class Glass : ContentControl
     private void ShapeChanged()
     {
         if (_rim is null || ActualWidth < 2 || ActualHeight < 2) return;
+        // растянутая под новый размер кромка искажает скругления: прячем её, пока не готова новая
+        if (_deco is not null && !SameSize()) { _deco.BeginAnimation(OpacityProperty, null); _deco.Opacity = 0; }
         _texTimer.Stop();
         _texTimer.Start();
     }
+
+    private bool SameSize() => _texKey.W == (int)Math.Round(ActualWidth) && _texKey.H == (int)Math.Round(ActualHeight);
 
     private async Task RebuildTexturesAsync()
     {
@@ -266,15 +273,39 @@ public class Glass : ContentControl
         var h = (int)Math.Round(ActualHeight);
         if (w < 2 || h < 2) return;
         var key = (w, h, Corner, Lens, IceReach, Seed, Sparks);
-        if (key == _texKey) return;
+        if (key == _texKey) { ShowDeco(); return; }
         _texKey = key;
         var gen = ++_texGen;
-        var (rim, ice) = await Task.Run(() => (Textures.Get(TexKind.Rim, w, h, key.Corner, key.Lens, 0),
-                                                 Textures.Get(TexKind.Ice, w, h, key.Corner, key.IceReach, key.Seed)));
+        // считаем в пикселях экрана, чтобы тонкая кромка была чёткой на масштабе 125–200 %; на огромных панелях
+        // масштаб ограничен: больше ~4 млн пикселей на текстуру не нужно и дорого по памяти
+        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var scale = Math.Clamp(Math.Min(dpi, Math.Sqrt(4_000_000.0 / (w * (double)h))), 0.5, 3);
+        int pw = Math.Max(2, (int)Math.Round(w * scale)), ph = Math.Max(2, (int)Math.Round(h * scale));
+        BitmapSource rim, ice;
+        try
+        {
+            (rim, ice) = await Task.Run(() => (Textures.Get(TexKind.Rim, pw, ph, key.Corner * scale, key.Lens * scale, 0),
+                                               Textures.Get(TexKind.Ice, pw, ph, key.Corner * scale, key.IceReach * scale, key.Seed)));
+        }
+        catch (Exception e) when (e is OutOfMemoryException or ArgumentException or InvalidOperationException)
+        {
+            _texKey = default; // в следующий раз попробуем снова
+            return;
+        }
         if (gen != _texGen) return; // пока считали, размер снова поменялся
-        if (_rim is not null) _rim.Source = rim;
-        if (_ice is not null) _ice.Source = ice;
+        if (_rim is not null) _rim.Fill = Frozen(new ImageBrush(rim) { Stretch = Stretch.Fill });
+        if (_ice is not null) _ice.Fill = Frozen(new ImageBrush(ice) { Stretch = Stretch.Fill });
         BuildSparks(w, h);
+        ShowDeco();
+    }
+
+    /// <summary>Кромка, иней и искры готовы под текущий размер: мягко проявляются.</summary>
+    private void ShowDeco()
+    {
+        if (_deco is null || _deco.Opacity >= 1 || !SameSize()) return;
+        if (Motion.SpringDriver.ReducedMotion) { _deco.Opacity = 1; return; }
+        _deco.BeginAnimation(OpacityProperty, new DoubleAnimation(_deco.Opacity, 1, TimeSpan.FromSeconds(0.25)));
+        _deco.Opacity = 1;
     }
 
     private enum TexKind { Rim, Ice }
@@ -287,6 +318,8 @@ public class Glass : ContentControl
     {
         private static readonly object Gate = new();
         private static readonly LinkedList<((TexKind, int, int, double, double, int) Key, BitmapSource Img)> Cache = new();
+        private const long MaxBytes = 48L * 1024 * 1024; // последние размеры всех панелей с запасом
+        private static long _bytes;
 
         public static BitmapSource Get(TexKind kind, int w, int h, double r, double p, int seed)
         {
@@ -295,12 +328,19 @@ public class Glass : ContentControl
                 foreach (var e in Cache)
                     if (e.Key == key) return e.Img;
             var px = kind == TexKind.Rim ? GlassTextures.Rim(w, h, r, p) : GlassTextures.Ice(w, h, r, p, seed);
+            // точек на дюйм столько, чтобы картинка занимала размер панели (Fill всё равно растянет точно)
             var img = BitmapSource.Create(w, h, 96, 96, PixelFormats.Pbgra32, null, px, w * 4);
             img.Freeze();
             lock (Gate)
             {
                 Cache.AddFirst((key, img));
-                while (Cache.Count > 24) Cache.RemoveLast();
+                _bytes += px.LongLength;
+                while (_bytes > MaxBytes && Cache.Count > 1)
+                {
+                    var last = Cache.Last!.Value;
+                    Cache.RemoveLast();
+                    _bytes -= (long)last.Img.PixelWidth * last.Img.PixelHeight * 4;
+                }
             }
             return img;
         }
@@ -319,6 +359,7 @@ public class Glass : ContentControl
         _sparkBoard?.Stop(this);
         _sparkBoard = null;
         _sparkRunning = false;
+        _sparkPaused = false;
         _sparks.Children.Clear();
         if (Sparks <= 0) return;
         var rnd = new Random(Seed * 7919 + 13);
@@ -335,8 +376,8 @@ public class Glass : ContentControl
                 default: x = w - rnd.Next(4, 17); break;
             }
             // искра только внутри скруглённой формы: в срезанном углу её не видно было бы целиком
-            if (GlassTextures.InsideDistance(x, y, w, h, Corner) < 3) continue;
             var size = new[] { 9, 11, 13, 15 }[rnd.Next(4)];
+            if (GlassTextures.InsideDistance(x, y, w, h, Corner) < size / 2.0 + 1) continue;
             var spark = MakeSpark(size);
             Canvas.SetLeft(spark, x - size / 2.0);
             Canvas.SetTop(spark, y - size / 2.0);
@@ -364,12 +405,31 @@ public class Glass : ContentControl
 
     private static readonly IEasingFunction SparkEase = Frozen(new SineEase { EasingMode = EasingMode.EaseInOut });
 
+    private bool _sparkPaused;
+
+    /// <summary>
+    /// Искры мерцают, пока панель на экране и фон живой. Окно неактивно или игра запущена — замирают, где были.
+    /// «Уменьшить анимацию» в Windows — стоят неподвижно и видны наполовину (как на доске: opacity .55).
+    /// </summary>
     private void RunSparks()
     {
         if (_sparkBoard is null || _sparks is null) return;
-        var run = _live && _sparks.Visibility == Visibility.Visible && !Motion.SpringDriver.SystemReduced;
-        if (run && !_sparkRunning) { _sparkBoard.Begin(this, true); _sparkRunning = true; }
-        else if (!run && _sparkRunning) { _sparkBoard.Stop(this); _sparkRunning = false; }
+        var shown = IsVisible && _sparks.Visibility == Visibility.Visible;
+        if (Motion.SpringDriver.SystemReduced)
+        {
+            if (_sparkRunning) { _sparkBoard.Stop(this); _sparkRunning = false; _sparkPaused = false; }
+            foreach (FrameworkElement sp in _sparks.Children)
+            {
+                sp.Opacity = 0.55;
+                var st = (TransformGroup)sp.RenderTransform;
+                ((ScaleTransform)st.Children[0]).ScaleX = ((ScaleTransform)st.Children[0]).ScaleY = 1;
+            }
+            return;
+        }
+        var run = _live && shown;
+        if (run && !_sparkRunning) { _sparkBoard.Begin(this, true); _sparkRunning = true; _sparkPaused = false; }
+        else if (run && _sparkPaused) { _sparkBoard.Resume(this); _sparkPaused = false; }
+        else if (!run && _sparkRunning && !_sparkPaused) { _sparkBoard.Pause(this); _sparkPaused = true; }
     }
 
     /// <summary>Искра: два тонких светлых луча крестом и мягкая точка в центре (как .gl на доске).</summary>

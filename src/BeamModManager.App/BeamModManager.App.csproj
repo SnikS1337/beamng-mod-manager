@@ -33,7 +33,7 @@
   </PropertyGroup>
 
   <Target Name="CompileGlassShader" BeforeTargets="BeforeBuild"
-          Inputs="$(MSBuildProjectDirectory)\$(GlassShaderSource)" Outputs="$(MSBuildProjectDirectory)\$(GlassShaderOutput)">
+          Inputs="$(MSBuildProjectDirectory)\$(GlassShaderSource);$(MSBuildProjectFullPath)" Outputs="$(MSBuildProjectDirectory)\$(GlassShaderOutput)">
     <ItemGroup Condition="'$(FxcPath)' == ''">
       <_FxcCandidate Include="$(MSBuildProgramFiles32)\Windows Kits\10\bin\10.*\x64\fxc.exe"/>
     </ItemGroup>

@@ -190,6 +190,9 @@ public partial class App : Application
     {
         var appDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager");
         Directory.CreateDirectory(appDir);
+        // копии фото для фона из прошлой версии больше не нужны (фото убрано 2026-10-15)
+        try { foreach (var f in Directory.EnumerateFiles(appDir, "background-*.*")) File.Delete(f); }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException) { }
         var settingsStore = new SettingsStore(Path.Combine(appDir, "settings.json"));
         var loaded = settingsStore.Load();
         var settings = loaded.Settings;
@@ -268,22 +271,25 @@ public partial class App : Application
             StartHeight = settings.WindowHeight,
             StartMaximized = settings.WindowMaximized,
             Previews = new PreviewLoader(cache, Shrinker.ToJpeg),
-            PickFolder = owner =>
+            ChooseFolder = owner =>
             {
                 var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Папка mods или папка пользователя BeamNG" };
-                if (dlg.ShowDialog(owner) != true) return false;
+                if (dlg.ShowDialog(owner) != true) return null;
                 var r = GameFolders.Resolve(dlg.FolderName);
-                if (!r.Ok)
-                {
-                    MessageBox.Show(owner, r.Message, "Папка не подходит", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return false;
-                }
+                if (r.Ok) return r.ModsDir;
+                MessageBox.Show(owner, r.Message, "Папка не подходит", MessageBoxButton.OK, MessageBoxImage.Information);
+                return null;
+            },
+            UseFolder = dir =>
+            {
                 var before = svm.Current;
-                // настройки сами переключат папку (подписка выше)
-                svm.Update(s => s with { ModsFolder = r.ModsDir, UserFolder = null });
-                // выбрали ту же папку (например, диск подключили после запуска): настройки не изменились, переключаем сами
-                if (ReferenceEquals(before, svm.Current)) { currentDir = r.ModsDir; Use(currentDir); }
-                return true; // окно перечитает моды
+                // настройки сами переключат папку (подписка выше), окно перечитает моды по их событию
+                svm.Update(s => s with { ModsFolder = dir, UserFolder = null });
+                if (!ReferenceEquals(before, svm.Current)) return true;
+                // та же папка (например, диск подключили после запуска): настройки не изменились, переключаем сами
+                currentDir = dir;
+                Use(currentDir);
+                return false;
             },
             SaveWindow = w =>
             {

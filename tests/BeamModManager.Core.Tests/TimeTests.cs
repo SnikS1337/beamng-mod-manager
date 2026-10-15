@@ -188,6 +188,30 @@ public static class TimeTests
             finally { try { Directory.Delete(root, true); } catch { } }
             return Task.CompletedTask;
         });
+        t.Run("число копий читается при каждой уборке: поменяли в настройках — следующая установка оставляет новое число", () =>
+        {
+            var root = Path.Combine(Path.GetTempPath(), "bmm-keep-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var layout = new ModLayout(Path.Combine(root, "mods"), Path.Combine(root, "dis"), Path.Combine(root, "bak"));
+                var now = T0;
+                var keep = 5;
+                var inst = new ModInstaller(layout, () => now, () => keep);
+                inst.Install(Mod(1000), "car.zip");
+                for (var i = 1; i <= 4; i++) { now = T0.AddMinutes(i); inst.Install(Mod(1000 + i * 100), "car.zip", new InstallOptions { ReplaceExisting = true }); }
+                Assert.Eq(4, inst.Backups("car.zip").Count);
+                keep = 2;
+                now = T0.AddMinutes(10);
+                inst.Install(Mod(2500), "car.zip", new InstallOptions { ReplaceExisting = true });
+                Assert.Eq(2, inst.Backups("car.zip").Count);
+                keep = 0; // мусор из настроек: одна копия остаётся всегда
+                now = T0.AddMinutes(11);
+                inst.Install(Mod(2600), "car.zip", new InstallOptions { ReplaceExisting = true });
+                Assert.Eq(1, inst.Backups("car.zip").Count);
+            }
+            finally { try { Directory.Delete(root, true); } catch { } }
+            return Task.CompletedTask;
+        });
     }
 
     /// <summary>Сайт, у которого каждая карточка отвечает не сразу (настоящая задержка).</summary>

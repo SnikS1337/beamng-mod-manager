@@ -24,8 +24,11 @@ public sealed class WindowHost
 {
     public required IGarageBackend Backend { get; init; }
     public PreviewLoader? Previews { get; init; }
-    /// <summary>«Указать папку»: показывает выбор папки и записывает её в настройки (моды перечитываются по их событию); null — не умеем (демо).</summary>
-    public Func<Window, bool>? PickFolder { get; init; }
+    /// <summary>«Указать папку»: диалог выбора и проверка; возвращает папку mods или null (отказались, не подходит). null — не умеем (демо).</summary>
+    public Func<Window, string?>? ChooseFolder { get; init; }
+    /// <summary>Взять папку модов (уже проверенную): записывает её в настройки. true — настройки изменились (моды
+    /// перечитаются по их событию); false — та же папка, помощник переключён заново, перечитать должно окно.</summary>
+    public Func<string, bool>? UseFolder { get; init; }
     public Action<Window>? SaveWindow { get; init; }
     /// <summary>Сделать снимок окна в этот файл и закрыться (сборочная машина).</summary>
     public string? ShotPath { get; init; }
@@ -119,6 +122,9 @@ public partial class MainWindow : Window
         _folderKey = FolderKey(host.Settings.Current);
         ApplyLook(host.Settings.Current);
         SettingsPanel.SizeChanged += (_, _) => AdaptSettings();
+        // в Windows переключили «Эффекты прозрачности» или анимацию: применяем сразу, без перезапуска
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+        Closed += (_, _) => Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
 
         // вход окна (DESIGN.md 6 «Один вход»): не в снимках сборочной машины и не при выключенных анимациях.
         // Начальное положение ставим сразу, до первого кадра; сами анимации — в OnLoaded, карточки — в CardGridPanel.
@@ -214,7 +220,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Начальное значение остаётся обычным значением, анимация держит конец: так нет кадра с панелью сразу на месте.
+    /// До OnLoaded панель стоит в начале входа (конструктор), здесь анимация держит начало до задержки и ведёт к месту.
+    /// Обычное значение сразу ставится конечным: если анимацию когда-нибудь снимут, панель останется на месте и видна.
     /// Стекло берёт фон под собой по своему месту только после раскладки, поэтому на каждом кадре сдвига просим её.
     /// </summary>
     private static void Enter(Glass g, DependencyProperty axis, double from, double delay)
@@ -223,8 +230,11 @@ public partial class MainWindow : Window
         var time = TimeSpan.FromSeconds(0.9);
         var move = Anim.Hold(from, 0, start, time, Anim.Smooth);
         move.CurrentTimeInvalidated += (_, _) => g.InvalidateArrange();
-        Anim.Mover(g).BeginAnimation(axis, move);
+        var mover = Anim.Mover(g);
+        mover.BeginAnimation(axis, move);
+        mover.SetValue(axis, 0.0);
         g.BeginAnimation(OpacityProperty, Anim.Hold(0, 1, start, time, Anim.Smooth));
+        g.Opacity = 1;
     }
 
     // ───────────── данные ─────────────
@@ -305,7 +315,8 @@ public partial class MainWindow : Window
         var s = _host.Settings.Current;
         var live = IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && _host.ShotPath is null;
         _motion.SetRunning(live && s.AnimatedBackground, live && s.Fireflies);
-        foreach (var (g, _) in _glass) g.SetLive(live); // искры льда мерцают в том же ритме, что и фон
+        // искры льда мерцают в том же ритме, что и фон; выключили «Анимированный фон» — стоят и они (DESIGN.md 6)
+        foreach (var (g, _) in _glass) g.SetLive(live && s.AnimatedBackground);
         _motionLive = live;
         UpdateBadgePulse();
     }
@@ -353,6 +364,12 @@ public partial class MainWindow : Window
     private BackgroundTheme? _theme;
     private double _frost = -1;
 
+    /// <summary>
+    /// Нет видеокарты для WPF (удалённый рабочий стол, виртуальная машина): шейдеры и размытие считает процессор на каждом
+    /// кадре фона, поэтому жидкое стекло заменяется матовым (DESIGN.md 3.2). Снимкам сборочной машины нужен настоящий вид.
+    /// </summary>
+    private bool WeakGraphics() => _host.ShotPath is null && (RenderCapability.Tier >> 16) < 2;
+
     /// <summary>Матовое стекло (DESIGN.md 3.2): размытие 26 px, плотная подложка.</summary>
     private static readonly Brush MatteTint = Frozen(new SolidColorBrush(Color.FromArgb(0xA8, 34, 46, 68)));
     /// <summary>Плоское стекло: сплошная заливка #2a3446.</summary>
@@ -360,6 +377,9 @@ public partial class MainWindow : Window
 
     // число копий в ключ не входит: установщик читает его сам при каждой уборке, перечитывать папку не нужно
     private static string FolderKey(AppSettings s) => $"{s.ModsFolder}|{s.UserFolder}";
+
+    private void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e) =>
+        Dispatcher.BeginInvoke(() => { if (IsLoaded) ApplyLook(_host.Settings.Current); });
 
     private void OnSettingsChanged(AppSettings s)
     {
@@ -379,7 +399,7 @@ public partial class MainWindow : Window
         if (frost != _frost) { _frost = frost; Resources["FrostOpacity"] = frost; }
 
         // «Уменьшить прозрачность» в Windows сильнее настроек: стекло плоское (DESIGN.md 3.2, «Плоское»)
-        var mode = Native.TransparencyOff() ? GlassMode.Flat : s.LiquidGlass ? GlassMode.Liquid : GlassMode.Matte;
+        var mode = Native.TransparencyOff() ? GlassMode.Flat : s.LiquidGlass && !WeakGraphics() ? GlassMode.Liquid : GlassMode.Matte;
         var ice = s.Frost ? s.FrostStrength switch { 0 => 0.5, 2 => 1.8, _ => 1.0 } : 0.0; // --k на доске
         foreach (var (g, tint) in _glass)
         {
@@ -407,8 +427,8 @@ public partial class MainWindow : Window
             if (time == TimeSpan.Zero) { stop.BeginAnimation(GradientStop.ColorProperty, null); stop.Color = c; return; }
             stop.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(c, time) { EasingFunction = ThemeEase }, HandoffBehavior.SnapshotAndReplace);
         }
-        for (var i = 0; i < 3; i++) To(BaseBrush.GradientStops[i], p.Base[i]);
-        for (var i = 0; i < 5; i++) To(Grade.GradientStops[i], p.Grade[i]);
+        for (var i = 0; i < Math.Min(BaseBrush.GradientStops.Count, p.Base.Count); i++) To(BaseBrush.GradientStops[i], p.Base[i]);
+        for (var i = 0; i < Math.Min(Grade.GradientStops.Count, p.Grade.Count); i++) To(Grade.GradientStops[i], p.Grade[i]);
         for (var i = 0; i < _motion.Blobs.Count && i < p.Blobs.Count; i++)
         {
             To(_motion.Blobs[i].GradientStops[0], p.Blobs[i]);
@@ -758,34 +778,43 @@ public partial class MainWindow : Window
     private void MoreBackups_Click(object sender, RoutedEventArgs e) => _host.Settings.MoreBackups();
     private void AutoFolder_Click(object sender, RoutedEventArgs e)
     {
-        if (CanChangeFolder()) _host.Settings.UseAutoFolder();
+        if (!_host.Settings.FolderIsManual || BlockedByPending() || !ConfirmForget()) return;
+        _host.Settings.UseAutoFolder();
     }
     private void CheckApp_Click(object sender, RoutedEventArgs e) => _host.Banner?.CheckNowAsync(_closing.Token);
 
     private void PickFolder_Click(object sender, RoutedEventArgs e) => PickFolder();
 
     /// <summary>
-    /// Выбор папки модов. Смена папки обычно перечитывает моды по событию настроек, но выбор той же папки (диск
-    /// подключили после запуска) настроек не меняет, поэтому после удачного выбора перечитываем всегда.
+    /// Выбор папки модов. Сначала диалог, потом вопрос — только если папка действительно другая. Смена папки
+    /// перечитывает моды по событию настроек; выбор той же (диск подключили после запуска) настроек не меняет,
+    /// тогда перечитываем здесь — ровно один раз.
     /// </summary>
     private void PickFolder()
     {
-        if (_host.PickFolder is not { } pick || !CanChangeFolder()) return;
-        if (pick(this)) Refresh();
+        if (_host.ChooseFolder is not { } choose || _host.UseFolder is not { } use || BlockedByPending()) return;
+        if (choose(this) is not { } dir) return;
+        var same = _host.Settings.ModsFolderPath is { } cur && string.Equals(Path.TrimEndingDirectorySeparator(cur),
+            Path.TrimEndingDirectorySeparator(dir), StringComparison.OrdinalIgnoreCase);
+        if (!same && !ConfirmForget()) return;
+        if (!use(dir)) Refresh();
     }
 
     /// <summary>
     /// Папку нельзя менять, пока ждут переключения, отложенные до закрытия игры: они записаны по имени файла и
-    /// применились бы к модам другой папки. И предупреждаем, что сведения о модах прежней папки забудутся.
+    /// применились бы к модам другой папки.
     /// </summary>
-    private bool CanChangeFolder()
+    private bool BlockedByPending()
     {
-        if (_vm.HasPending)
-        {
-            MessageBox.Show(this, "Сначала закройте игру: есть моды, которые включатся или выключатся после её закрытия.",
-                "Папка модов", MessageBoxButton.OK, MessageBoxImage.Information);
-            return false;
-        }
+        if (!_vm.HasPending) return false;
+        MessageBox.Show(this, "Сначала закройте игру: есть моды, которые включатся или выключатся после её закрытия.",
+            "Папка модов", MessageBoxButton.OK, MessageBoxImage.Information);
+        return true;
+    }
+
+    /// <summary>Сведения о модах прежней папки (где следим, пропущенные версии) забудутся: спрашиваем, если моды есть.</summary>
+    private bool ConfirmForget()
+    {
         if (_vm.AllCards.Count == 0) return true;
         return MessageBox.Show(this, "Список модов перечитается из другой папки. Отметки о модах этой папки (где следим за обновлениями, " +
                 "пропущенные версии) будут забыты, сами файлы модов не тронутся.\n\nСменить папку?",
