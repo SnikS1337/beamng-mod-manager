@@ -5,7 +5,7 @@ using BeamModManager.Core.Library;
 
 namespace BeamModManager.Core.Tests;
 
-/// <summary>db.json игры: настоящие файлы с компьютера друга заказчика (0.39.4, tests/fixtures/game).</summary>
+/// <summary>db.json игры: настоящие файлы игры 0.39.4 с тестового компьютера (tests/fixtures/game).</summary>
 public static class GameDbTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);

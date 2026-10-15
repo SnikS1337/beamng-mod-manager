@@ -346,7 +346,7 @@ public static class GarageTests
 
         t.Group("Гараж поверх настоящей папки и db.json (0.39.4)");
 
-        t.Run("5 модов друга: BMW выключен флажком, тип из db.json, включение пишет флажок", () =>
+        t.Run("5 модов из образца: BMW выключен флажком, тип из db.json, включение пишет флажок", () =>
         {
             using var g = new GameDbTests.Game();
             var cache = new PreviewCache(Path.Combine(g.Root, "app", "previews"));
