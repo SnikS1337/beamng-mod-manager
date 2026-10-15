@@ -449,3 +449,41 @@ public static class GameBridgeTests
         });
     }
 }
+
+public static class GameDbRobustnessTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("db.json и папка mods: неудобные случаи");
+
+        t.Run("ключ мода как у игры: строчные только латиница (Lua string.lower)", () =>
+        {
+            Assert.Eq("Машина_bmw", GameModDb.KeyOf("Машина_BMW.zip"));
+            Assert.Eq("bmw_m2_g87_inf", GameModDb.KeyOf("mods/repo/BMW_M2_G87_inf.ZIP"));
+        });
+
+        t.Run("db.json недописан (игра пишет): выключенные не «включаются», берётся состояние из библиотеки", () =>
+        {
+            using var g = new GameDbTests.Game();
+            GameDbSync.Reconcile(g.Store, g.Inst);
+            Assert.False(g.Store.Mods().Single(m => m.FileName == "BMW_M2_G87_inf.zip").Enabled, "сначала выключен");
+            var full = File.ReadAllText(g.Db);
+            File.WriteAllText(g.Db, full[..(full.Length / 2)]); // оборвано посередине
+            var db = GameModDb.ReadStable(g.Db, attempts: 1);
+            Assert.True(db.Unreadable, "распознано как нечитаемое");
+            GameDbSync.Reconcile(g.Store, g.Inst, db);
+            Assert.False(g.Store.Mods().Single(m => m.FileName == "BMW_M2_G87_inf.zip").Enabled, "остался выключенным");
+            Assert.Eq(5, g.Store.Mods().Count);
+        });
+
+        t.Run("ссылка на папку-петлю в mods не уводит обход в бесконечность", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var link = Path.Combine(g.Mods, "loop");
+            try { Directory.CreateSymbolicLink(link, g.Mods); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { return; } // нет прав на ссылки
+            var disk = g.Inst.ScanDetailed();
+            Assert.Eq(5, disk.Count);
+        });
+    }
+}

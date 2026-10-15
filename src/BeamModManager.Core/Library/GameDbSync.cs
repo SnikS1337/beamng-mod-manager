@@ -31,10 +31,24 @@ public static class GameDbSync
         disk.Select(d => d.Enabled && db.Find(d.FileName) is { } e && e.IsAt(d.SubFolder) && !e.Active ? d with { Enabled = false } : d).ToList();
 
     /// <summary>Сверка библиотеки с папкой и db.json разом.</summary>
-    public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer)
+    public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer) =>
+        Reconcile(store, installer, GameModDb.ReadStable(GameModDb.PathIn(installer.Layout.ModsDir)));
+
+    /// <summary>
+    /// Сверка с уже прочитанным db.json. Если он не прочитался (игра как раз пишет), «включён ли мод» берётся из библиотеки,
+    /// а не из пустого списка: иначе все выключенные на мгновение показались бы включёнными.
+    /// </summary>
+    public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer, GameDbReadResult db)
     {
-        var db = GameModDb.Read(GameModDb.PathIn(installer.Layout.ModsDir));
-        var report = LibrarySync.Reconcile(store, Overlay(installer.ScanDetailed(), db), installer.ModsFolderAvailable);
+        var disk = installer.ScanDetailed();
+        IReadOnlyList<DiskMod> view;
+        if (db.Unreadable)
+        {
+            var known = store.Mods().ToDictionary(m => m.FileName, StringComparer.OrdinalIgnoreCase);
+            view = disk.Select(d => d.Enabled && known.TryGetValue(d.FileName, out var m) && !m.Enabled ? d with { Enabled = false } : d).ToList();
+        }
+        else view = Overlay(disk, db);
+        var report = LibrarySync.Reconcile(store, view, installer.ModsFolderAvailable);
         // мод, который уже лежал в папке: «Установлен» — когда его добавила игра, а не день первого запуска менеджера
         foreach (var f in report.Added)
             if (db.Find(f)?.DateAdded is { } added &&

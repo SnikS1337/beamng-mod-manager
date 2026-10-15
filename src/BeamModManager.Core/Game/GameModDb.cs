@@ -36,6 +36,12 @@ public sealed record GameDbReadResult(bool Exists, double? FormatVersion, IReadO
 {
     public static readonly GameDbReadResult Missing = new(false, null, Array.Empty<GameModEntry>(), Array.Empty<string>());
 
+    /// <summary>
+    /// Файл есть, но не прочитался или не разобрался (например, игра как раз его пишет). Пустой список модов тогда
+    /// ничего не значит: «включён ли мод» по нему решать нельзя.
+    /// </summary>
+    public bool Unreadable { get; init; }
+
     /// <summary>Запись по имени файла архива (регистр не важен). Null — игра этот файл ещё не видела.</summary>
     public GameModEntry? Find(string fileName)
     {
@@ -82,11 +88,18 @@ public static class GameModDb
     private const long MaxBytes = 128L * 1024 * 1024;
     private static readonly object Gate = new();
 
+    /// <summary>
+    /// Ключ мода, как его считает игра (core_modmanager.getModNameFromPath): имя файла без папки и «.zip», строчными.
+    /// Строчными — как Lua string.lower: только латиница, кириллица остаётся как есть («Машина_BMW» → «Машина_bmw»).
+    /// </summary>
     public static string KeyOf(string fileName)
     {
         var name = Path.GetFileName(fileName.Trim());
         if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
-        return name.ToLowerInvariant();
+        return string.Create(name.Length, name, static (span, src) =>
+        {
+            for (var i = 0; i < src.Length; i++) span[i] = src[i] is >= 'A' and <= 'Z' ? (char)(src[i] + 32) : src[i];
+        });
     }
 
     public static string PathIn(string modsDir) => System.IO.Path.Combine(modsDir, FileName);
@@ -97,14 +110,29 @@ public static class GameModDb
         try
         {
             if (!File.Exists(dbPath)) return GameDbReadResult.Missing;
-            if (new FileInfo(dbPath).Length > MaxBytes) return new(true, null, Array.Empty<GameModEntry>(), new[] { "db.json слишком большой, не читаем" });
+            if (new FileInfo(dbPath).Length > MaxBytes) return new(true, null, Array.Empty<GameModEntry>(), new[] { "db.json слишком большой, не читаем" }) { Unreadable = true };
             text = ReadShared(dbPath);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return new(true, null, Array.Empty<GameModEntry>(), new[] { $"не удалось прочитать db.json: {e.Message}" });
+            return new(true, null, Array.Empty<GameModEntry>(), new[] { $"не удалось прочитать db.json: {e.Message}" }) { Unreadable = true };
         }
         return Parse(text);
+    }
+
+    /// <summary>
+    /// Чтение с повтором: игра переписывает db.json после каждого переключения (не атомарно), и попасть на
+    /// недописанный файл легко, особенно пока менеджер ждёт подтверждения от помощника.
+    /// </summary>
+    public static GameDbReadResult ReadStable(string dbPath, int attempts = 4)
+    {
+        var r = Read(dbPath);
+        for (var i = 1; i < attempts && r.Unreadable; i++)
+        {
+            Thread.Sleep(60 * i);
+            r = Read(dbPath);
+        }
+        return r;
     }
 
     public static GameDbReadResult Parse(string json)
@@ -112,8 +140,8 @@ public static class GameModDb
         var warnings = new List<string>();
         JsonNode? root;
         try { root = JsonNode.Parse(json, documentOptions: new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip }); }
-        catch (JsonException) { return new(true, null, Array.Empty<GameModEntry>(), new[] { "db.json повреждён" }); }
-        if (root is not JsonObject obj) return new(true, null, Array.Empty<GameModEntry>(), new[] { "db.json имеет неожиданный вид" });
+        catch (JsonException) { return new(true, null, Array.Empty<GameModEntry>(), new[] { "db.json повреждён" }) { Unreadable = true }; }
+        if (root is not JsonObject obj) return new(true, null, Array.Empty<GameModEntry>(), new[] { "db.json имеет неожиданный вид" }) { Unreadable = true };
 
         double? version = obj["header"] is JsonObject h && h["version"] is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
         if (version is { } ver && ver >= 2) warnings.Add($"db.json новой версии формата ({ver.ToString(CultureInfo.InvariantCulture)}): читаем как 1.x");
