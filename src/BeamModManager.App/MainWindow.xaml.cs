@@ -32,6 +32,8 @@ public sealed class WindowHost
     public int StartWidth { get; init; }
     public int StartHeight { get; init; }
     public bool StartMaximized { get; init; }
+    public double? ShotWidth { get; init; }
+    public double? ShotHeight { get; init; }
 }
 
 public partial class MainWindow : Window
@@ -76,7 +78,11 @@ public partial class MainWindow : Window
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); };
         _gameTimer.Tick += (_, _) => CheckGame();
 
-        SourceInitialized += (_, _) => Native.StyleWindow(this);
+        SourceInitialized += (_, _) =>
+        {
+            Native.StyleWindow(this);
+            if (host.ShotPath is not null) Native.AllowLargerThanScreen(this);
+        };
         Loaded += OnLoaded;
         Loaded += (_, _) => FitMaximized();
         StateChanged += (_, _) => { FitMaximized(); UpdateMotion(); };
@@ -92,6 +98,15 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        if (_host.ShotPath is not null)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = 0;
+            Top = 0;
+            Width = _host.ShotWidth ?? 1440;
+            Height = _host.ShotHeight ?? 960;
+            UpdateLayout();
+        }
         Refresh();
         _gameTimer.Start();
         CheckGame();

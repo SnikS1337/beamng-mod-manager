@@ -49,13 +49,13 @@ public partial class App : Application
                 WallPath = Path.Combine(demo, "wall.jpg"),
                 ShotPath = shot,
                 ShotSelect = Arg("--select"),
+                ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
+                ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
             };
         }
         else host = RealHost();
 
         var w = new MainWindow(new GarageViewModel(host.Backend), host);
-        var width = Arg("--width");
-        if (width is not null && double.TryParse(width, out var ww)) w.Width = ww;
         MainWindow = w;
         w.Show();
     }
