@@ -349,3 +349,49 @@ public static class GarageTests
         });
     }
 }
+
+public static class GarageCardTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("Гараж: подпись и плашка, как на доске «Гараж»");
+
+        t.Run("версия · размер; без страницы — «не проверяется»; обновление — переход белым", () =>
+        {
+            var mods = new[]
+            {
+                Make("Honda", "1.6", 88, tracked: true),
+                Make("Traffic", "3.1", 12, tracked: false),
+                Make("Dacia", "1.0", 142, tracked: true, latest: "1.5"),
+                Make("Station", "1.0", 12, tracked: true, on: false),
+                Make("Pack", null, 5, tracked: false),
+            };
+            var vm = new GarageViewModel(new Fixed(mods));
+            vm.Refresh();
+            ModCard C(string n) => vm.Cards.Single(c => c.Name == n);
+            Assert.Eq("1.6 · 88 МБ", C("Honda").Subtitle);
+            Assert.Eq(ChipKind.None, C("Honda").Chip);
+            Assert.Eq("3.1 · не проверяется", C("Traffic").Subtitle);
+            Assert.Eq("1.0 → 1.5", C("Dacia").Subtitle);
+            Assert.True(C("Dacia").SubtitleStrong, "белым");
+            Assert.Eq((ChipKind.Update, "Есть обновление"), (C("Dacia").Chip, C("Dacia").ChipText));
+            Assert.Eq((ChipKind.Disabled, "Выключен"), (C("Station").Chip, C("Station").ChipText));
+            Assert.Eq("не проверяется", C("Pack").Subtitle);
+        });
+    }
+
+    private sealed class Fixed(IReadOnlyList<GarageMod> mods) : IGarageBackend
+    {
+        public GarageSnapshot Load() => new(mods, true, null);
+        public bool IsGameRunning() => false;
+        public ToggleResult SetEnabled(string fileName, bool enabled) => new(false, ToggleWay.Failed, "нет");
+    }
+
+    private static GarageMod Make(string name, string? ver, long mb, bool tracked, string? latest = null, bool on = true)
+    {
+        var m = new InstalledMod(name, name, name + ".zip", ver, mb * 1024 * 1024, DateTimeOffset.UnixEpoch, on);
+        var bnd = tracked ? new ModBinding(name, "modland", "1", new Uri("https://modland.net/x"), true) : null;
+        var u = latest is null ? null : new UpdateFinding(name, name, "modland", UpdateStatus.Likely, ver, latest, bnd!.Url);
+        return new GarageMod(m, u, bnd, null, false, false, null, null, "vehicle", null);
+    }
+}

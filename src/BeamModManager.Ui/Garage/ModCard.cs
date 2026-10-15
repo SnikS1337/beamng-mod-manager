@@ -9,6 +9,9 @@ public enum CardStatus { Normal, UpdateAvailable, PossiblyUpdated, PageMissing, 
 /// <summary>Тип мода для заглушки, когда в архиве нет ни одной картинки.</summary>
 public enum PlaceholderKind { Vehicle, Map, Sound, Script, Other }
 
+/// <summary>Плашка в правом верхнем углу фото: голубая точка у обновления, янтарная у сомнительного, снежинка у выключенного.</summary>
+public enum ChipKind { None, Update, Warning, Disabled }
+
 /// <summary>
 /// Одна карточка гаража. Экземпляр живёт, пока мод в библиотеке, и обновляется на месте: так окно может плавно
 /// показать изменение (иней тает, номер версии перекатывается), а не перерисовать карточку заново.
@@ -34,6 +37,20 @@ public sealed class ModCard : Observable
     private string _statusText = "";
     /// <summary>«1.0 → 1.5», «Страница пропала», «Выключен», версия или пусто.</summary>
     public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
+
+    private string _subtitle = "";
+    /// <summary>Строка под названием, как в макете: «1.6 · 88 МБ», «3.1 · не проверяется», «1.0 → 1.5» (белым).</summary>
+    public string Subtitle { get => _subtitle; private set => Set(ref _subtitle, value); }
+
+    private bool _subtitleStrong;
+    /// <summary>Подпись выделена белым (переход версий при обновлении).</summary>
+    public bool SubtitleStrong { get => _subtitleStrong; private set => Set(ref _subtitleStrong, value); }
+
+    private ChipKind _chip;
+    public ChipKind Chip { get => _chip; private set => Set(ref _chip, value); }
+
+    private string? _chipText;
+    public string? ChipText { get => _chipText; private set => Set(ref _chipText, value); }
 
     private bool _hasUpdateBadge;
     /// <summary>Белая плашка «Есть обновление» на фото.</summary>
@@ -100,6 +117,28 @@ public sealed class ModCard : Observable
             StatusText = d.Mod.Version ?? "";
         }
         HasWarningDot = Status is CardStatus.PossiblyUpdated or CardStatus.PageMissing;
+
+        (Chip, ChipText) = Status switch
+        {
+            CardStatus.UpdateAvailable => (ChipKind.Update, "Есть обновление"),
+            CardStatus.PossiblyUpdated => (ChipKind.Warning, "Возможно, обновлён"),
+            CardStatus.PageMissing => (ChipKind.Warning, "Страница пропала"),
+            CardStatus.Disabled => (ChipKind.Disabled, "Выключен"),
+            _ => (ChipKind.None, (string?)null),
+        };
+        if (Chip is not ChipKind.Disabled && !enabled) (Chip, ChipText) = (ChipKind.Disabled, "Выключен");
+
+        SubtitleStrong = Status == CardStatus.UpdateAvailable && PendingText is null;
+        if (PendingText is not null) Subtitle = PendingText;
+        else if (SubtitleStrong) Subtitle = StatusText;
+        else
+        {
+            var parts = new List<string>();
+            if (d.Mod.Version is { Length: > 0 } v) parts.Add(v);
+            if (!d.Tracked) parts.Add("не проверяется");
+            else if (d.Mod.SizeBytes is { } s) parts.Add(Text.Ru.Size(s));
+            Subtitle = string.Join(" · ", parts);
+        }
     }
 
     internal static PlaceholderKind PlaceholderOf(GarageMod d) => d.ModType?.ToLowerInvariant() switch

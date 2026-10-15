@@ -36,6 +36,7 @@ JsonStoreTests.Register(t);
 PreviewTests.Register(t);
 PreviewLoaderTests.Register(t);
 GarageTests.Register(t);
+GarageCardTests.Register(t);
 
 
 return t.Summary();
