@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
+using System.Diagnostics;
 using BeamModManager.App.Demo;
+using BeamModManager.Core.AppUpdate;
 using BeamModManager.App.Services;
 using BeamModManager.Core.Game;
 using BeamModManager.Core.Install;
@@ -8,6 +10,7 @@ using BeamModManager.Core.Library;
 using BeamModManager.Core.Previews;
 using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
+using BeamModManager.Ui.AppUpdate;
 using BeamModManager.Ui.Previews;
 
 namespace BeamModManager.App;
@@ -20,6 +23,15 @@ public partial class App : Application
 {
     private static Mutex? _single;
 
+    /// <summary>
+    /// Откуда брать обновления: публичный репозиторий только с готовыми сборками (код остаётся закрытым).
+    /// latest.json пишет сборочная машина (windows.yml, задание release).
+    /// </summary>
+    public const string UpdateManifestUrl = "https://github.com/SnikS1337/ModManagerBeamNG/releases/latest/download/latest.json";
+
+    private readonly CancellationTokenSource _life = new();
+    private string? _restartExe;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -31,6 +43,9 @@ public partial class App : Application
 
         var demo = Arg("--demo");
         var shot = Arg("--shot");
+
+        // после самообновления: прежний процесс ещё закрывается и держит «один экземпляр» — ждём его
+        if (int.TryParse(Arg("--after-update"), out var oldPid)) WaitForExit(oldPid);
 
         // два менеджера над одной библиотекой и одним db.json мешали бы друг другу
         if (demo is null)
@@ -85,9 +100,67 @@ public partial class App : Application
             DownloadsAllowed = host.DownloadsAllowed,
             ManyEnabledThreshold = host.ManyEnabledThreshold,
         };
+        if (host.Updater is { } up)
+        {
+            if (Arg("--after-update") is not null) host.StartupToast = $"Программа обновлена до {AppVersion.Display(up.Current)}";
+            // прежний exe и скачанное больше не нужны; убираем при каждом запуске — вдруг прошлый перезапуск прервался
+            var exe = Environment.ProcessPath!;
+            _ = Task.Run(() => UpdateInstaller.Cleanup(exe, UpdateDir));
+        }
+        host.Banner = new UpdateBanner(host.Updater, a => Dispatcher.BeginInvoke(a), RestartIntoUpdate);
         var w = new MainWindow(vm, host);
         MainWindow = w;
         w.Show();
+    }
+
+    private static string UpdateDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager", "update");
+
+    /// <summary>
+    /// Самообновление возможно только у настоящей сборки: один BeamModManager.exe с номером версии от сборочной машины.
+    /// При запуске через dotnet run, из папки разработки (версия 1.0.0 по умолчанию) и в демо — нет.
+    /// </summary>
+    private static AppUpdater? CreateUpdater()
+    {
+        var exe = Environment.ProcessPath;
+        var ver = typeof(App).Assembly.GetName().Version;
+        if (exe is null || ver is null || !string.Equals(Path.GetFileName(exe), UpdateInstaller.ExeName, StringComparison.OrdinalIgnoreCase)) return null;
+        if (ver.Major != 0 || ver.Build <= 0) return null; // 1.0.0.0 — сборка без номера (не с машины сборки)
+        var http = UpdateDownloader.CreateClient($"ModManagerBeamNG/{AppVersion.Display(ver)}");
+        return new AppUpdater(new UpdateDownloader(http), new Uri(UpdateManifestUrl), ver, exe, UpdateDir,
+            p => AppVersion.Parse(FileVersionInfo.GetVersionInfo(p).FileVersion));
+    }
+
+    private static void WaitForExit(int pid)
+    {
+        try { using var p = Process.GetProcessById(pid); p.WaitForExit(20000); }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { } // уже вышел
+    }
+
+    /// <summary>Новая версия уже на месте: закрываемся как обычно (окно сохраняет своё), на выходе запускаем её.</summary>
+    private void RestartIntoUpdate()
+    {
+        _restartExe = Environment.ProcessPath;
+        MainWindow?.Close();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _life.Cancel();
+        if (_restartExe is { } exe)
+        {
+            try { _single?.ReleaseMutex(); } catch (ApplicationException) { }
+            _single?.Dispose();
+            _single = null;
+            try { Process.Start(new ProcessStartInfo(exe, $"--after-update {Environment.ProcessId}") { UseShellExecute = false }); }
+            catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+            {
+                // новая версия не запустилась: возвращаем прежнюю и запускаем её
+                if (UpdateInstaller.Rollback(exe))
+                    try { Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false }); }
+                    catch (Exception y) when (y is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { }
+            }
+        }
+        base.OnExit(e);
     }
 
     private static WindowHost RealHost()
@@ -125,6 +198,8 @@ public partial class App : Application
         return new WindowHost
         {
             Backend = switching,
+            Updater = CreateUpdater(),
+            CheckUpdatesOnStart = settings.CheckAppUpdates,
             // загрузки в этой сборке ещё нет: кнопки «Обновить» не показываем, даже если в настройках разрешено
             DownloadsAllowed = false,
             ManyEnabledThreshold = settings.ActiveModsWarnAbove,
@@ -146,7 +221,8 @@ public partial class App : Application
                     return false;
                 }
                 settings = settings with { ModsFolder = r.ModsDir };
-                settingsStore.Save(settings);
+                try { settingsStore.Save(settings); }
+                catch (Exception x) when (x is IOException or UnauthorizedAccessException) { } // папка всё равно берётся, сохранится в следующий раз
                 Use(r.ModsDir);
                 return true;
             },

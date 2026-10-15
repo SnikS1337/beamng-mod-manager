@@ -70,13 +70,22 @@ jobs:
           git commit -q -m "Снимки для $env:GITHUB_SHA"
           git push -f -q origin HEAD:ci-shots
 
-  # Готовая программа: один exe без установки .NET (self-contained), выпуск «latest» обновляется на каждый push в main.
+  # Готовая программа: один exe без установки .NET (self-contained).
+  # 1) выпуск «latest» в этом (закрытом) репозитории — как раньше;
+  # 2) выпуск v<версия> в публичном SnikS1337/ModManagerBeamNG c latest.json — оттуда программа обновляется сама.
+  #    Нужен секрет RELEASES_TOKEN (токен с правом Contents: write на публичный репозиторий); без него шаг пропускается.
   release:
     needs: [build, app, lua]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
+    # выпуски по одному: более старая сборка, закончившая позже, не должна стать «последней»
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
+    env:
+      PUBLIC_REPO: SnikS1337/ModManagerBeamNG
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -90,11 +99,23 @@ jobs:
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
             -p:DebugType=none -p:Version=$ver -nologo -o publish
           if ($LASTEXITCODE -ne 0) { throw "publish не прошёл" }
+          $fv = (Get-Item publish/BeamModManager.exe).VersionInfo.FileVersion
+          if (-not $fv.StartsWith($ver)) { throw "версия exe ($fv) не совпала с ${ver}, самообновление её бы отвергло" }
           Copy-Item tools/release/README.txt "publish/Как запустить.txt"
           Compress-Archive -Path publish/* -DestinationPath "ModManagerBeamNG.zip"
+          $zip = Get-Item ModManagerBeamNG.zip
+          $manifest = [ordered]@{
+            version   = $ver
+            url       = "https://github.com/$env:PUBLIC_REPO/releases/download/v$ver/ModManagerBeamNG.zip"
+            size      = $zip.Length
+            sha256    = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            notes     = (git log -1 --pretty=%s)
+            published = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          }
+          $manifest | ConvertTo-Json | Out-File -Encoding utf8NoBOM latest.json
+          Get-Content latest.json
           "VER=$ver" | Out-File -Append $env:GITHUB_ENV
-          Get-ChildItem publish, ModManagerBeamNG.zip | Format-Table Name, Length
-      - name: Выпуск latest
+      - name: Выпуск latest (закрытый репозиторий)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,5 +124,21 @@ jobs:
           $notes = "Сборка $env:VER от $(Get-Date -Format 'yyyy-MM-dd HH:mm') UTC, коммит $($env:GITHUB_SHA.Substring(0,7)).`n`nПоследнее изменение: $msg`n`nСкачать ModManagerBeamNG.zip, распаковать в любую папку, запустить BeamModManager.exe. Подробности в «Как запустить.txt» внутри архива."
           gh release delete latest --yes --cleanup-tag 2>$null
           $global:LASTEXITCODE = 0
-          gh release create latest ModManagerBeamNG.zip --title "ModManager BeamNG $env:VER (свежая сборка)" --notes $notes --target $env:GITHUB_SHA --prerelease
+          gh release create latest ModManagerBeamNG.zip latest.json --title "ModManager BeamNG $env:VER (свежая сборка)" --notes $notes --target $env:GITHUB_SHA --prerelease
           if ($LASTEXITCODE -ne 0) { throw "выпуск не создан" }
+      - name: Выпуск для самообновления (публичный репозиторий)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if (-not $env:GH_TOKEN) { Write-Host "::warning::RELEASES_TOKEN не задан: самообновление не получит эту сборку"; exit 0 }
+          # не выкладываем версию старше уже опубликованной
+          $cur = gh release view --repo $env:PUBLIC_REPO --json tagName --jq .tagName 2>$null
+          $global:LASTEXITCODE = 0
+          if ($cur) {
+            $curV = [version]($cur.TrimStart('v'))
+            if ([version]$env:VER -le $curV) { Write-Host "::warning::уже опубликована $cur, $env:VER не новее"; exit 0 }
+          }
+          $msg = (git log -1 --pretty=%s)
+          gh release create "v$env:VER" ModManagerBeamNG.zip latest.json --repo $env:PUBLIC_REPO --title "ModManager BeamNG $env:VER" --notes "$msg" --latest
+          if ($LASTEXITCODE -ne 0) { throw "публичный выпуск не создан (репозиторий $env:PUBLIC_REPO существует и в нём есть хотя бы один коммит?)" }

@@ -36,6 +36,7 @@ GameRepoFolderTests.Register(t);
 GameDateAddedTests.Register(t);
 GameBridgeTests.Register(t);
 GameDbRobustnessTests.Register(t);
+AppUpdateTests.Register(t);
 JsonStoreTests.Register(t);
 JsonStoreFailureTests.Register(t);
 PreviewTests.Register(t);
