@@ -9,19 +9,30 @@ namespace BeamModManager.App.Services;
 /// <summary>
 /// Само движется только фон (DESIGN_MOTION раздел 2): «дыхание» фото, плывущий градиент, пятна и огоньки, всё на 48 с.
 /// Останавливается, когда окно не видно, не в фокусе или запущена игра; при «Уменьшить анимацию» в Windows не запускается.
+/// Фон и огоньки — две отдельные истории: в настройках они включаются по отдельности («Анимированный фон», «Огоньки»).
 /// </summary>
 public sealed class BackgroundMotion
 {
-    private readonly Storyboard _sb = new();
+    private readonly Part _bg, _flies;
     private readonly FrameworkElement _owner;
-    private bool _started, _paused;
 
-    public BackgroundMotion(FrameworkElement owner, ScaleTransform wallScale, TranslateTransform wallMove, TranslateTransform gradeMove, Canvas lights)
+    /// <summary>Одна история со своим состоянием: ещё не начата, идёт, на паузе.</summary>
+    private sealed class Part
+    {
+        public readonly Storyboard Sb = new();
+        public bool Started, Paused;
+    }
+
+    public BackgroundMotion(FrameworkElement owner, ScaleTransform wallScale, TranslateTransform wallMove, TranslateTransform gradeMove, Canvas lights, Canvas flies)
     {
         _owner = owner;
+        _bg = new Part();
+        _flies = new Part();
         // фон медленный: 30 кадров в секунду глазу хватает, а стекло пересчитывает копию сцены вдвое реже (DESIGN.md 8)
-        Timeline.SetDesiredFrameRate(_sb, 30);
+        Timeline.SetDesiredFrameRate(_bg.Sb, 30);
+        Timeline.SetDesiredFrameRate(_flies.Sb, 30);
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+        var sb = _bg.Sb;
         void Anim(DependencyObject target, DependencyProperty prop, double from, double to, double seconds, bool reverse = true, double delay = 0)
         {
             var a = new DoubleAnimation(from, to, TimeSpan.FromSeconds(seconds))
@@ -33,7 +44,7 @@ public sealed class BackgroundMotion
             };
             Storyboard.SetTarget(a, target);
             Storyboard.SetTargetProperty(a, new PropertyPath(prop));
-            _sb.Children.Add(a);
+            sb.Children.Add(a);
         }
 
         Anim(wallScale, ScaleTransform.ScaleXProperty, 1.04, 1.12, 48);
@@ -68,6 +79,7 @@ public sealed class BackgroundMotion
         }
 
         // светлячки: 18 мягких огоньков 3–8 px, дрейф 14–30 с, мерцание 2,5–6,5 с; одно зерно — один и тот же рисунок
+        sb = _flies.Sb;
         var rnd = new Random(7);
         for (var i = 0; i < 18; i++)
         {
@@ -89,7 +101,7 @@ public sealed class BackgroundMotion
             e.RenderTransform = t;
             Canvas.SetLeft(e, 100 + rnd.NextDouble() * 1300);
             Canvas.SetTop(e, 60 + rnd.NextDouble() * 860);
-            lights.Children.Add(e);
+            flies.Children.Add(e);
             var drift = 14 + rnd.NextDouble() * 16;
             Anim(t, TranslateTransform.XProperty, 0, rnd.Next(-90, 90), drift, delay: rnd.NextDouble() * drift);
             Anim(t, TranslateTransform.YProperty, 0, rnd.Next(-110, 60), drift, delay: rnd.NextDouble() * drift);
@@ -98,13 +110,19 @@ public sealed class BackgroundMotion
         }
     }
 
-    /// <summary>Двигаться или стоять. Повторные вызовы с тем же значением ничего не делают.</summary>
-    public void SetRunning(bool run)
+    /// <summary>Двигаться или стоять, фону и огонькам отдельно. Повторные вызовы с тем же значением ничего не делают.</summary>
+    public void SetRunning(bool background, bool flies)
     {
-        if (Motion.SpringDriver.ReducedMotion) run = false;
-        if (run && !_started) { _sb.Begin(_owner, true); _started = true; _paused = false; return; }
-        if (!_started) return;
-        if (run && _paused) { _sb.Resume(_owner); _paused = false; }
-        else if (!run && !_paused) { _sb.Pause(_owner); _paused = true; }
+        var reduced = Motion.SpringDriver.SystemReduced;
+        Run(_bg, background && !reduced);
+        Run(_flies, flies && !reduced);
+    }
+
+    private void Run(Part p, bool run)
+    {
+        if (run && !p.Started) { p.Sb.Begin(_owner, true); p.Started = true; p.Paused = false; return; }
+        if (!p.Started) return;
+        if (run && p.Paused) { p.Sb.Resume(_owner); p.Paused = false; }
+        else if (!run && !p.Paused) { p.Sb.Pause(_owner); p.Paused = true; }
     }
 }

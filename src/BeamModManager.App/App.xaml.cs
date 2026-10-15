@@ -12,6 +12,7 @@ using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
 using BeamModManager.Ui.AppUpdate;
 using BeamModManager.Ui.Previews;
+using BeamModManager.Ui.Settings;
 
 namespace BeamModManager.App;
 
@@ -100,6 +101,10 @@ public partial class App : Application
                 ShotSelect = Arg("--select"),
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
+                // настройки в демо живут только в памяти: файл пользователя не трогаем
+                Settings = new SettingsViewModel(new AppSettings()) { ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")) },
+                StartPage = Arg("--page"),
+                StartSection = Enum.TryParse<SettingsSection>(Arg("--section"), true, out var sec) ? sec : SettingsSection.Appearance,
             };
         }
         else host = RealHost();
@@ -117,6 +122,10 @@ public partial class App : Application
             _ = Task.Run(() => UpdateInstaller.Cleanup(exe, UpdateDir));
         }
         host.Banner = new UpdateBanner(host.Updater, a => Dispatcher.BeginInvoke(a), RestartIntoUpdate);
+        host.Settings.CanUpdateApp = host.Updater is not null;
+        host.Settings.VersionText = host.Updater is { } u
+            ? $"Версия {AppVersion.Display(u.Current)}"
+            : "Сборка для разработки: сама не обновляется";
         var w = new MainWindow(vm, host);
         MainWindow = w;
         w.Show();
@@ -192,21 +201,69 @@ public partial class App : Application
         var store = new JsonLibraryStore(Path.Combine(appDir, "library.json"));
         var cache = new PreviewCache(Path.Combine(appDir, "previews"));
         var switching = new SwitchingBackend();
+        var svm = new SettingsViewModel(settings);
 
         void Use(string? modsDir)
         {
             // без папки: заведомо несуществующий путь, гараж покажет «Не нашли папку с модами»
             var dir = modsDir ?? Path.Combine(appDir, "нет-папки-mods");
-            var installer = new ModInstaller(ModLayout.InAppFolder(dir, appDir), () => DateTimeOffset.UtcNow, settings.KeepBackups);
+            var installer = new ModInstaller(ModLayout.InAppFolder(dir, appDir), () => DateTimeOffset.UtcNow, svm.Current.KeepBackups);
             switching.Inner = new LibraryGarageBackend(store, installer, cache, GameProcess.IsRunning, notice);
+            svm.ModsFolderPath = modsDir;
             notice = null;
         }
-        Use(check.Ok ? check.ModsDir : null);
+        var currentDir = check.Ok ? check.ModsDir : null;
+        Use(currentDir);
+
+        // Настройки пишутся не на каждое движение ползунка, а через полсекунды тишины; при закрытии окна — сразу.
+        void SaveNow()
+        {
+            try { settingsStore.Save(svm.Current); }
+            catch (Exception x) when (x is IOException or UnauthorizedAccessException) { } // запишем при следующем изменении
+        }
+        var saveTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveNow(); };
+
+        var folderKey = (svm.Current.ModsFolder, svm.Current.UserFolder, svm.Current.KeepBackups);
+        var wall = svm.Current.BackgroundImage;
+        svm.Changed += s =>
+        {
+            saveTimer.Stop();
+            saveTimer.Start();
+            // фото заменили или убрали: прежняя копия больше не нужна (удаляем только свою, из папки программы)
+            if (s.BackgroundImage != wall)
+            {
+                if (wall is not null)
+                    try
+                    {
+                        if (string.Equals(Path.GetDirectoryName(Path.GetFullPath(wall)), Path.GetFullPath(appDir), StringComparison.OrdinalIgnoreCase)) File.Delete(wall);
+                    }
+                    catch (Exception x) when (x is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
+                wall = s.BackgroundImage;
+            }
+            // папка (или число копий для установщика) поменялась: переключаем помощника до того, как окно перечитает моды
+            var key = (s.ModsFolder, s.UserFolder, s.KeepBackups);
+            if (key == folderKey) return;
+            var folderChanged = key.ModsFolder != folderKey.ModsFolder || key.UserFolder != folderKey.UserFolder;
+            folderKey = key;
+            if (folderChanged)
+            {
+                var r = GameFolders.FromSettings(s);
+                if (!r.Ok && s.ModsFolder is null && s.UserFolder is null)
+                {
+                    var found = GameFolders.FindModsFolders(GameFolders.DefaultUserRoot()).FirstOrDefault();
+                    if (found is not null) r = GameFolders.Resolve(found);
+                }
+                currentDir = r.Ok ? r.ModsDir : null;
+            }
+            Use(currentDir);
+        };
 
         var pendingPath = Path.Combine(appDir, "pending.json");
         return new WindowHost
         {
             Backend = switching,
+            Settings = svm,
             Updater = CreateUpdater(),
             CheckUpdatesOnStart = settings.CheckAppUpdates,
             // загрузки в этой сборке ещё нет: кнопки «Обновить» не показываем, даже если в настройках разрешено
@@ -229,10 +286,30 @@ public partial class App : Application
                     MessageBox.Show(owner, r.Message, "Папка не подходит", MessageBoxButton.OK, MessageBoxImage.Information);
                     return false;
                 }
-                settings = settings with { ModsFolder = r.ModsDir };
-                try { settingsStore.Save(settings); }
-                catch (Exception x) when (x is IOException or UnauthorizedAccessException) { } // папка всё равно берётся, сохранится в следующий раз
-                Use(r.ModsDir);
+                // настройки сами переключат папку и перечитают моды (подписка выше и в окне)
+                svm.Update(s => s with { ModsFolder = r.ModsDir, UserFolder = null });
+                return true;
+            },
+            PickWallpaper = owner =>
+            {
+                var dlg = new Microsoft.Win32.OpenFileDialog { Title = "Фото для фона", Filter = "Картинки (*.jpg, *.png, *.bmp)|*.jpg;*.jpeg;*.png;*.bmp" };
+                if (dlg.ShowDialog(owner) != true) return false;
+                // картинка должна читаться, иначе фона не будет, а человек не поймёт почему
+                if (Services.Backdrop.LoadBlurred(dlg.FileName, 0) is null)
+                {
+                    MessageBox.Show(owner, "Эту картинку не получилось открыть. Попробуйте JPG или PNG.", "Фото для фона", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return false;
+                }
+                // своя копия: исходник можно удалить или переместить, фон останется; новое имя — чтобы окно увидело замену
+                var dest = Path.Combine(appDir, $"background-{DateTime.Now:yyyyMMdd-HHmmss}{Path.GetExtension(dlg.FileName).ToLowerInvariant()}");
+                try { File.Copy(dlg.FileName, dest, overwrite: true); }
+                catch (Exception x) when (x is IOException or UnauthorizedAccessException)
+                {
+                    MessageBox.Show(owner, $"Не удалось сохранить копию фото: {x.Message}", "Фото для фона", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return false;
+                }
+                // выбрали фото — значит, хотят его видеть: из «Цвет» переходим на «Фото»
+                svm.Update(s => s with { BackgroundImage = dest, Background = s.Background == BackgroundMode.SolidColor ? BackgroundMode.Photo : s.Background });
                 return true;
             },
             SaveWindow = w =>
@@ -240,8 +317,9 @@ public partial class App : Application
                 var max = w.WindowState == WindowState.Maximized;
                 // свёрнутое или развёрнутое окно: обычный размер знает только RestoreBounds
                 var b = w.WindowState != WindowState.Normal ? w.RestoreBounds : new Rect(w.Left, w.Top, w.ActualWidth, w.ActualHeight);
-                settings = settings with { WindowMaximized = max, WindowWidth = (int)b.Width, WindowHeight = (int)b.Height };
-                try { settingsStore.Save(settings); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                svm.Update(s => s with { WindowMaximized = max, WindowWidth = (int)b.Width, WindowHeight = (int)b.Height });
+                saveTimer.Stop();
+                SaveNow(); // окно закрывается: пишем всё, что ещё ждало таймера
             },
         };
     }

@@ -95,7 +95,7 @@
                                     </Border.Background>
                                 </Border>
                                 <!-- иней: наша текстура из design/mockup/tools/gen_ice.py -->
-                                <Border CornerRadius="26" RenderTransformOrigin="0.5,0.5">
+                                <Border CornerRadius="26" RenderTransformOrigin="0.5,0.5" Opacity="{DynamicResource FrostOpacity}">
                                     <Border.Background>
                                         <ImageBrush ImageSource="pack://application:,,,/Assets/frost-card.png" Stretch="Fill"/>
                                     </Border.Background>
@@ -263,7 +263,7 @@
                     </Image.RenderTransform>
                 </Image>
                 <!-- плавающий градиент: подкрашивает фото (вместо «мягкого света» — прозрачность) -->
-                <Border Opacity="0.30">
+                <Border x:Name="GradeLayer" Opacity="0.30">
                     <Border.Background>
                         <LinearGradientBrush x:Name="Grade" StartPoint="0,0" EndPoint="1,0.36" SpreadMethod="Repeat">
                             <LinearGradientBrush.RelativeTransform>
@@ -277,7 +277,8 @@
                         </LinearGradientBrush>
                     </Border.Background>
                 </Border>
-                <Border>
+                <!-- затемнение: при 35 % (по умолчанию) — только градиент, выше добавляется ровный слой («Затемнение фона») -->
+                <Border x:Name="Shade">
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                             <GradientStop Color="#4D0C1220" Offset="0"/>
@@ -285,7 +286,9 @@
                         </LinearGradientBrush>
                     </Border.Background>
                 </Border>
+                <Border x:Name="ShadeExtra" Background="#0C1220" Opacity="0"/>
                 <Canvas x:Name="Lights"/>
+                <Canvas x:Name="Flies"/>
             </Grid>
 
             <ScrollViewer x:Name="Scroller" Margin="116,0,360,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -460,6 +463,222 @@
                 </Border>
                 <Border/>
             </DockPanel>
+        </c:Glass>
+
+
+        <!-- ═════ Настройки (DESIGN.md 5.1): одна стеклянная панель, слева разделы, справа выбранный; всё применяется сразу ═════ -->
+        <c:Glass x:Name="SettingsPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="14" Tint="#800E182C"
+                 Margin="116,84,16,16" VerticalAlignment="Top" Visibility="Collapsed">
+            <Grid Margin="20,24,8,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,20,0">
+                    <RadioButton Style="{StaticResource SettingsNav}" Content="Внешний вид"
+                                 IsChecked="{Binding Section, Converter={StaticResource EnumToBool}, ConverterParameter=Appearance}"/>
+                    <RadioButton Style="{StaticResource SettingsNav}" Content="Загрузка модов"
+                                 IsChecked="{Binding Section, Converter={StaticResource EnumToBool}, ConverterParameter=Downloads}"/>
+                    <RadioButton Style="{StaticResource SettingsNav}" Content="Папки"
+                                 IsChecked="{Binding Section, Converter={StaticResource EnumToBool}, ConverterParameter=Folders}"/>
+                    <RadioButton Style="{StaticResource SettingsNav}" Content="Обновления"
+                                 IsChecked="{Binding Section, Converter={StaticResource EnumToBool}, ConverterParameter=Updates}"/>
+                    <RadioButton Style="{StaticResource SettingsNav}" Content="Сайты"
+                                 IsChecked="{Binding Section, Converter={StaticResource EnumToBool}, ConverterParameter=Sites}"/>
+                </StackPanel>
+
+                <ScrollViewer x:Name="SettingsScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,16,0">
+                    <StackPanel>
+                        <TextBlock Text="{Binding SectionTitle}" FontSize="22" FontWeight="Bold" Margin="4,4,0,18"/>
+
+                        <!-- Внешний вид: две колонки, на узком окне одна (раскладку меняет окно) -->
+                        <Grid x:Name="AppearanceGrid" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Appearance}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="AppearanceLeftCol" Width="*"/>
+                                <ColumnDefinition x:Name="AppearanceRightCol" Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel x:Name="AppearanceLeft" Grid.Column="0" Margin="0,0,14,0">
+                                <TextBlock Style="{StaticResource GroupTitle}" Text="Готовые наборы"/>
+                                <UniformGrid Columns="2" Margin="0,0,-8,0">
+                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Лёд" Tag="стекло, иней, фон" IsChecked="{Binding IsIce}"/>
+                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Стекло" Tag="без инея" IsChecked="{Binding IsGlass}"/>
+                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Матовое" Tag="плотное стекло" IsChecked="{Binding IsMatte}"/>
+                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Лёгкое" Tag="ничего лишнего" IsChecked="{Binding IsLight}"/>
+                                </UniformGrid>
+                                <TextBlock Style="{StaticResource Note}" Text="{Binding PresetNote}" Margin="4,0,4,18"/>
+
+                                <TextBlock Style="{StaticResource GroupTitle}" Text="Движение"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Анимации интерфейса" Tag="Капля-выбор, появление и подъём карточек."
+                                          IsChecked="{Binding UiAnimations}" Margin="0,0,0,8"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Анимированный фон" Tag="Фото медленно дышит, по нему плывут цветные пятна."
+                                          IsChecked="{Binding AnimatedBackground}" IsEnabled="{Binding PhotoOptionsEnabled}" Margin="0,0,0,8"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Огоньки" Tag="Над фоном плавают светлые точки."
+                                          IsChecked="{Binding Fireflies}" IsEnabled="{Binding PhotoOptionsEnabled}" Margin="0,0,0,18"/>
+                            </StackPanel>
+                            <StackPanel x:Name="AppearanceRight" Grid.Column="1" Margin="14,0,0,0">
+                                <TextBlock Style="{StaticResource GroupTitle}" Text="Стекло"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Жидкое стекло" Tag="Лёгкие прозрачные панели, сквозь них виден фон. Выключено: плотное матовое стекло."
+                                          IsChecked="{Binding LiquidGlass}" Margin="0,0,0,8"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Иней" Tag="Морозный узор на карточках выключенных модов."
+                                          IsChecked="{Binding Frost}" Margin="0,0,0,8"/>
+                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Сила инея" Tag="От лёгкой дымки до густого мороза."
+                                                        IsEnabled="{Binding FrostOptionsEnabled}" Margin="0,0,0,18">
+                                    <Border Style="{StaticResource SegmentBox}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <RadioButton Style="{StaticResource Segment}" GroupName="frost" Content="Слабо" IsChecked="{Binding FrostWeak}"/>
+                                            <RadioButton Style="{StaticResource Segment}" GroupName="frost" Content="Средне" IsChecked="{Binding FrostMedium}"/>
+                                            <RadioButton Style="{StaticResource Segment}" GroupName="frost" Content="Сильно" IsChecked="{Binding FrostStrong}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </HeaderedContentControl>
+
+                                <TextBlock Style="{StaticResource GroupTitle}" Text="Фон"/>
+                                <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,12" Margin="0,0,0,8">
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource Link}" Content="Убрать" Margin="0,0,10,0" Click="RemoveWall_Click"
+                                                    Visibility="{Binding HasBackgroundImage, Converter={StaticResource BoolToVis}}"/>
+                                            <Button Style="{StaticResource Secondary}" Content="Выбрать фото" Padding="16,0" Click="PickWall_Click"/>
+                                        </StackPanel>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Своё фото" FontSize="15" FontWeight="SemiBold"/>
+                                            <TextBlock Style="{StaticResource Note}" Text="{Binding BackgroundImageNote}" Margin="0,2,0,0"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Что за панелями" Tag="Фото, сильно размытое фото или один цвет." Margin="0,0,0,8">
+                                    <Border Style="{StaticResource SegmentBox}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <RadioButton Style="{StaticResource Segment}" GroupName="bg" Content="Фото" IsChecked="{Binding BackgroundPhoto}"/>
+                                            <RadioButton Style="{StaticResource Segment}" GroupName="bg" Content="Размытое" IsChecked="{Binding BackgroundBlurred}"/>
+                                            <RadioButton Style="{StaticResource Segment}" GroupName="bg" Content="Цвет" IsChecked="{Binding BackgroundColor}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </HeaderedContentControl>
+                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Затемнение фона" Tag="Темнее фон — проще читать."
+                                                        IsEnabled="{Binding PhotoOptionsEnabled}" Margin="0,0,0,18">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Slider Style="{StaticResource ThinSlider}" Minimum="0" Maximum="100" Value="{Binding BackgroundDim}"
+                                                AutomationProperties.Name="Затемнение фона" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding BackgroundDimText}" Width="44" TextAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </HeaderedContentControl>
+                            </StackPanel>
+                            <DockPanel x:Name="AppearanceFoot" Grid.Row="1" Grid.ColumnSpan="2" Margin="4,0,0,0">
+                                <Button DockPanel.Dock="Right" Style="{StaticResource Link}" Content="Сбросить" Click="ResetLook_Click" VerticalAlignment="Top"
+                                        ToolTip="Вернуть набор «Лёд»"/>
+                                <TextBlock Style="{StaticResource Note}" MaxWidth="520" HorizontalAlignment="Left"
+                                           Text="Если в Windows выключены эффекты анимации, программа учтёт это сама, даже когда здесь всё включено."/>
+                            </DockPanel>
+                        </Grid>
+
+                        <!-- Загрузка модов -->
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Left" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Downloads}">
+                            <CheckBox Style="{StaticResource Switch}" Content="Разрешить загрузку модов" IsEnabled="False" IsChecked="False"
+                                      Tag="Включено: в программе появятся кнопки «Скачать» и «Установить». Выключено: менеджер показывает ваши моды и ведёт на страницу автора, а скачиваете вы сами."/>
+                            <TextBlock Style="{StaticResource Note}" Margin="4,12,4,0"
+                                       Text="Скачивание из программы ещё не готово, поэтому включатель пока недоступен. Платные моды не скачиваются никогда: вместо «Скачать» будет «Купить у автора»."/>
+                        </StackPanel>
+
+                        <!-- Папки -->
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Left" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Folders}">
+                            <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,14" Margin="0,0,0,8">
+                                <StackPanel>
+                                    <TextBlock Text="Папка модов" FontSize="15" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding ModsFolderText}" FontSize="13.5" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                    <TextBlock Style="{StaticResource Note}" Text="{Binding FolderNote}" Margin="0,2,0,0" Visibility="{Binding HasModsFolder, Converter={StaticResource BoolToVis}}"/>
+                                    <WrapPanel Margin="0,12,0,0">
+                                        <Button Style="{StaticResource Secondary}" Content="Изменить" MinWidth="120" Padding="16,0" Margin="0,0,8,0" Click="PickFolder_Click"/>
+                                        <Button Style="{StaticResource Secondary}" Content="Открыть в проводнике" Padding="16,0" Margin="0,0,8,0" Click="OpenFolder_Click"
+                                                Visibility="{Binding HasModsFolder, Converter={StaticResource BoolToVis}}"/>
+                                        <Button Style="{StaticResource Link}" Content="Найти автоматически" VerticalAlignment="Center" Click="AutoFolder_Click"
+                                                Visibility="{Binding FolderIsManual, Converter={StaticResource BoolToVis}}"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                            <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Предупреждать о включённых модах" Margin="0,0,0,8"
+                                                    Tag="Когда включено больше этого числа, над модами появляется строка: игра может грузиться дольше.">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Style="{StaticResource StepButton}" Content="−" Click="LessWarn_Click" IsEnabled="{Binding CanLessWarn}" AutomationProperties.Name="Меньше"/>
+                                    <TextBlock Text="{Binding WarnAboveText}" Width="48" TextAlignment="Center" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold"/>
+                                    <Button Style="{StaticResource StepButton}" Content="+" Click="MoreWarn_Click" IsEnabled="{Binding CanMoreWarn}" AutomationProperties.Name="Больше"/>
+                                </StackPanel>
+                            </HeaderedContentControl>
+                            <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Копии прошлых версий"
+                                                    Tag="Сколько прошлых версий каждого мода хранить при обновлении, чтобы можно было вернуться.">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Style="{StaticResource StepButton}" Content="−" Click="LessBackups_Click" IsEnabled="{Binding CanLessBackups}" AutomationProperties.Name="Меньше"/>
+                                    <TextBlock Text="{Binding KeepBackupsText}" Width="48" TextAlignment="Center" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold"/>
+                                    <Button Style="{StaticResource StepButton}" Content="+" Click="MoreBackups_Click" IsEnabled="{Binding CanMoreBackups}" AutomationProperties.Name="Больше"/>
+                                </StackPanel>
+                            </HeaderedContentControl>
+                        </StackPanel>
+
+                        <!-- Обновления: программы (работает) и модов (появится вместе с разделом «Обновления») -->
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Left" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Updates}">
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="Программа"/>
+                            <CheckBox Style="{StaticResource Switch}" Content="Проверять новую версию при запуске" Margin="0,0,0,8"
+                                      Tag="Если вышла новая версия, над модами появится строка «Обновить». Обновляется только по вашей кнопке."
+                                      IsChecked="{Binding CheckAppUpdates}"/>
+                            <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,12" Margin="0,0,0,18">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource Secondary}" Content="Проверить сейчас" Padding="16,0" Margin="16,0,0,0"
+                                                Click="CheckApp_Click" IsEnabled="{Binding CanUpdateApp}" VerticalAlignment="Center"/>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding VersionText}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                            <TextBlock Style="{StaticResource Note}" Text="Новые версии берутся с GitHub, файл проверяется перед заменой." Margin="0,2,0,0"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <!-- что ответила проверка: та же плашка, что над модами -->
+                                    <DockPanel x:Name="SettingsUpdateBox" Margin="0,12,0,0" DataContext="{x:Null}"
+                                               Visibility="{Binding Visible, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource Secondary}" Height="32" Padding="14,0" Margin="12,0,0,0"
+                                                Content="{Binding ActionLabel}" Click="UpdateAct_Click" Visibility="{Binding ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
+                                        <TextBlock Text="{Binding Text}" FontSize="13.5" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="Моды"/>
+                            <CheckBox Style="{StaticResource Switch}" Content="Проверять обновления модов при запуске" Margin="0,0,0,8"
+                                      Tag="Программа сама смотрит на сайтах, не вышли ли новые версии ваших модов."
+                                      IsChecked="{Binding AutoCheckOnStart}"/>
+                            <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Повторять, пока программа открыта" Tag="Если программа открыта подолгу." Margin="0,0,0,10">
+                                <Border Style="{StaticResource SegmentBox}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton Style="{StaticResource Segment}" GroupName="repeat" Content="Нет" IsChecked="{Binding RepeatOff}"/>
+                                        <RadioButton Style="{StaticResource Segment}" GroupName="repeat" Content="3 ч" IsChecked="{Binding Repeat3}"/>
+                                        <RadioButton Style="{StaticResource Segment}" GroupName="repeat" Content="6 ч" IsChecked="{Binding Repeat6}"/>
+                                        <RadioButton Style="{StaticResource Segment}" GroupName="repeat" Content="12 ч" IsChecked="{Binding Repeat12}"/>
+                                    </StackPanel>
+                                </Border>
+                            </HeaderedContentControl>
+                            <TextBlock Style="{StaticResource Note}" Margin="4,0,4,0"
+                                       Text="Проверка модов на сайтах заработает вместе с разделом «Обновления». Выбранное здесь сохранится."/>
+                        </StackPanel>
+
+                        <!-- Сайты -->
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Left" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Sites}">
+                            <ItemsControl ItemsSource="{Binding Sites}" Focusable="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Style="{StaticResource Switch}" Content="{Binding Name}" Tag="{Binding Text}" IsChecked="{Binding Enabled}" Margin="0,0,0,8"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Style="{StaticResource Note}" Margin="4,4,4,0"
+                                       Text="Выключенный сайт не участвует в поиске и проверке обновлений. Сбой одного сайта не мешает остальным."/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
         </c:Glass>
 
         <!-- узкое окно: правая панель выезжает поверх сетки, под ней затемнение; щелчок по нему закрывает панель -->

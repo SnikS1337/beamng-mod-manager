@@ -64,7 +64,13 @@ public sealed record ModDetails(
 public sealed class GarageViewModel : Observable
 {
     /// <summary>Порог строки «Включено 34 мода. Игра может грузиться дольше» (DESIGN_FLOWS 6.9, AppSettings.ActiveModsWarnAbove).</summary>
-    public int ManyEnabledThreshold { get; set; } = 30;
+    /// <remarks>Меняется из настроек на ходу: строка пересчитывается сразу. 0 — не предупреждать.</remarks>
+    public int ManyEnabledThreshold
+    {
+        get => _manyThreshold;
+        set { if (_manyThreshold == value) return; _manyThreshold = value; Rebuild(); }
+    }
+    private int _manyThreshold = 30;
 
     /// <summary>
     /// Загрузка разрешена в настройках. Выключена (по умолчанию) — кнопки «Обновить» нет, вместо неё «Открыть страницу»:

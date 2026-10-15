@@ -44,6 +44,7 @@ PreviewLoaderTests.Register(t);
 GarageTests.Register(t);
 GarageCardTests.Register(t);
 SwitchingBackendTests.Register(t);
+SettingsScreenTests.Register(t);
 
 
 return t.Summary();

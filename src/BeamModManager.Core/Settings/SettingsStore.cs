@@ -71,6 +71,7 @@ public sealed class SettingsStore
                     FrostStrength = Int(r, nameof(AppSettings.FrostStrength), d.FrostStrength, warnings),
                     FrostSparks = Bool(r, nameof(AppSettings.FrostSparks), d.FrostSparks, warnings),
                     Background = (BackgroundMode)Int(r, nameof(AppSettings.Background), (int)d.Background, warnings),
+                    BackgroundImage = Str(r, nameof(AppSettings.BackgroundImage), warnings),
                     BackgroundDim = Int(r, nameof(AppSettings.BackgroundDim), d.BackgroundDim, warnings),
                     UiAnimations = Bool(r, nameof(AppSettings.UiAnimations), d.UiAnimations, warnings),
                     AnimatedBackground = Bool(r, nameof(AppSettings.AnimatedBackground), d.AnimatedBackground, warnings),
