@@ -368,3 +368,84 @@ public static class GameDateAddedTests
         });
     }
 }
+
+public static class GameBridgeTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("Помощник внутри игры (переключение на ходу)");
+
+        t.Run("признак жизни: свежий — жив, старше 6 с или нет файла — нет", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var now = DateTimeOffset.UtcNow;
+            var b = new GameBridge(g.Mods, () => now);
+            Assert.False(b.IsAlive(), "файла нет");
+            Directory.CreateDirectory(Path.GetDirectoryName(b.StatePath)!);
+            File.WriteAllText(b.StatePath, $$"""{"alive": {{now.ToUnixTimeSeconds() - 2}}, "version": 1}""");
+            Assert.True(b.IsAlive(), "2 с назад");
+            File.WriteAllText(b.StatePath, $$"""{"alive": {{now.ToUnixTimeSeconds() - 10}}}""");
+            Assert.False(b.IsAlive(), "10 с назад");
+            File.WriteAllText(b.StatePath, "{ битый");
+            Assert.False(b.IsAlive(), "битый файл");
+            Assert.Eq(Path.Combine(g.Root, "bmm_bridge", "state.json"), b.StatePath);
+        });
+
+        t.Run("команда: ключи как у игры, свой помощник не трогается, время и номер на месте", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var now = DateTimeOffset.FromUnixTimeSeconds(1760000000);
+            var b = new GameBridge(g.Mods, () => now);
+            var id = b.Send(new Dictionary<string, bool> { ["BMW_M2_G87_inf.zip"] = false, ["mudstone_valley.zip"] = true, ["bmm_bridge.zip"] = false });
+            Assert.True(id is not null, "записано");
+            var cmd = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(b.CommandPath))!;
+            Assert.Eq(id, (string?)cmd["id"]);
+            Assert.Eq(1760000000L, (long)cmd["time"]!);
+            Assert.Eq("{\"bmw_m2_g87_inf\":false,\"mudstone_valley\":true}", cmd["set"]!.ToJsonString());
+            Assert.False(b.Send(new Dictionary<string, bool> { ["a.zip"] = true }) == id, "номера разные");
+        });
+
+        t.Run("ответ помощника читается", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var b = new GameBridge(g.Mods);
+            Directory.CreateDirectory(Path.GetDirectoryName(b.StatePath)!);
+            File.WriteAllText(b.StatePath, """{"alive": 1, "ackId": "7-1", "results": {"bmw": "ok", "ghost": "missing"}}""");
+            var a = b.ReadAnswer()!;
+            Assert.Eq("7-1", a.AckId);
+            Assert.Eq("missing", a.Results["ghost"]);
+        });
+
+        t.Run("архив помощника: всегда те же байты, внутри расширение и скрипт мода; ставится один раз и в гараже не виден", () =>
+        {
+            Assert.True(GameBridge.BuildMod().AsSpan().SequenceEqual(GameBridge.BuildMod()), "одинаковые байты");
+            using (var z = new ZipArchive(new MemoryStream(GameBridge.BuildMod())))
+            {
+                Assert.True(z.Entries.Select(e => e.FullName).OrderBy(x => x).SequenceEqual(new[] { "lua/ge/extensions/bmmBridge.lua", "scripts/bmm_bridge/modScript.lua" }), "состав");
+                using var r = new StreamReader(z.GetEntry("scripts/bmm_bridge/modScript.lua")!.Open());
+                Assert.True(r.ReadToEnd().Contains("extensions.load('bmmBridge')"), "скрипт грузит расширение");
+            }
+            using var g = new GameDbTests.Game();
+            Assert.True(GameBridge.EnsureInstalled(g.Mods), "положен");
+            var path = Path.Combine(g.Mods, GameBridge.ModFileName);
+            File.SetLastWriteTimeUtc(path, new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            Assert.True(GameBridge.EnsureInstalled(g.Mods), "уже на месте");
+            Assert.Eq(2001, File.GetLastWriteTimeUtc(path).Year);
+            Assert.False(g.Inst.ScanDetailed().Any(d => d.FileName == GameBridge.ModFileName), "в гараже его нет");
+        });
+
+        t.Run("архивы во вложенных папках mods видны (как в игре), распакованные — нет", () =>
+        {
+            using var g = new GameDbTests.Game();
+            Directory.CreateDirectory(Path.Combine(g.Mods, "cars", "old"));
+            Directory.CreateDirectory(Path.Combine(g.Mods, "unpacked", "x"));
+            File.WriteAllBytes(Path.Combine(g.Mods, "cars", "old", "civic.zip"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(g.Mods, "unpacked", "x", "inner.zip"), new byte[] { 1 });
+            var disk = g.Inst.ScanDetailed();
+            var civic = disk.Single(d => d.FileName == "civic.zip");
+            Assert.Eq("cars/old", civic.SubFolder);
+            Assert.Eq(Path.Combine(g.Mods, "cars/old", "civic.zip"), g.Inst.PathOf(civic));
+            Assert.False(disk.Any(d => d.FileName == "inner.zip"), "распакованные пропущены");
+        });
+    }
+}

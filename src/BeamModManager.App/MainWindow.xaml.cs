@@ -51,6 +51,8 @@ public partial class MainWindow : Window
     private readonly BackgroundMotion _motion;
     private readonly DispatcherTimer _gameTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(6) };
+    /// <summary>Пока изменение передано помощнику в игре, раз в секунду смотрим, применила ли его игра.</summary>
+    private readonly DispatcherTimer _liveTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private CardGridPanel? _panel;
     private bool _gameRunning;
     private DateTime _lastRefresh;
@@ -102,6 +104,7 @@ public partial class MainWindow : Window
         vm.PropertyChanged += Vm_PropertyChanged;
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); };
         _gameTimer.Tick += (_, _) => CheckGame();
+        _liveTimer.Tick += (_, _) => { _vm.TickLive(); if (!_vm.LiveWaiting) _liveTimer.Stop(); };
 
         SourceInitialized += (_, _) =>
         {
@@ -179,6 +182,7 @@ public partial class MainWindow : Window
             case nameof(GarageViewModel.Toast):
                 _toastTimer.Stop();
                 if (_vm.Toast is not null) _toastTimer.Start();
+                if (_vm.LiveWaiting && !_liveTimer.IsEnabled) _liveTimer.Start();
                 break;
             case nameof(GarageViewModel.Filter):
                 PlaceFilterDrop(instant: false);
@@ -207,6 +211,7 @@ public partial class MainWindow : Window
         _gameRunning = running;
         if (changed) UpdateMotion();
         if (!running && _vm.HasPending) _vm.OnGameExited();
+        else if (running && _vm.HasPending && !_liveTimer.IsEnabled) _vm.TickLive(); // помощник мог появиться позже: передадим ещё раз
     }
 
     /// <summary>Фон движется, только когда окно на виду, в фокусе и игра не запущена (DESIGN.md раздел 8, «Бюджет»).</summary>
@@ -365,6 +370,7 @@ public partial class MainWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         _gameTimer.Stop();
+        _liveTimer.Stop();
         _previewCts?.Cancel();
         _host.SaveWindow?.Invoke(this);
         _host.SavePending?.Invoke(_vm.PendingChanges);

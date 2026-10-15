@@ -190,7 +190,7 @@ public sealed class GarageViewModel : Observable
             if (!_cards.TryGetValue(m.Mod.Id, out var c)) _cards[m.Mod.Id] = c = new ModCard(m.Mod.Id);
             // ожидание, совпавшее с тем, что уже на диске, больше не нужно (например, переключили в самой игре)
             if (_pending.TryGetValue(m.Mod.FileName, out var want) && want == m.Mod.Enabled) _pending.Remove(m.Mod.FileName);
-            c.Apply(m, _pending.TryGetValue(m.Mod.FileName, out var p) ? p : null);
+            c.Apply(m, _pending.TryGetValue(m.Mod.FileName, out var p) ? p : null, LiveWaiting);
         }
         foreach (var gone in _cards.Keys.Where(k => !alive.Contains(k)).ToList()) _cards.Remove(gone);
         var files = new HashSet<string>(_snap.Mods.Select(m => m.Mod.FileName), StringComparer.OrdinalIgnoreCase);
@@ -296,7 +296,17 @@ public sealed class GarageViewModel : Observable
 
         if (_backend.IsGameRunning() || _pending.ContainsKey(file))
         {
-            Queue(file, want, card);
+            if (_backend.IsGameRunning() && _backend.LiveAvailable)
+            {
+                // помощник в игре: переключаем сразу, как меню модов самой игры
+                _pending[file] = want;
+                _liveTries = 0; // новое действие человека — новая попытка
+                SendLive();
+                card.Apply(card.Data, want, LiveWaiting);
+                Raise(nameof(HasPending));
+                Rebuild();
+            }
+            else Queue(file, want, card);
         }
         else
         {
@@ -307,7 +317,7 @@ public sealed class GarageViewModel : Observable
         }
 
         var label = want ? "Включён" : "Выключен";
-        if (_pending.ContainsKey(file)) label += ". Применится, когда закроете игру";
+        if (_pending.ContainsKey(file) && !LiveWaiting) label += ". Применится, когда закроете игру";
         ShowToast(label, withUndo ? () => { if (_cards.TryGetValue(card.Id, out var c)) SetEnabled(c, before, withUndo: false); } : null);
     }
 
@@ -315,9 +325,41 @@ public sealed class GarageViewModel : Observable
     {
         // вернули как было на диске — ждать нечего
         if (card.Data.Mod.Enabled == want) _pending.Remove(file); else _pending[file] = want;
-        card.Apply(card.Data, _pending.TryGetValue(file, out var p) ? p : null);
+        card.Apply(card.Data, _pending.TryGetValue(file, out var p) ? p : null, LiveWaiting);
         Raise(nameof(HasPending));
         Rebuild();
+    }
+
+    /// <summary>Сколько ждём, пока игра применит переданное помощнику (она пишет db.json сразу после переключения).</summary>
+    public static readonly TimeSpan LiveTimeout = TimeSpan.FromSeconds(6);
+    private DateTimeOffset? _liveSentAt;
+    private int _liveTries; // передач без подтверждения подряд: больше двух — помощник не справляется, ждём закрытия игры
+
+    /// <summary>Изменения переданы помощнику в игре и ждут подтверждения (карточка: «Выключается…»).</summary>
+    public bool LiveWaiting => _pending.Count > 0 && _liveSentAt is { } t && _now() - t < LiveTimeout;
+
+    private bool SendLive()
+    {
+        if (_pending.Count == 0 || !_backend.TrySendLive(PendingChanges)) return false;
+        _liveSentAt = _now();
+        _liveTries++;
+        return true;
+    }
+
+    /// <summary>
+    /// Окно зовёт раз в секунду-три, пока игра запущена и что-то ждёт: смотрим, применила ли игра (db.json), и, если помощник
+    /// появился или промолчал, передаём ещё раз. Не ответил за <see cref="LiveTimeout"/> — ждём закрытия игры, как без помощника.
+    /// </summary>
+    public void TickLive()
+    {
+        if (_pending.Count == 0) { _liveSentAt = null; _liveTries = 0; return; }
+        var expired = _liveSentAt is { } t && _now() - t >= LiveTimeout;
+        if ((_liveSentAt is null || expired) && _liveTries < 2 && _backend.IsGameRunning() && _backend.LiveAvailable && SendLive())
+            expired = false; // помощник отвечает (или появился): передали заново
+        if (expired) _liveSentAt = null;
+        Refresh();
+        if (expired && _pending.Count > 0)
+            ShowToast("Игра не ответила. Изменения применятся, когда закроете её", null);
     }
 
     /// <summary>Окно заметило, что игра закрылась: применяем отложенное. Возвращает число неудач.</summary>

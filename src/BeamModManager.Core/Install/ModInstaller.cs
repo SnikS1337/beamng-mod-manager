@@ -356,23 +356,45 @@ public sealed class ModInstaller
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* файл исчез или занят: в этот раз пропускаем */ }
             }
-            // игра различает моды по имени файла без папки, поэтому архив с тем же именем в корне главнее
-            var repo = Path.Combine(_layout.ModsDir, RepoFolder);
-            if (Directory.Exists(repo))
+            // игра ищет архивы во всех подпапках mods (core_modmanager: findFiles("/mods/", "*.zip", -1)), кроме распакованных;
+            // различает моды по имени файла без папки, поэтому архив с тем же именем в корне главнее
+            foreach (var (name, sub, path) in SubfolderZips())
             {
-                try
-                {
-                    foreach (var f in Directory.EnumerateFiles(repo, "*.zip").Order(StringComparer.OrdinalIgnoreCase))
-                    {
-                        var name = Path.GetFileName(f);
-                        if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || !seen.Add(name)) continue;
-                        try { result.Add(new DiskMod(name, true, new FileInfo(f).Length, RepoFolder)); }
-                        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-                    }
-                }
+                if (!seen.Add(name)) continue;
+                try { result.Add(new DiskMod(name, true, new FileInfo(path).Length, sub)); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             }
+            // помощник менеджера внутри игры — служебный, в гараже его нет
+            result.RemoveAll(d => string.Equals(d.FileName, Game.GameBridge.ModFileName, StringComparison.OrdinalIgnoreCase) && d.SubFolder is null);
             return result.OrderBy(d => d.FileName, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+    }
+
+    private IEnumerable<(string Name, string Sub, string Path)> SubfolderZips()
+    {
+        var root = _layout.ModsDir;
+        if (!Directory.Exists(root)) yield break;
+        var stack = new Stack<string>();
+        try { foreach (var d in Directory.EnumerateDirectories(root).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase)) stack.Push(d); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { yield break; }
+        while (stack.Count > 0)
+        {
+            var dir = stack.Pop();
+            var rel = Path.GetRelativePath(root, dir).Replace('\\', '/');
+            if (string.Equals(rel, "unpacked", StringComparison.OrdinalIgnoreCase) || rel.StartsWith("unpacked/", StringComparison.OrdinalIgnoreCase)) continue;
+            List<string> files, dirs;
+            try
+            {
+                files = Directory.EnumerateFiles(dir, "*.zip").Order(StringComparer.OrdinalIgnoreCase).ToList();
+                dirs = Directory.EnumerateDirectories(dir).OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
+            foreach (var f in files)
+            {
+                var name = Path.GetFileName(f);
+                if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) yield return (name, rel, f);
+            }
+            foreach (var d in dirs) stack.Push(d);
         }
     }
 

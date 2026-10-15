@@ -41,6 +41,12 @@ public interface IGarageBackend
     GarageSnapshot Load();
     bool IsGameRunning();
     ToggleResult SetEnabled(string fileName, bool enabled);
+
+    /// <summary>Помощник внутри запущенной игры отвечает: моды можно переключать сразу, не дожидаясь закрытия игры.</summary>
+    bool LiveAvailable => false;
+
+    /// <summary>Передать помощнику нужное состояние модов (имя файла → включён). false — не получилось, ждём закрытия игры.</summary>
+    bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) => false;
 }
 
 /// <summary>Гараж поверх настоящих библиотеки, папки модов и db.json игры.</summary>
@@ -70,9 +76,18 @@ public sealed class LibraryGarageBackend : IGarageBackend
 
     public ToggleResult SetEnabled(string fileName, bool enabled) => GameDbSync.SetEnabled(_installer, fileName, enabled, _gameRunning);
 
+    private GameBridge Bridge => _bridge ??= new GameBridge(_installer.Layout.ModsDir);
+    private GameBridge? _bridge;
+
+    public bool LiveAvailable => _installer.ModsFolderAvailable && Bridge.IsAlive();
+
+    public bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) => LiveAvailable && Bridge.Send(wanted) is not null;
+
     public GarageSnapshot Load()
     {
         if (!_installer.ModsFolderAvailable) return GarageSnapshot.NoFolder;
+        // помощник для переключения на ходу: кладём (или обновляем) один раз за запуск; запущенная игра подхватит его сама
+        if (!_bridgeChecked) { _bridgeChecked = true; GameBridge.EnsureInstalled(_installer.Layout.ModsDir); }
         GameDbReadResult db;
         using ((_store as JsonLibraryStore)?.Batch())
         {
@@ -122,6 +137,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
     }
 
     private bool _pruned;
+    private bool _bridgeChecked;
 
     private string? ArchivePath(InstalledMod m, IReadOnlyDictionary<string, DiskMod> disk) =>
         disk.TryGetValue(m.FileName, out var d) ? _installer.PathOf(d) : null;

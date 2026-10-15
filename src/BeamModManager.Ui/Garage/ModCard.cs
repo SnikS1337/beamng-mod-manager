@@ -79,7 +79,9 @@ public sealed class ModCard : Observable
 
     private string? _previewKey;
 
-    internal void Apply(GarageMod d, bool? pending)
+    /// <param name="pending">Нужное состояние, которое ещё не применено (игра запущена); null — ничего не ждёт.</param>
+    /// <param name="live">Изменение уже передано помощнику в игре и вот-вот применится.</param>
+    internal void Apply(GarageMod d, bool? pending, bool live = false)
     {
         Data = d;
         Name = d.Mod.Name;
@@ -92,7 +94,9 @@ public sealed class ModCard : Observable
 
         var enabled = pending ?? d.Mod.Enabled;
         Enabled = enabled;
-        PendingText = pending is null ? null : pending.Value ? "Включится, когда закроете игру" : "Выключится, когда закроете игру";
+        PendingText = pending is null ? null
+            : live ? (pending.Value ? "Включается…" : "Выключается…")
+            : pending.Value ? "Включится, когда закроете игру" : "Выключится, когда закроете игру";
 
         var u = d.NeedsUpdate ? d.Update : null;
         HasUpdateBadge = u is { Status: UpdateStatus.Likely };
