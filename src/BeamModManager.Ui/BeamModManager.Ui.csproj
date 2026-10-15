@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Логика экранов без WPF: проверяется на любой системе. Окно (BeamModManager.App) только показывает её. -->
+  <ItemGroup>
+    <ProjectReference Include="..\BeamModManager.Core\BeamModManager.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

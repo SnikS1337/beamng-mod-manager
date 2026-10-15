@@ -11,7 +11,7 @@ public static class GameDbTests
     private static readonly DateTimeOffset T0 = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
     private static readonly Func<bool> NotRunning = () => false;
 
-    private static string Fixture(string name)
+    internal static string Fixture(string name)
     {
         var dir = AppContext.BaseDirectory;
         while (dir != null && !Directory.Exists(Path.Combine(dir, "tests", "fixtures"))) dir = Path.GetDirectoryName(dir);
@@ -32,7 +32,7 @@ public static class GameDbTests
     }
 
     /// <summary>Папка mods с настоящим db.json и пустыми архивами под его имена.</summary>
-    private sealed class Game : IDisposable
+    internal sealed class Game : IDisposable
     {
         public readonly string Root = Path.Combine(Path.GetTempPath(), "bmm-game-" + Guid.NewGuid().ToString("N"));
         public readonly ModInstaller Inst;
