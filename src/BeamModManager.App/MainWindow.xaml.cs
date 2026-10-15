@@ -68,7 +68,7 @@ public partial class MainWindow : Window
         }
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
-        var wall = Backdrop.LoadBlurred(host.WallPath);
+        var wall = Services.Backdrop.LoadBlurred(host.WallPath);
         if (wall is not null) { Wall.Source = wall; Wall.Visibility = Visibility.Visible; }
         _motion = new BackgroundMotion(this, WallScale, WallMove, GradeMove, Lights);
 
