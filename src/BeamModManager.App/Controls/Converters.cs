@@ -27,12 +27,12 @@ public static class ImageCache
             bi.CacheOption = BitmapCacheOption.OnLoad; // файл не держим открытым: кэш можно чистить
             bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             bi.DecodePixelWidth = decodeWidth;
-            bi.UriSource = new Uri(path, UriKind.Absolute);
+            bi.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
             bi.EndInit();
             bi.Freeze();
             img = bi;
         }
-        catch (Exception e) when (e is IOException or NotSupportedException or UnauthorizedAccessException or ArgumentException or FileFormatException) { }
+        catch (Exception e) when (e is IOException or NotSupportedException or UnauthorizedAccessException or ArgumentException or FileFormatException or UriFormatException) { }
         ColorCache[key] = img;
         return img;
     }
