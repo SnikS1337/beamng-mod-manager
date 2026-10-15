@@ -19,6 +19,10 @@ public static class GarageTests
         public DateTimeOffset? LastChecked;
         public readonly List<(string File, bool On)> Calls = new();
         public Func<string, bool, ToggleResult>? Override;
+        public bool Live;
+        public readonly List<IReadOnlyDictionary<string, bool>> Sent = new();
+        public bool LiveAvailable => Live;
+        public bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) { if (!Live) return false; Sent.Add(wanted); return true; }
 
         public GarageSnapshot Load() => new(Mods.ToList(), Folder, LastChecked);
         public bool IsGameRunning() => Running;
@@ -336,6 +340,74 @@ public static class GarageTests
             b.Mods[0] = b.Mods[0] with { Mod = b.Mods[0].Mod with { FileName = "a_v2.zip", SizeBytes = 5 } };
             vm.Refresh();
             Assert.True(vm.Cards[0].PreviewPath is null, "старую картинку не показываем");
+        });
+
+        t.Run("помощник в игре: переключение сразу, без ожидания закрытия; игра применила — ожидание снято", () =>
+        {
+            var now = T0;
+            var b = new FakeBackend { Mods = new List<GarageMod> { Mod("A"), Mod("B") }, Running = true, Live = true };
+            var vm = new GarageViewModel(b, () => now);
+            vm.Refresh();
+            vm.Toggle(vm.Cards[0]);
+            Assert.Eq(0, b.Calls.Count); // db.json не трогаем: игра запущена
+            Assert.True(b.Sent.Single().SequenceEqual(new Dictionary<string, bool> { ["a.zip"] = false }), "передано помощнику");
+            Assert.Eq("Выключается…", vm.Cards[0].PendingText);
+            Assert.Eq("Выключен", vm.Toast!.Text);
+            Assert.True(vm.LiveWaiting, "ждём подтверждения");
+
+            // игра выключила мод и записала db.json
+            b.Mods[0] = b.Mods[0] with { Mod = b.Mods[0].Mod with { Enabled = false } };
+            now = now.AddSeconds(1);
+            vm.TickLive();
+            Assert.True(!vm.HasPending && vm.Cards[0].PendingText is null && !vm.Cards[0].Enabled, "применено в игре");
+        });
+
+        t.Run("помощник промолчал: через 6 с ждём закрытия игры, как без него, и говорим об этом", () =>
+        {
+            var now = T0;
+            var b = new FakeBackend { Mods = new List<GarageMod> { Mod("A") }, Running = true, Live = true };
+            var vm = new GarageViewModel(b, () => now);
+            vm.Refresh();
+            vm.Toggle(vm.Cards[0]);
+            b.Live = false; // помощник перестал отвечать
+            now = now.AddSeconds(7);
+            vm.TickLive();
+            Assert.Eq("Выключится, когда закроете игру", vm.Cards[0].PendingText);
+            Assert.Eq("Игра не ответила. Изменения применятся, когда закроете её", vm.Toast!.Text);
+            b.Running = false;
+            vm.OnGameExited();
+            Assert.Eq(("a.zip", false), b.Calls.Single());
+        });
+
+        t.Run("помощник жив, но игра не применяет (мод ей неизвестен): одна повторная передача, потом ждём закрытия", () =>
+        {
+            var now = T0;
+            var b = new FakeBackend { Mods = new List<GarageMod> { Mod("A") }, Running = true, Live = true };
+            var vm = new GarageViewModel(b, () => now);
+            vm.Refresh();
+            vm.Toggle(vm.Cards[0]);
+            now = now.AddSeconds(7); vm.TickLive();
+            Assert.Eq(2, b.Sent.Count);
+            Assert.Eq("Выключается…", vm.Cards[0].PendingText);
+            now = now.AddSeconds(7); vm.TickLive();
+            now = now.AddSeconds(7); vm.TickLive();
+            Assert.Eq(2, b.Sent.Count);
+            Assert.Eq("Выключится, когда закроете игру", vm.Cards[0].PendingText);
+        });
+
+        t.Run("помощник появился позже: отложенное передаётся ему целиком", () =>
+        {
+            var now = T0;
+            var b = new FakeBackend { Mods = new List<GarageMod> { Mod("A"), Mod("B") }, Running = true };
+            var vm = new GarageViewModel(b, () => now);
+            vm.Refresh();
+            vm.Toggle(vm.Cards[0]);
+            vm.Toggle(vm.Cards[1]);
+            Assert.Eq(0, b.Sent.Count);
+            b.Live = true;
+            vm.TickLive();
+            Assert.Eq(2, b.Sent.Single().Count);
+            Assert.Eq("Выключается…", vm.Cards[1].PendingText);
         });
 
         t.Run("тост гаснет только свой: старый таймер не гасит новый", () =>

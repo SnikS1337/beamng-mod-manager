@@ -17,6 +17,13 @@ jobs:
       - name: Тесты
         run: dotnet run --project tests/BeamModManager.Core.Tests -c Release
 
+  # Помощник внутри игры (Lua) на подделке API BeamNG: в игре LuaJIT, совместимый с Lua 5.1.
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -q lua5.1 && lua5.1 tests/lua/bridge_test.lua src/BeamModManager.Core/Game/Bridge
+
   # Окно на WPF (.NET 10): сборка и снимки экрана в демо-режиме. Снимки уходят в ветку ci-shots.
   app:
     runs-on: windows-latest
@@ -65,7 +72,7 @@ jobs:
 
   # Готовая программа: один exe без установки .NET (self-contained), выпуск «latest» обновляется на каждый push в main.
   release:
-    needs: [build, app]
+    needs: [build, app, lua]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     permissions:

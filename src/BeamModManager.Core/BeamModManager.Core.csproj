@@ -1,9 +1,14 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <!-- помощник внутри игры (GameBridge): Lua-файлы вкладываются в сборку и собираются в bmm_bridge.zip -->
+  <ItemGroup>
+    <EmbeddedResource Include="Game\Bridge\*.lua" />
+  </ItemGroup>
 
 </Project>
