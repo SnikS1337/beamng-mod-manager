@@ -174,11 +174,10 @@ public sealed class CardGridPanel : Panel
         var t = Anim.Mover(c);
         var dx = old.X + t.X - now.X;
         var dy = old.Y + t.Y - now.Y;
-        // анимацию снимаем и ставим начало как обычное значение: до первого кадра часов карточка уже на нужном месте
-        t.BeginAnimation(TranslateTransform.XProperty, null);
-        t.BeginAnimation(TranslateTransform.YProperty, null);
-        t.X = dx;
-        t.Y = dy;
+        // анимация с явным началом действует сразу (кадра «уже на новом месте» нет); обычное значение — конечное (0),
+        // поэтому снятая анимация никогда не оставит карточку сдвинутой
+        t.X = 0;
+        t.Y = 0;
         t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(dx, 0, time) { EasingFunction = Anim.Smooth });
         t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(dy, 0, time) { EasingFunction = Anim.Smooth });
     }
@@ -187,10 +186,8 @@ public sealed class CardGridPanel : Panel
     private static void Appear(UIElement c)
     {
         var t = Anim.Mover(c);
-        t.BeginAnimation(TranslateTransform.YProperty, null);
-        c.BeginAnimation(OpacityProperty, null);
-        t.Y = AppearFrom;
-        c.Opacity = 0;
+        t.Y = 0;
+        c.Opacity = 1; // обычные значения конечные: анимации ниже действуют сразу с начала
         t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(AppearFrom, 0, MoveTime) { EasingFunction = Anim.Smooth });
         c.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, AppearTime) { EasingFunction = Anim.Smooth });
     }
@@ -200,9 +197,9 @@ public sealed class CardGridPanel : Panel
     {
         var delay = TimeSpan.FromMilliseconds(60 + 45 * i);
         var t = Anim.Mover(c);
-        t.Y = RiseFrom;
-        c.Opacity = 0;
         t.BeginAnimation(TranslateTransform.YProperty, Anim.Hold(RiseFrom, 0, delay, RiseTime, Anim.Lift));
         c.BeginAnimation(OpacityProperty, Anim.Hold(0, 1, delay, RiseTime, Anim.Smooth));
+        t.Y = 0; // обычные значения конечные; до задержки анимация держит начало
+        c.Opacity = 1;
     }
 }
