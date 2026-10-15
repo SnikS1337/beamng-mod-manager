@@ -28,7 +28,11 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Сборка
-        run: dotnet build src/BeamModManager.App -c Release -warnaserror
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory shots -Force | Out-Null
+          dotnet build src/BeamModManager.App -c Release -warnaserror -nologo -clp:NoSummary 2>&1 | Tee-Object shots/build.log
+          if ($LASTEXITCODE -ne 0) { throw "сборка не прошла" }
       - name: Снимки экрана
         shell: pwsh
         run: |
@@ -48,7 +52,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          if (-not (Test-Path shots) -or -not (Get-ChildItem shots)) { exit 0 }
+          if (-not (Test-Path shots)) { exit 0 }
           git config user.name "ci"
           git config user.email "ci@users.noreply.github.com"
           git checkout --orphan ci-shots-tmp
