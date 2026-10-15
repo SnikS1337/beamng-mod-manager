@@ -28,6 +28,18 @@ public partial class App : Application
         }
 
         var demo = Arg("--demo");
+        var shot = Arg("--shot");
+        if (shot is not null)
+        {
+            // на сборочной машине некому смотреть на окно ошибки: пишем её рядом со снимком и выходим
+            void Crash(object? ex)
+            {
+                try { File.WriteAllText(shot + ".error.txt", ex?.ToString() ?? "неизвестная ошибка"); } catch (IOException) { }
+                Environment.Exit(2);
+            }
+            DispatcherUnhandledException += (_, a) => Crash(a.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (_, a) => Crash(a.ExceptionObject);
+        }
         WindowHost host;
         if (demo is not null)
         {
@@ -35,7 +47,7 @@ public partial class App : Application
             {
                 Backend = new DemoBackend(demo),
                 WallPath = Path.Combine(demo, "wall.jpg"),
-                ShotPath = Arg("--shot"),
+                ShotPath = shot,
                 ShotSelect = Arg("--select"),
             };
         }
