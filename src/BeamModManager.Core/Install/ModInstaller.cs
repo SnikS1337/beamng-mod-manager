@@ -347,6 +347,9 @@ public sealed class ModInstaller
         }
     }
 
+    /// <summary>Папки, с которыми работает установщик.</summary>
+    public ModLayout Layout => _layout;
+
     /// <summary>Папка модов существует (иначе пустой снимок означает «диск недоступен», а не «модов нет»).</summary>
     public bool ModsFolderAvailable => Directory.Exists(_layout.ModsDir);
 
