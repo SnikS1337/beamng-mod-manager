@@ -40,7 +40,7 @@ Windows), **не решено** (выбор после проверки на Win
 | Интерфейс | WPF на .NET 10 без сторонних пакетов (WPF-UI не понадобился: всё своё по доске «Гараж») | собирается на Windows (CI), на живой игре не проверен | [DESIGN.md](docs/DESIGN.md) 8 |
 | Стекло | сейчас матовое: размытая копия сцены (`VisualBrush` + `BlurEffect`); преломление шейдером HLSL — после замера кадров; запасной путь WebView2 | матовое работает / шейдер не решён | [DESIGN.md](docs/DESIGN.md) 8 |
 | Анимации | пружины Apple: `Spring` кадр за кадром (капли) и `SpringEase` для анимаций WPF (подъём карточки); Lottie не решено | работает (на экране не проверено) | [DESIGN_MOTION.md](docs/DESIGN_MOTION.md) 5 |
-| Сборка на Windows | GitHub Actions `windows-latest`: тесты, сборка окна, снимки экрана в ветку `ci-shots` | работает | [STATUS.md](docs/STATUS.md) 1 |
+| Сборка на Windows | GitHub Actions `windows-latest`: тесты, сборка окна, снимки экрана в ветку `ci-shots`, готовый exe в выпуске `latest` | работает | [STATUS.md](docs/STATUS.md) 1 |
 | Сбор данных об игре | PowerShell (`tools/windows/collect-beamng-info.ps1`) | работает (на Windows не запускался) | [PHASE0.md](docs/PHASE0.md) |
 | Макет дизайна (в программу не входит) | Python 3, numpy, Pillow | работает | [DESIGN.md](docs/DESIGN.md) 12 |
 
