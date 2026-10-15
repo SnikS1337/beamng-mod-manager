@@ -33,6 +33,7 @@ LibraryTests.Register(t);
 CoreFixesTests.Register(t);
 GameDbTests.Register(t);
 JsonStoreTests.Register(t);
+PreviewTests.Register(t);
 
 
 return t.Summary();
