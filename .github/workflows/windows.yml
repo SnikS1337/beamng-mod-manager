@@ -62,3 +62,39 @@ jobs:
           git add -f shots
           git commit -q -m "Снимки для $env:GITHUB_SHA"
           git push -f -q origin HEAD:ci-shots
+
+  # Готовая программа: один exe без установки .NET (self-contained), выпуск «latest» обновляется на каждый push в main.
+  release:
+    needs: [build, app]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Сборка exe
+        shell: pwsh
+        run: |
+          $ver = "0.1.$env:GITHUB_RUN_NUMBER"
+          dotnet publish src/BeamModManager.App -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+            -p:DebugType=none -p:Version=$ver -nologo -o publish
+          if ($LASTEXITCODE -ne 0) { throw "publish не прошёл" }
+          Copy-Item tools/release/README.txt "publish/Как запустить.txt"
+          Compress-Archive -Path publish/* -DestinationPath "ModManagerBeamNG.zip"
+          "VER=$ver" | Out-File -Append $env:GITHUB_ENV
+          Get-ChildItem publish, ModManagerBeamNG.zip | Format-Table Name, Length
+      - name: Выпуск latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $msg = (git log -1 --pretty=%s)
+          $notes = "Сборка $env:VER от $(Get-Date -Format 'yyyy-MM-dd HH:mm') UTC, коммит $($env:GITHUB_SHA.Substring(0,7)).`n`nПоследнее изменение: $msg`n`nСкачать ModManagerBeamNG.zip, распаковать в любую папку, запустить BeamModManager.exe. Подробности в «Как запустить.txt» внутри архива."
+          gh release delete latest --yes --cleanup-tag 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create latest ModManagerBeamNG.zip --title "ModManager BeamNG $env:VER (свежая сборка)" --notes $notes --target $env:GITHUB_SHA --prerelease
+          if ($LASTEXITCODE -ne 0) { throw "выпуск не создан" }
