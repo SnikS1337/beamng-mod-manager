@@ -10,7 +10,7 @@
 
     <!-- Своя верхушка окна: полосы Windows нет, фон до самого верха (DESIGN_FLOWS раздел 2). Тянуть окно можно за верхние 64 px. -->
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="64" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+        <WindowChrome CaptionHeight="64" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
@@ -38,7 +38,12 @@
                                     <TranslateTransform x:Name="Pick"/>
                                 </TransformGroup>
                             </Grid.RenderTransform>
-                            <Border x:Name="Glow" CornerRadius="26" Background="#1D2533" Opacity="0">
+                            <Border x:Name="GlowHover" CornerRadius="26" Background="#1D2533" Opacity="0">
+                                <Border.Effect>
+                                    <DropShadowEffect BlurRadius="34" ShadowDepth="0" Color="#AACDFF" Opacity="0.24" RenderingBias="Performance"/>
+                                </Border.Effect>
+                            </Border>
+                            <Border x:Name="GlowPick" CornerRadius="26" Background="#1D2533" Opacity="0">
                                 <Border.Effect>
                                     <DropShadowEffect BlurRadius="46" ShadowDepth="0" Color="#96C8FF" Opacity="0.34" RenderingBias="Performance"/>
                                 </Border.Effect>
@@ -63,24 +68,40 @@
                                 </Viewbox>
                             </Border>
 
+                            <!-- фото: цветное и серое друг над другом; выключенный мод «засыпает» плавно (DESIGN_MOTION 3.1) -->
                             <Border CornerRadius="26">
                                 <Border.Background>
                                     <MultiBinding Converter="{StaticResource PreviewBrush}">
                                         <Binding Path="PreviewPath"/>
-                                        <Binding Path="Enabled"/>
                                         <Binding Path="(c:CardGridPanel.InView)" RelativeSource="{RelativeSource Self}"/>
                                     </MultiBinding>
                                 </Border.Background>
                             </Border>
-                            <!-- выключенный мод: холодный налёт поверх серого фото -->
-                            <Border CornerRadius="26" Visibility="{Binding Enabled, Converter={StaticResource BoolToCollapsed}}">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#4D96C3EB" Offset="0"/>
-                                        <GradientStop Color="#3378A5D7" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                            </Border>
+                            <Grid x:Name="Sleep" Opacity="0" IsHitTestVisible="False">
+                                <Border CornerRadius="26">
+                                    <Border.Background>
+                                        <MultiBinding Converter="{StaticResource PreviewBrush}" ConverterParameter="gray">
+                                            <Binding Path="PreviewPath"/>
+                                            <Binding Path="(c:CardGridPanel.InView)" RelativeSource="{RelativeSource Self}"/>
+                                        </MultiBinding>
+                                    </Border.Background>
+                                </Border>
+                                <Border CornerRadius="26">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#4D96C3EB" Offset="0"/>
+                                            <GradientStop Color="#3378A5D7" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                                <!-- иней: наша текстура из design/mockup/tools/gen_ice.py -->
+                                <Border CornerRadius="26" RenderTransformOrigin="0.5,0.5">
+                                    <Border.Background>
+                                        <ImageBrush ImageSource="pack://application:,,,/Assets/frost-card.png" Stretch="Fill"/>
+                                    </Border.Background>
+                                    <Border.RenderTransform><ScaleTransform x:Name="FrostScale" ScaleX="1.03" ScaleY="1.03"/></Border.RenderTransform>
+                                </Border>
+                            </Grid>
                             <Border CornerRadius="26">
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -132,6 +153,27 @@
                                 <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="Snow" Property="Visibility" Value="Visible"/>
                             </DataTrigger>
+                            <!-- выключили: иней нарастает медленно; включили: тает (DESIGN_MOTION 3.1) -->
+                            <DataTrigger Binding="{Binding Enabled}" Value="False">
+                                <DataTrigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:1.1" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:1.1" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:1.1" EasingFunction="{StaticResource Smooth}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.EnterActions>
+                                <DataTrigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1.03" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1.03" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.ExitActions>
+                            </DataTrigger>
                             <DataTrigger Binding="{Binding SubtitleStrong}" Value="True">
                                 <Setter TargetName="Sub" Property="Foreground" Value="White"/>
                                 <Setter TargetName="Sub" Property="FontWeight" Value="SemiBold"/>
@@ -141,7 +183,7 @@
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-5" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0.65" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.EnterActions>
@@ -149,7 +191,7 @@
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
@@ -161,7 +203,7 @@
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="-4" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowPick" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.EnterActions>
@@ -169,7 +211,7 @@
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowPick" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.ExitActions>
@@ -186,7 +228,7 @@
         </Style>
     </Window.Resources>
 
-    <Grid x:Name="Root" ClipToBounds="True">
+    <Grid x:Name="Root" ClipToBounds="True" MouseLeftButtonDown="Root_MouseLeftButtonDown">
 
         <!-- ═════ Сцена: всё, что видно сквозь стекло ═════ -->
         <Grid x:Name="Scene">
@@ -411,14 +453,35 @@
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
                         <StackPanel>
-                            <Border Height="132" CornerRadius="20" BorderBrush="#33FFFFFF" BorderThickness="1">
-                                <Border.Background>
-                                    <MultiBinding Converter="{StaticResource PreviewBrush}">
-                                        <Binding Path="Selected.PreviewPath"/>
-                                        <Binding Path="Selected.Enabled"/>
-                                    </MultiBinding>
-                                </Border.Background>
-                            </Border>
+                            <Grid Height="132">
+                                <Border CornerRadius="20">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#2A3446" Offset="0"/>
+                                            <GradientStop Color="#1B2232" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <Viewbox Width="44" Height="44" Opacity="0.42">
+                                        <Path Data="{Binding Selected.Placeholder, Converter={StaticResource PlaceholderIcon}}" Stroke="White" StrokeThickness="1.4"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="22" Height="22"/>
+                                    </Viewbox>
+                                </Border>
+                                <Border CornerRadius="20">
+                                    <Border.Background>
+                                        <MultiBinding Converter="{StaticResource PreviewBrush}">
+                                            <Binding Path="Selected.PreviewPath"/>
+                                        </MultiBinding>
+                                    </Border.Background>
+                                </Border>
+                                <Border CornerRadius="20" Visibility="{Binding Selected.Enabled, Converter={StaticResource BoolToCollapsed}}">
+                                    <Border.Background>
+                                        <MultiBinding Converter="{StaticResource PreviewBrush}" ConverterParameter="gray">
+                                            <Binding Path="Selected.PreviewPath"/>
+                                        </MultiBinding>
+                                    </Border.Background>
+                                </Border>
+                                <Border CornerRadius="20" BorderBrush="#33FFFFFF" BorderThickness="1"/>
+                            </Grid>
                             <TextBlock Text="{Binding Details.Name}" FontSize="24" FontWeight="Bold" Margin="0,18,0,0" TextWrapping="Wrap" LineHeight="28"/>
                             <TextBlock Text="{Binding Details.Author}" Foreground="{StaticResource Text2}" Margin="0,3,0,0"
                                        Visibility="{Binding Details.Author, Converter={StaticResource NullToCollapsed}}"/>

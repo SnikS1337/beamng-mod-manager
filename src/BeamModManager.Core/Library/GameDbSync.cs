@@ -34,7 +34,13 @@ public static class GameDbSync
     public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer)
     {
         var db = GameModDb.Read(GameModDb.PathIn(installer.Layout.ModsDir));
-        return LibrarySync.Reconcile(store, Overlay(installer.ScanDetailed(), db), installer.ModsFolderAvailable);
+        var report = LibrarySync.Reconcile(store, Overlay(installer.ScanDetailed(), db), installer.ModsFolderAvailable);
+        // мод, который уже лежал в папке: «Установлен» — когда его добавила игра, а не день первого запуска менеджера
+        foreach (var f in report.Added)
+            if (db.Find(f)?.DateAdded is { } added &&
+                store.Mods().FirstOrDefault(m => string.Equals(m.FileName, f, StringComparison.OrdinalIgnoreCase)) is { } m && added < m.InstalledAtUtc)
+                store.UpsertMod(m with { InstalledAtUtc = added });
+        return report;
     }
 
     /// <summary>

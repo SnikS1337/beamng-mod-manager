@@ -14,6 +14,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Resource Include="Assets\frost-card.png"/>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\BeamModManager.Ui\BeamModManager.Ui.csproj" />
   </ItemGroup>
 
