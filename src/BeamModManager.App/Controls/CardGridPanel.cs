@@ -9,6 +9,55 @@ namespace BeamModManager.App.Controls;
 /// </summary>
 public sealed class CardGridPanel : Panel
 {
+    /// <summary>
+    /// Карточка рядом с видимой частью сетки (с запасом в экран сверху и снизу). Наследуется вниз по дереву карточки:
+    /// картинку держат только такие карточки, иначе при сотнях модов в памяти лежали бы сотни декодированных фото.
+    /// </summary>
+    public static readonly DependencyProperty InViewProperty = DependencyProperty.RegisterAttached(
+        "InView", typeof(bool), typeof(CardGridPanel), new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.Inherits));
+
+    public static bool GetInView(DependencyObject d) => (bool)d.GetValue(InViewProperty);
+    public static void SetInView(DependencyObject d, bool v) => d.SetValue(InViewProperty, v);
+
+    private ScrollViewer? _scroll;
+
+    public CardGridPanel()
+    {
+        Loaded += (_, _) =>
+        {
+            _scroll = FindScroll(this);
+            if (_scroll is not null) _scroll.ScrollChanged += (_, _) => UpdateInView();
+            UpdateInView();
+        };
+    }
+
+    private static ScrollViewer? FindScroll(DependencyObject d)
+    {
+        for (var p = System.Windows.Media.VisualTreeHelper.GetParent(d); p is not null; p = System.Windows.Media.VisualTreeHelper.GetParent(p))
+            if (p is ScrollViewer s) return s;
+        return null;
+    }
+
+    private void UpdateInView()
+    {
+        if (_scroll is null) { foreach (UIElement c in InternalChildren) SetInView(c, true); return; }
+        double top, bottom;
+        try
+        {
+            var origin = TransformToAncestor(_scroll).Transform(new Point(0, 0)).Y; // где панель внутри видимой области
+            var h = _scroll.ViewportHeight;
+            top = -origin - h;
+            bottom = -origin + 2 * h;
+        }
+        catch (InvalidOperationException) { return; }
+        var itemH = Math.Round(ItemWidth * Ratio);
+        for (var i = 0; i < InternalChildren.Count; i++)
+        {
+            var y = i / Columns * (itemH + Gap);
+            SetInView(InternalChildren[i], y + itemH >= top && y <= bottom);
+        }
+    }
+
     public const double Gap = 20, MinItem = 280, MaxItem = 340, Ratio = 236.0 / 308.0;
 
     public int Columns { get; private set; } = 3;
@@ -40,6 +89,7 @@ public sealed class CardGridPanel : Panel
             var col = i % Columns;
             InternalChildren[i].Arrange(new Rect(col * (itemW + Gap), row * (itemH + Gap), itemW, itemH));
         }
+        Dispatcher.BeginInvoke(UpdateInView, System.Windows.Threading.DispatcherPriority.Loaded);
         return final;
     }
 }

@@ -19,6 +19,8 @@ public sealed class BackgroundMotion
     public BackgroundMotion(FrameworkElement owner, ScaleTransform wallScale, TranslateTransform wallMove, TranslateTransform gradeMove, Canvas lights)
     {
         _owner = owner;
+        // фон медленный: 30 кадров в секунду глазу хватает, а стекло пересчитывает копию сцены вдвое реже (DESIGN.md 8)
+        Timeline.SetDesiredFrameRate(_sb, 30);
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
         void Anim(DependencyObject target, DependencyProperty prop, double from, double to, double seconds, bool reverse = true, double delay = 0)
         {

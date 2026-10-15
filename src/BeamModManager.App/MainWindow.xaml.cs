@@ -102,6 +102,8 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) =>
         {
             Native.StyleWindow(this);
+            // фото карточек декодируются под масштаб Windows: на 150 % нужно в полтора раза больше пикселей
+            ImageCache.DecodeHeight = (int)Math.Ceiling(260 * VisualTreeHelper.GetDpi(this).DpiScaleY);
             SnapLayouts.Attach(this, MaxButton, over => { if (over) CapButton_MouseEnter(MaxButton, null); }, () => Max_Click(MaxButton, new RoutedEventArgs()));
         };
         Root.SizeChanged += (_, _) => ApplyWidthClass();
@@ -182,9 +184,16 @@ public partial class MainWindow : Window
 
     // ───────────── игра и «ничего не рисуем зря» ─────────────
 
-    private void CheckGame()
+    private bool _checking;
+
+    /// <summary>Поиск процесса игры занимает десятки миллисекунд: делаем его в фоне, чтобы анимация не запиналась.</summary>
+    private async void CheckGame()
     {
-        var running = _host.Backend.IsGameRunning();
+        if (_checking) return;
+        _checking = true;
+        bool running;
+        try { running = await Task.Run(_host.Backend.IsGameRunning); }
+        finally { _checking = false; }
         var changed = running != _gameRunning;
         _gameRunning = running;
         if (changed) UpdateMotion();
@@ -201,9 +210,7 @@ public partial class MainWindow : Window
     private void FitMaximized()
     {
         var b = SystemParameters.WindowResizeBorderThickness;
-        Root.Margin = WindowState == WindowState.Maximized
-            ? new Thickness(b.Left + 4, b.Top + 4, b.Right + 4, b.Bottom + 4)
-            : new Thickness(0);
+        Root.Margin = WindowState == WindowState.Maximized ? b : new Thickness(0);
         MaxButton.Tag = FindResource(WindowState == WindowState.Maximized ? "IconRestore" : "IconMax");
         MaxButton.ToolTip = WindowState == WindowState.Maximized ? "Вернуть размер" : "Развернуть";
         System.Windows.Automation.AutomationProperties.SetName(MaxButton, (string)MaxButton.ToolTip);
