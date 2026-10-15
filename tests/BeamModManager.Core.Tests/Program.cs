@@ -32,6 +32,7 @@ DownloadPolicyTests.Register(t);
 LibraryTests.Register(t);
 CoreFixesTests.Register(t);
 GameDbTests.Register(t);
+JsonStoreTests.Register(t);
 
 
 return t.Summary();
