@@ -13,6 +13,7 @@ using BeamModManager.App.Motion;
 using BeamModManager.App.Services;
 using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
+using BeamModManager.Ui.Look;
 using BeamModManager.Ui.Settings;
 using BeamModManager.Ui.Previews;
 
@@ -22,7 +23,6 @@ namespace BeamModManager.App;
 public sealed class WindowHost
 {
     public required IGarageBackend Backend { get; init; }
-    public string? WallPath { get; init; }
     public PreviewLoader? Previews { get; init; }
     /// <summary>«Указать папку»: показывает выбор папки и записывает её в настройки (моды перечитываются по их событию); null — не умеем (демо).</summary>
     public Func<Window, bool>? PickFolder { get; init; }
@@ -53,8 +53,6 @@ public sealed class WindowHost
     public required SettingsViewModel Settings { get; init; }
     /// <summary>Открыть при запуске (снимки сборочной машины): "settings" — настройки.</summary>
     public string? StartPage { get; init; }
-    /// <summary>«Выбрать фото» для фона: диалог, копия в папку программы, запись в настройки; null — не умеем (демо).</summary>
-    public Func<Window, bool>? PickWallpaper { get; init; }
     public SettingsSection StartSection { get; init; }
 }
 
@@ -113,8 +111,8 @@ public partial class MainWindow : Window
         }
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
-        _motion = new BackgroundMotion(this, WallScale, WallMove, GradeMove, Lights, Flies);
-        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel }.Select(g => (G: g, Blur: g.Blur, Tint: g.Tint)).ToArray();
+        _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
+        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         SettingsPanel.DataContext = host.Settings;
         host.Settings.Section = host.StartSection;
         host.Settings.Changed += OnSettingsChanged;
@@ -257,26 +255,30 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Фон движется, только когда окно на виду, в фокусе и игра не запущена (DESIGN.md раздел 8, «Бюджет»), и только то,
-    /// что включено в настройках. При фоне «Цвет» двигать нечего.
+    /// что включено в настройках.
     /// </summary>
     private void UpdateMotion()
     {
         var s = _host.Settings.Current;
         var live = IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && _host.ShotPath is null;
-        var photo = s.Background != BackgroundMode.SolidColor;
-        _motion.SetRunning(live && photo && s.AnimatedBackground, live && photo && s.Fireflies);
+        _motion.SetRunning(live && s.AnimatedBackground, live && s.Fireflies);
+        foreach (var (g, _) in _glass) g.SetLive(live); // искры льда мерцают в том же ритме, что и фон
     }
 
     // ───────────── внешний вид из настроек (DESIGN.md 5.1) ─────────────
 
-    private readonly (Glass G, double Blur, Brush Tint)[] _glass;
-    private readonly Dictionary<string, BitmapSource?> _walls = new();
+    private readonly (Glass G, Brush Tint)[] _glass;
     private string _folderKey;
+    private BackgroundTheme? _theme;
+    private double _frost = -1;
 
     /// <summary>Матовое стекло (DESIGN.md 3.2): размытие 26 px, плотная подложка.</summary>
     private static readonly Brush MatteTint = Frozen(new SolidColorBrush(Color.FromArgb(0xA8, 34, 46, 68)));
+    /// <summary>Плоское стекло: сплошная заливка #2a3446.</summary>
+    private static readonly Brush FlatTint = Frozen(new SolidColorBrush(Color.FromRgb(0x2A, 0x34, 0x46)));
 
-    private static string FolderKey(AppSettings s) => $"{s.ModsFolder}|{s.UserFolder}|{s.KeepBackups}";
+    // число копий в ключ не входит: установщик читает его сам при каждой уборке, перечитывать папку не нужно
+    private static string FolderKey(AppSettings s) => $"{s.ModsFolder}|{s.UserFolder}";
 
     private void OnSettingsChanged(AppSettings s)
     {
@@ -287,46 +289,54 @@ public partial class MainWindow : Window
         if (key != _folderKey) { _folderKey = key; if (IsLoaded) Refresh(); }
     }
 
-    /// <summary>Применяет внешний вид сразу, без перезапуска: стекло, иней, фон, затемнение, движение.</summary>
+    /// <summary>Применяет внешний вид сразу, без перезапуска: стекло, иней, тема фона, движение.</summary>
     private void ApplyLook(AppSettings s)
     {
         SpringDriver.AnimationsOff = !s.UiAnimations;
-        Resources["FrostOpacity"] = s.Frost ? s.FrostStrength switch { 0 => 0.45, 2 => 1.0, _ => 0.75 } : 0.0;
+        // ресурс меняем, только если значение другое: замена ресурса обходит всё дерево окна (сотни карточек)
+        var frost = s.Frost ? s.FrostStrength switch { 0 => 0.45, 2 => 1.0, _ => 0.75 } : 0.0;
+        if (frost != _frost) { _frost = frost; Resources["FrostOpacity"] = frost; }
 
-        var matte = !s.LiquidGlass;
-        foreach (var (g, blur, tint) in _glass)
+        // «Уменьшить прозрачность» в Windows сильнее настроек: стекло плоское (DESIGN.md 3.2, «Плоское»)
+        var mode = Native.TransparencyOff() ? GlassMode.Flat : s.LiquidGlass ? GlassMode.Liquid : GlassMode.Matte;
+        var ice = s.Frost ? s.FrostStrength switch { 0 => 0.5, 2 => 1.8, _ => 1.0 } : 0.0; // --k на доске
+        foreach (var (g, tint) in _glass)
         {
-            g.Blur = matte ? 26 : blur;
-            g.Tint = matte ? MatteTint : tint;
+            g.SetLook(mode, ice, s.FrostSparks);
+            // у тоста своя, ещё более плотная подложка
+            g.Tint = mode switch { GlassMode.Flat => FlatTint, GlassMode.Matte when g != ToastBox => MatteTint, _ => tint };
         }
 
-        var photo = s.Background != BackgroundMode.SolidColor;
-        var wall = photo ? WallImage(s.BackgroundImage ?? _host.WallPath, s.Background == BackgroundMode.BlurredPhoto ? 40 : 16) : null;
-        Wall.Source = wall;
-        Wall.Visibility = wall is null ? Visibility.Collapsed : Visibility.Visible;
-        GradeLayer.Visibility = Lights.Visibility = photo ? Visibility.Visible : Visibility.Collapsed;
-        Flies.Visibility = photo && s.Fireflies ? Visibility.Visible : Visibility.Collapsed;
-
-        // 35 % — как на доске (только градиент); меньше — градиент слабее, больше — сверху ровный тёмный слой
-        var dim = photo ? s.BackgroundDim : 35;
-        Shade.Opacity = Math.Min(1, dim / 35.0);
-        ShadeExtra.Opacity = dim > 35 ? (dim - 35) / 65.0 * 0.7 : 0;
-
+        Flies.Visibility = s.Fireflies ? Visibility.Visible : Visibility.Collapsed;
+        if (_theme != s.Theme) ApplyTheme(BackgroundThemes.Of(s.Theme), animate: _theme is not null && IsLoaded);
+        _theme = s.Theme;
         UpdateMotion();
     }
 
-    /// <summary>Фото-фон с нужным размытием; размывается один раз и запоминается (переключать туда-обратно дёшево).</summary>
-    private BitmapSource? WallImage(string? path, double blur)
+    /// <summary>
+    /// Тема фона: цвета основы, полосы и пятен перетекают в новые за 0,8 с по мягкой S-кривой — все слои одновременно и
+    /// с одной скоростью, поэтому промежуточные кадры тоже тёмные и цельные, без вспышки. Без анимаций — 0,25 с.
+    /// </summary>
+    private void ApplyTheme(ThemePalette p, bool animate)
     {
-        if (path is null) return null;
-        var key = $"{blur}|{path}";
-        if (!_walls.TryGetValue(key, out var img))
+        var time = !animate ? TimeSpan.Zero : TimeSpan.FromSeconds(SpringDriver.ReducedMotion ? 0.25 : 0.8);
+        void To(GradientStop stop, uint argb)
         {
-            if (_walls.Count > 4) _walls.Clear(); // прежние фото больше не нужны
-            _walls[key] = img = Services.Backdrop.LoadBlurred(path, blur);
+            var c = ThemeSwatchConverter.ToColor(argb);
+            if (time == TimeSpan.Zero) { stop.BeginAnimation(GradientStop.ColorProperty, null); stop.Color = c; return; }
+            stop.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(c, time) { EasingFunction = ThemeEase }, HandoffBehavior.SnapshotAndReplace);
         }
-        return img;
+        for (var i = 0; i < 3; i++) To(BaseBrush.GradientStops[i], p.Base[i]);
+        for (var i = 0; i < 5; i++) To(Grade.GradientStops[i], p.Grade[i]);
+        for (var i = 0; i < _motion.Blobs.Count && i < p.Blobs.Count; i++)
+        {
+            To(_motion.Blobs[i].GradientStops[0], p.Blobs[i]);
+            To(_motion.Blobs[i].GradientStops[1], p.Blobs[i] & 0x00FFFFFF); // край пятна: тот же цвет, прозрачный
+        }
     }
+
+    private static readonly IEasingFunction ThemeEase = Frozen(new SineEase { EasingMode = EasingMode.EaseInOut });
+    private static T Frozen<T>(T f) where T : Freezable { f.Freeze(); return f; }
 
     // ───────────── окно ─────────────
 
@@ -470,7 +480,6 @@ public partial class MainWindow : Window
         new(Color.FromArgb(0x9E, 0xFF, 0x82, 0x76), 0), new(Color.FromArgb(0x85, 0xD6, 0x3A, 0x2E), 0.52), new(Color.FromArgb(0x94, 0xFF, 0x78, 0x6C), 1),
     }, new Point(0.2, 0), new Point(0.8, 1)));
     private static readonly Brush RedDropRim = Frozen(new SolidColorBrush(Color.FromArgb(0x73, 0xFF, 0xBE, 0xB4)));
-    private static Brush Frozen(Brush b) { b.Freeze(); return b; }
 
     private static void Fade(UIElement el, double to, double seconds)
     {
@@ -500,6 +509,7 @@ public partial class MainWindow : Window
         var settings = rb == NavSettings;
         if (!garage) _vm.Selected = null; // правая панель — про мод из гаража, в других разделах ей не место
         SectionTitle.Text = (string)rb.Content;
+        if (!garage) SectionTitle.Visibility = Visibility.Visible; // на узком окне гараж мог спрятать заголовок
         Scroller.Visibility = garage ? Visibility.Visible : Visibility.Collapsed;
         EmptyBox.Visibility = garage && _vm.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
         SoonBox.Visibility = garage || settings ? Visibility.Collapsed : Visibility.Visible;
@@ -587,17 +597,45 @@ public partial class MainWindow : Window
     }
 
     private void ResetLook_Click(object sender, RoutedEventArgs e) => _host.Settings.ResetAppearance();
-    private void PickWall_Click(object sender, RoutedEventArgs e) => _host.PickWallpaper?.Invoke(this);
-    private void RemoveWall_Click(object sender, RoutedEventArgs e) => _host.Settings.RemoveBackgroundImage();
     private void LessWarn_Click(object sender, RoutedEventArgs e) => _host.Settings.LessWarn();
     private void MoreWarn_Click(object sender, RoutedEventArgs e) => _host.Settings.MoreWarn();
     private void LessBackups_Click(object sender, RoutedEventArgs e) => _host.Settings.LessBackups();
     private void MoreBackups_Click(object sender, RoutedEventArgs e) => _host.Settings.MoreBackups();
-    private void AutoFolder_Click(object sender, RoutedEventArgs e) => _host.Settings.UseAutoFolder();
+    private void AutoFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (CanChangeFolder()) _host.Settings.UseAutoFolder();
+    }
     private void CheckApp_Click(object sender, RoutedEventArgs e) => _host.Banner?.CheckNowAsync(_closing.Token);
 
-    // папку меняют настройки: моды перечитываются по их событию (OnSettingsChanged), здесь только диалог
-    private void PickFolder_Click(object sender, RoutedEventArgs e) => _host.PickFolder?.Invoke(this);
+    private void PickFolder_Click(object sender, RoutedEventArgs e) => PickFolder();
+
+    /// <summary>
+    /// Выбор папки модов. Смена папки обычно перечитывает моды по событию настроек, но выбор той же папки (диск
+    /// подключили после запуска) настроек не меняет, поэтому после удачного выбора перечитываем всегда.
+    /// </summary>
+    private void PickFolder()
+    {
+        if (_host.PickFolder is not { } pick || !CanChangeFolder()) return;
+        if (pick(this)) Refresh();
+    }
+
+    /// <summary>
+    /// Папку нельзя менять, пока ждут переключения, отложенные до закрытия игры: они записаны по имени файла и
+    /// применились бы к модам другой папки. И предупреждаем, что сведения о модах прежней папки забудутся.
+    /// </summary>
+    private bool CanChangeFolder()
+    {
+        if (_vm.HasPending)
+        {
+            MessageBox.Show(this, "Сначала закройте игру: есть моды, которые включатся или выключатся после её закрытия.",
+                "Папка модов", MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
+        }
+        if (_vm.AllCards.Count == 0) return true;
+        return MessageBox.Show(this, "Список модов перечитается из другой папки. Отметки о модах этой папки (где следим за обновлениями, " +
+                "пропущенные версии) будут забыты, сами файлы модов не тронутся.\n\nСменить папку?",
+            "Папка модов", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
+    }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
@@ -630,7 +668,7 @@ public partial class MainWindow : Window
         switch (_vm.Empty?.Action)
         {
             case EmptyAction.PickFolder:
-                _host.PickFolder?.Invoke(this);
+                PickFolder();
                 break;
             case EmptyAction.ShowAll: _vm.Filter = GarageFilter.All; break;
             case EmptyAction.OpenSearch:

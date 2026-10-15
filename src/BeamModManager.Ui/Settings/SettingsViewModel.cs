@@ -3,6 +3,7 @@ using BeamModManager.Core.Sources.BeamNg;
 using BeamModManager.Core.Sources.Modland;
 using BeamModManager.Core.Sources.ModsGaming;
 using BeamModManager.Core.Sources.StMods;
+using BeamModManager.Ui.Look;
 using BeamModManager.Ui.Mvvm;
 
 namespace BeamModManager.Ui.Settings;
@@ -32,6 +33,25 @@ public sealed class SiteToggle : Observable
     internal void Changed() => Raise(nameof(Enabled));
 }
 
+/// <summary>Плитка темы фона: выбор ставит тему, снятие отметки ничего не делает (как у переключателей-сегментов).</summary>
+public sealed class ThemeTile : Observable
+{
+    private readonly SettingsViewModel _owner;
+    internal ThemeTile(SettingsViewModel owner, ThemePalette palette) { _owner = owner; Palette = palette; }
+
+    public ThemePalette Palette { get; }
+    public string Name => Palette.Name;
+    public string Note => Palette.Note;
+
+    public bool IsSelected
+    {
+        get => _owner.Current.Theme == Palette.Theme;
+        set { if (value) _owner.Theme = Palette.Theme; }
+    }
+
+    internal void Changed() => Raise(nameof(IsSelected));
+}
+
 /// <summary>Пункт списка разделов слева.</summary>
 public sealed record SectionItem(SettingsSection Section, string Title);
 
@@ -47,6 +67,7 @@ public sealed class SettingsViewModel : Observable
     public SettingsViewModel(AppSettings initial)
     {
         _current = initial.Normalize();
+        Themes = BackgroundThemes.All.Select(p => new ThemeTile(this, p)).ToList();
         Sites = new[]
         {
             new SiteToggle(this, ModlandParser.SourceId, "Modland", "Большой каталог модов."),
@@ -73,6 +94,7 @@ public sealed class SettingsViewModel : Observable
         _current = next;
         Raise(string.Empty); // все привязки окна перечитываются: зависимые пункты, набор, подписи
         foreach (var s in Sites) s.Changed();
+        foreach (var t in Themes) t.Changed();
         Changed?.Invoke(next);
     }
 
@@ -130,22 +152,10 @@ public sealed class SettingsViewModel : Observable
     public bool FrostMedium { get => FrostStrength == 1; set { if (value) FrostStrength = 1; } }
     public bool FrostStrong { get => FrostStrength == 2; set { if (value) FrostStrength = 2; } }
 
-    public BackgroundMode Background { get => _current.Background; set => Update(s => s with { Background = value }); }
-    public bool BackgroundPhoto { get => Background == BackgroundMode.Photo; set { if (value) Background = BackgroundMode.Photo; } }
-    public bool BackgroundBlurred { get => Background == BackgroundMode.BlurredPhoto; set { if (value) Background = BackgroundMode.BlurredPhoto; } }
-    public bool BackgroundColor { get => Background == BackgroundMode.SolidColor; set { if (value) Background = BackgroundMode.SolidColor; } }
+    /// <summary>Тема фона (три градиента, DESIGN.md 3.1). Плитки в окне — <see cref="Themes"/>.</summary>
+    public BackgroundTheme Theme { get => _current.Theme; set => Update(s => s with { Theme = value }); }
 
-    /// <summary>Своё фото выбрано (иначе за панелями градиент).</summary>
-    public bool HasBackgroundImage => _current.BackgroundImage is not null;
-
-    public string BackgroundImageNote => HasBackgroundImage
-        ? "Фото с вашего компьютера. Программа хранит свою копию."
-        : "Своего фото нет: за панелями тёмный градиент с цветными пятнами.";
-
-    public void RemoveBackgroundImage() => Update(s => s with { BackgroundImage = null });
-
-    public int BackgroundDim { get => _current.BackgroundDim; set => Update(s => s with { BackgroundDim = value }); }
-    public string BackgroundDimText => $"{BackgroundDim} %";
+    public IReadOnlyList<ThemeTile> Themes { get; }
 
     public bool UiAnimations { get => _current.UiAnimations; set => Update(s => s with { UiAnimations = value }); }
     public bool AnimatedBackground { get => _current.AnimatedBackground; set => Update(s => s with { AnimatedBackground = value }); }
@@ -153,9 +163,6 @@ public sealed class SettingsViewModel : Observable
 
     /// <summary>Сила инея зависит от инея: при выключенном пункт тускнеет и не нажимается (значение хранится).</summary>
     public bool FrostOptionsEnabled => _current.Frost;
-
-    /// <summary>Затемнение, движение фона и огоньки не имеют смысла при фоне «Цвет».</summary>
-    public bool PhotoOptionsEnabled => _current.Background != BackgroundMode.SolidColor;
 
     // ───────────── загрузка модов ─────────────
 
@@ -190,8 +197,9 @@ public sealed class SettingsViewModel : Observable
     public void MoreBackups() => KeepBackups++;
 
     public int WarnAbove { get => _current.ActiveModsWarnAbove; set => Update(s => s with { ActiveModsWarnAbove = value }); }
-    public string WarnAboveText => $"{WarnAbove}";
-    public bool CanLessWarn => WarnAbove > 1;
+    /// <summary>0 — не предупреждать.</summary>
+    public string WarnAboveText => WarnAbove == 0 ? "нет" : $"{WarnAbove}";
+    public bool CanLessWarn => WarnAbove > 0;
     public bool CanMoreWarn => WarnAbove < 1000;
     /// <summary>Шаг 5: порог обычно круглый (30, 40), а щёлкать по одному долго.</summary>
     public void LessWarn() => WarnAbove = WarnAbove > 5 ? (WarnAbove - 1) / 5 * 5 : WarnAbove - 1;

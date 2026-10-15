@@ -31,8 +31,8 @@ public static class SettingsScreenTests
             vm.KeepBackups = 0;
             Assert.Eq(1, vm.Current.KeepBackups);
             Assert.False(vm.CanLessBackups, "меньше одной копии нельзя");
-            vm.BackgroundDim = -10;
-            Assert.Eq(0, vm.Current.BackgroundDim);
+            vm.WarnAbove = -10;
+            Assert.Eq(0, vm.Current.ActiveModsWarnAbove);
         });
 
         t.Run("порог «много включённых» шагает по 5 и встаёт на круглое", () =>
@@ -42,7 +42,10 @@ public static class SettingsScreenTests
             vm.LessWarn(); vm.LessWarn(); Assert.Eq(25, vm.WarnAbove);
             vm.WarnAbove = 33; vm.MoreWarn(); Assert.Eq(35, vm.WarnAbove);
             vm.WarnAbove = 33; vm.LessWarn(); Assert.Eq(30, vm.WarnAbove);
-            vm.WarnAbove = 3; vm.LessWarn(); vm.LessWarn(); vm.LessWarn(); Assert.Eq(1, vm.WarnAbove);
+            vm.WarnAbove = 3; vm.LessWarn(); vm.LessWarn(); vm.LessWarn(); Assert.Eq(0, vm.WarnAbove);
+            Assert.Eq("нет", vm.WarnAboveText);
+            Assert.False(vm.CanLessWarn, "ниже «нет» некуда");
+            vm.MoreWarn(); Assert.Eq(1, vm.WarnAbove);
         });
 
         t.Run("набор выставляет переключатели; ручная правка делает набор «своим», «Сбросить» возвращает «Лёд»", () =>
@@ -78,9 +81,6 @@ public static class SettingsScreenTests
             Assert.Eq(2, vm.FrostStrength, "значение осталось");
             vm.Frost = true;
             Assert.True(vm.FrostStrong, "вернулось «Сильно»");
-            vm.BackgroundColor = true;
-            Assert.False(vm.PhotoOptionsEnabled, "движение фото недоступно при «Цвет»");
-            Assert.True(vm.Current.AnimatedBackground, "но не выключено");
         });
 
         t.Run("переключатели-сегменты: снятие одного пункта ничего не меняет, выбор другого меняет", () =>
@@ -96,8 +96,10 @@ public static class SettingsScreenTests
             Assert.Eq(6, vm.Current.AutoCheckEveryHours);
             vm.RepeatOff = true;
             Assert.Eq(0, vm.Current.AutoCheckEveryHours);
-            vm.BackgroundBlurred = true;
-            Assert.Eq(BackgroundMode.BlurredPhoto, vm.Current.Background);
+            vm.Themes[2].IsSelected = true;
+            Assert.True(vm.Current.Theme == BackgroundTheme.Dusk, "плитка «Сумерки»");
+            vm.Themes[2].IsSelected = false; // снятие отметки — не изменение
+            Assert.True(vm.Current.Theme == BackgroundTheme.Dusk, "осталась");
         });
 
         t.Run("сайты: выключение и включение пишут список отключённых без повторов", () =>
@@ -134,29 +136,22 @@ public static class SettingsScreenTests
             Assert.True(vm.ModsFolderText.StartsWith("Не нашли"), vm.ModsFolderText);
         });
 
-        t.Run("своё фото: есть — подпись про копию, «Убрать» возвращает градиент; набор фото не трогает", () =>
+        t.Run("темы фона: три плитки, отмечена одна, набор тему не меняет, тема переживает файл", () =>
         {
             var vm = new SettingsViewModel(new AppSettings());
-            Assert.False(vm.HasBackgroundImage, "по умолчанию фото нет");
-            vm.Update(s => s with { BackgroundImage = @"C:\app\background-1.jpg" });
-            Assert.True(vm.HasBackgroundImage, "выбрано");
+            Assert.Eq(3, vm.Themes.Count);
+            Assert.True(vm.Themes.Count(t => t.IsSelected) == 1 && vm.Themes[0].IsSelected, "по умолчанию «Ночь»");
+            vm.Themes[1].IsSelected = true;
+            Assert.True(vm.Themes.Count(t => t.IsSelected) == 1 && vm.Themes[1].IsSelected, "одна отмечена");
             vm.ApplyPreset(AppearancePreset.Light);
-            Assert.Eq(@"C:\app\background-1.jpg", vm.Current.BackgroundImage);
-            vm.RemoveBackgroundImage();
-            Assert.Null(vm.Current.BackgroundImage);
-            Assert.True(vm.BackgroundImageNote.StartsWith("Своего фото нет"), vm.BackgroundImageNote);
-        });
-
-        t.Run("своё фото переживает запись и чтение файла настроек", () =>
-        {
+            Assert.True(vm.Current.Theme == BackgroundTheme.Deep, "набор тему не трогает");
+            Assert.True(vm.IsLight, "а набор распознаётся");
             var p = Path.Combine(Path.GetTempPath(), "bmm-set-" + Guid.NewGuid().ToString("N") + ".json");
             try
             {
                 var st = new SettingsStore(p);
-                st.Save(new AppSettings { BackgroundImage = "  " });
-                Assert.Null(st.Load().Settings.BackgroundImage);
-                st.Save(new AppSettings { BackgroundImage = @"C:\app\background-2.png" });
-                Assert.Eq(@"C:\app\background-2.png", st.Load().Settings.BackgroundImage);
+                st.Save(vm.Current);
+                Assert.True(st.Load().Settings.Theme == BackgroundTheme.Deep, "из файла");
             }
             finally { File.Delete(p); }
         });

@@ -547,8 +547,7 @@ public static class CoreFixesTests
             var d = new AppSettings();
             Assert.True(d.LiquidGlass && d.Frost && d.FrostSparks && d.UiAnimations && d.AnimatedBackground && d.Fireflies, "всё включено");
             Assert.Eq(1, d.FrostStrength);
-            Assert.True(d.Background == BackgroundMode.Photo, "фото");
-            Assert.Eq(35, d.BackgroundDim);
+            Assert.True(d.Theme == BackgroundTheme.Night, "фон «Ночь»");
             Assert.Eq(30, d.ActiveModsWarnAbove);
             Assert.False(d.FirstRunDone, "первый запуск не пройден");
             Assert.Eq(0, d.WindowWidth);
@@ -557,16 +556,15 @@ public static class CoreFixesTests
 
         t.Run("значения вне диапазона приводятся к допустимым", () =>
         {
-            var s = new AppSettings { FrostStrength = 9, BackgroundDim = 400, ActiveModsWarnAbove = 0, WindowWidth = 5, WindowHeight = 99999, Background = (BackgroundMode)42 }.Normalize();
+            var s = new AppSettings { FrostStrength = 9, ActiveModsWarnAbove = -4, WindowWidth = 5, WindowHeight = 99999, Theme = (BackgroundTheme)42 }.Normalize();
             Assert.Eq(2, s.FrostStrength);
-            Assert.Eq(100, s.BackgroundDim);
-            Assert.Eq(1, s.ActiveModsWarnAbove);
+            Assert.Eq(0, s.ActiveModsWarnAbove);
             Assert.Eq(0, s.WindowWidth);
             Assert.Eq(0, s.WindowHeight);
-            Assert.True(s.Background == BackgroundMode.Photo, "неизвестный режим фона");
-            var low = new AppSettings { FrostStrength = -3, BackgroundDim = -1, ActiveModsWarnAbove = 100000, WindowWidth = 1280, WindowHeight = 720 }.Normalize();
+            Assert.True(s.Theme == BackgroundTheme.Night, "неизвестная тема фона");
+            Assert.Eq(0, new AppSettings { ActiveModsWarnAbove = 0 }.Normalize().ActiveModsWarnAbove);
+            var low = new AppSettings { FrostStrength = -3, ActiveModsWarnAbove = 100000, WindowWidth = 1280, WindowHeight = 720 }.Normalize();
             Assert.Eq(0, low.FrostStrength);
-            Assert.Eq(0, low.BackgroundDim);
             Assert.Eq(1000, low.ActiveModsWarnAbove);
             Assert.True(low.WindowWidth == 1280 && low.WindowHeight == 720, "нормальный размер окна сохраняется");
             var small = new AppSettings { WindowWidth = 999, WindowHeight = 679 }.Normalize();
@@ -579,7 +577,7 @@ public static class CoreFixesTests
             var p = Path.Combine(Tmp(), "settings.json");
             var want = new AppSettings
             {
-                LiquidGlass = false, Frost = false, FrostStrength = 2, FrostSparks = false, Background = BackgroundMode.SolidColor, BackgroundDim = 70,
+                LiquidGlass = false, Frost = false, FrostStrength = 2, FrostSparks = false, Theme = BackgroundTheme.Dusk,
                 UiAnimations = false, AnimatedBackground = false, Fireflies = false, BackgroundTilt = true, ActiveModsWarnAbove = 55, FirstRunDone = true,
                 WindowWidth = 1600, WindowHeight = 900, WindowMaximized = true,
             };
@@ -605,28 +603,27 @@ public static class CoreFixesTests
         {
             var p = Path.Combine(Tmp(), "settings.json");
             File.WriteAllText(p, """
-            { "LiquidGlass": "нет", "Frost": 0, "FrostStrength": "сильно", "Background": "Photo", "BackgroundDim": 12.5,
+            { "LiquidGlass": "нет", "Frost": 0, "FrostStrength": "сильно", "Theme": "Night",
               "ActiveModsWarnAbove": null, "WindowWidth": true, "FirstRunDone": true, "Fireflies": false }
             """);
             var r = new SettingsStore(p).Load();
             Assert.True(r.HadProblems, "предупреждения есть");
             Assert.True(r.Settings.LiquidGlass && r.Settings.Frost, "по умолчанию");
             Assert.Eq(1, r.Settings.FrostStrength);
-            Assert.True(r.Settings.Background == BackgroundMode.Photo, "фон по умолчанию");
+            Assert.True(r.Settings.Theme == BackgroundTheme.Night, "фон по умолчанию");
             Assert.Eq(30, r.Settings.ActiveModsWarnAbove);
             Assert.Eq(0, r.Settings.WindowWidth);
             Assert.True(r.Settings.FirstRunDone && !r.Settings.Fireflies, "верные поля прочитаны");
         });
 
-        t.Run("значения вне диапазона в файле приводятся к допустимым, режим фона из мусора — фото", () =>
+        t.Run("значения вне диапазона в файле приводятся к допустимым, тема фона из мусора — «Ночь»", () =>
         {
             var p = Path.Combine(Tmp(), "settings.json");
-            File.WriteAllText(p, "{ \"FrostStrength\": 77, \"BackgroundDim\": -5, \"Background\": 99, \"ActiveModsWarnAbove\": 5000000000 }");
+            File.WriteAllText(p, "{ \"FrostStrength\": 77, \"Theme\": 99, \"ActiveModsWarnAbove\": 5000000000 }");
             var s = new SettingsStore(p).Load().Settings;
             Assert.Eq(2, s.FrostStrength);
-            Assert.Eq(0, s.BackgroundDim);
-            Assert.True(s.Background == BackgroundMode.Photo, "фон");
-            Assert.True(s.ActiveModsWarnAbove is >= 1 and <= 1000, "порог в пределах");
+            Assert.True(s.Theme == BackgroundTheme.Night, "фон");
+            Assert.True(s.ActiveModsWarnAbove is >= 0 and <= 1000, "порог в пределах");
         });
 
         t.Run("наборы внешнего вида: применяются, распознаются, свои настройки распознаются как «свои»", () =>
@@ -641,7 +638,8 @@ public static class CoreFixesTests
             Assert.True(ice.LiquidGlass && ice.Frost && ice.Fireflies, "лёд: всё включено");
             var light = AppearancePresets.Apply(new AppSettings(), AppearancePreset.Light);
             Assert.True(!light.LiquidGlass && !light.Frost && !light.UiAnimations && !light.AnimatedBackground && !light.Fireflies, "лёгкое: ничего лишнего");
-            Assert.True(AppearancePresets.Detect(new AppSettings { BackgroundDim = 12 }) is null, "свои");
+            Assert.True(AppearancePresets.Detect(new AppSettings { Fireflies = false }) is null, "свои");
+            Assert.True(AppearancePresets.Detect(new AppSettings { Theme = BackgroundTheme.Dusk }) == AppearancePreset.Ice, "тема фона на набор не влияет");
             Assert.True(AppearancePresets.Detect(new AppSettings()) == AppearancePreset.Ice, "по умолчанию — лёд");
         });
 
@@ -879,10 +877,19 @@ public static class CoreFixesTests
             Assert.True(s.Get(L("modland", "a", "x"), L("stmods", "c", "y")) == ManualMatch.Same, "найдено");
         });
 
-        t.Run("набор «Лёгкое» не меняет затемнение фона (в дизайне его нет)", () =>
+        t.Run("набор не меняет тему фона: это выбор цвета, а не нагрузки", () =>
         {
-            var light = AppearancePresets.Apply(new AppSettings { BackgroundDim = 35 }, AppearancePreset.Light);
-            Assert.Eq(35, light.BackgroundDim);
+            var light = AppearancePresets.Apply(new AppSettings { Theme = BackgroundTheme.Deep }, AppearancePreset.Light);
+            Assert.True(light.Theme == BackgroundTheme.Deep, "тема осталась");
+        });
+
+        t.Run("старый файл с фото («Background», «BackgroundDim», «BackgroundImage») читается без предупреждений, фон «Ночь»", () =>
+        {
+            var p = Path.Combine(Tmp(), "settings.json");
+            File.WriteAllText(p, "{ \"Background\": 2, \"BackgroundDim\": 70, \"BackgroundImage\": \"C:\\\\x.jpg\", \"Fireflies\": false }");
+            var r = new SettingsStore(p).Load();
+            Assert.False(r.HadProblems, string.Join("; ", r.Warnings));
+            Assert.True(r.Settings.Theme == BackgroundTheme.Night && !r.Settings.Fireflies, "прочитано");
         });
     }
 

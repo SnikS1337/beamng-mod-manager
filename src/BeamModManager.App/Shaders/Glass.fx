@@ -4,7 +4,7 @@
 // d — расстояние от края скруглённого прямоугольника внутрь. Каналы R, G, B сдвигаются с множителями
 // 1.0 / 1.12 / 1.26: на краю тонкая радужная кромка. Затем насыщенность и яркость, как saturate() и brightness() в CSS.
 // Все длины в одних единицах (точки WPF): от единиц зависит только их отношение.
-// Сборка: fxc /T ps_3_0 /E main (цель CompileGlassShader в BeamModManager.App.csproj).
+// Сборка: fxc /T ps_2_0 /E main (PS 2.0 WPF умеет рисовать и без видеокарты, программно) (цель CompileGlassShader в BeamModManager.App.csproj).
 
 sampler2D input : register(s0);
 

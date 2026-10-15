@@ -245,24 +245,17 @@
         <!-- ═════ Сцена: всё, что видно сквозь стекло ═════ -->
         <Grid x:Name="Scene">
             <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True">
+                <!-- основа: тёмный градиент темы (DESIGN.md 3.1, темы — Ui/Look/BackgroundThemes); цвета ставит и плавно меняет окно -->
                 <Border>
                     <Border.Background>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0.4,1">
+                        <LinearGradientBrush x:Name="BaseBrush" StartPoint="0,0" EndPoint="0.4,1">
                             <GradientStop Color="#101B33" Offset="0"/>
-                            <GradientStop Color="#1D2533" Offset="0.55"/>
-                            <GradientStop Color="#2A2032" Offset="1"/>
+                            <GradientStop Color="#1B2236" Offset="0.55"/>
+                            <GradientStop Color="#251C34" Offset="1"/>
                         </LinearGradientBrush>
                     </Border.Background>
                 </Border>
-                <Image x:Name="Wall" Stretch="UniformToFill" Margin="-70" RenderTransformOrigin="0.5,0.5" Visibility="Collapsed">
-                    <Image.RenderTransform>
-                        <TransformGroup>
-                            <ScaleTransform x:Name="WallScale" ScaleX="1.04" ScaleY="1.04"/>
-                            <TranslateTransform x:Name="WallMove"/>
-                        </TransformGroup>
-                    </Image.RenderTransform>
-                </Image>
-                <!-- плавающий градиент: подкрашивает фото (вместо «мягкого света» — прозрачность) -->
+                <!-- плывущая цветная полоса: подкрашивает основу (вместо «мягкого света» — прозрачность) -->
                 <Border x:Name="GradeLayer" Opacity="0.30">
                     <Border.Background>
                         <LinearGradientBrush x:Name="Grade" StartPoint="0,0" EndPoint="1,0.36" SpreadMethod="Repeat">
@@ -277,8 +270,8 @@
                         </LinearGradientBrush>
                     </Border.Background>
                 </Border>
-                <!-- затемнение: при 35 % (по умолчанию) — только градиент, выше добавляется ровный слой («Затемнение фона») -->
-                <Border x:Name="Shade">
+                <!-- затемнение сверху вниз, одно на все темы: белый текст читается в любом месте -->
+                <Border>
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                             <GradientStop Color="#4D0C1220" Offset="0"/>
@@ -286,7 +279,6 @@
                         </LinearGradientBrush>
                     </Border.Background>
                 </Border>
-                <Border x:Name="ShadeExtra" Background="#0C1220" Opacity="0"/>
                 <Canvas x:Name="Lights"/>
                 <Canvas x:Name="Flies"/>
             </Grid>
@@ -395,7 +387,8 @@
         <!-- ═════ Стекло ═════ -->
 
         <!-- Левая панель: x 16, y 16, 84 × 284 -->
-        <c:Glass x:Name="Nav" Source="{Binding ElementName=Scene}" Corner="36" Blur="7" Tint="#700E182C"
+        <c:Glass x:Name="Nav" Source="{Binding ElementName=Scene}" Corner="36" Blur="2" Tint="#700E182C"
+                 Lens="30" Refraction="105" Brightness="0.78" Ice="0.55" IceReach="34" Sparks="6" Seed="11"
                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0" Width="84" Height="284"
                  WindowChrome.IsHitTestVisibleInChrome="True">
             <Canvas>
@@ -419,7 +412,8 @@
         </c:Glass>
 
         <!-- Верхняя панель: x 116, y 16, высота 52, до правой панели -->
-        <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="26" Blur="7" Tint="#700E182C"
+        <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="26" Blur="3" Tint="#700E182C"
+                 Lens="26" Refraction="120" Brightness="0.60" Ice="0.34" IceReach="24" Sparks="8" Seed="13"
                  VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
             <DockPanel Margin="22,0,12,0">
                 <TextBlock x:Name="SectionTitle" Text="Моды" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
@@ -467,7 +461,8 @@
 
 
         <!-- ═════ Настройки (DESIGN.md 5.1): одна стеклянная панель, слева разделы, справа выбранный; всё применяется сразу ═════ -->
-        <c:Glass x:Name="SettingsPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="14" Tint="#800E182C"
+        <c:Glass x:Name="SettingsPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="4" Tint="#700E182C"
+                 Lens="56" Refraction="144" Brightness="0.66" Ice="0.13" IceReach="50" Sparks="12" Seed="16"
                  Margin="116,84,16,16" VerticalAlignment="Top" Visibility="Collapsed">
             <Grid Margin="20,24,8,24">
                 <Grid.ColumnDefinitions>
@@ -516,10 +511,10 @@
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Движение"/>
                                 <CheckBox Style="{StaticResource Switch}" Content="Анимации интерфейса" Tag="Капля-выбор, появление и подъём карточек."
                                           IsChecked="{Binding UiAnimations}" Margin="0,0,0,8"/>
-                                <CheckBox Style="{StaticResource Switch}" Content="Анимированный фон" Tag="Фото медленно дышит, по нему плывут цветные пятна."
-                                          IsChecked="{Binding AnimatedBackground}" IsEnabled="{Binding PhotoOptionsEnabled}" Margin="0,0,0,8"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Анимированный фон" Tag="По фону медленно плывут пятна света и цветная полоса."
+                                          IsChecked="{Binding AnimatedBackground}" Margin="0,0,0,8"/>
                                 <CheckBox Style="{StaticResource Switch}" Content="Огоньки" Tag="Над фоном плавают светлые точки."
-                                          IsChecked="{Binding Fireflies}" IsEnabled="{Binding PhotoOptionsEnabled}" Margin="0,0,0,18"/>
+                                          IsChecked="{Binding Fireflies}" Margin="0,0,0,18"/>
                             </StackPanel>
                             <StackPanel x:Name="AppearanceRight" Grid.Column="1" Margin="14,0,0,0">
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Стекло"/>
@@ -539,36 +534,19 @@
                                 </HeaderedContentControl>
 
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Фон"/>
-                                <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,12" Margin="0,0,0,8">
-                                    <DockPanel>
-                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
-                                            <Button Style="{StaticResource Link}" Content="Убрать" Margin="0,0,10,0" Click="RemoveWall_Click"
-                                                    Visibility="{Binding HasBackgroundImage, Converter={StaticResource BoolToVis}}"/>
-                                            <Button Style="{StaticResource Secondary}" Content="Выбрать фото" Padding="16,0" Click="PickWall_Click"/>
-                                        </StackPanel>
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Своё фото" FontSize="15" FontWeight="SemiBold"/>
-                                            <TextBlock Style="{StaticResource Note}" Text="{Binding BackgroundImageNote}" Margin="0,2,0,0"/>
-                                        </StackPanel>
-                                    </DockPanel>
-                                </Border>
-                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Что за панелями" Tag="Фото, сильно размытое фото или один цвет." Margin="0,0,0,8">
-                                    <Border Style="{StaticResource SegmentBox}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="bg" Content="Фото" IsChecked="{Binding BackgroundPhoto}"/>
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="bg" Content="Размытое" IsChecked="{Binding BackgroundBlurred}"/>
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="bg" Content="Цвет" IsChecked="{Binding BackgroundColor}"/>
-                                        </StackPanel>
-                                    </Border>
-                                </HeaderedContentControl>
-                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Затемнение фона" Tag="Темнее фон — проще читать."
-                                                        IsEnabled="{Binding PhotoOptionsEnabled}" Margin="0,0,0,18">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Slider Style="{StaticResource ThinSlider}" Minimum="0" Maximum="100" Value="{Binding BackgroundDim}"
-                                                AutomationProperties.Name="Затемнение фона" VerticalAlignment="Center"/>
-                                        <TextBlock Text="{Binding BackgroundDimText}" Width="44" TextAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                                    </StackPanel>
-                                </HeaderedContentControl>
+                                <ItemsControl ItemsSource="{Binding Themes}" Focusable="False" Margin="0,0,-8,10">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><UniformGrid Columns="3"/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <RadioButton Style="{StaticResource ThemeTile}" GroupName="theme" IsChecked="{Binding IsSelected}"
+                                                         AutomationProperties.Name="{Binding Name}"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Style="{StaticResource Note}" Margin="4,0,4,18"
+                                           Text="Все три тёмные и спокойные: текст читается, цвет дают картинки модов. Меняются плавно."/>
                             </StackPanel>
                             <DockPanel x:Name="AppearanceFoot" Grid.Row="1" Grid.ColumnSpan="2" Margin="4,0,0,0">
                                 <Button DockPanel.Dock="Right" Style="{StaticResource Link}" Content="Сбросить" Click="ResetLook_Click" VerticalAlignment="Top"
@@ -588,7 +566,7 @@
 
                         <!-- Папки -->
                         <StackPanel MaxWidth="760" HorizontalAlignment="Left" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Folders}">
-                            <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,14" Margin="0,0,0,8">
+                            <Border CornerRadius="18" Background="{StaticResource RowFill}" BorderBrush="{StaticResource RowRim}" BorderThickness="1" Padding="16,14" Margin="0,0,0,8">
                                 <StackPanel>
                                     <TextBlock Text="Папка модов" FontSize="15" FontWeight="SemiBold"/>
                                     <TextBlock Text="{Binding ModsFolderText}" FontSize="13.5" Margin="0,6,0,0" TextWrapping="Wrap"/>
@@ -626,7 +604,7 @@
                             <CheckBox Style="{StaticResource Switch}" Content="Проверять новую версию при запуске" Margin="0,0,0,8"
                                       Tag="Если вышла новая версия, над модами появится строка «Обновить». Обновляется только по вашей кнопке."
                                       IsChecked="{Binding CheckAppUpdates}"/>
-                            <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,12" Margin="0,0,0,18">
+                            <Border CornerRadius="18" Background="{StaticResource RowFill}" BorderBrush="{StaticResource RowRim}" BorderThickness="1" Padding="16,12" Margin="0,0,0,18">
                                 <StackPanel>
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Style="{StaticResource Secondary}" Content="Проверить сейчас" Padding="16,0" Margin="16,0,0,0"
@@ -685,7 +663,8 @@
         <Border x:Name="Dim" Background="#7A060A14" Visibility="Collapsed" MouseLeftButtonDown="Dim_MouseDown"/>
 
         <!-- Правая панель: x 1096, y 64 (под капсулой кнопок окна), 328 × 880 -->
-        <c:Glass x:Name="Inspector" Source="{Binding ElementName=Scene}" Corner="32" Blur="14" Tint="#800E182C"
+        <c:Glass x:Name="Inspector" Source="{Binding ElementName=Scene}" Corner="32" Blur="5" Tint="#800E182C"
+                 Lens="56" Refraction="144" Brightness="0.70" Ice="0.16" IceReach="52" Sparks="12" Seed="14"
                  HorizontalAlignment="Right" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
             <c:Glass.RenderTransform><TranslateTransform x:Name="InspectorMove" X="344"/></c:Glass.RenderTransform>
             <Grid>
@@ -775,6 +754,7 @@
 
         <!-- Капсула кнопок окна 132 × 36 в правом верхнем углу; при наведении появляется капля, под «Закрыть» красная -->
         <c:Glass x:Name="Caption" Source="{Binding ElementName=Scene}" Corner="18" Blur="4" Tint="#700E182C"
+                 Lens="18" Refraction="0" Brightness="0.78" Ice="0"
                  HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0" Width="132" Height="36"
                  WindowChrome.IsHitTestVisibleInChrome="True" MouseLeave="Caption_MouseLeave">
             <Grid>
@@ -800,7 +780,8 @@
         </c:Glass>
 
         <!-- Тост: что сделано и «Отменить» -->
-        <c:Glass x:Name="ToastBox" Source="{Binding ElementName=Scene}" Corner="24" Blur="14" Tint="#B30E182C"
+        <c:Glass x:Name="ToastBox" Source="{Binding ElementName=Scene}" Corner="24" Blur="6" Tint="#B30E182C"
+                 Lens="24" Refraction="60" Brightness="0.70" Ice="0"
                  VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="116,0,360,28" Height="48" Padding="20,0,12,0"
                  Visibility="{Binding Toast, Converter={StaticResource NullToCollapsed}}">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

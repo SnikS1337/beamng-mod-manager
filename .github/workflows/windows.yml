@@ -64,6 +64,8 @@ jobs:
           Shot 'garage-1360' @('--width', '1360', '--select', '"Ford Mustang Shelby GT500"')
           Shot 'garage-1100' @('--width', '1100', '--height', '760')
           Shot 'garage-1000-open' @('--width', '1000', '--height', '700', '--select', '"Заправка Diesel"')
+          Shot 'garage-deep' @('--theme', 'Deep', '--select', '"Dacia Sandero Stepway"')
+          Shot 'garage-dusk' @('--theme', 'Dusk')
           Shot 'settings' @('--page', 'settings')
           Shot 'settings-folders' @('--page', 'settings', '--section', 'Folders')
           Shot 'settings-updates' @('--page', 'settings', '--section', 'Updates')

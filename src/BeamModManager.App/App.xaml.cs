@@ -96,18 +96,20 @@ public partial class App : Application
             {
                 Backend = new DemoBackend(demo),
                 DownloadsAllowed = true, // как на доске «Гараж»
-                WallPath = Path.Combine(demo, "wall.jpg"),
                 ShotPath = shot,
                 ShotSelect = Arg("--select"),
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
                 // настройки в демо живут только в памяти: файл пользователя не трогаем
-                Settings = new SettingsViewModel(new AppSettings { BackgroundImage = Path.GetFullPath(Path.Combine(demo, "wall.jpg")) })
+                Settings = new SettingsViewModel(new AppSettings
+                {
+                    Theme = Enum.TryParse<BackgroundTheme>(Arg("--theme"), true, out var th) && Enum.IsDefined(th) ? th : BackgroundTheme.Night,
+                })
                 {
                     ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")),
                 },
                 StartPage = Arg("--page"),
-                StartSection = Enum.TryParse<SettingsSection>(Arg("--section"), true, out var sec) ? sec : SettingsSection.Appearance,
+                StartSection = Enum.TryParse<SettingsSection>(Arg("--section"), true, out var sec) && Enum.IsDefined(sec) ? sec : SettingsSection.Appearance,
             };
         }
         else host = RealHost();
@@ -194,12 +196,19 @@ public partial class App : Application
         string? notice = loaded.HadProblems ? "Часть настроек сброшена. Старый файл сохранён" : null;
 
         // папка mods: из настроек; если не задана — ищем сами в стандартном месте (у не-Steam сборок тоже, startup.ini не нужен)
-        var check = GameFolders.FromSettings(settings);
-        if (!check.Ok && settings.ModsFolder is null && settings.UserFolder is null)
+        static FolderCheck Resolve(AppSettings s)
         {
-            var found = GameFolders.FindModsFolders(GameFolders.DefaultUserRoot()).FirstOrDefault();
-            if (found is not null) check = GameFolders.Resolve(found);
+            var r = GameFolders.FromSettings(s);
+            if (r.Ok || s.ModsFolder is not null || s.UserFolder is not null) return r;
+            // автопоиск обходит папки BeamNG: подпапка без прав не должна ронять окно и сбивать смену настроек
+            try
+            {
+                var found = GameFolders.FindModsFolders(GameFolders.DefaultUserRoot()).FirstOrDefault();
+                return found is not null ? GameFolders.Resolve(found) : r;
+            }
+            catch (Exception x) when (x is IOException or UnauthorizedAccessException) { return r; }
         }
+        var check = Resolve(settings);
 
         var store = new JsonLibraryStore(Path.Combine(appDir, "library.json"));
         var cache = new PreviewCache(Path.Combine(appDir, "previews"));
@@ -210,7 +219,8 @@ public partial class App : Application
         {
             // без папки: заведомо несуществующий путь, гараж покажет «Не нашли папку с модами»
             var dir = modsDir ?? Path.Combine(appDir, "нет-папки-mods");
-            var installer = new ModInstaller(ModLayout.InAppFolder(dir, appDir), () => DateTimeOffset.UtcNow, svm.Current.KeepBackups);
+            // число копий читается при каждой уборке: «−»/«+» в настройках не пересоздают помощника и не перечитывают папку
+            var installer = new ModInstaller(ModLayout.InAppFolder(dir, appDir), () => DateTimeOffset.UtcNow, () => svm.Current.KeepBackups);
             switching.Inner = new LibraryGarageBackend(store, installer, cache, GameProcess.IsRunning, notice);
             svm.ModsFolderPath = modsDir;
             notice = null;
@@ -227,38 +237,17 @@ public partial class App : Application
         var saveTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveNow(); };
 
-        var folderKey = (svm.Current.ModsFolder, svm.Current.UserFolder, svm.Current.KeepBackups);
-        var wall = svm.Current.BackgroundImage;
+        var folderKey = (svm.Current.ModsFolder, svm.Current.UserFolder);
         svm.Changed += s =>
         {
             saveTimer.Stop();
             saveTimer.Start();
-            // фото заменили или убрали: прежняя копия больше не нужна (удаляем только свою, из папки программы)
-            if (s.BackgroundImage != wall)
-            {
-                if (wall is not null)
-                    try
-                    {
-                        if (string.Equals(Path.GetDirectoryName(Path.GetFullPath(wall)), Path.GetFullPath(appDir), StringComparison.OrdinalIgnoreCase)) File.Delete(wall);
-                    }
-                    catch (Exception x) when (x is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
-                wall = s.BackgroundImage;
-            }
-            // папка (или число копий для установщика) поменялась: переключаем помощника до того, как окно перечитает моды
-            var key = (s.ModsFolder, s.UserFolder, s.KeepBackups);
+            // папка поменялась: переключаем помощника до того, как окно перечитает моды (окно подписано позже)
+            var key = (s.ModsFolder, s.UserFolder);
             if (key == folderKey) return;
-            var folderChanged = key.ModsFolder != folderKey.ModsFolder || key.UserFolder != folderKey.UserFolder;
             folderKey = key;
-            if (folderChanged)
-            {
-                var r = GameFolders.FromSettings(s);
-                if (!r.Ok && s.ModsFolder is null && s.UserFolder is null)
-                {
-                    var found = GameFolders.FindModsFolders(GameFolders.DefaultUserRoot()).FirstOrDefault();
-                    if (found is not null) r = GameFolders.Resolve(found);
-                }
-                currentDir = r.Ok ? r.ModsDir : null;
-            }
+            var r = Resolve(s);
+            currentDir = r.Ok ? r.ModsDir : null;
             Use(currentDir);
         };
 
@@ -289,31 +278,12 @@ public partial class App : Application
                     MessageBox.Show(owner, r.Message, "Папка не подходит", MessageBoxButton.OK, MessageBoxImage.Information);
                     return false;
                 }
-                // настройки сами переключат папку и перечитают моды (подписка выше и в окне)
+                var before = svm.Current;
+                // настройки сами переключат папку (подписка выше)
                 svm.Update(s => s with { ModsFolder = r.ModsDir, UserFolder = null });
-                return true;
-            },
-            PickWallpaper = owner =>
-            {
-                var dlg = new Microsoft.Win32.OpenFileDialog { Title = "Фото для фона", Filter = "Картинки (*.jpg, *.png, *.bmp)|*.jpg;*.jpeg;*.png;*.bmp" };
-                if (dlg.ShowDialog(owner) != true) return false;
-                // картинка должна читаться, иначе фона не будет, а человек не поймёт почему
-                if (Services.Backdrop.LoadBlurred(dlg.FileName, 0) is null)
-                {
-                    MessageBox.Show(owner, "Эту картинку не получилось открыть. Попробуйте JPG или PNG.", "Фото для фона", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return false;
-                }
-                // своя копия: исходник можно удалить или переместить, фон останется; новое имя — чтобы окно увидело замену
-                var dest = Path.Combine(appDir, $"background-{DateTime.Now:yyyyMMdd-HHmmss}{Path.GetExtension(dlg.FileName).ToLowerInvariant()}");
-                try { File.Copy(dlg.FileName, dest, overwrite: true); }
-                catch (Exception x) when (x is IOException or UnauthorizedAccessException)
-                {
-                    MessageBox.Show(owner, $"Не удалось сохранить копию фото: {x.Message}", "Фото для фона", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return false;
-                }
-                // выбрали фото — значит, хотят его видеть: из «Цвет» переходим на «Фото»
-                svm.Update(s => s with { BackgroundImage = dest, Background = s.Background == BackgroundMode.SolidColor ? BackgroundMode.Photo : s.Background });
-                return true;
+                // выбрали ту же папку (например, диск подключили после запуска): настройки не изменились, переключаем сами
+                if (ReferenceEquals(before, svm.Current)) { currentDir = r.ModsDir; Use(currentDir); }
+                return true; // окно перечитает моды
             },
             SaveWindow = w =>
             {
