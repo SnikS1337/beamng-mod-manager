@@ -78,11 +78,7 @@ public partial class MainWindow : Window
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); };
         _gameTimer.Tick += (_, _) => CheckGame();
 
-        SourceInitialized += (_, _) =>
-        {
-            Native.StyleWindow(this);
-            if (host.ShotPath is not null) Native.AllowLargerThanScreen(this);
-        };
+        SourceInitialized += (_, _) => Native.StyleWindow(this);
         Loaded += OnLoaded;
         Loaded += (_, _) => FitMaximized();
         StateChanged += (_, _) => { FitMaximized(); UpdateMotion(); };
@@ -100,12 +96,14 @@ public partial class MainWindow : Window
     {
         if (_host.ShotPath is not null)
         {
-            WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = 0;
-            Top = 0;
-            Width = _host.ShotWidth ?? 1440;
-            Height = _host.ShotHeight ?? 960;
-            UpdateLayout();
+            // экран сборочной машины меньше окна, а больше экрана Windows окно не пускает: содержимое снимаем отдельно,
+            // разложив его в нужном размере
+            Root.DataContext = _vm;
+            Content = null;
+            var size = new Size(_host.ShotWidth ?? 1440, _host.ShotHeight ?? 960);
+            Root.Measure(size);
+            Root.Arrange(new Rect(size));
+            Root.UpdateLayout();
         }
         Refresh();
         _gameTimer.Start();
@@ -375,9 +373,8 @@ public partial class MainWindow : Window
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-            var dpi = VisualTreeHelper.GetDpi(this);
-            var rt = new RenderTargetBitmap((int)Math.Ceiling(Root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(Root.ActualHeight * dpi.DpiScaleY),
-                96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
+            Root.UpdateLayout();
+            var rt = new RenderTargetBitmap((int)Math.Ceiling(Root.ActualWidth), (int)Math.Ceiling(Root.ActualHeight), 96, 96, PixelFormats.Pbgra32);
             rt.Render(Root);
             var enc = new PngBitmapEncoder();
             enc.Frames.Add(BitmapFrame.Create(rt));
