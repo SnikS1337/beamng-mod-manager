@@ -4,8 +4,9 @@
 Ведёт библиотеку установленных модов, следит за обновлениями, ищет по нескольким
 сайтам сразу и по желанию помогает скачивать.
 
-> **Статус: заморожен до появления Windows.** Ядро готово и проверено (476 тестов), дизайн утверждён,
-> интерфейс не написан. Что сделано, что осталось и с чего начать: [docs/STATUS.md](docs/STATUS.md).
+> **Статус: этап 1 «Гараж» написан.** Ядро и логика экранов проверены (528 тестов, на Linux и на Windows), окно
+> собирается и снимается на Windows в GitHub Actions, на живой игре ещё не проверено. Что сделано и что дальше:
+> [docs/STATUS.md](docs/STATUS.md).
 > План: [docs/PLAN.md](docs/PLAN.md). Дизайн: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Принципы
@@ -31,12 +32,15 @@ Windows), **не решено** (выбор после проверки на Win
 | Разбор страниц сайтов | самописный разбор HTML; AngleSharp как замена | работает / не решено | [STATUS.md](docs/STATUS.md) 3.2 |
 | Сеть | `HttpClient` (`HttpPageFetcher`): очередь на сайт, паузы, кэш | работает (на живых сайтах не проверено) | [PLAN.md](docs/PLAN.md) 9 |
 | Страницы с проверкой «вы человек?», окно загрузки ModsFire | WebView2 | на Windows | [PHASE0.md](docs/PHASE0.md), [PLAN.md](docs/PLAN.md) 7 |
-| Библиотека модов | SQLite с полнотекстовым поиском (FTS5), вероятно пакет Microsoft.Data.Sqlite; сейчас хранилище в памяти | на Windows | [PLAN.md](docs/PLAN.md) 5, [STATUS.md](docs/STATUS.md) 3.2 |
+| Библиотека модов | файл `library.json` (`System.Text.Json`), атомарная запись; SQLite не нужен (решено 2026-10-15) | работает | [STATUS.md](docs/STATUS.md) 1 |
+| Связь с игрой | флажок `active` в `db.json` (как сама игра), версия из `beamng.log`, папка пользователя из `startup.ini` | работает (на файлах игры 0.39.4) | [PHASE0.md](docs/PHASE0.md) «Данные с Windows» |
+| Логика экранов | отдельный проект без WPF (`INotifyPropertyChanged`, свои команды), проверяется тестами | работает | [STATUS.md](docs/STATUS.md) 1 |
 | Настройки, решения по дублям | JSON-файлы (`System.Text.Json`), атомарная запись | работает | [STATUS.md](docs/STATUS.md) 3.1 |
 | Архивы | ZIP: встроенный `System.IO.Compression`; RAR и 7z → ZIP: SharpCompress | ZIP работает / RAR, 7z на Windows | [PLAN.md](docs/PLAN.md) 7 |
-| Интерфейс | WPF + WPF-UI | на Windows | [DESIGN.md](docs/DESIGN.md) 8 |
-| Жидкое стекло | шейдер HLSL (`ShaderEffect`) в WPF; запасной путь — весь интерфейс в WebView2 | на Windows / не решено (после замера кадров) | [DESIGN.md](docs/DESIGN.md) 8 |
-| Анимации | анимации WPF (`Storyboard`) со своей пружинной кривой по формулам Apple; готовые мелочи через LottieSharp | на Windows / Lottie не решено | [DESIGN_MOTION.md](docs/DESIGN_MOTION.md) 5 |
+| Интерфейс | WPF на .NET 10 без сторонних пакетов (WPF-UI не понадобился: всё своё по доске «Гараж») | собирается на Windows (CI), на живой игре не проверен | [DESIGN.md](docs/DESIGN.md) 8 |
+| Стекло | сейчас матовое: размытая копия сцены (`VisualBrush` + `BlurEffect`); преломление шейдером HLSL — после замера кадров; запасной путь WebView2 | матовое работает / шейдер не решён | [DESIGN.md](docs/DESIGN.md) 8 |
+| Анимации | пружины Apple: `Spring` кадр за кадром (капли) и `SpringEase` для анимаций WPF (подъём карточки); Lottie не решено | работает (на экране не проверено) | [DESIGN_MOTION.md](docs/DESIGN_MOTION.md) 5 |
+| Сборка на Windows | GitHub Actions `windows-latest`: тесты, сборка окна, снимки экрана в ветку `ci-shots` | работает | [STATUS.md](docs/STATUS.md) 1 |
 | Сбор данных об игре | PowerShell (`tools/windows/collect-beamng-info.ps1`) | работает (на Windows не запускался) | [PHASE0.md](docs/PHASE0.md) |
 | Макет дизайна (в программу не входит) | Python 3, numpy, Pillow | работает | [DESIGN.md](docs/DESIGN.md) 12 |
 
@@ -44,10 +48,11 @@ Windows), **не решено** (выбор после проверки на Win
 
 ```
 src/
-  BeamModManager.Core/       ядро без интерфейса: адаптеры, дубли, обновления, установка, библиотека (пока в памяти)
-  BeamModManager.App/        будет создан на Windows: WPF-интерфейс и окно загрузки (WebView2)
+  BeamModManager.Core/       ядро без интерфейса: адаптеры, дубли, обновления, установка, библиотека, связь с игрой, картинки
+  BeamModManager.Ui/         логика экранов без WPF (гараж), проверяется тестами
+  BeamModManager.App/        окно на WPF (.NET 10), собирается только на Windows
 tests/
-  BeamModManager.Core.Tests/ тесты ядра
+  BeamModManager.Core.Tests/ тесты ядра и логики экранов
   fixtures/                  сохранённые HTML-страницы сайтов для тестов адаптеров
 docs/
   STATUS.md                  состояние, пробелы, порядок первого дня на Windows
@@ -108,7 +113,10 @@ tools/
 | `Library/BindingSuggester` | Подбор привязки установленного файла к записи на сайте: название из имени файла, ранжирование, автоподтверждение только при уверенном совпадении |
 | `Search/SearchService` | Общий поиск: параллельно по всем источникам, одна карточка на мод, источники и цена каждого внутри, «возможно то же» помечается и не склеивается, сбой или зависание сайта не ломает остальные |
 | `Net/PageFetching` | Вежливая загрузка страниц: очередь на сайт, пауза с разбросом, повтор после 429 с Retry-After, кэш, остановка сайта при странице проверки и после серии сбоев; проверена на фальшивых ответах с искусственными часами |
-| `Library/*` | Библиотека модов, привязки к сайтам, состояние проверок; хранилище `ILibraryStore` (версия в памяти готова, SQLite позже); список обновлений считается при чтении |
+| `Library/*` | Библиотека модов, привязки к сайтам, состояние проверок; хранилище `ILibraryStore`: в памяти (тесты) и в файле `JsonLibraryStore`; список обновлений считается при чтении |
+| `Game/GameModDb`, `GameInfo`, `Library/GameDbSync` | `db.json` игры: чтение, включение и выключение флажком при закрытой игре, данные модов из репозитория; версия игры; папка пользователя из `startup.ini` |
+| `Previews/*` | Картинка мода из архива по оглавлению ZIP, размер по заголовку без декодирования, кэш картинок |
+| `Ui/Garage/*` (проект Ui) | Экран «Гараж» без окна: карточки, фильтры, поиск по гаражу, правая панель, включение и выключение; `LibraryGarageBackend` поверх настоящих папки и `db.json` |
 | `Library/UpdateCoordinator`, `BindingRepair`, `UpdateCheckService` | Единый вход проверки обновлений (повторные нажатия, отмена, свежесть), починка потерянных привязок, «Пропустить эту версию» |
 | `Updates/FeedCoverage` | Когда официальная лента репозитория доказывает, что мод не менялся |
 | `Settings/*` | Настройки (загрузка выключена по умолчанию, внешний вид, окно), готовые наборы внешнего вида, политика загрузки `DownloadPolicy`, папки игры |
@@ -118,10 +126,11 @@ tools/
 
 ## Сборка и тесты
 
-Нужен .NET 8 SDK.
+Нужен .NET 8 SDK (окну — .NET 10 SDK и Windows).
 
 ```
 dotnet run --project tests/BeamModManager.Core.Tests
+dotnet run --project src/BeamModManager.App -- --demo design/demo   # только Windows
 ```
 
 Тесты написаны на собственном мини-раннере без внешних пакетов (`tests/.../TestRunner.cs`),
@@ -133,7 +142,8 @@ dotnet restore --configfile <файл-конфиг-с-пустыми-источ�
 dotnet build --no-restore
 ```
 
-Проект `BeamModManager.App` (WPF) создаётся позже, на Windows.
+Проект `BeamModManager.App` (WPF) не входит в `BeamModManager.sln`, чтобы решение собиралось и вне Windows; окно
+собирается отдельно (`dotnet build src/BeamModManager.App`), на каждый push это делает GitHub Actions.
 
 ## Лицензия
 
