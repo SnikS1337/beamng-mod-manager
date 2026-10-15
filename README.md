@@ -42,9 +42,10 @@
 `latest.json`, код остаётся здесь, в закрытом). Чтобы сборочная машина могла туда выкладывать, один раз:
 
 1. Создать на GitHub публичный репозиторий `ModManagerBeamNG`, отметив «Add a README file» (нужен хотя бы один коммит).
-2. Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token: доступ только к
-   репозиторию `ModManagerBeamNG`, Permissions → Contents: **Read and write**.
-3. В этом (закрытом) репозитории: Settings → Secrets and variables → Actions → New repository secret,
+2. Настройки **аккаунта** (аватар → Settings, не настройки репозитория) → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token: Repository access — только `ModManagerBeamNG` (не `123`: писать токен будет
+   туда), Permissions → Contents: **Read and write**.
+3. В **этом** (закрытом, `123`) репозитории: Settings → Secrets and variables → Actions → New repository secret,
    имя `RELEASES_TOKEN`, значение — токен из шага 2.
 
 Без секрета всё остальное работает, а выкладка для самообновления пропускается с предупреждением в сборке.
