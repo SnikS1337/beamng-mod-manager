@@ -17,10 +17,12 @@ public sealed class FilterItem : Observable
 
     private int _count;
     /// <summary>Число рядом с названием («Нужно обновить 3»), чтобы объём работы был виден до нажатия.</summary>
-    public int Count { get => _count; internal set { if (Set(ref _count, value)) Raise(nameof(Label)); } }
+    public int Count { get => _count; internal set { if (Set(ref _count, value)) { Raise(nameof(Label)); Raise(nameof(ShowCount)); } } }
 
     /// <summary>У «Все» и «Включённые» число не пишется: его показывает заголовок.</summary>
-    public string Label => Filter is GarageFilter.NeedsUpdate or GarageFilter.NotTracked && Count > 0 ? $"{Title} {Count}" : Title;
+    public bool ShowCount => Filter is GarageFilter.NeedsUpdate or GarageFilter.NotTracked && Count > 0;
+
+    public string Label => ShowCount ? $"{Title} {Count}" : Title;
 
     private bool _isActive;
     public bool IsActive { get => _isActive; internal set => Set(ref _isActive, value); }
@@ -37,6 +39,9 @@ public sealed record Toast(string Text, bool CanUndo, long Serial);
 /// <summary>Главная кнопка правой панели меняется по состоянию мода (DESIGN.md раздел 4).</summary>
 public enum MainAction { None, Update, Enable, FindReplacement }
 
+/// <summary>Строка блока данных в правой панели: «Размер — 312 МБ».</summary>
+public sealed record Fact(string Label, string Value);
+
 /// <summary>Правая панель выбранного мода.</summary>
 public sealed record ModDetails(
     string Name,
@@ -44,7 +49,7 @@ public sealed record ModDetails(
     MainAction Action,
     string? ActionLabel,
     string? ActionHint,
-    IReadOnlyList<(string Label, string Value)> Facts,
+    IReadOnlyList<Fact> Facts,
     Uri? PageUrl,
     string ToggleLabel,
     string? PendingText);
@@ -84,6 +89,9 @@ public sealed class GarageViewModel : Observable
     }
 
     public ObservableCollection<ModCard> Cards { get; } = new();
+
+    /// <summary>Все карточки без фильтра и поиска (для фоновой загрузки картинок).</summary>
+    public IReadOnlyList<ModCard> AllCards => _snap.Mods.Select(m => _cards[m.Mod.Id]).ToList();
     public IReadOnlyList<FilterItem> Filters { get; }
     public RelayCommand SelectFilterCommand { get; }
     public RelayCommand ToggleSelectedCommand { get; }
@@ -365,13 +373,13 @@ public sealed class GarageViewModel : Observable
         }
         else act = MainAction.None;
 
-        var facts = new List<(string, string)>();
-        if (m.SizeBytes is { } size) facts.Add(("Размер", Ru.Size(size)));
-        facts.Add(("Установлен", Ru.Date(m.InstalledAtUtc)));
-        if (d.Binding is { } b) facts.Add(("Следим на", b.Url.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? b.Url.Host[4..] : b.Url.Host));
-        else facts.Add(("Следим на", d.CheckingDeclined ? "Не проверяем по вашему выбору" : "Страница не указана"));
-        if (d.LastCheckedUtc is { } t) facts.Add(("Проверен", Ru.Ago(t, _now())));
-        if (m.Version is { } v) facts.Add(("Версия", v));
+        var facts = new List<Fact>();
+        if (m.SizeBytes is { } size) facts.Add(new Fact("Размер", Ru.Size(size)));
+        facts.Add(new Fact("Установлен", Ru.Date(m.InstalledAtUtc)));
+        if (d.Binding is { } b) facts.Add(new Fact("Следим на", b.Url.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? b.Url.Host[4..] : b.Url.Host));
+        else facts.Add(new Fact("Следим на", d.CheckingDeclined ? "Не проверяем по вашему выбору" : "Страница не указана"));
+        if (d.LastCheckedUtc is { } t) facts.Add(new Fact("Проверен", Ru.Ago(t, _now())));
+        if (m.Version is { } v) facts.Add(new Fact("Версия", v));
 
         return new ModDetails(m.Name, d.Author, act, label, hint, facts, d.Binding?.Url,
             c.Enabled ? "Выключить" : "Включить", c.PendingText);

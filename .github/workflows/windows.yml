@@ -1,5 +1,3 @@
-# Сборка и тесты на настоящей Windows (у GitHub). Запускается на каждую отправку в main и вручную.
-# Результат: зелёная или красная отметка у коммита, журнал сборки и (когда появится приложение) готовая сборка для скачивания.
 name: windows
 
 on:
@@ -8,6 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Ядро и логика экранов: те же тесты, что и на Linux, но на настоящей Windows.
   build:
     runs-on: windows-latest
     steps:
@@ -15,5 +14,45 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Тесты ядра на Windows
+      - name: Тесты
         run: dotnet run --project tests/BeamModManager.Core.Tests -c Release
+
+  # Окно на WPF (.NET 10): сборка и снимки экрана в демо-режиме. Снимки уходят в ветку ci-shots.
+  app:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Сборка
+        run: dotnet build src/BeamModManager.App -c Release -warnaserror
+      - name: Снимки экрана
+        shell: pwsh
+        run: |
+          $exe = "src/BeamModManager.App/bin/Release/net10.0-windows/BeamModManager.exe"
+          New-Item -ItemType Directory shots -Force | Out-Null
+          function Shot($name, [string[]]$extra) {
+            $args = @('--demo', 'design/demo', '--shot', "shots/$name.png") + $extra
+            $p = Start-Process $exe -ArgumentList $args -PassThru
+            if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "$name: окно не закрылось за 2 минуты" }
+            if (-not (Test-Path "shots/$name.png")) { throw "$name: снимка нет (код выхода $($p.ExitCode))" }
+          }
+          Shot 'garage' @('--select', '"Dacia Sandero Stepway"')
+          Shot 'garage-empty-panel' @()
+          Shot 'garage-1100' @('--width', '1100')
+          Get-ChildItem shots
+      - name: Отправить снимки
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path shots) -or -not (Get-ChildItem shots)) { exit 0 }
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan ci-shots-tmp
+          git rm -r -q --cached .
+          git add -f shots
+          git commit -q -m "Снимки для $env:GITHUB_SHA"
+          git push -f -q origin HEAD:ci-shots
