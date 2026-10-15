@@ -32,6 +32,12 @@ public sealed class WindowHost
     public int StartWidth { get; init; }
     public int StartHeight { get; init; }
     public bool StartMaximized { get; init; }
+    public bool DownloadsAllowed { get; init; }
+    public int ManyEnabledThreshold { get; init; } = 30;
+    public Func<IReadOnlyDictionary<string, bool>>? LoadPending { get; init; }
+    public Action<IReadOnlyDictionary<string, bool>>? SavePending { get; init; }
+    /// <summary>Дописать библиотеку на диск при закрытии.</summary>
+    public Func<bool>? Flush { get; init; }
     public double? ShotWidth { get; init; }
     public double? ShotHeight { get; init; }
 }
@@ -314,6 +320,8 @@ public partial class MainWindow : Window
         _gameTimer.Stop();
         _previewCts?.Cancel();
         _host.SaveWindow?.Invoke(this);
+        _host.SavePending?.Invoke(_vm.PendingChanges);
+        _host.Flush?.Invoke();
     }
 
     // ───────────── левая панель ─────────────
@@ -388,11 +396,10 @@ public partial class MainWindow : Window
         switch (_vm.Details?.Action)
         {
             case MainAction.Enable: _vm.ToggleSelected(); break;
-            case MainAction.Update:
-            case MainAction.FindReplacement:
-                // загрузка и поиск — следующий этап; пока ведём на страницу мода
-                OpenPage_Click(sender, e);
-                break;
+            case MainAction.OpenPage: OpenPage_Click(sender, e); break;
+            // загрузки и поиска по сайтам в этой сборке ещё нет: «Обновить» ведёт на страницу, «Найти замену» — в раздел «Поиск»
+            case MainAction.Update: OpenPage_Click(sender, e); break;
+            case MainAction.FindReplacement: NavSearch.IsChecked = true; break;
         }
     }
 
@@ -430,6 +437,8 @@ public partial class MainWindow : Window
             return;
         }
         if (typing || NavGarage.IsChecked != true) return;
+        // стрелки и пробел — для карточек; у кнопок фильтров, панели и окна они делают своё обычное дело
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase btn && btn.DataContext is not ModCard) return;
         var cols = _panel?.Columns ?? 3;
         switch (e.Key)
         {

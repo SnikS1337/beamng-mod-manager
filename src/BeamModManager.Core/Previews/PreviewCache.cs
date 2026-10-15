@@ -70,6 +70,7 @@ public sealed class PreviewCache
             var isTmp = name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
             var ext = Path.GetExtension(name);
             if (!isTmp && ext is not (".jpg" or ".none")) continue;
+            if (isTmp && DateTime.UtcNow - File.GetLastWriteTimeUtc(f) < TimeSpan.FromMinutes(5)) continue; // ещё пишется
             if (!isTmp && keep.Contains(Path.GetFileNameWithoutExtension(name))) continue;
             if (TryDelete(f)) removed++;
         }

@@ -118,3 +118,65 @@ public static class JsonStoreTests
         });
     }
 }
+
+public static class JsonStoreFailureTests
+{
+    private static readonly DateTimeOffset T0 = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
+
+    public static void Register(TestRunner t)
+    {
+        t.Group("Библиотека в файле: сбои диска");
+
+        t.Run("запись не удалась: исключения нет, правка в памяти, ошибка видна, следующая запись догоняет", () =>
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "bmm-lf-" + Guid.NewGuid().ToString("N"));
+            var p = Path.Combine(dir, "library.json");
+            var s = new JsonLibraryStore(p);
+            Directory.CreateDirectory(p); // на месте файла папка: переименование не пройдёт
+            s.UpsertMod(new InstalledMod("a", "A", "a.zip", null, 1, T0));
+            Assert.Eq(1, s.Mods().Count);
+            Assert.True(s.SaveError is not null, "ошибка запомнена");
+            Assert.False(s.Flush(), "пока не записано");
+            Directory.Delete(p);
+            Assert.True(s.Flush(), "записалось");
+            Assert.True(s.SaveError is null, "ошибки больше нет");
+            Assert.Eq(1, new JsonLibraryStore(p).Mods().Count);
+            Assert.Eq(0, Directory.GetFiles(dir, "*.tmp").Length);
+        });
+
+        t.Run("те же данные ещё раз: файл не переписывается (сверка при каждом возврате в окно)", () =>
+        {
+            var p = Path.Combine(Path.GetTempPath(), "bmm-lf-" + Guid.NewGuid().ToString("N"), "library.json");
+            var s = new JsonLibraryStore(p);
+            var m = new InstalledMod("a", "A", "a.zip", "1", 1, T0);
+            var b = new ModBinding("a", "stmods", "x", new Uri("https://stmods.org/x/"), true);
+            var c = new CheckState("a", "stmods", T0, null, "1", 1);
+            s.UpsertMod(m); s.UpsertBinding(b); s.SaveCheck(c); s.SetSourceStatus("stmods", BeamModManager.Core.Sources.SourceStatus.Ok); s.SetDismissedUpdate("a", "2");
+            File.SetLastWriteTimeUtc(p, new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            s.UpsertMod(m with { }); s.UpsertBinding(b with { }); s.SaveCheck(c with { });
+            s.SetSourceStatus("stmods", BeamModManager.Core.Sources.SourceStatus.Ok); s.SetDismissedUpdate("a", "2");
+            Assert.Eq(2000, File.GetLastWriteTimeUtc(p).Year);
+            s.UpsertMod(m with { Version = "2" });
+            Assert.True(File.GetLastWriteTimeUtc(p).Year > 2000, "изменение записано");
+        });
+
+        t.Run("файл занят при запуске: библиотека его не перезаписывает", () =>
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "bmm-lf-" + Guid.NewGuid().ToString("N"));
+            var p = Path.Combine(dir, "library.json");
+            var s0 = new JsonLibraryStore(p);
+            s0.UpsertMod(new InstalledMod("a", "A", "a.zip", null, 1, T0));
+            s0.UpsertBinding(new ModBinding("a", "stmods", "x", new Uri("https://stmods.org/x/"), true));
+            var before = File.ReadAllText(p);
+
+            JsonLibraryStore s;
+            using (new FileStream(p, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                s = new JsonLibraryStore(p);
+            if (s.LoadWarnings.Count == 0) return; // система не держит блокировку (так бывает вне Windows): проверять нечего
+            Assert.Eq(0, s.Mods().Count);
+            s.UpsertMod(new InstalledMod("b", "B", "b.zip", null, 1, T0));
+            Assert.Eq(before, File.ReadAllText(p));
+            Assert.True(s.SaveError is not null, "объяснено, почему не пишем");
+        });
+    }
+}

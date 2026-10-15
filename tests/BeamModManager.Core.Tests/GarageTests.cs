@@ -106,6 +106,8 @@ public static class GarageTests
             Assert.Eq("BMW M2 G87", vm.Cards.Single().Name);
             vm.SearchText = "g87";
             Assert.Eq(1, vm.Cards.Count);
+            vm.SearchText = "bmw_m2";
+            Assert.Eq("BMW M2 G87", vm.Cards.Single().Name);
             vm.SearchText = "audi";
             Assert.Eq(0, vm.Cards.Count);
             Assert.Eq("Нет такого мода", vm.Empty!.Title);
@@ -176,7 +178,15 @@ public static class GarageTests
         {
             var (vm, _) = Make(Mod("A", latest: "1.5"), Mod("B", missing: true), Mod("C", on: false), Mod("D", tracked: false));
             vm.Selected = vm.Cards[0];
+            Assert.Eq(MainAction.OpenPage, vm.Details!.Action);
+            Assert.Eq("Открыть страницу", vm.Details.ActionLabel);
+            Assert.Eq("Новая версия 1.5 на beamng.com. Скачайте её там, менеджер заметит обновление сам", vm.Details.ActionHint);
+            Assert.False(vm.Details.OpenPageLink, "внизу «Открыть страницу» не дублируется");
+            vm.DownloadsAllowed = true;
+            vm.Selected = null;
+            vm.Selected = vm.Cards[0];
             Assert.Eq("Обновить до 1.5", vm.Details!.ActionLabel);
+            Assert.True(vm.Details.OpenPageLink, "при включённой загрузке ссылка внизу есть");
             Assert.True(vm.Details.Facts.Contains(new Fact("Следим на", "beamng.com")), "сайт без www");
             Assert.True(vm.Details.Facts.Contains(new Fact("Проверен", "18 минут назад")), "когда проверен");
             Assert.True(vm.Details.Facts.Contains(new Fact("Размер", "300 МБ")), "размер");
@@ -284,6 +294,44 @@ public static class GarageTests
             Assert.True(vm.Toast is { Text: "Нет доступа к db.json", CanUndo: false }, "тост");
         });
 
+        t.Run("отложенное переживает перезапуск менеджера и применяется, когда игры нет", () =>
+        {
+            var (vm, b) = Make(Mod("A"), Mod("B"));
+            b.Running = true;
+            vm.Toggle(vm.Cards[0]);
+            var saved = vm.PendingChanges;
+            Assert.Eq(1, saved.Count);
+
+            var vm2 = new GarageViewModel(b, () => T0);
+            vm2.RestorePending(saved);
+            Assert.Eq("Выключится, когда закроете игру", vm2.Cards[0].PendingText);
+            b.Running = false;
+            vm2.OnGameExited();
+            Assert.Eq(("a.zip", false), b.Calls.Single());
+        });
+
+        t.Run("порог «много включённых» из настроек; 0 — не показывать", () =>
+        {
+            var (vm, _) = Make(Enumerable.Range(0, 12).Select(i => Mod("M" + i)).ToArray());
+            vm.ManyEnabledThreshold = 10;
+            vm.Refresh();
+            Assert.Eq("Включено 12 модов. Игра может грузиться дольше", vm.ManyEnabledBanner);
+            vm.ManyEnabledThreshold = 0;
+            vm.Refresh();
+            Assert.True(vm.ManyEnabledBanner is null, "выключено");
+        });
+
+        t.Run("картинка из фона держится, пока архив тот же; новая версия архива — сброс", () =>
+        {
+            var (vm, b) = Make(Mod("A"));
+            vm.Cards[0].PreviewPath = "/cache/old.jpg";
+            vm.Refresh();
+            Assert.Eq("/cache/old.jpg", vm.Cards[0].PreviewPath);
+            b.Mods[0] = b.Mods[0] with { Mod = b.Mods[0].Mod with { FileName = "a_v2.zip", SizeBytes = 5 } };
+            vm.Refresh();
+            Assert.True(vm.Cards[0].PreviewPath is null, "старую картинку не показываем");
+        });
+
         t.Run("тост гаснет только свой: старый таймер не гасит новый", () =>
         {
             var (vm, _) = Make(Mod("A"), Mod("B"));
@@ -317,6 +365,22 @@ public static class GarageTests
             Assert.True(bmw.Enabled, "включён");
             Assert.True(BeamModManager.Core.Game.GameModDb.Read(g.Db).Find("BMW_M2_G87_inf.zip")!.Active, "в db.json тоже");
             Assert.True(File.Exists(Path.Combine(g.Mods, "BMW_M2_G87_inf.zip")), "файл на месте");
+        });
+
+        t.Run("повреждённая библиотека: один тост при запуске, дальше тихо", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var lib = Path.Combine(g.Root, "app", "library.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(lib)!);
+            File.WriteAllText(lib, "{ сломано");
+            var store = new JsonLibraryStore(lib);
+            var vm = new GarageViewModel(new LibraryGarageBackend(store, g.Inst, new PreviewCache(Path.Combine(g.Root, "p")), () => false, "Часть настроек сброшена"), () => T0);
+            vm.Refresh();
+            Assert.True(vm.Toast is { CanUndo: false } toast && toast.Text.StartsWith("Часть настроек сброшена. Библиотека: "), "тост");
+            vm.DismissToast(vm.Toast!.Serial);
+            vm.Refresh();
+            Assert.True(vm.Toast is null, "второй раз не показываем");
+            Assert.Eq(5, vm.Cards.Count);
         });
 
         t.Run("картинка из кэша попадает на карточку; папки нет — гараж просит указать", () =>

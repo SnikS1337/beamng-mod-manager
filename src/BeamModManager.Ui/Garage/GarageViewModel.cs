@@ -37,7 +37,7 @@ public sealed record EmptyState(string Title, string Text, string? ActionLabel, 
 public sealed record Toast(string Text, bool CanUndo, long Serial);
 
 /// <summary>Главная кнопка правой панели меняется по состоянию мода (DESIGN.md раздел 4).</summary>
-public enum MainAction { None, Update, Enable, FindReplacement }
+public enum MainAction { None, Update, OpenPage, Enable, FindReplacement }
 
 /// <summary>Строка блока данных в правой панели: «Размер — 312 МБ».</summary>
 public sealed record Fact(string Label, string Value);
@@ -51,6 +51,8 @@ public sealed record ModDetails(
     string? ActionHint,
     IReadOnlyList<Fact> Facts,
     Uri? PageUrl,
+    /// <summary>Нижняя кнопка «Открыть страницу»: не показывается, когда это уже главная кнопка.</summary>
+    bool OpenPageLink,
     /// <summary>«Выключить» / «Включить» внизу панели; null, когда «Включить» уже главная кнопка (не дублируем).</summary>
     string? ToggleLabel,
     string? PendingText);
@@ -61,8 +63,14 @@ public sealed record ModDetails(
 /// </summary>
 public sealed class GarageViewModel : Observable
 {
-    /// <summary>Порог строки «Включено 34 мода. Игра может грузиться дольше» (DESIGN_FLOWS 6.9).</summary>
-    public const int ManyEnabledThreshold = 30;
+    /// <summary>Порог строки «Включено 34 мода. Игра может грузиться дольше» (DESIGN_FLOWS 6.9, AppSettings.ActiveModsWarnAbove).</summary>
+    public int ManyEnabledThreshold { get; set; } = 30;
+
+    /// <summary>
+    /// Загрузка разрешена в настройках. Выключена (по умолчанию) — кнопки «Обновить» нет, вместо неё «Открыть страницу»:
+    /// человек обновляет сам, программа замечает новую версию при следующей проверке (DESIGN_FLOWS 3.3).
+    /// </summary>
+    public bool DownloadsAllowed { get; set; }
 
     private readonly IGarageBackend _backend;
     private readonly Func<DateTimeOffset> _now;
@@ -154,12 +162,27 @@ public sealed class GarageViewModel : Observable
     /// <summary>Есть изменения, которые ждут закрытия игры.</summary>
     public bool HasPending => _pending.Count > 0;
 
+    /// <summary>Отложенные переключения (имя файла → включить): сохраняются при закрытии менеджера, пока игра запущена.</summary>
+    public IReadOnlyDictionary<string, bool> PendingChanges => new Dictionary<string, bool>(_pending, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Вернуть отложенное с прошлого запуска; уже совпавшее с диском отбрасывается при обновлении.</summary>
+    public void RestorePending(IReadOnlyDictionary<string, bool> changes)
+    {
+        foreach (var (file, want) in changes) _pending[file] = want;
+        Refresh();
+    }
+
+    private string? _storageWarning;
+    /// <summary>Библиотека не пишется на диск (занята, нет места): что случилось, одной строкой.</summary>
+    public string? StorageWarning { get => _storageWarning; private set => Set(ref _storageWarning, value); }
+
     // ───────────── загрузка ─────────────
 
     public void Refresh()
     {
         _snap = _backend.Load();
         FolderAvailable = _snap.FolderAvailable;
+        StorageWarning = _snap.StorageWarning;
         var alive = new HashSet<string>();
         foreach (var m in _snap.Mods)
         {
@@ -174,6 +197,7 @@ public sealed class GarageViewModel : Observable
         foreach (var f in _pending.Keys.Where(f => !files.Contains(f)).ToList()) _pending.Remove(f);
         Raise(nameof(HasPending));
         Rebuild();
+        if (_snap.Notice is { } n) ShowToast(n, null);
     }
 
     private void Rebuild()
@@ -184,7 +208,7 @@ public sealed class GarageViewModel : Observable
         Filters[2].Count = all.Count(c => c.Data.NeedsUpdate);
         Filters[3].Count = all.Count(c => !c.Data.Tracked);
 
-        var tokens = Ru.Fold(_search).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var tokens = Ru.Fold(_search).Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var visible = all.Where(c => Pass(c, _filter) && Matches(c, tokens)).ToList();
         Cards.SyncTo(visible);
 
@@ -196,7 +220,7 @@ public sealed class GarageViewModel : Observable
         Empty = EmptyFor(all.Count, visible.Count, tokens.Length > 0);
 
         var enabled = Filters[1].Count;
-        ManyEnabledBanner = !_bannerDismissed && enabled > ManyEnabledThreshold
+        ManyEnabledBanner = !_bannerDismissed && ManyEnabledThreshold > 0 && enabled > ManyEnabledThreshold
             ? $"Включено {Ru.Mods(enabled)}. Игра может грузиться дольше" : null;
 
         if (Selected is not null && !visible.Contains(Selected)) Selected = null;
@@ -343,23 +367,35 @@ public sealed class GarageViewModel : Observable
 
     private void RaiseDetails() => Raise(nameof(Details));
 
+    private static string Host(Uri u) => u.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? u.Host[4..] : u.Host;
+
     private ModDetails BuildDetails(ModCard c)
     {
         var d = c.Data;
         var m = d.Mod;
         MainAction act;
         string? label = null, hint = null;
+        var site = d.Binding is { } bs ? Host(bs.Url) : null;
         if (d.NeedsUpdate && d.Update is { Status: UpdateStatus.Likely } u)
         {
-            act = MainAction.Update;
-            label = u.LatestVersion is null ? "Обновить" : $"Обновить до {u.LatestVersion}";
-            hint = "Прежняя версия сохранится, её можно вернуть";
+            if (DownloadsAllowed)
+            {
+                act = MainAction.Update;
+                label = u.LatestVersion is null ? "Обновить" : $"Обновить до {u.LatestVersion}";
+                hint = "Прежняя версия сохранится, её можно вернуть";
+            }
+            else
+            {
+                act = MainAction.OpenPage;
+                label = "Открыть страницу";
+                hint = $"Новая версия{(u.LatestVersion is null ? "" : " " + u.LatestVersion)} на {Host(u.Url)}. Скачайте её там, менеджер заметит обновление сам";
+            }
         }
-        else if (d.NeedsUpdate && d.Update is { Status: UpdateStatus.Possible })
+        else if (d.NeedsUpdate && d.Update is { Status: UpdateStatus.Possible } p)
         {
-            act = MainAction.Update;
-            label = "Обновить";
-            hint = "Файл на сайте изменился, а номер версии тот же";
+            act = DownloadsAllowed ? MainAction.Update : MainAction.OpenPage;
+            label = DownloadsAllowed ? "Обновить" : "Открыть страницу";
+            hint = $"Файл на {Host(p.Url)} изменился, а номер версии тот же";
         }
         else if (d.PageMissing)
         {
@@ -377,12 +413,12 @@ public sealed class GarageViewModel : Observable
         var facts = new List<Fact>();
         if (m.SizeBytes is { } size) facts.Add(new Fact("Размер", Ru.Size(size)));
         facts.Add(new Fact("Установлен", Ru.Date(m.InstalledAtUtc)));
-        if (d.Binding is { } b) facts.Add(new Fact("Следим на", b.Url.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? b.Url.Host[4..] : b.Url.Host));
+        if (site is not null) facts.Add(new Fact("Следим на", site));
         else facts.Add(new Fact("Следим на", d.CheckingDeclined ? "Не проверяем по вашему выбору" : "Страница не указана"));
         if (d.LastCheckedUtc is { } t) facts.Add(new Fact("Проверен", Ru.Ago(t, _now())));
         if (m.Version is { } v) facts.Add(new Fact("Версия", v));
 
-        return new ModDetails(m.Name, d.Author, act, label, hint, facts, d.Binding?.Url,
+        return new ModDetails(m.Name, d.Author, act, label, hint, facts, d.Binding?.Url, act != MainAction.OpenPage && d.Binding is not null,
             act == MainAction.Enable ? null : c.Enabled ? "Выключить" : "Включить", c.PendingText);
     }
 }
