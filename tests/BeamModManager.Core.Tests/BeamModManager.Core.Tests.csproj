@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BeamModManager.Core\BeamModManager.Core.csproj" />
+    <ProjectReference Include="..\..\src\BeamModManager.Ui\BeamModManager.Ui.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

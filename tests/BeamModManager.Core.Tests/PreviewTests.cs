@@ -202,3 +202,48 @@ public static class PreviewTests
         });
     }
 }
+
+public static class PreviewLoaderTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("Картинки в фоне");
+
+        t.Run("первый раз читает архив и уменьшает, второй — только кэш; без картинок — метка", () =>
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "bmm-pl-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var car = Path.Combine(dir, "car.zip");
+            var script = Path.Combine(dir, "script.zip");
+            using (var z = new ZipArchive(File.Create(car), ZipArchiveMode.Create))
+                using (var s = z.CreateEntry("vehicles/car/default.jpg").Open()) s.Write(PreviewTests.Jpg(1920, 1080));
+            using (var z = new ZipArchive(File.Create(script), ZipArchiveMode.Create))
+                using (var s = z.CreateEntry("lua/x.lua").Open()) s.Write("x"u8);
+
+            var shrinks = 0;
+            var loader = new BeamModManager.Ui.Previews.PreviewLoader(new PreviewCache(Path.Combine(dir, "cache")), b => { shrinks++; return new byte[] { 9 }; });
+            var p = loader.Ensure(car);
+            Assert.True(p is not null && File.ReadAllBytes(p).SequenceEqual(new byte[] { 9 }), "в кэше уменьшенная");
+            Assert.Eq(p, loader.Ensure(car));
+            Assert.Eq(1, shrinks);
+            Assert.True(loader.Ensure(script) is null, "картинок нет");
+            Assert.True(loader.Ensure(Path.Combine(dir, "нет.zip")) is null, "файла нет");
+
+            var ready = new List<string>();
+            loader.FillAsync(new[] { ("car", car), ("script", script) }, (k, _) => { lock (ready) ready.Add(k); }).Wait();
+            Assert.True(ready.SequenceEqual(new[] { "car" }), "сообщили только о найденной");
+        });
+
+        t.Run("картинка не декодировалась: метку «нет картинки» не ставим, попробуем снова", () =>
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "bmm-pl-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var car = Path.Combine(dir, "car.zip");
+            using (var z = new ZipArchive(File.Create(car), ZipArchiveMode.Create))
+                using (var s = z.CreateEntry("vehicles/car/default.png").Open()) s.Write(PreviewTests.Png(800, 600));
+            var cache = new PreviewCache(Path.Combine(dir, "cache"));
+            Assert.True(new BeamModManager.Ui.Previews.PreviewLoader(cache, _ => null).Ensure(car) is null, "не вышло");
+            Assert.Eq(CacheState.Missing, cache.State(ArchiveStamp.Of(car)));
+        });
+    }
+}
