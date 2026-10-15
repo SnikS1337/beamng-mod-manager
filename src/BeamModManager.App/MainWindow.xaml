@@ -400,7 +400,7 @@
                             <Button x:Name="OpenPage" Style="{StaticResource Secondary}" Content="Открыть страницу" Margin="0,0,5,0" Click="OpenPage_Click"
                                     Visibility="{Binding Details.PageUrl, Converter={StaticResource NullToCollapsed}}"/>
                             <Button Style="{StaticResource Secondary}" Content="{Binding Details.ToggleLabel}" Margin="5,0,0,0" Click="Toggle_Click"
-                                    ToolTip="Пробел"/>
+                                    ToolTip="Пробел" Visibility="{Binding Details.ToggleLabel, Converter={StaticResource NullToCollapsed}}"/>
                         </UniformGrid>
                     </StackPanel>
 

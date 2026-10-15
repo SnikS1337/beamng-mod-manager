@@ -51,7 +51,8 @@ public sealed record ModDetails(
     string? ActionHint,
     IReadOnlyList<Fact> Facts,
     Uri? PageUrl,
-    string ToggleLabel,
+    /// <summary>«Выключить» / «Включить» внизу панели; null, когда «Включить» уже главная кнопка (не дублируем).</summary>
+    string? ToggleLabel,
     string? PendingText);
 
 /// <summary>
@@ -382,6 +383,6 @@ public sealed class GarageViewModel : Observable
         if (m.Version is { } v) facts.Add(new Fact("Версия", v));
 
         return new ModDetails(m.Name, d.Author, act, label, hint, facts, d.Binding?.Url,
-            c.Enabled ? "Выключить" : "Включить", c.PendingText);
+            act == MainAction.Enable ? null : c.Enabled ? "Выключить" : "Включить", c.PendingText);
     }
 }
