@@ -104,6 +104,7 @@ public partial class App : Application
                 Settings = new SettingsViewModel(new AppSettings
                 {
                     Theme = Enum.TryParse<BackgroundTheme>(Arg("--theme"), true, out var th) && Enum.IsDefined(th) ? th : BackgroundTheme.Night,
+                    Mode = Enum.TryParse<UiMode>(Arg("--mode"), true, out var md) && Enum.IsDefined(md) ? md : UiMode.Dark,
                 })
                 {
                     ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")),

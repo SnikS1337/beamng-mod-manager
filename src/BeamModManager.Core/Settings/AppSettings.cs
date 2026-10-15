@@ -8,6 +8,9 @@ namespace BeamModManager.Core.Settings;
 /// </summary>
 public enum BackgroundTheme { Night = 0, Deep = 1, Dusk = 2 }
 
+/// <summary>Оформление: тёмное (как на доске), светлое или как в Windows («Режим приложения» в параметрах цвета).</summary>
+public enum UiMode { Dark = 0, Light = 1, System = 2 }
+
 /// <summary>
 /// Настройки менеджера. Любое неизвестное, повреждённое или отсутствующее значение заменяется безопасным
 /// по умолчанию, в первую очередь загрузка модов: она включается только явным значением true в файле.
@@ -65,6 +68,9 @@ public sealed record AppSettings
     /// <summary>«Искры льда»: блики на кромках. Работают только при включённом инее.</summary>
     public bool FrostSparks { get; init; } = true;
 
+    /// <summary>«Оформление»: тёмное, светлое или как в Windows.</summary>
+    public UiMode Mode { get; init; } = UiMode.Dark;
+
     /// <summary>«Фон»: какой градиент за панелями.</summary>
     public BackgroundTheme Theme { get; init; } = BackgroundTheme.Night;
 
@@ -99,6 +105,7 @@ public sealed record AppSettings
     {
         FrostStrength = Math.Clamp(FrostStrength, 0, 2),
         Theme = Enum.IsDefined(Theme) ? Theme : BackgroundTheme.Night,
+        Mode = Enum.IsDefined(Mode) ? Mode : UiMode.Dark,
         ActiveModsWarnAbove = Math.Clamp(ActiveModsWarnAbove, 0, 1000),
         WindowWidth = WindowWidth is >= 1000 and <= 20000 ? WindowWidth : 0,       // обрывок или мусор: окно откроется по умолчанию
         WindowHeight = WindowHeight is >= 680 and <= 20000 ? WindowHeight : 0,

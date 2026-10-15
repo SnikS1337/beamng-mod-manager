@@ -37,19 +37,22 @@ public sealed class SiteToggle : Observable
 public sealed class ThemeTile : Observable
 {
     private readonly SettingsViewModel _owner;
-    internal ThemeTile(SettingsViewModel owner, ThemePalette palette) { _owner = owner; Palette = palette; }
 
-    public ThemePalette Palette { get; }
+    private readonly BackgroundTheme _theme;
+    internal ThemeTile(SettingsViewModel owner, BackgroundTheme theme) { _owner = owner; _theme = theme; }
+
+    /// <summary>Палитра темы в текущем оформлении: плитка показывает именно то, что будет за панелями.</summary>
+    public ThemePalette Palette => BackgroundThemes.Of(_theme, _owner.EffectiveLight);
     public string Name => Palette.Name;
     public string Note => Palette.Note;
 
     public bool IsSelected
     {
-        get => _owner.Current.Theme == Palette.Theme;
-        set { if (value) _owner.Theme = Palette.Theme; }
+        get => _owner.Current.Theme == _theme;
+        set { if (value) _owner.Theme = _theme; }
     }
 
-    internal void Changed() => Raise(nameof(IsSelected));
+    internal void Changed() { Raise(nameof(IsSelected)); Raise(nameof(Palette)); Raise(nameof(Name)); Raise(nameof(Note)); }
 }
 
 /// <summary>Пункт списка разделов слева.</summary>
@@ -67,7 +70,7 @@ public sealed class SettingsViewModel : Observable
     public SettingsViewModel(AppSettings initial)
     {
         _current = initial.Normalize();
-        Themes = BackgroundThemes.All.Select(p => new ThemeTile(this, p)).ToList();
+        Themes = Enum.GetValues<BackgroundTheme>().Select(t => new ThemeTile(this, t)).ToList();
         Sites = new[]
         {
             new SiteToggle(this, ModlandParser.SourceId, "Modland", "Большой каталог модов."),
@@ -151,6 +154,30 @@ public sealed class SettingsViewModel : Observable
     public bool FrostWeak { get => FrostStrength == 0; set { if (value) FrostStrength = 0; } }
     public bool FrostMedium { get => FrostStrength == 1; set { if (value) FrostStrength = 1; } }
     public bool FrostStrong { get => FrostStrength == 2; set { if (value) FrostStrength = 2; } }
+
+    /// <summary>Оформление: тёмное, светлое, как в Windows.</summary>
+    public UiMode Mode { get => _current.Mode; set => Update(s => s with { Mode = value }); }
+    public bool ModeDark { get => Mode == UiMode.Dark; set { if (value) Mode = UiMode.Dark; } }
+    public bool ModeLight { get => Mode == UiMode.Light; set { if (value) Mode = UiMode.Light; } }
+    public bool ModeSystem { get => Mode == UiMode.System; set { if (value) Mode = UiMode.System; } }
+
+    /// <summary>В Windows сейчас светлый режим приложений (задаёт окно; нужен для «Как в Windows»).</summary>
+    public bool SystemLight
+    {
+        get => _systemLight;
+        set
+        {
+            if (!Set(ref _systemLight, value)) return;
+            Raise(nameof(EffectiveLight));
+            foreach (var t in Themes) t.Changed();
+        }
+    }
+    private bool _systemLight;
+
+    /// <summary>Светлое ли оформление на самом деле (с учётом «Как в Windows»).</summary>
+    public bool EffectiveLight => LightFor(_current, _systemLight);
+
+    public static bool LightFor(AppSettings s, bool systemLight) => s.Mode == UiMode.Light || (s.Mode == UiMode.System && systemLight);
 
     /// <summary>Тема фона (три градиента, DESIGN.md 3.1). Плитки в окне — <see cref="Themes"/>.</summary>
     public BackgroundTheme Theme { get => _current.Theme; set => Update(s => s with { Theme = value }); }

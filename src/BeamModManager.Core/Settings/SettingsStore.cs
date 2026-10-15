@@ -72,6 +72,7 @@ public sealed class SettingsStore
                     FrostSparks = Bool(r, nameof(AppSettings.FrostSparks), d.FrostSparks, warnings),
                     // прежние «Background» (фото), «BackgroundDim», «BackgroundImage» больше не читаются: фото убрано
                     Theme = (BackgroundTheme)Int(r, nameof(AppSettings.Theme), (int)d.Theme, warnings),
+                    Mode = (UiMode)Int(r, nameof(AppSettings.Mode), (int)d.Mode, warnings),
                     UiAnimations = Bool(r, nameof(AppSettings.UiAnimations), d.UiAnimations, warnings),
                     AnimatedBackground = Bool(r, nameof(AppSettings.AnimatedBackground), d.AnimatedBackground, warnings),
                     Fireflies = Bool(r, nameof(AppSettings.Fireflies), d.Fireflies, warnings),
