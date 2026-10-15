@@ -31,8 +31,8 @@ public sealed record AppSettings
     public bool AutoCheckOnStart { get; init; } = true;
 
     /// <summary>
-    /// Проверять при запуске, не вышла ли новая версия самой программы (по умолчанию да). Выключатель — в будущем разделе
-    /// «Настройки»; по кнопке «Проверить» проверка работает и при выключенной настройке.
+    /// Проверять при запуске, не вышла ли новая версия самой программы (по умолчанию да). Выключатель — в «Настройки →
+    /// Обновления»; кнопка «Проверить сейчас» там же работает и при выключенной настройке.
     /// </summary>
     public bool CheckAppUpdates { get; init; } = true;
 
@@ -64,6 +64,12 @@ public sealed record AppSettings
 
     /// <summary>«Что за панелями»: фото, размытое фото или один цвет.</summary>
     public BackgroundMode Background { get; init; } = BackgroundMode.Photo;
+
+    /// <summary>
+    /// «Своё фото» за панелями: копия выбранной картинки в папке программы. null — фото нет (за панелями градиент):
+    /// своей фотографии у программы нет, образец из макета в неё не входит (DESIGN.md раздел 9).
+    /// </summary>
+    public string? BackgroundImage { get; init; }
 
     /// <summary>«Затемнение фона», 0–100 процентов (по умолчанию 35).</summary>
     public int BackgroundDim { get; init; } = 35;
@@ -106,6 +112,7 @@ public sealed record AppSettings
         SchemaVersion = CurrentSchema,
         ModsFolder = Clean(ModsFolder),
         UserFolder = Clean(UserFolder),
+        BackgroundImage = Clean(BackgroundImage),
         CheckTtlHours = Math.Clamp(CheckTtlHours, 1, 168),
         AutoCheckEveryHours = AutoCheckEveryHours <= 0 ? 0 : Math.Clamp(AutoCheckEveryHours, 1, 168),
         KeepBackups = Math.Clamp(KeepBackups, 1, 20),

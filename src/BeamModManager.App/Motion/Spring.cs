@@ -51,7 +51,14 @@ public sealed class SpringDriver
     private TimeSpan _last;
     private bool _on;
 
-    public static bool ReducedMotion => !System.Windows.SystemParameters.ClientAreaAnimation;
+    /// <summary>В Windows выключены эффекты анимации.</summary>
+    public static bool SystemReduced => !System.Windows.SystemParameters.ClientAreaAnimation;
+
+    /// <summary>«Анимации интерфейса» выключены в настройках программы.</summary>
+    public static bool AnimationsOff { get; set; }
+
+    /// <summary>Интерфейс не анимируется: капли, панели и карточки встают на место сразу. Фон этим не управляется.</summary>
+    public static bool ReducedMotion => SystemReduced || AnimationsOff;
 
     public Spring Add(Spring s, Action<double> apply)
     {
@@ -105,6 +112,7 @@ public sealed class SpringEase : EasingFunctionBase
 
     protected override double EaseInCore(double t)
     {
+        if (SpringDriver.ReducedMotion) return t > 0 ? 1 : 0; // анимации выключены: сразу в конец, без движения
         var w = 2 * Math.PI;
         var x = t * Settle;
         var zeta = Bounce >= 0 ? 1 - Bounce : 1 / (1 + Bounce);

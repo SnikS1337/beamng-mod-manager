@@ -20,6 +20,8 @@
     <c:PreviewBrushConverter x:Key="PreviewBrush"/>
     <c:PlaceholderIconConverter x:Key="PlaceholderIcon"/>
     <c:ChipDotConverter x:Key="ChipDot"/>
+    <c:EnumToVisibilityConverter x:Key="EnumToVis"/>
+    <c:EnumToBoolConverter x:Key="EnumToBool"/>
 
     <!-- Контурные иконки 22 px, линия 1.7 (DESIGN.md 3.6) -->
     <!-- «Моды»: сетка карточек (раздел про все моды, не только машины) -->
@@ -329,6 +331,252 @@
         <Setter Property="HorizontalAlignment" Value="Right"/>
         <Setter Property="VerticalAlignment" Value="Top"/>
         <Setter Property="Margin" Value="0,12,12,0"/>
+    </Style>
+
+    <!-- ═════ Настройки (DESIGN.md 5.1, доски «Настройки: …») ═════ -->
+
+    <!-- Заголовок группы: «Стекло», «Фон», «Движение» -->
+    <Style x:Key="GroupTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="#EBFFFFFF"/>
+        <Setter Property="Margin" Value="4,0,4,8"/>
+    </Style>
+
+    <!-- Пояснение под группой и в строках -->
+    <Style x:Key="Note" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="Foreground" Value="#E0FFFFFF"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="LineHeight" Value="17"/>
+    </Style>
+
+    <!-- Строка-включатель: вся строка нажимается, справа дорожка 52 × 32; недоступная тускнеет, но остаётся на месте -->
+    <Style x:Key="Switch" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <Border x:Name="Row" CornerRadius="18" Background="#17FFFFFF" Padding="16,12">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Right" Width="52" Height="32" Margin="16,0,0,0" VerticalAlignment="Center">
+                                <Border x:Name="Track" CornerRadius="16" Background="#38FFFFFF"/>
+                                <Ellipse x:Name="Knob" Width="26" Height="26" Fill="White" HorizontalAlignment="Left" Margin="3,0,0,0">
+                                    <Ellipse.Effect>
+                                        <DropShadowEffect BlurRadius="6" ShadowDepth="2" Direction="270" Color="#060A16" Opacity="0.4" RenderingBias="Performance"/>
+                                    </Ellipse.Effect>
+                                </Ellipse>
+                            </Grid>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{TemplateBinding Content}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <TextBlock Text="{TemplateBinding Tag}" Style="{StaticResource Note}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Knob" Property="Margin" Value="23,0,0,0"/>
+                            <Setter TargetName="Track" Property="Background">
+                                <Setter.Value>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#C6DFFF" Offset="0"/>
+                                        <GradientStop Color="#8FBFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="#21FFFFFF"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Строка с выбором справа (сегменты, ползунок, счётчик): заголовок и пояснение слева -->
+    <Style x:Key="OptionRow" TargetType="HeaderedContentControl">
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="HeaderedContentControl">
+                    <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,12">
+                        <DockPanel>
+                            <ContentPresenter DockPanel.Dock="Right" Margin="16,0,0,0" VerticalAlignment="Center"/>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{TemplateBinding Header}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <TextBlock Text="{TemplateBinding Tag}" Style="{StaticResource Note}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Сегменты: «Слабо | Средне | Сильно»; подложка и сами пункты -->
+    <Style x:Key="SegmentBox" TargetType="Border">
+        <Setter Property="CornerRadius" Value="19"/>
+        <Setter Property="Padding" Value="3"/>
+        <Setter Property="Background" Value="#1AFFFFFF"/>
+    </Style>
+    <Style x:Key="Segment" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="#C2FFFFFF"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="Medium"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="B" CornerRadius="15" Background="Transparent" Padding="14,6" Margin="1,0">
+                        <TextBlock Text="{TemplateBinding Content}" HorizontalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#1AFFFFFF"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="#3DFFFFFF"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Плитка готового набора: название и что в нём; выбранная светлее, с белой кромкой -->
+    <Style x:Key="PresetTile" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Margin" Value="0,0,8,8"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="B" CornerRadius="16" Background="#17FFFFFF" BorderBrush="#14FFFFFF" BorderThickness="1" Padding="14,9">
+                        <StackPanel>
+                            <TextBlock Text="{TemplateBinding Content}" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Text="{TemplateBinding Tag}" FontSize="12" Foreground="#E0FFFFFF" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#24FFFFFF"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="#33FFFFFF"/>
+                            <Setter TargetName="B" Property="BorderBrush" Value="#D9FFFFFF"/>
+                            <Setter TargetName="B" Property="BorderThickness" Value="1.5"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Пункт списка разделов настроек: таблетка 42 px, выбранный светлее и со свечением -->
+    <Style x:Key="SettingsNav" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="#E0FFFFFF"/>
+        <Setter Property="FontSize" Value="14.5"/>
+        <Setter Property="FontWeight" Value="Medium"/>
+        <Setter Property="Height" Value="42"/>
+        <Setter Property="Margin" Value="0,0,0,4"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="GroupName" Value="settingsNav"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="B" CornerRadius="21" Background="Transparent" Padding="16,0">
+                        <TextBlock Text="{TemplateBinding Content}" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#14FFFFFF"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="#33FFFFFF"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Круглая кнопка счётчика «−» / «+» -->
+    <Style x:Key="StepButton" TargetType="Button" BasedOn="{StaticResource Secondary}">
+        <Setter Property="Width" Value="34"/>
+        <Setter Property="Height" Value="34"/>
+        <Setter Property="FontSize" Value="17"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="B" CornerRadius="17" Background="#24FFFFFF" BorderBrush="#33FFFFFF" BorderThickness="1">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-2,0,0"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#38FFFFFF"/></Trigger>
+                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Background" Value="#1AFFFFFF"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.35"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Ползунок: дорожка 6 px, белый круг 22 px со свечением -->
+    <Style x:Key="ThinSlider" TargetType="Slider">
+        <Setter Property="Width" Value="150"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="IsMoveToPointEnabled" Value="True"/>
+        <Setter Property="IsSnapToTickEnabled" Value="True"/>
+        <Setter Property="TickFrequency" Value="1"/>
+        <Setter Property="SmallChange" Value="1"/>
+        <Setter Property="LargeChange" Value="10"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Slider">
+                    <Grid Height="26" Background="Transparent">
+                        <Border Height="6" CornerRadius="3" Background="#4DFFFFFF" VerticalAlignment="Center"/>
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="Slider.DecreaseLarge" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Border Height="6" CornerRadius="3" Background="#CCFFFFFF" VerticalAlignment="Center"/>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="Slider.IncreaseLarge" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Width="22" Height="22">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Ellipse Fill="White">
+                                                <Ellipse.Effect>
+                                                    <DropShadowEffect BlurRadius="12" ShadowDepth="0" Color="#AACDFF" Opacity="0.5" RenderingBias="Performance"/>
+                                                </Ellipse.Effect>
+                                            </Ellipse>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- Пружина для подъёма карточки и наведения (DESIGN_MOTION 5): 0,5 с, упругость 0,15; длительность ×1,6 -->

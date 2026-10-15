@@ -343,6 +343,17 @@ public static class GarageTests
             Assert.True(vm.ManyEnabledBanner is null, "выключено");
         });
 
+        t.Run("порог поменяли в настройках: строка пересчитывается сразу, без перечитывания папки", () =>
+        {
+            var (vm, _) = Make(Enumerable.Range(0, 12).Select(i => Mod("M" + i)).ToArray());
+            vm.Refresh();
+            Assert.True(vm.ManyEnabledBanner is null, "12 из 30 — нет");
+            vm.ManyEnabledThreshold = 10;
+            Assert.Eq("Включено 12 модов. Игра может грузиться дольше", vm.ManyEnabledBanner);
+            vm.ManyEnabledThreshold = 20;
+            Assert.True(vm.ManyEnabledBanner is null, "снова ниже порога");
+        });
+
         t.Run("картинка из фона держится, пока архив тот же; новая версия архива — сброс", () =>
         {
             var (vm, b) = Make(Mod("A"));

@@ -154,3 +154,22 @@ public sealed class ChipDotConverter : IValueConverter
         value is ChipKind.Update ? Blue : Amber;
     public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) => throw new NotSupportedException();
 }
+
+/// <summary>Видно, когда значение равно параметру (раздел настроек, режим): <c>ConverterParameter=Appearance</c>.</summary>
+public sealed class EnumToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is not null && string.Equals(value.ToString(), parameter as string, StringComparison.Ordinal) ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => Binding.DoNothing;
+}
+
+/// <summary>Отметка пункта-переключателя: равно ли значение параметру; выбор пункта ставит значение.</summary>
+public sealed class EnumToBoolConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is not null && string.Equals(value.ToString(), parameter as string, StringComparison.Ordinal);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is true && parameter is string p ? Enum.Parse(targetType, p) : Binding.DoNothing;
+}

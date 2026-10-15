@@ -11,7 +11,9 @@ using System.Windows.Threading;
 using BeamModManager.App.Controls;
 using BeamModManager.App.Motion;
 using BeamModManager.App.Services;
+using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
+using BeamModManager.Ui.Settings;
 using BeamModManager.Ui.Previews;
 
 namespace BeamModManager.App;
@@ -22,7 +24,7 @@ public sealed class WindowHost
     public required IGarageBackend Backend { get; init; }
     public string? WallPath { get; init; }
     public PreviewLoader? Previews { get; init; }
-    /// <summary>«Указать папку»: показывает выбор папки и пересобирает гараж; null — не умеем (демо).</summary>
+    /// <summary>«Указать папку»: показывает выбор папки и записывает её в настройки (моды перечитываются по их событию); null — не умеем (демо).</summary>
     public Func<Window, bool>? PickFolder { get; init; }
     public Action<Window>? SaveWindow { get; init; }
     /// <summary>Сделать снимок окна в этот файл и закрыться (сборочная машина).</summary>
@@ -47,6 +49,13 @@ public sealed class WindowHost
     public BeamModManager.Ui.AppUpdate.UpdateBanner? Banner { get; set; }
     public double? ShotWidth { get; init; }
     public double? ShotHeight { get; init; }
+    /// <summary>Экран «Настройки»: всё применяется сразу; файл пишет App по событию <see cref="SettingsViewModel.Changed"/>.</summary>
+    public required SettingsViewModel Settings { get; init; }
+    /// <summary>Открыть при запуске (снимки сборочной машины): "settings" — настройки.</summary>
+    public string? StartPage { get; init; }
+    /// <summary>«Выбрать фото» для фона: диалог, копия в папку программы, запись в настройки; null — не умеем (демо).</summary>
+    public Func<Window, bool>? PickWallpaper { get; init; }
+    public SettingsSection StartSection { get; init; }
 }
 
 public partial class MainWindow : Window
@@ -104,9 +113,14 @@ public partial class MainWindow : Window
         }
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
-        var wall = Services.Backdrop.LoadBlurred(host.WallPath);
-        if (wall is not null) { Wall.Source = wall; Wall.Visibility = Visibility.Visible; }
-        _motion = new BackgroundMotion(this, WallScale, WallMove, GradeMove, Lights);
+        _motion = new BackgroundMotion(this, WallScale, WallMove, GradeMove, Lights, Flies);
+        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel }.Select(g => (G: g, Blur: g.Blur, Tint: g.Tint)).ToArray();
+        SettingsPanel.DataContext = host.Settings;
+        host.Settings.Section = host.StartSection;
+        host.Settings.Changed += OnSettingsChanged;
+        _folderKey = FolderKey(host.Settings.Current);
+        ApplyLook(host.Settings.Current);
+        SettingsPanel.SizeChanged += (_, _) => AdaptSettings();
 
         vm.PropertyChanged += Vm_PropertyChanged;
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); };
@@ -159,6 +173,7 @@ public partial class MainWindow : Window
         if (_host.Banner is { } banner)
         {
             UpdateBox.DataContext = banner;
+            SettingsUpdateBox.DataContext = banner;
             if (_host.CheckUpdatesOnStart)
                 Dispatcher.BeginInvoke(async () =>
                 {
@@ -166,6 +181,7 @@ public partial class MainWindow : Window
                     if (IsLoaded) await banner.CheckOnStartAsync(_closing.Token);
                 }, DispatcherPriority.ApplicationIdle);
         }
+        if (_host.StartPage == "settings") NavSettings.IsChecked = true;
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
         if (_host.ShotPath is not null) Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, TakeShot);
     }
@@ -239,9 +255,78 @@ public partial class MainWindow : Window
         else if (running && _vm.HasPending && !_liveTimer.IsEnabled) _vm.TickLive(); // помощник мог появиться позже: передадим ещё раз
     }
 
-    /// <summary>Фон движется, только когда окно на виду, в фокусе и игра не запущена (DESIGN.md раздел 8, «Бюджет»).</summary>
-    private void UpdateMotion() =>
-        _motion.SetRunning(IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && _host.ShotPath is null);
+    /// <summary>
+    /// Фон движется, только когда окно на виду, в фокусе и игра не запущена (DESIGN.md раздел 8, «Бюджет»), и только то,
+    /// что включено в настройках. При фоне «Цвет» двигать нечего.
+    /// </summary>
+    private void UpdateMotion()
+    {
+        var s = _host.Settings.Current;
+        var live = IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && _host.ShotPath is null;
+        var photo = s.Background != BackgroundMode.SolidColor;
+        _motion.SetRunning(live && photo && s.AnimatedBackground, live && photo && s.Fireflies);
+    }
+
+    // ───────────── внешний вид из настроек (DESIGN.md 5.1) ─────────────
+
+    private readonly (Glass G, double Blur, Brush Tint)[] _glass;
+    private readonly Dictionary<string, BitmapSource?> _walls = new();
+    private string _folderKey;
+
+    /// <summary>Матовое стекло (DESIGN.md 3.2): размытие 26 px, плотная подложка.</summary>
+    private static readonly Brush MatteTint = Frozen(new SolidColorBrush(Color.FromArgb(0xA8, 34, 46, 68)));
+
+    private static string FolderKey(AppSettings s) => $"{s.ModsFolder}|{s.UserFolder}|{s.KeepBackups}";
+
+    private void OnSettingsChanged(AppSettings s)
+    {
+        ApplyLook(s);
+        _vm.ManyEnabledThreshold = s.ActiveModsWarnAbove;
+        // папку уже переключила программа (App подписана раньше окна): перечитываем моды
+        var key = FolderKey(s);
+        if (key != _folderKey) { _folderKey = key; if (IsLoaded) Refresh(); }
+    }
+
+    /// <summary>Применяет внешний вид сразу, без перезапуска: стекло, иней, фон, затемнение, движение.</summary>
+    private void ApplyLook(AppSettings s)
+    {
+        SpringDriver.AnimationsOff = !s.UiAnimations;
+        Resources["FrostOpacity"] = s.Frost ? s.FrostStrength switch { 0 => 0.45, 2 => 1.0, _ => 0.75 } : 0.0;
+
+        var matte = !s.LiquidGlass;
+        foreach (var (g, blur, tint) in _glass)
+        {
+            g.Blur = matte ? 26 : blur;
+            g.Tint = matte ? MatteTint : tint;
+        }
+
+        var photo = s.Background != BackgroundMode.SolidColor;
+        var wall = photo ? WallImage(s.BackgroundImage ?? _host.WallPath, s.Background == BackgroundMode.BlurredPhoto ? 40 : 16) : null;
+        Wall.Source = wall;
+        Wall.Visibility = wall is null ? Visibility.Collapsed : Visibility.Visible;
+        GradeLayer.Visibility = Lights.Visibility = photo ? Visibility.Visible : Visibility.Collapsed;
+        Flies.Visibility = photo && s.Fireflies ? Visibility.Visible : Visibility.Collapsed;
+
+        // 35 % — как на доске (только градиент); меньше — градиент слабее, больше — сверху ровный тёмный слой
+        var dim = photo ? s.BackgroundDim : 35;
+        Shade.Opacity = Math.Min(1, dim / 35.0);
+        ShadeExtra.Opacity = dim > 35 ? (dim - 35) / 65.0 * 0.7 : 0;
+
+        UpdateMotion();
+    }
+
+    /// <summary>Фото-фон с нужным размытием; размывается один раз и запоминается (переключать туда-обратно дёшево).</summary>
+    private BitmapSource? WallImage(string? path, double blur)
+    {
+        if (path is null) return null;
+        var key = $"{blur}|{path}";
+        if (!_walls.TryGetValue(key, out var img))
+        {
+            if (_walls.Count > 4) _walls.Clear(); // прежние фото больше не нужны
+            _walls[key] = img = Services.Backdrop.LoadBlurred(path, blur);
+        }
+        return img;
+    }
 
     // ───────────── окно ─────────────
 
@@ -313,6 +398,7 @@ public partial class MainWindow : Window
     {
         var avail = TopBar.ActualWidth - 34;
         if (avail <= 0) return;
+        if (NavGarage.IsChecked != true) { SectionTitle.Visibility = Visibility.Visible; return; } // кроме заголовка там ничего нет
         // ширины меряем по тексту, а не по раскладке: у скрытого элемента она нулевая, и панель прыгала бы
         // между «влезает» и «не влезает» (заголовок то показывается, то прячется)
         FilterBox.Measure(new Size(double.PositiveInfinity, 52));
@@ -411,12 +497,18 @@ public partial class MainWindow : Window
         var rb = (RadioButton)sender;
         _springs.To(_navDrop, Canvas.GetTop(rb), instant: !IsLoaded);
         var garage = rb == NavGarage;
+        var settings = rb == NavSettings;
         if (!garage) _vm.Selected = null; // правая панель — про мод из гаража, в других разделах ей не место
         SectionTitle.Text = (string)rb.Content;
         Scroller.Visibility = garage ? Visibility.Visible : Visibility.Collapsed;
         EmptyBox.Visibility = garage && _vm.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
-        SoonBox.Visibility = garage ? Visibility.Collapsed : Visibility.Visible;
+        SoonBox.Visibility = garage || settings ? Visibility.Collapsed : Visibility.Visible;
+        SettingsPanel.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
         SoonTitle.Text = (string)rb.Content;
+        // фильтры, поиск и число модов — про список модов; в других разделах им не место
+        var gv = garage ? Visibility.Visible : Visibility.Collapsed;
+        FilterBox.Visibility = SearchField.Visibility = CountLabel.Visibility = gv;
+        if (garage) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         if (garage) EmptyBox.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(GarageViewModel.Empty)) { Converter = (System.Windows.Data.IValueConverter)FindResource("NullToCollapsed") });
     }
 
@@ -478,6 +570,42 @@ public partial class MainWindow : Window
     private void UpdateAct_Click(object sender, RoutedEventArgs e) => _host.Banner?.Act(_closing.Token);
     private void UpdateLater_Click(object sender, RoutedEventArgs e) => _host.Banner?.Dismiss();
 
+    // ───────────── настройки ─────────────
+
+    /// <summary>Внешний вид в две колонки, на узком окне в одну (как на доске при 1440 и на 1000–1100).</summary>
+    private void AdaptSettings()
+    {
+        var one = SettingsScroll.ActualWidth > 0 && SettingsScroll.ActualWidth < 780;
+        Grid.SetRow(AppearanceRight, one ? 1 : 0);
+        Grid.SetColumn(AppearanceRight, one ? 0 : 1);
+        Grid.SetColumnSpan(AppearanceLeft, one ? 2 : 1);
+        Grid.SetColumnSpan(AppearanceRight, one ? 2 : 1);
+        Grid.SetRow(AppearanceFoot, one ? 2 : 1);
+        AppearanceLeft.Margin = one ? new Thickness(0) : new Thickness(0, 0, 14, 0);
+        AppearanceRight.Margin = one ? new Thickness(0) : new Thickness(14, 0, 0, 0);
+        AppearanceRightCol.Width = one ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+    }
+
+    private void ResetLook_Click(object sender, RoutedEventArgs e) => _host.Settings.ResetAppearance();
+    private void PickWall_Click(object sender, RoutedEventArgs e) => _host.PickWallpaper?.Invoke(this);
+    private void RemoveWall_Click(object sender, RoutedEventArgs e) => _host.Settings.RemoveBackgroundImage();
+    private void LessWarn_Click(object sender, RoutedEventArgs e) => _host.Settings.LessWarn();
+    private void MoreWarn_Click(object sender, RoutedEventArgs e) => _host.Settings.MoreWarn();
+    private void LessBackups_Click(object sender, RoutedEventArgs e) => _host.Settings.LessBackups();
+    private void MoreBackups_Click(object sender, RoutedEventArgs e) => _host.Settings.MoreBackups();
+    private void AutoFolder_Click(object sender, RoutedEventArgs e) => _host.Settings.UseAutoFolder();
+    private void CheckApp_Click(object sender, RoutedEventArgs e) => _host.Banner?.CheckNowAsync(_closing.Token);
+
+    // папку меняют настройки: моды перечитываются по их событию (OnSettingsChanged), здесь только диалог
+    private void PickFolder_Click(object sender, RoutedEventArgs e) => _host.PickFolder?.Invoke(this);
+
+    private void OpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_host.Settings.ModsFolderPath is not { } dir || !Directory.Exists(dir)) return;
+        try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = false }); }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException) { }
+    }
+
     private void OpenPage_Click(object sender, RoutedEventArgs e)
     {
         if (_vm.Details?.PageUrl is not { } url || url.Scheme is not ("https" or "http")) return;
@@ -502,7 +630,7 @@ public partial class MainWindow : Window
         switch (_vm.Empty?.Action)
         {
             case EmptyAction.PickFolder:
-                if (_host.PickFolder?.Invoke(this) == true) Refresh();
+                _host.PickFolder?.Invoke(this);
                 break;
             case EmptyAction.ShowAll: _vm.Filter = GarageFilter.All; break;
             case EmptyAction.OpenSearch:
