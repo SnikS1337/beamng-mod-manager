@@ -11,6 +11,14 @@
     <SolidColorBrush x:Key="Danger" Color="#FFB8B0"/>
     <SolidColorBrush x:Key="DataBlock" Color="#57080E1C"/>
     <SolidColorBrush x:Key="DataLine" Color="#17FFFFFF"/>
+    <!-- строки и блоки на стекле (доска «ледяное стекло»): тёмная подложка rgba(8,14,28,.34) и тонкий свет сверху -->
+    <SolidColorBrush x:Key="RowFill" Color="#57080E1C"/>
+    <SolidColorBrush x:Key="RowFillHover" Color="#6E0C1428"/>
+    <LinearGradientBrush x:Key="RowRim" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#2EFFFFFF" Offset="0"/>
+        <GradientStop Color="#14FFFFFF" Offset="0.25"/>
+        <GradientStop Color="#14FFFFFF" Offset="1"/>
+    </LinearGradientBrush>
     <SolidColorBrush x:Key="FocusRing" Color="#FFFFFF"/>
 
     <c:NullToCollapsedConverter x:Key="NullToCollapsed"/>
@@ -22,6 +30,7 @@
     <c:ChipDotConverter x:Key="ChipDot"/>
     <c:EnumToVisibilityConverter x:Key="EnumToVis"/>
     <c:EnumToBoolConverter x:Key="EnumToBool"/>
+    <c:ThemeSwatchConverter x:Key="ThemeSwatch"/>
 
     <!-- Контурные иконки 22 px, линия 1.7 (DESIGN.md 3.6) -->
     <!-- «Моды»: сетка карточек (раздел про все моды, не только машины) -->
@@ -52,7 +61,9 @@
         <Setter Property="SnapsToDevicePixels" Value="False"/>
     </Style>
 
-    <!-- Стекло: копия сцены под панелью, подложка, блик сверху слева, светлая кромка (DESIGN.md 3.2) -->
+    <!-- Стекло (DESIGN.md 3.2, доска «Гараж»): копия сцены с лёгким размытием и преломлением у краёв (PART_Lens),
+         подложка, блик сверху слева, кромка-блик по карте, контур 1 px, иней по краям и искры льда. Кромку, иней и искры
+         окно считает под размер панели (Glass.cs). -->
     <Style TargetType="c:Glass">
         <Setter Property="Foreground" Value="{StaticResource Text}"/>
         <Setter Property="Focusable" Value="False"/>
@@ -62,14 +73,18 @@
                     <Grid>
                         <Border x:Name="ShadowHost" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" Background="#0B1222">
                             <Border.Effect>
-                                <DropShadowEffect BlurRadius="48" ShadowDepth="18" Direction="270" Color="#080C18" Opacity="0.38" RenderingBias="Performance"/>
+                                <DropShadowEffect BlurRadius="56" ShadowDepth="22" Direction="270" Color="#080C18" Opacity="0.38" RenderingBias="Performance"/>
                             </Border.Effect>
                         </Border>
                         <Border x:Name="PART_Clip" ClipToBounds="True">
-                            <Rectangle x:Name="PART_Sample" IsHitTestVisible="False"/>
+                            <Grid x:Name="PART_Lens">
+                                <Border ClipToBounds="True">
+                                    <Rectangle x:Name="PART_Sample" IsHitTestVisible="False"/>
+                                </Border>
+                            </Grid>
                         </Border>
                         <Border CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" Background="{TemplateBinding Tint}"/>
-                        <Border CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" IsHitTestVisible="False">
+                        <Border x:Name="PART_Highlight" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" IsHitTestVisible="False">
                             <Border.Background>
                                 <LinearGradientBrush StartPoint="0.1,0" EndPoint="0.3,1">
                                     <GradientStop Color="#33FFFFFF" Offset="0"/>
@@ -78,15 +93,11 @@
                                 </LinearGradientBrush>
                             </Border.Background>
                         </Border>
-                        <Border CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" BorderThickness="1" IsHitTestVisible="False">
-                            <Border.BorderBrush>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#73EBF6FF" Offset="0"/>
-                                    <GradientStop Color="#33CDE6FF" Offset="0.35"/>
-                                    <GradientStop Color="#1FFFFFFF" Offset="1"/>
-                                </LinearGradientBrush>
-                            </Border.BorderBrush>
-                        </Border>
+                        <Image x:Name="PART_Rim" Stretch="Fill" IsHitTestVisible="False"/>
+                        <Border x:Name="PART_Contour" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" BorderThickness="1"
+                                BorderBrush="#1FFFFFFF" IsHitTestVisible="False"/>
+                        <Image x:Name="PART_Ice" Stretch="Fill" IsHitTestVisible="False"/>
+                        <Canvas x:Name="PART_Sparks" IsHitTestVisible="False" ClipToBounds="False"/>
                         <ContentPresenter Margin="{TemplateBinding Padding}"/>
                     </Grid>
                     <ControlTemplate.Triggers>
@@ -359,7 +370,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
-                    <Border x:Name="Row" CornerRadius="18" Background="#17FFFFFF" Padding="16,12">
+                    <Border x:Name="Row" CornerRadius="18" Background="{StaticResource RowFill}" BorderBrush="{StaticResource RowRim}" BorderThickness="1" Padding="16,12">
                         <DockPanel>
                             <Grid DockPanel.Dock="Right" Width="52" Height="32" Margin="16,0,0,0" VerticalAlignment="Center">
                                 <Border x:Name="Track" CornerRadius="16" Background="#38FFFFFF"/>
@@ -387,7 +398,7 @@
                                 </Setter.Value>
                             </Setter>
                         </Trigger>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="#21FFFFFF"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{StaticResource RowFillHover}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -401,7 +412,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="HeaderedContentControl">
-                    <Border CornerRadius="18" Background="#17FFFFFF" Padding="16,12">
+                    <Border CornerRadius="18" Background="{StaticResource RowFill}" BorderBrush="{StaticResource RowRim}" BorderThickness="1" Padding="16,12">
                         <DockPanel>
                             <ContentPresenter DockPanel.Dock="Right" Margin="16,0,0,0" VerticalAlignment="Center"/>
                             <StackPanel VerticalAlignment="Center">
@@ -422,7 +433,7 @@
     <Style x:Key="SegmentBox" TargetType="Border">
         <Setter Property="CornerRadius" Value="19"/>
         <Setter Property="Padding" Value="3"/>
-        <Setter Property="Background" Value="#1AFFFFFF"/>
+        <Setter Property="Background" Value="#57080E1C"/>
     </Style>
     <Style x:Key="Segment" TargetType="RadioButton">
         <Setter Property="Foreground" Value="#C2FFFFFF"/>
@@ -458,18 +469,58 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
-                    <Border x:Name="B" CornerRadius="16" Background="#17FFFFFF" BorderBrush="#14FFFFFF" BorderThickness="1" Padding="14,9">
+                    <Border x:Name="B" CornerRadius="16" Background="{StaticResource RowFill}" BorderBrush="{StaticResource RowRim}" BorderThickness="1" Padding="14,9">
                         <StackPanel>
                             <TextBlock Text="{TemplateBinding Content}" FontSize="14" FontWeight="SemiBold"/>
                             <TextBlock Text="{TemplateBinding Tag}" FontSize="12" Foreground="#E0FFFFFF" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#24FFFFFF"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="{StaticResource RowFillHover}"/></Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="B" Property="Background" Value="#33FFFFFF"/>
                             <Setter TargetName="B" Property="BorderBrush" Value="#D9FFFFFF"/>
                             <Setter TargetName="B" Property="BorderThickness" Value="1.5"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Плитка темы фона: образец самой темы (основа и два пятна), подпись внизу; выбранная — с белой кромкой -->
+    <Style x:Key="ThemeTile" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Height" Value="76"/>
+        <Setter Property="Margin" Value="0,0,8,0"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Grid>
+                        <Border CornerRadius="16" Background="{Binding Palette, Converter={StaticResource ThemeSwatch}, ConverterParameter=base}"/>
+                        <Border CornerRadius="16" Background="{Binding Palette, Converter={StaticResource ThemeSwatch}, ConverterParameter=blob0}"/>
+                        <Border CornerRadius="16" Background="{Binding Palette, Converter={StaticResource ThemeSwatch}, ConverterParameter=blob2}"/>
+                        <Border CornerRadius="16">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#00080E1C" Offset="0.35"/>
+                                    <GradientStop Color="#99080E1C" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <StackPanel VerticalAlignment="Bottom" Margin="12,0,10,9">
+                            <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Note}" FontSize="11.5" Foreground="#D9FFFFFF" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                        <Border x:Name="Rim" CornerRadius="16" BorderThickness="1" BorderBrush="#33FFFFFF"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Rim" Property="BorderBrush" Value="#73FFFFFF"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Rim" Property="BorderBrush" Value="#E6FFFFFF"/>
+                            <Setter TargetName="Rim" Property="BorderThickness" Value="2"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

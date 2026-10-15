@@ -5,7 +5,7 @@ using System.Windows.Media.Effects;
 namespace BeamModManager.App.Controls;
 
 /// <summary>
-/// Преломление «жидкого стекла» по краям панели (DESIGN.md 3.2, шейдер Shaders/Glass.fx, PS 3.0).
+/// Преломление «жидкого стекла» по краям панели (DESIGN.md 3.2, шейдер Shaders/Glass.fx, PS 2.0: WPF рисует его и без видеокарты).
 /// Все длины (<see cref="Size"/>, <see cref="Radius"/>, <see cref="Lens"/>, <see cref="Strength"/>) в одних единицах,
 /// обычно в точках WPF: шейдер работает с их отношением. <see cref="Strength"/> = 0 — без преломления.
 /// Перед использованием проверить <see cref="IsAvailable"/>; если false — матовое стекло без шейдера.
@@ -59,8 +59,8 @@ public sealed class RefractionEffect : ShaderEffect
     /// <summary>Яркость, как brightness() в CSS: 1 — без изменений.</summary>
     public double Brightness { get => (double)GetValue(BrightnessProperty); set => SetValue(BrightnessProperty, value); }
 
-    /// <summary>Шейдер загрузился и видеокарта умеет PS 3.0. Звать из потока окна.</summary>
-    public static bool IsAvailable => RenderCapability.IsPixelShaderVersionSupported(3, 0) && Shader() is not null;
+    /// <summary>Шейдер загрузился. PS 2.0 WPF рисует на видеокарте, а без неё программно. Звать из потока окна.</summary>
+    public static bool IsAvailable => Shader() is not null;
 
     public RefractionEffect()
     {

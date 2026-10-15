@@ -81,7 +81,7 @@ public sealed class ModInstaller
 {
     private readonly ModLayout _layout;
     private readonly Func<DateTimeOffset> _now;
-    private readonly int _keepBackups;
+    private readonly Func<int> _keepBackups;
 
     // Операции меняют файлы в общих папках, а вызывать их могут из разных потоков (окно, фоновое обновление, профиль).
     // Одна блокировка на процесс: проверка «файла нет» и перемещение не должны разъезжаться.
@@ -90,11 +90,18 @@ public sealed class ModInstaller
     private static readonly char[] InvalidNameChars = { '<', '>', ':', '"', '/', '\\', '|', '?', '*' };
 
     public ModInstaller(ModLayout layout, Func<DateTimeOffset>? now = null, int keepBackups = 3)
+        : this(layout, now, () => keepBackups) { }
+
+    /// <summary>Число копий читается при каждой уборке: его можно менять в настройках без пересоздания установщика.</summary>
+    public ModInstaller(ModLayout layout, Func<DateTimeOffset>? now, Func<int> keepBackups)
     {
         _layout = layout;
         _now = now ?? (() => DateTimeOffset.UtcNow);
-        _keepBackups = Math.Max(1, keepBackups); // 0 стёр бы только что сделанную копию, а «удаление» стало бы окончательным
+        _keepBackups = keepBackups;
     }
+
+    // 0 стёр бы только что сделанную копию, а «удаление» стало бы окончательным
+    private int KeepBackups => Math.Max(1, _keepBackups());
 
     private static readonly HashSet<string> ReservedNames = new(StringComparer.Ordinal)
     {
@@ -667,7 +674,7 @@ public sealed class ModInstaller
         try
         {
             var all = Backups(name).ToList();
-            foreach (var old in all.Take(Math.Max(0, all.Count - _keepBackups))) File.Delete(old);
+            foreach (var old in all.Take(Math.Max(0, all.Count - KeepBackups))) File.Delete(old);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }

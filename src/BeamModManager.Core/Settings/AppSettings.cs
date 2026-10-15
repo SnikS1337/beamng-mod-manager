@@ -2,8 +2,11 @@ using BeamModManager.Core.Updates;
 
 namespace BeamModManager.Core.Settings;
 
-/// <summary>«Что за панелями»: фото, размытое фото, один цвет.</summary>
-public enum BackgroundMode { Photo = 0, BlurredPhoto = 1, SolidColor = 2 }
+/// <summary>
+/// Фон за панелями: один из трёх тёмных градиентов (решено 2026-10-15 вместо фотографии). Цвета — в
+/// BeamModManager.Ui.Look.BackgroundThemes; номера сохраняются в файле, их не меняем.
+/// </summary>
+public enum BackgroundTheme { Night = 0, Deep = 1, Dusk = 2 }
 
 /// <summary>
 /// Настройки менеджера. Любое неизвестное, повреждённое или отсутствующее значение заменяется безопасным
@@ -62,22 +65,13 @@ public sealed record AppSettings
     /// <summary>«Искры льда»: блики на кромках. Работают только при включённом инее.</summary>
     public bool FrostSparks { get; init; } = true;
 
-    /// <summary>«Что за панелями»: фото, размытое фото или один цвет.</summary>
-    public BackgroundMode Background { get; init; } = BackgroundMode.Photo;
-
-    /// <summary>
-    /// «Своё фото» за панелями: копия выбранной картинки в папке программы. null — фото нет (за панелями градиент):
-    /// своей фотографии у программы нет, образец из макета в неё не входит (DESIGN.md раздел 9).
-    /// </summary>
-    public string? BackgroundImage { get; init; }
-
-    /// <summary>«Затемнение фона», 0–100 процентов (по умолчанию 35).</summary>
-    public int BackgroundDim { get; init; } = 35;
+    /// <summary>«Фон»: какой градиент за панелями.</summary>
+    public BackgroundTheme Theme { get; init; } = BackgroundTheme.Night;
 
     /// <summary>«Анимации интерфейса»: капля-выбор, появление и подъём карточек.</summary>
     public bool UiAnimations { get; init; } = true;
 
-    /// <summary>«Анимированный фон»: фото медленно меняет цвет.</summary>
+    /// <summary>«Анимированный фон»: по градиенту медленно плывут пятна света и цветная полоса.</summary>
     public bool AnimatedBackground { get; init; } = true;
 
     /// <summary>«Огоньки»: светлые точки над фоном.</summary>
@@ -88,7 +82,7 @@ public sealed record AppSettings
 
     // ---- Прочее
 
-    /// <summary>Предупреждать, когда включённых модов больше этого числа (по умолчанию 30, PLAN.md), 1–1000.</summary>
+    /// <summary>Предупреждать, когда включённых модов больше этого числа (по умолчанию 30, PLAN.md), 0–1000; 0 — не предупреждать.</summary>
     public int ActiveModsWarnAbove { get; init; } = 30;
 
     /// <summary>Подсказка первого запуска уже показана.</summary>
@@ -104,15 +98,13 @@ public sealed record AppSettings
     public AppSettings Normalize() => this with
     {
         FrostStrength = Math.Clamp(FrostStrength, 0, 2),
-        Background = Enum.IsDefined(Background) ? Background : BackgroundMode.Photo,
-        BackgroundDim = Math.Clamp(BackgroundDim, 0, 100),
-        ActiveModsWarnAbove = Math.Clamp(ActiveModsWarnAbove, 1, 1000),
+        Theme = Enum.IsDefined(Theme) ? Theme : BackgroundTheme.Night,
+        ActiveModsWarnAbove = Math.Clamp(ActiveModsWarnAbove, 0, 1000),
         WindowWidth = WindowWidth is >= 1000 and <= 20000 ? WindowWidth : 0,       // обрывок или мусор: окно откроется по умолчанию
         WindowHeight = WindowHeight is >= 680 and <= 20000 ? WindowHeight : 0,
         SchemaVersion = CurrentSchema,
         ModsFolder = Clean(ModsFolder),
         UserFolder = Clean(UserFolder),
-        BackgroundImage = Clean(BackgroundImage),
         CheckTtlHours = Math.Clamp(CheckTtlHours, 1, 168),
         AutoCheckEveryHours = AutoCheckEveryHours <= 0 ? 0 : Math.Clamp(AutoCheckEveryHours, 1, 168),
         KeepBackups = Math.Clamp(KeepBackups, 1, 20),

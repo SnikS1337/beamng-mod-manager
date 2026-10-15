@@ -7,7 +7,7 @@ using System.Windows.Shapes;
 namespace BeamModManager.App.Services;
 
 /// <summary>
-/// Само движется только фон (DESIGN_MOTION раздел 2): «дыхание» фото, плывущий градиент, пятна и огоньки, всё на 48 с.
+/// Само движется только фон (DESIGN_MOTION раздел 2): плывущая цветная полоса, пятна света и огоньки, всё на 48 с.
 /// Останавливается, когда окно не видно, не в фокусе или запущена игра; при «Уменьшить анимацию» в Windows не запускается.
 /// Фон и огоньки — две отдельные истории: в настройках они включаются по отдельности («Анимированный фон», «Огоньки»).
 /// </summary>
@@ -15,6 +15,10 @@ public sealed class BackgroundMotion
 {
     private readonly Part _bg, _flies;
     private readonly FrameworkElement _owner;
+    private readonly List<RadialGradientBrush> _blobs = new();
+
+    /// <summary>Кисти трёх пятен (не заморожены): их цвет меняется вместе с темой фона.</summary>
+    public IReadOnlyList<RadialGradientBrush> Blobs => _blobs;
 
     /// <summary>Одна история со своим состоянием: ещё не начата, идёт, на паузе.</summary>
     private sealed class Part
@@ -23,7 +27,7 @@ public sealed class BackgroundMotion
         public bool Started, Paused;
     }
 
-    public BackgroundMotion(FrameworkElement owner, ScaleTransform wallScale, TranslateTransform wallMove, TranslateTransform gradeMove, Canvas lights, Canvas flies)
+    public BackgroundMotion(FrameworkElement owner, TranslateTransform gradeMove, Canvas lights, Canvas flies)
     {
         _owner = owner;
         _bg = new Part();
@@ -47,10 +51,6 @@ public sealed class BackgroundMotion
             sb.Children.Add(a);
         }
 
-        Anim(wallScale, ScaleTransform.ScaleXProperty, 1.04, 1.12, 48);
-        Anim(wallScale, ScaleTransform.ScaleYProperty, 1.04, 1.12, 48);
-        Anim(wallMove, TranslateTransform.XProperty, 0, -22, 48);
-        Anim(wallMove, TranslateTransform.YProperty, 0, -14, 48);
         Anim(gradeMove, TranslateTransform.XProperty, 0, 1, 48, reverse: false);
 
         // три светлых пятна (200°, 250°, 30°) со сдвигом фазы
@@ -62,10 +62,11 @@ public sealed class BackgroundMotion
         };
         foreach (var b in blobs)
         {
+            RadialGradientBrush blob;
             var e = new Ellipse
             {
                 Width = b.R * 2, Height = b.R * 2,
-                Fill = new RadialGradientBrush(b.C, Color.FromArgb(0, b.C.R, b.C.G, b.C.B)) { GradientOrigin = new Point(0.5, 0.5) },
+                Fill = blob = new RadialGradientBrush(b.C, Color.FromArgb(0, b.C.R, b.C.G, b.C.B)) { GradientOrigin = new Point(0.5, 0.5) },
                 IsHitTestVisible = false,
                 CacheMode = new BitmapCache(0.5),
             };
@@ -74,6 +75,7 @@ public sealed class BackgroundMotion
             Canvas.SetLeft(e, b.X);
             Canvas.SetTop(e, b.Y);
             lights.Children.Add(e);
+            _blobs.Add(blob);
             Anim(t, TranslateTransform.XProperty, 0, b.Dx, 48, delay: b.Delay);
             Anim(t, TranslateTransform.YProperty, 0, b.Dy, 48, delay: b.Delay);
         }

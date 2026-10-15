@@ -23,4 +23,18 @@ internal static class Native
         var dark = 1;
         _ = DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
     }
+
+    /// <summary>
+    /// В Windows выключены «Эффекты прозрачности» (Параметры → Персонализация → Цвета). Тогда стекло плоское.
+    /// Нет ключа или нет прав — считаем, что прозрачность включена.
+    /// </summary>
+    public static bool TransparencyOff()
+    {
+        try
+        {
+            using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return k?.GetValue("EnableTransparency") is int v && v == 0;
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or System.IO.IOException) { return false; }
+    }
 }

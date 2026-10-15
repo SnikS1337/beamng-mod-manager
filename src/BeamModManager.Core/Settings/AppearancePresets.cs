@@ -7,35 +7,31 @@ public static class AppearancePresets
 {
     public static IReadOnlyList<AppearancePreset> All { get; } = new[] { AppearancePreset.Ice, AppearancePreset.Glass, AppearancePreset.Matte, AppearancePreset.Light };
 
-    /// <summary>Применяет набор к настройкам. Остальные настройки (папки, проверки, окно) не затрагиваются.</summary>
+    /// <summary>Применяет набор к настройкам. Остальные настройки (фон, папки, проверки, окно) не затрагиваются: фон — выбор цвета, а не «тяжести».</summary>
     public static AppSettings Apply(AppSettings s, AppearancePreset preset) => (preset switch
     {
         // «Лёд»: стекло, иней, фон, всё включено (по умолчанию).
         AppearancePreset.Ice => s with
         {
             LiquidGlass = true, Frost = true, FrostStrength = 1, FrostSparks = true,
-            Background = BackgroundMode.Photo, BackgroundDim = 35,
             UiAnimations = true, AnimatedBackground = true, Fireflies = true,
         },
         // «Стекло»: преломление есть, инея нет.
         AppearancePreset.Glass => s with
         {
             LiquidGlass = true, Frost = false, FrostStrength = 1, FrostSparks = true,
-            Background = BackgroundMode.Photo, BackgroundDim = 35,
             UiAnimations = true, AnimatedBackground = true, Fireflies = true,
         },
         // «Матовое»: обычное матовое стекло без преломления и инея, движение остаётся.
         AppearancePreset.Matte => s with
         {
             LiquidGlass = false, Frost = false, FrostStrength = 1, FrostSparks = true,
-            Background = BackgroundMode.Photo, BackgroundDim = 35,
             UiAnimations = true, AnimatedBackground = true, Fireflies = true,
         },
         // «Лёгкое»: ничего лишнего для слабых компьютеров.
         AppearancePreset.Light => s with
         {
             LiquidGlass = false, Frost = false, FrostStrength = 1, FrostSparks = false,
-            Background = BackgroundMode.Photo, BackgroundDim = 35,
             UiAnimations = false, AnimatedBackground = false, Fireflies = false, BackgroundTilt = false,
         },
         _ => s,
@@ -49,8 +45,7 @@ public static class AppearancePresets
         {
             var e = Apply(s, p);
             var frostSame = !e.Frost ? !s.Frost : s.Frost && s.FrostStrength == e.FrostStrength && s.FrostSparks == e.FrostSparks;
-            if (s.LiquidGlass == e.LiquidGlass && frostSame && s.Background == e.Background && s.BackgroundDim == e.BackgroundDim &&
-                s.UiAnimations == e.UiAnimations && s.AnimatedBackground == e.AnimatedBackground && s.Fireflies == e.Fireflies)
+            if (s.LiquidGlass == e.LiquidGlass && frostSame && s.UiAnimations == e.UiAnimations && s.AnimatedBackground == e.AnimatedBackground && s.Fireflies == e.Fireflies)
                 return p;
         }
         return null;

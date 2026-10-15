@@ -173,3 +173,47 @@ public sealed class EnumToBoolConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         value is true && parameter is string p ? Enum.Parse(targetType, p) : Binding.DoNothing;
 }
+
+/// <summary>
+/// Образец темы фона для плитки в настройках: параметр «base» — основа темы по диагонали, «blob0» / «blob2» —
+/// светлое пятно в углу. Кисти замораживаются и запоминаются: плиток три, тем три.
+/// </summary>
+public sealed class ThemeSwatchConverter : IValueConverter
+{
+    private static readonly Dictionary<(BeamModManager.Core.Settings.BackgroundTheme, string), Brush> Cache = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is not BeamModManager.Ui.Look.ThemePalette p || parameter is not string part) return null;
+        if (Cache.TryGetValue((p.Theme, part), out var cached)) return cached;
+        Brush b;
+        switch (part)
+        {
+            case "base":
+                b = new LinearGradientBrush(new GradientStopCollection
+                {
+                    new(ToColor(p.Base[0]), 0), new(ToColor(p.Base[1]), 0.55), new(ToColor(p.Base[2]), 1),
+                }, new Point(0, 0), new Point(0.4, 1));
+                break;
+            case "blob0":
+            case "blob2":
+                var c = ToColor(p.Blobs[part == "blob0" ? 0 : 2]);
+                var full = Color.FromArgb((byte)Math.Min(255, c.A * 2), c.R, c.G, c.B); // в маленькой плитке пятно ярче, иначе его не видно
+                b = new RadialGradientBrush(full, Color.FromArgb(0, c.R, c.G, c.B))
+                {
+                    Center = part == "blob0" ? new Point(0.15, 0.2) : new Point(0.85, 0.95),
+                    GradientOrigin = part == "blob0" ? new Point(0.15, 0.2) : new Point(0.85, 0.95),
+                    RadiusX = 0.75, RadiusY = 0.9,
+                };
+                break;
+            default: return null;
+        }
+        b.Freeze();
+        Cache[(p.Theme, part)] = b;
+        return b;
+    }
+
+    public static Color ToColor(uint argb) => Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => Binding.DoNothing;
+}

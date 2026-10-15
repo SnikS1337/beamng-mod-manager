@@ -48,7 +48,7 @@
              Text="fxc.exe не найден: используется готовый $(GlassShaderOutput)"/>
 
     <Exec Condition="Exists('$(FxcPath)')" WorkingDirectory="$(MSBuildProjectDirectory)"
-          Command="&quot;$(FxcPath)&quot; /nologo /T ps_3_0 /E main /O3 /Fo &quot;$(GlassShaderOutput)&quot; &quot;$(GlassShaderSource)&quot;"
+          Command="&quot;$(FxcPath)&quot; /nologo /T ps_2_0 /E main /O3 /Fo &quot;$(GlassShaderOutput)&quot; &quot;$(GlassShaderSource)&quot;"
           IgnoreStandardErrorWarningFormat="true" CustomErrorRegularExpression="error X\d+" StandardOutputImportance="high"/>
   </Target>
 
