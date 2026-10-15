@@ -101,7 +101,7 @@ public static class GarageTests
             Assert.Eq(3, vm.Cards.Count);
         });
 
-        t.Run("«Найти в гараже»: по словам, без регистра, «ё» = «е», и по имени файла", () =>
+        t.Run("«Найти мод»: по словам, без регистра, «ё» = «е», и по имени файла", () =>
         {
             var (vm, _) = Make(Mod("Ёлка Racing"), Mod("BMW M2 G87"), Mod("Lada"));
             vm.SearchText = "елка";
@@ -129,7 +129,7 @@ public static class GarageTests
         t.Run("пустые состояния из таблицы DESIGN_FLOWS 4", () =>
         {
             var (vm, b) = Make();
-            Assert.Eq("В гараже пока пусто", vm.Empty!.Title);
+            Assert.Eq("Модов пока нет", vm.Empty!.Title);
             Assert.Eq("Модов пока нет", vm.Summary);
             b.Folder = false; vm.Refresh();
             Assert.Eq(EmptyAction.PickFolder, vm.Empty!.Action);
