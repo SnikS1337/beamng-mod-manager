@@ -21,7 +21,7 @@ public static class Backdrop
             var bi = new BitmapImage();
             bi.BeginInit();
             bi.CacheOption = BitmapCacheOption.OnLoad;
-            bi.UriSource = new Uri(path, UriKind.Absolute);
+            bi.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
             bi.DecodePixelWidth = 1280; // размытому фону больше не нужно
             bi.EndInit();
             bi.Freeze();
@@ -37,7 +37,7 @@ public static class Backdrop
             rt.Freeze();
             return rt;
         }
-        catch (Exception e) when (e is IOException or NotSupportedException or UnauthorizedAccessException or ArgumentException or FileFormatException)
+        catch (Exception e) when (e is IOException or NotSupportedException or UnauthorizedAccessException or ArgumentException or FileFormatException or UriFormatException)
         {
             return null;
         }
