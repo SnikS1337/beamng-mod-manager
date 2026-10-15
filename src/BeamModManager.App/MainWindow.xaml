@@ -302,6 +302,30 @@
                     </ControlTemplate>
                 </ScrollViewer.Template>
                 <StackPanel Margin="0,84,0,28">
+                    <!-- самообновление: «Вышла новая версия» → «Обновить» → загрузка → перезапуск -->
+                    <Border x:Name="UpdateBox" CornerRadius="20" MinHeight="44" Margin="0,0,0,12" Padding="18,6,10,6" DataContext="{x:Null}"
+                            Visibility="{Binding Visible, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#3D6EB4FF" Offset="0"/>
+                                <GradientStop Color="#268FD0FF" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Grid>
+                            <DockPanel VerticalAlignment="Center">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource Secondary}" Height="32" MinWidth="110" Padding="14,0" Content="{Binding ActionLabel}" Click="UpdateAct_Click"
+                                            Visibility="{Binding ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
+                                    <Button Style="{StaticResource Link}" Content="Позже" Margin="8,0,0,0" Click="UpdateLater_Click"
+                                            Visibility="{Binding CanDismiss, Converter={StaticResource BoolToVis}}"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding Text}" VerticalAlignment="Center" FontSize="13.5" TextWrapping="Wrap"/>
+                            </DockPanel>
+                            <ProgressBar VerticalAlignment="Bottom" Height="3" Margin="0,0,8,-4" Minimum="0" Maximum="1" Value="{Binding Progress, Mode=OneWay, FallbackValue=0}"
+                                         Foreground="#E6FFFFFF" Background="#1FFFFFFF" BorderThickness="0"
+                                         Visibility="{Binding Progress, Converter={StaticResource NullToCollapsed}}"/>
+                        </Grid>
+                    </Border>
                     <Border CornerRadius="20" MinHeight="40" Background="#33FFB340" Margin="0,0,0,12" Padding="18,8"
                             Visibility="{Binding StorageWarning, Converter={StaticResource NullToCollapsed}}">
                         <TextBlock Text="{Binding StorageWarning}" VerticalAlignment="Center" FontSize="13.5" TextWrapping="Wrap"/>

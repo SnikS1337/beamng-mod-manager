@@ -381,6 +381,9 @@ public sealed class GarageViewModel : Observable
 
     // ───────────── тост ─────────────
 
+    /// <summary>Сообщение без «Отменить» (например, «Программа обновлена до 0.1.30»).</summary>
+    public void Notify(string text) => ShowToast(text, null);
+
     private void ShowToast(string text, Action? undo)
     {
         _undo = undo;

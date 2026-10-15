@@ -38,6 +38,13 @@ public sealed class WindowHost
     public Action<IReadOnlyDictionary<string, bool>>? SavePending { get; init; }
     /// <summary>Дописать библиотеку на диск при закрытии.</summary>
     public Func<bool>? Flush { get; init; }
+    /// <summary>Самообновление; null — недоступно (сборка для разработки, демо).</summary>
+    public BeamModManager.Core.AppUpdate.AppUpdater? Updater { get; init; }
+    public bool CheckUpdatesOnStart { get; init; }
+    /// <summary>Сказать при открытии окна (например, «Программа обновлена до 0.1.30»).</summary>
+    public string? StartupToast { get; set; }
+    /// <summary>Плашка «Вышла новая версия» (создаёт App).</summary>
+    public BeamModManager.Ui.AppUpdate.UpdateBanner? Banner { get; set; }
     public double? ShotWidth { get; init; }
     public double? ShotHeight { get; init; }
 }
@@ -138,6 +145,7 @@ public partial class MainWindow : Window
     }
 
     private bool _filterPlaced;
+    private readonly CancellationTokenSource _closing = new();
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -146,6 +154,17 @@ public partial class MainWindow : Window
         _gameTimer.Start();
         CheckGame();
         UpdateMotion();
+        if (_host.StartupToast is { } toast) _vm.Notify(toast);
+        if (_host.Banner is { } banner)
+        {
+            UpdateBox.DataContext = banner;
+            if (_host.CheckUpdatesOnStart)
+                Dispatcher.BeginInvoke(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5)); // не мешаем запуску
+                    if (IsLoaded) await banner.CheckOnStartAsync(_closing.Token);
+                }, DispatcherPriority.ApplicationIdle);
+        }
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
         if (_host.ShotPath is not null) Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, TakeShot);
     }
@@ -374,6 +393,7 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        _closing.Cancel(); // проверка или загрузка обновления прерываются без следов
         _gameTimer.Stop();
         _liveTimer.Stop();
         _previewCts?.Cancel();
@@ -451,6 +471,8 @@ public partial class MainWindow : Window
     private void Toggle_Click(object sender, RoutedEventArgs e) => _vm.ToggleSelected();
     private void Undo_Click(object sender, RoutedEventArgs e) => _vm.Undo();
     private void DismissBanner_Click(object sender, RoutedEventArgs e) => _vm.DismissBanner();
+    private void UpdateAct_Click(object sender, RoutedEventArgs e) => _host.Banner?.Act(_closing.Token);
+    private void UpdateLater_Click(object sender, RoutedEventArgs e) => _host.Banner?.Dismiss();
 
     private void OpenPage_Click(object sender, RoutedEventArgs e)
     {

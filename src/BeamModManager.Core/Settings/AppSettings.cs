@@ -30,6 +30,12 @@ public sealed record AppSettings
     /// <summary>Проверять обновления при запуске (по умолчанию да: сценарий «открыл раз в неделю, посмотрел, что обновилось»).</summary>
     public bool AutoCheckOnStart { get; init; } = true;
 
+    /// <summary>
+    /// Проверять при запуске, не вышла ли новая версия самой программы (по умолчанию да). Выключатель — в будущем разделе
+    /// «Настройки»; по кнопке «Проверить» проверка работает и при выключенной настройке.
+    /// </summary>
+    public bool CheckAppUpdates { get; init; } = true;
+
     /// <summary>Автопроверка раз в N часов; 0 — выключена (1–168).</summary>
     public int AutoCheckEveryHours { get; init; }
 

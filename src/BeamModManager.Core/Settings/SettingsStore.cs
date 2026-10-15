@@ -61,6 +61,7 @@ public sealed class SettingsStore
                     UserFolder = Str(r, nameof(AppSettings.UserFolder), warnings),
                     CheckTtlHours = Int(r, nameof(AppSettings.CheckTtlHours), d.CheckTtlHours, warnings),
                     AutoCheckOnStart = Bool(r, nameof(AppSettings.AutoCheckOnStart), d.AutoCheckOnStart, warnings),
+                    CheckAppUpdates = Bool(r, nameof(AppSettings.CheckAppUpdates), d.CheckAppUpdates, warnings),
                     AutoCheckEveryHours = Int(r, nameof(AppSettings.AutoCheckEveryHours), d.AutoCheckEveryHours, warnings),
                     DisabledSources = Strs(r, nameof(AppSettings.DisabledSources), warnings),
                     KeepBackups = Int(r, nameof(AppSettings.KeepBackups), d.KeepBackups, warnings),
