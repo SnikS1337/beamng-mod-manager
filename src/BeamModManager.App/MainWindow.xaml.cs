@@ -395,7 +395,7 @@ public partial class MainWindow : Window
     {
         SpringDriver.AnimationsOff = !s.UiAnimations;
         // ресурс меняем, только если значение другое: замена ресурса обходит всё дерево окна (сотни карточек)
-        var frost = s.Frost ? s.FrostStrength switch { 0 => 0.45, 2 => 1.0, _ => 0.75 } : 0.0;
+        var frost = s.Frost ? s.FrostStrength switch { 0 => 0.55, 2 => 1.0, _ => 0.95 } : 0.0; // на доске иней на карточке .95
         if (frost != _frost) { _frost = frost; Resources["FrostOpacity"] = frost; }
 
         // «Уменьшить прозрачность» в Windows сильнее настроек: стекло плоское (DESIGN.md 3.2, «Плоское»)
