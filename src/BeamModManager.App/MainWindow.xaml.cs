@@ -56,6 +56,15 @@ public partial class MainWindow : Window
         _host = host;
         InitializeComponent();
         DataContext = vm;
+        if (host.ShotPath is not null)
+        {
+            // Экран сборочной машины меньше окна, а больше экрана Windows окно не пускает. Canvas детей не обрезает:
+            // содержимое раскладывается в нужном размере и снимается целиком, окно при этом живое.
+            Content = null;
+            Root.Width = host.ShotWidth ?? 1440;
+            Root.Height = host.ShotHeight ?? 960;
+            Content = new Canvas { Children = { Root } };
+        }
 
         _navDrop = _springs.Add(new Spring(0.5, 0.15, 14), v => NavDropMove.Y = v);
         _filterX = _springs.Add(new Spring(0.5, 0.15, -3), v => FilterDropMove.X = v);
@@ -94,17 +103,7 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (_host.ShotPath is not null)
-        {
-            // экран сборочной машины меньше окна, а больше экрана Windows окно не пускает: содержимое снимаем отдельно,
-            // разложив его в нужном размере
-            Root.DataContext = _vm;
-            Content = null;
-            var size = new Size(_host.ShotWidth ?? 1440, _host.ShotHeight ?? 960);
-            Root.Measure(size);
-            Root.Arrange(new Rect(size));
-            Root.UpdateLayout();
-        }
+
         Refresh();
         _gameTimer.Start();
         CheckGame();
