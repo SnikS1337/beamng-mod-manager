@@ -133,12 +133,17 @@ jobs:
         run: |
           if (-not $env:GH_TOKEN) { Write-Host "::warning::RELEASES_TOKEN не задан: самообновление не получит эту сборку"; exit 0 }
           # не выкладываем версию старше уже опубликованной
-          $cur = gh release view --repo $env:PUBLIC_REPO --json tagName --jq .tagName 2>$null
+          $cur = gh release view --repo $env:PUBLIC_REPO --json tagName --jq .tagName 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            if ("$cur" -notmatch 'release not found') { Write-Host "::error::не удалось прочитать выпуски $env:PUBLIC_REPO: $cur"; exit 1 }
+            $cur = $null
+          }
           $global:LASTEXITCODE = 0
           if ($cur) {
             $curV = [version]($cur.TrimStart('v'))
             if ([version]$env:VER -le $curV) { Write-Host "::warning::уже опубликована $cur, $env:VER не новее"; exit 0 }
           }
           $msg = (git log -1 --pretty=%s)
-          gh release create "v$env:VER" ModManagerBeamNG.zip latest.json --repo $env:PUBLIC_REPO --title "ModManager BeamNG $env:VER" --notes "$msg" --latest
-          if ($LASTEXITCODE -ne 0) { throw "публичный выпуск не создан (репозиторий $env:PUBLIC_REPO существует и в нём есть хотя бы один коммит?)" }
+          $out = gh release create "v$env:VER" ModManagerBeamNG.zip latest.json --repo $env:PUBLIC_REPO --title "ModManager BeamNG $env:VER" --notes "$msg" --latest 2>&1
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::публичный выпуск не создан: $out"; exit 1 }
+          Write-Host "::notice::опубликовано: $out"
