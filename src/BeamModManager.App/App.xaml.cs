@@ -346,6 +346,18 @@ public partial class App : Application
         MainWindow?.Close();
     }
 
+    /// <summary>Папки BeamNG.drive в библиотеках Steam (путь к Steam — из реестра). Нет Steam — пусто.</summary>
+    private static IReadOnlyList<string> SteamGameDirs()
+    {
+        try
+        {
+            if (Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) is string steam && steam.Length > 0)
+                return SteamLibraries.GameDirs(steam.Replace('/', '\\'));
+        }
+        catch (Exception x) when (x is System.Security.SecurityException or IOException or UnauthorizedAccessException or ArgumentException) { }
+        return Array.Empty<string>();
+    }
+
     private static WindowHost RealHost(AppUpdater? updater)
     {
         var appDir = AppDir;
@@ -358,7 +370,8 @@ public partial class App : Application
         var settings = loaded.Settings;
         string? notice = loaded.HadProblems ? "Часть настроек сброшена. Старый файл сохранён" : null;
 
-        // папка mods: из настроек; если не задана — ищем сами в стандартном месте (у не-Steam сборок тоже, startup.ini не нужен)
+        // папка mods: из настроек; если не задана — ищем сами: перенесённая папка пользователя из startup.ini игры в Steam
+        // (её часто уносят на другой диск), затем стандартные места (у не-Steam сборок тоже)
         static FolderCheck Resolve(AppSettings s)
         {
             var r = GameFolders.FromSettings(s);
@@ -366,12 +379,15 @@ public partial class App : Application
             // автопоиск обходит папки BeamNG: подпапка без прав не должна ронять окно и сбивать смену настроек
             try
             {
-                var found = GameFolders.FindModsFolders(GameFolders.DefaultUserRoot()).FirstOrDefault();
+                var found = GameFolders.AutoDetect(SteamGameDirs(), GameFolders.DefaultUserRoots());
                 return found is not null ? GameFolders.Resolve(found) : r;
             }
             catch (Exception x) when (x is IOException or UnauthorizedAccessException) { return r; }
         }
         var check = Resolve(settings);
+        // папка выбрана вручную, а игра обновилась и берёт моды из папки новой версии — подсказываем
+        if (check.Ok && settings.ModsFolder is not null && GameFolders.NewerModsFolder(check.ModsDir!) is { } newer)
+            notice ??= $"Игра обновилась: её моды теперь в «{Path.GetFileName(Path.GetDirectoryName(newer))}». Сменить папку — «Настройки → Папки»";
 
         var store = new JsonLibraryStore(Path.Combine(appDir, "library.json"));
         var cache = new PreviewCache(Path.Combine(appDir, "previews"));

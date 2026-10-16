@@ -27,6 +27,9 @@ public static class PreviewPicker
 
     public static PreviewPick Pick(string zipPath)
     {
+        // заглушка OneDrive: чтение скачало бы весь мод ради одной картинки. Предупреждение — чтобы не запомнить «картинок нет»
+        if (Safety.CloudFiles.IsCloudOnly(zipPath))
+            return new PreviewPick(PreviewSource.None, null, 0, 0, ArchiveContent.Unknown, "Файл только в облаке, на компьютер не скачан");
         try
         {
             using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

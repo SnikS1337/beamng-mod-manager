@@ -122,6 +122,14 @@ public sealed class LibraryGarageBackend : IGarageBackend
     public GarageSnapshot Load()
     {
         if (!_installer.ModsFolderAvailable) return GarageSnapshot.NoFolder;
+        // папка есть, но пропала посреди чтения (флешка, сетевой диск) или её не дают читать: «не нашли папку», а не ошибка.
+        // Сверку при этом не применяем: неполный список файлов выглядел бы как «моды удалили».
+        try { return LoadCore(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return GarageSnapshot.NoFolder; }
+    }
+
+    private GarageSnapshot LoadCore()
+    {
         // помощник для переключения на ходу: кладём (или обновляем) один раз за запуск; запущенная игра подхватит его сама
         if (!_bridgeChecked) { _bridgeChecked = true; GameBridge.EnsureInstalled(_installer.Layout.ModsDir); }
         GameDbReadResult db;
