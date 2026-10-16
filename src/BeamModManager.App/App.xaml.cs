@@ -72,7 +72,9 @@ public partial class App : Application
         // после самообновления прежний процесс ждёт, пока новая версия покажет окно (и отпустил «один экземпляр»)
         _afterUpdate = int.TryParse(Arg("--after-update"), out _parentPid);
         _rolledBack = AppVersion.Parse(Arg("--rolled-back"));
-        if (demo is null && Environment.GetEnvironmentVariable("BMM_TEST_UPDATE_FEED") is { Length: > 0 } feed && Directory.Exists(feed))
+        // только проверочные сборки сборочной машины (0.1.1, 0.1.2): настоящие выпуски (номер сборки от 57) переменную не замечают
+        if (demo is null && ThisVersion.Build is > 0 and < 50
+            && Environment.GetEnvironmentVariable("BMM_TEST_UPDATE_FEED") is { Length: > 0 } feed && Directory.Exists(feed))
             _testFeed = Path.GetFullPath(feed);
 
         // два менеджера над одной библиотекой и одним db.json мешали бы друг другу
