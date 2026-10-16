@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using BeamModManager.App.Motion;
@@ -11,8 +12,13 @@ namespace BeamModManager.App.Controls;
 /// В окне 1440 получается ровно 3 колонки по 308.
 /// При смене фильтра и поиска карточки переезжают со старых мест на новые, новые проявляются (DESIGN_MOTION 3.4).
 /// Сдвиг — свой TranslateTransform у контейнера карточки; подъём при наведении и выборе живёт внутри карточки и не мешает.
+/// <para>
+/// Виртуализация: карточки (стекло, иней, картинка) создаются только для видимой части сетки с запасом в экран сверху и
+/// снизу, остальные — по мере прокрутки. Высота сетки при этом полная, прокрутка честная. Без этого 300 модов создавали
+/// 300 карточек при каждом поиске (секунды), а 5000 — десятки секунд при запуске и сотни мегабайт памяти.
+/// </para>
 /// </summary>
-public sealed class CardGridPanel : Panel
+public sealed class CardGridPanel : VirtualizingPanel
 {
     /// <summary>
     /// Карточка рядом с видимой частью сетки (с запасом в экран сверху и снизу). Наследуется вниз по дереву карточки:
@@ -35,14 +41,16 @@ public sealed class CardGridPanel : Panel
     public static void SetRise(DependencyObject d, int v) => d.SetValue(RiseProperty, v);
 
     private ScrollViewer? _scroll;
+    /// <summary>Какие карточки (по номеру в списке) созданы сейчас.</summary>
+    private int _first, _last = -1;
 
     public CardGridPanel()
     {
         Loaded += (_, _) =>
         {
             _scroll = FindScroll(this);
-            if (_scroll is not null) _scroll.ScrollChanged += (_, _) => UpdateInView();
-            UpdateInView();
+            if (_scroll is not null) _scroll.ScrollChanged += (_, _) => OnScrolled();
+            InvalidateMeasure(); // до этого прокрутки не знали: создали карточки на первый экран
         };
     }
 
@@ -56,10 +64,10 @@ public sealed class CardGridPanel : Panel
         return null;
     }
 
-    /// <summary>Видимая часть сетки в её координатах с запасом <paramref name="pad"/>; без прокрутки — вся.</summary>
+    /// <summary>Видимая часть сетки в её координатах с запасом <paramref name="pad"/>; без прокрутки — неизвестно.</summary>
     private (double Top, double Bottom)? ViewBand(double pad)
     {
-        if (_scroll is null) return null;
+        if (_scroll is null || !IsLoaded) return null;
         try
         {
             var origin = TransformToAncestor(_scroll).Transform(new Point(0, 0)).Y; // где панель внутри видимой области
@@ -68,17 +76,56 @@ public sealed class CardGridPanel : Panel
         catch (InvalidOperationException) { return null; }
     }
 
+    private double ItemHeight => Math.Round(ItemWidth * Ratio);
+
+    /// <summary>Номера карточек, которые должны быть созданы: видимые ряды и по экрану сверху и снизу.</summary>
+    private (int First, int Last) WantedRange(int count)
+    {
+        if (count == 0) return (0, -1);
+        var rowH = ItemHeight + Gap;
+        if (ViewBand(_scroll?.ViewportHeight ?? 900) is not { } band)
+            return (0, Math.Min(count - 1, Columns * 8 - 1)); // ещё не знаем, где окно: первые восемь рядов
+        var firstRow = Math.Max(0, (int)Math.Floor(band.Top / rowH));
+        var lastRow = Math.Max(firstRow, (int)Math.Floor(Math.Max(0, band.Bottom) / rowH));
+        return (Math.Min(count - 1, firstRow * Columns), Math.Min(count - 1, (lastRow + 1) * Columns - 1));
+    }
+
+    private void OnScrolled()
+    {
+        // прокрутили за пределы созданного — досоздаём; внутри запаса — только отмечаем, кто на виду
+        var count = ItemsControl.GetItemsOwner(this)?.Items.Count ?? 0;
+        var (f, l) = WantedRange(count);
+        if (f < _first || l > _last) InvalidateMeasure();
+        else UpdateInView();
+    }
+
     private void UpdateInView()
     {
-        if (_scroll is null) { foreach (UIElement c in InternalChildren) SetInView(c, true); return; }
-        // с запасом в экран сверху и снизу
-        if (ViewBand(_scroll.ViewportHeight) is not { } band) return;
-        var itemH = Math.Round(ItemWidth * Ratio);
+        var gen = ItemContainerGenerator;
+        if (gen is null) return;
+        var band = ViewBand(_scroll?.ViewportHeight ?? 0);
+        var itemH = ItemHeight;
         for (var i = 0; i < InternalChildren.Count; i++)
         {
-            var y = i / Columns * (itemH + Gap);
-            SetInView(InternalChildren[i], y + itemH >= band.Top && y <= band.Bottom);
+            var index = gen.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
+            var y = index / Columns * (itemH + Gap);
+            SetInView(InternalChildren[i], band is not { } b || (y + itemH >= b.Top && y <= b.Bottom));
         }
+    }
+
+    /// <summary>Прокрутить так, чтобы карточка с этим номером была видна (её контейнера может ещё не быть).</summary>
+    public void BringIndexIntoView(int index, double topReserve)
+    {
+        if (_scroll is null || index < 0) return;
+        try
+        {
+            var origin = TransformToAncestor(_scroll).Transform(new Point(0, 0)).Y + _scroll.VerticalOffset; // верх сетки в прокрутке
+            var y = origin + index / Columns * (ItemHeight + Gap);
+            var top = _scroll.VerticalOffset;
+            if (y - topReserve < top) _scroll.ScrollToVerticalOffset(y - topReserve);
+            else if (y + ItemHeight + Gap > top + _scroll.ViewportHeight) _scroll.ScrollToVerticalOffset(y + ItemHeight + Gap - _scroll.ViewportHeight);
+        }
+        catch (InvalidOperationException) { }
     }
 
     public const double Gap = 20, MinItem = 280, MaxItem = 340, Ratio = 236.0 / 308.0;
@@ -96,10 +143,60 @@ public sealed class CardGridPanel : Panel
         var itemH = Math.Round(itemW * Ratio);
         if (cols != Columns) { Columns = cols; ColumnsChanged?.Invoke(this, EventArgs.Empty); }
         ItemWidth = itemW;
+
+        var count = ItemsControl.GetItemsOwner(this)?.Items.Count ?? 0;
+        var (first, last) = WantedRange(count);
+        Realize(first, last);
         foreach (UIElement c in InternalChildren) c.Measure(new Size(itemW, itemH));
-        var n = InternalChildren.Count;
-        var rows = (n + cols - 1) / cols;
+        var rows = (count + cols - 1) / cols;
         return new Size(w, rows == 0 ? 0 : rows * itemH + (rows - 1) * Gap);
+    }
+
+    /// <summary>Создать карточки first..last (по номеру в списке) и убрать остальные. Порядок детей совпадает с порядком в списке.</summary>
+    private void Realize(int first, int last)
+    {
+        _ = InternalChildren; // без этого обращения генератор у панели ещё не готов
+        var gen = ItemContainerGenerator;
+        if (gen is null) return;
+        // убрать созданные вне диапазона
+        for (var i = InternalChildren.Count - 1; i >= 0; i--)
+        {
+            var pos = new GeneratorPosition(i, 0);
+            var index = gen.IndexFromGeneratorPosition(pos);
+            if (index >= first && index <= last) continue;
+            gen.Remove(pos, 1);
+            RemoveInternalChildRange(i, 1);
+        }
+        _first = first;
+        _last = last;
+        if (last < first) return;
+        var start = gen.GeneratorPositionFromIndex(first);
+        var child = start.Offset == 0 ? start.Index : start.Index + 1;
+        using (gen.StartAt(start, GeneratorDirection.Forward, allowStartAtRealizedItem: true))
+            for (var index = first; index <= last; index++, child++)
+            {
+                if (gen.GenerateNext(out var isNew) is not UIElement el) break;
+                if (!isNew) continue; // уже на месте
+                if (child >= InternalChildren.Count) AddInternalChild(el); else InsertInternalChild(child, el);
+                gen.PrepareItemContainer(el);
+            }
+    }
+
+    /// <summary>Список менялся с прошлой раскладки (а не только прокрутка).</summary>
+    private bool _itemsChanged;
+
+    protected override void OnItemsChanged(object sender, ItemsChangedEventArgs args)
+    {
+        _itemsChanged = true;
+        switch (args.Action)
+        {
+            case System.Collections.Specialized.NotifyCollectionChangedAction.Remove:
+            case System.Collections.Specialized.NotifyCollectionChangedAction.Replace:
+            case System.Collections.Specialized.NotifyCollectionChangedAction.Move:
+                if (args.ItemUICount > 0) RemoveInternalChildRange(args.Position.Index, args.ItemUICount);
+                break;
+        }
+        base.OnItemsChanged(sender, args);
     }
 
     // ───────────── перестроение (FLIP): где карточка стояла в прошлый раз ─────────────
@@ -133,10 +230,14 @@ public sealed class CardGridPanel : Panel
         var band = (moving && _filled && !resizedOnly) || rise > 0 ? ViewBand(itemH) : null;
         var places = new Dictionary<object, Point>(n);
 
+        var gen = ItemContainerGenerator;
         for (var i = 0; i < n; i++)
         {
             var c = InternalChildren[i];
-            var p = new Point(i % Columns * (itemW + Gap), i / Columns * (itemH + Gap));
+            // место — по номеру карточки в списке: созданы не все, а только видимые
+            var index = gen?.IndexFromGeneratorPosition(new GeneratorPosition(i, 0)) ?? i;
+            if (index < 0) index = i;
+            var p = new Point(index % Columns * (itemW + Gap), index / Columns * (itemH + Gap));
             c.Arrange(new Rect(p.X, p.Y, itemW, itemH));
             var key = KeyOf(c);
             var had = _places.TryGetValue(key, out var old);
@@ -144,7 +245,7 @@ public sealed class CardGridPanel : Panel
 
             if (first)
             {
-                if (i < rise && (band is not { } b0 || p.Y < b0.Bottom - itemH)) Rise(c, i);
+                if (index < rise && (band is not { } b0 || p.Y < b0.Bottom - itemH)) Rise(c, index);
                 continue;
             }
             if (!_filled || !moving || resizedOnly) continue;
@@ -154,8 +255,10 @@ public sealed class CardGridPanel : Panel
                 if (old == p || !(Near(old.Y) || Near(p.Y))) continue;
                 Slide(c, old, p, colsChanged ? SettleTime : MoveTime);
             }
-            else if (!colsChanged && Near(p.Y)) Appear(c);
+            // новая в списке (фильтр, поиск) — проявляется; просто досозданная при прокрутке — уже стоит на месте
+            else if (!colsChanged && _itemsChanged && Near(p.Y)) Appear(c);
         }
+        _itemsChanged = false;
 
         _places = places;
         if (n > 0) _filled = true;

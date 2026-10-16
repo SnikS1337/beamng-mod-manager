@@ -1065,6 +1065,7 @@ public partial class MainWindow : Window
         if (_vm.Selected is not { } c) return;
         if (Cards.ItemContainerGenerator.ContainerFromItem(c) is FrameworkElement el)
             el.BringIntoView(new Rect(0, -84, el.ActualWidth, el.ActualHeight + 84 + 20)); // не прятать под верхнюю панель
+        else _panel?.BringIndexIntoView(_vm.Cards.IndexOf(c), 84); // карточка далеко и ещё не создана (сетка создаёт только видимые)
     }
 
     /// <summary>Фокус с клавиатуры идёт за выбором: иначе белая рамка осталась бы на прежней карточке.</summary>
@@ -1074,6 +1075,17 @@ public partial class MainWindow : Window
         if (Cards.ItemContainerGenerator.ContainerFromItem(c) is DependencyObject cp && VisualTreeHelper.GetChildrenCount(cp) > 0 &&
             VisualTreeHelper.GetChild(cp, 0) is UIElement btn)
             btn.Focus();
+        else if (_panel is { } panel && _vm.Cards.IndexOf(c) is var i and >= 0)
+        {
+            // карточки ещё нет: прокручиваем к ней, сетка её создаст, после раскладки ставим фокус
+            panel.BringIndexIntoView(i, 84);
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (ReferenceEquals(_vm.Selected, c) && Cards.ItemContainerGenerator.ContainerFromItem(c) is DependencyObject p2 &&
+                    VisualTreeHelper.GetChildrenCount(p2) > 0 && VisualTreeHelper.GetChild(p2, 0) is UIElement b2)
+                    b2.Focus();
+            }, DispatcherPriority.Loaded);
+        }
     }
 
     private void Toggle_Click(object sender, RoutedEventArgs e) => _vm.ToggleSelected();
