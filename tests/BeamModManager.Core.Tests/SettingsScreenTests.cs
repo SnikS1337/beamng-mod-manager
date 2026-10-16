@@ -83,6 +83,21 @@ public static class SettingsScreenTests
             Assert.True(vm.FrostStrong, "вернулось «Сильно»");
         });
 
+        t.Run("«Искры льда»: свой включатель, сохраняется, переводит набор в «свой»", () =>
+        {
+            var vm = new SettingsViewModel(new AppSettings());
+            AppSettings? saved = null;
+            vm.Changed += s => saved = s;
+            Assert.True(vm.FrostSparks && vm.IsIce, "по умолчанию включены, набор «Лёд»");
+            vm.FrostSparks = false;
+            Assert.False(saved!.FrostSparks, "ушло на сохранение");
+            Assert.True(vm.Preset is null, "набор стал своим");
+            vm.Frost = false;
+            Assert.False(vm.FrostOptionsEnabled, "без инея искры недоступны");
+            vm.ResetAppearance();
+            Assert.True(vm.FrostSparks && vm.IsIce, "«Сбросить» вернул искры");
+        });
+
         t.Run("переключатели-сегменты: снятие одного пункта ничего не меняет, выбор другого меняет", () =>
         {
             var vm = new SettingsViewModel(new AppSettings());

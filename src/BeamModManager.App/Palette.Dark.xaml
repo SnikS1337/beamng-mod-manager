@@ -12,21 +12,24 @@
     <SolidColorBrush x:Key="FocusRing" Color="#FFFFFF"/>
     <SolidColorBrush x:Key="WindowBack" Color="#1D2533"/>
 
-    <!-- блоки и строки на стекле: тёмная подложка rgba(8,14,28,.34) и тонкий свет сверху -->
+    <!-- блоки данных правой панели темнее стекла: rgba(8,14,28,.34) (доска «Гараж»); строки настроек светлее стекла:
+         rgba(255,255,255,.09) (доска «Настройки», как она отрисована) -->
     <SolidColorBrush x:Key="DataBlock" Color="#57080E1C"/>
     <SolidColorBrush x:Key="DataLine" Color="#17FFFFFF"/>
-    <SolidColorBrush x:Key="RowFill" Color="#57080E1C"/>
-    <SolidColorBrush x:Key="RowFillHover" Color="#6E0C1428"/>
+    <SolidColorBrush x:Key="RowFill" Color="#17FFFFFF"/>
+    <SolidColorBrush x:Key="RowFillHover" Color="#24FFFFFF"/>
     <SolidColorBrush x:Key="RowOn" Color="#33FFFFFF"/>
     <SolidColorBrush x:Key="RowOnRim" Color="#D9FFFFFF"/>
     <LinearGradientBrush x:Key="RowRim" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#2EFFFFFF" Offset="0"/>
+        <GradientStop Color="#24FFFFFF" Offset="0"/>
         <GradientStop Color="#14FFFFFF" Offset="0.25"/>
         <GradientStop Color="#14FFFFFF" Offset="1"/>
     </LinearGradientBrush>
+    <!-- мягкое холодное свечение выбранного (0 0 22px rgba(170,205,255,.3)) -->
+    <SolidColorBrush x:Key="SelGlow" Color="#AACDFF"/>
     <SolidColorBrush x:Key="SoftFill" Color="#1FFFFFFF"/>
     <SolidColorBrush x:Key="Divider" Color="#3DFFFFFF"/>
-    <SolidColorBrush x:Key="NavHover" Color="#14FFFFFF"/>
+    <SolidColorBrush x:Key="NavHover" Color="#24FFFFFF"/>
     <SolidColorBrush x:Key="NavOn" Color="#33FFFFFF"/>
 
     <!-- кнопки -->
@@ -43,7 +46,10 @@
     <SolidColorBrush x:Key="TrackOff" Color="#38FFFFFF"/>
     <SolidColorBrush x:Key="SegBack" Color="#57080E1C"/>
     <SolidColorBrush x:Key="SegHover" Color="#1AFFFFFF"/>
-    <SolidColorBrush x:Key="SegOn" Color="#3DFFFFFF"/>
+    <SolidColorBrush x:Key="SegOn" Color="#29FFFFFF"/>
+    <SolidColorBrush x:Key="SegOnRim" Color="#59FFFFFF"/>
+    <!-- дорожка сегментов в настройках светлее стекла (у фильтров — тёмная, SegBack) -->
+    <SolidColorBrush x:Key="SetSegBack" Color="#1AFFFFFF"/>
     <SolidColorBrush x:Key="Thumb" Color="#40FFFFFF"/>
     <SolidColorBrush x:Key="ThumbHover" Color="#80FFFFFF"/>
     <SolidColorBrush x:Key="ThumbDrag" Color="#A0FFFFFF"/>

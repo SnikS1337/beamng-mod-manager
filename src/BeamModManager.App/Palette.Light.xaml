@@ -19,6 +19,7 @@
     <SolidColorBrush x:Key="RowFillHover" Color="#B3FFFFFF"/>
     <SolidColorBrush x:Key="RowOn" Color="#E6FFFFFF"/>
     <SolidColorBrush x:Key="RowOnRim" Color="#B3141B2B"/>
+    <SolidColorBrush x:Key="SelGlow" Color="#7FA8E8"/>
     <LinearGradientBrush x:Key="RowRim" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#F2FFFFFF" Offset="0"/>
         <GradientStop Color="#1A0A1428" Offset="0.3"/>
@@ -44,6 +45,8 @@
     <SolidColorBrush x:Key="SegBack" Color="#59FFFFFF"/>
     <SolidColorBrush x:Key="SegHover" Color="#80FFFFFF"/>
     <SolidColorBrush x:Key="SegOn" Color="White"/>
+    <SolidColorBrush x:Key="SegOnRim" Color="#1F0A1428"/>
+    <SolidColorBrush x:Key="SetSegBack" Color="#59FFFFFF"/>
     <SolidColorBrush x:Key="Thumb" Color="#330A1428"/>
     <SolidColorBrush x:Key="ThumbHover" Color="#590A1428"/>
     <SolidColorBrush x:Key="ThumbDrag" Color="#800A1428"/>

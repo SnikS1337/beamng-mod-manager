@@ -155,6 +155,9 @@ public sealed class SettingsViewModel : Observable
     public bool FrostMedium { get => FrostStrength == 1; set { if (value) FrostStrength = 1; } }
     public bool FrostStrong { get => FrostStrength == 2; set { if (value) FrostStrength = 2; } }
 
+    /// <summary>«Искры льда»: редкие блики на кромках стекла. Зависит от инея, как и сила.</summary>
+    public bool FrostSparks { get => _current.FrostSparks; set => Update(s => s with { FrostSparks = value }); }
+
     /// <summary>Оформление: тёмное, светлое, как в Windows.</summary>
     public UiMode Mode { get => _current.Mode; set => Update(s => s with { Mode = value }); }
     public bool ModeDark { get => Mode == UiMode.Dark; set { if (value) Mode = UiMode.Dark; } }
@@ -188,7 +191,7 @@ public sealed class SettingsViewModel : Observable
     public bool AnimatedBackground { get => _current.AnimatedBackground; set => Update(s => s with { AnimatedBackground = value }); }
     public bool Fireflies { get => _current.Fireflies; set => Update(s => s with { Fireflies = value }); }
 
-    /// <summary>Сила инея зависит от инея: при выключенном пункт тускнеет и не нажимается (значение хранится).</summary>
+    /// <summary>Сила инея и искры зависят от инея: при выключенном пункты тускнеют и не нажимаются (значения хранятся).</summary>
     public bool FrostOptionsEnabled => _current.Frost;
 
     // ───────────── загрузка модов ─────────────
