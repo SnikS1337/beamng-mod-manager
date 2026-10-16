@@ -40,7 +40,8 @@ public class Glass : ContentControl
         nameof(Blur), typeof(double), typeof(Glass), new PropertyMetadata(3.0, (d, _) => ((Glass)d).Sync()));
 
     public static readonly DependencyProperty TintProperty = DependencyProperty.Register(
-        nameof(Tint), typeof(Brush), typeof(Glass), new PropertyMetadata(new SolidColorBrush(Color.FromArgb(0x70, 14, 24, 44))));
+        nameof(Tint), typeof(Brush), typeof(Glass), new PropertyMetadata(new SolidColorBrush(Color.FromArgb(0x70, 14, 24, 44)),
+            (d, _) => ((Glass)d).LookChanged?.Invoke()));
 
     public static readonly DependencyProperty ShadowProperty = DependencyProperty.Register(
         nameof(Shadow), typeof(bool), typeof(Glass), new PropertyMetadata(true));
@@ -98,6 +99,15 @@ public class Glass : ContentControl
     private bool _live;
     private bool _light;
 
+    /// <summary>Текущий режим стекла (капли на панели повторяют его).</summary>
+    public GlassMode Mode => _mode;
+    /// <summary>Светлое оформление.</summary>
+    public bool Light => _light;
+    /// <summary>Яркость копии сцены с учётом оформления (её же берёт капля, добавляя свои 12 %).</summary>
+    public double EffectiveBrightness => _light ? Math.Min(1.06, Brightness + 0.42) : Brightness;
+    /// <summary>Вид стекла изменился (режим, оформление, подложка): капли на панели перерисовываются.</summary>
+    public event Action? LookChanged;
+
     /// <summary>Режим стекла, сила инея (0 — без инея; 0,5 / 1 / 1,8 — слабо, средне, сильно), искры и оформление.</summary>
     public void SetLook(GlassMode mode, double iceFactor, bool sparks, bool light = false)
     {
@@ -109,6 +119,7 @@ public class Glass : ContentControl
         if (modeChanged) { _lastBlur = -1; _lastBox = Rect.Empty; Sync(); }
         ApplyMode();
         ApplyIce();
+        LookChanged?.Invoke();
     }
 
     /// <summary>Искры мерцают в общем ритме 6 с, только пока движется фон (окно на виду, игра не запущена).</summary>
@@ -225,7 +236,7 @@ public class Glass : ContentControl
             _refraction.Lens = Lens;
             _refraction.Radius = Corner;
             // в светлом оформлении копия сцены под стеклом не притемняется, а чуть высветляется: светлое стекло
-            _refraction.Brightness = _light ? Math.Min(1.06, Brightness + 0.42) : Brightness;
+            _refraction.Brightness = EffectiveBrightness;
             _refraction.Size = new Size(Math.Max(1, ActualWidth), Math.Max(1, ActualHeight));
             if (!ReferenceEquals(_lens.Effect, _refraction)) _lens.Effect = _refraction;
         }

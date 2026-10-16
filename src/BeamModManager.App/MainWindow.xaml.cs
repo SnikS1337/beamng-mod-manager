@@ -65,6 +65,8 @@ public partial class MainWindow : Window
     private readonly WindowHost _host;
     private readonly SpringDriver _springs = new();
     private readonly Spring _navDrop, _filterX, _filterW, _capX, _capScale, _inspX;
+    /// <summary>Нажатие на каплю: она чуть сжимается (0,92) и упруго возвращается (0,4 с, упругость 0,3 — «физическое»).</summary>
+    private readonly Spring _navPress, _filterPress, _capPress;
     private readonly BackgroundMotion _motion;
     private readonly DispatcherTimer _gameTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(6) };
@@ -91,11 +93,22 @@ public partial class MainWindow : Window
             Content = new Canvas { Children = { Root } };
         }
 
-        _navDrop = _springs.Add(new Spring(0.5, 0.15, 14), v => NavDropMove.Y = v);
-        _filterX = _springs.Add(new Spring(0.5, 0.15, -3), v => FilterDropMove.X = v);
-        _filterW = _springs.Add(new Spring(0.5, 0.15, 60), v => FilterDrop.Width = Math.Max(20, v));
-        _capX = _springs.Add(new Spring(0.5, 0.15, -1), v => CapDropMove.X = v);
-        _capScale = _springs.Add(new Spring(0.35, 0.15, 0.6), v => { CapDropScale.ScaleX = v; CapDropScale.ScaleY = v; });
+        // пружины создаются до своих «применить»: те читают скорость и сжатие соседних пружин
+        _navPress = new Spring(0.4, 0.3, 1);
+        _filterPress = new Spring(0.4, 0.3, 1);
+        _capPress = new Spring(0.4, 0.3, 1);
+        _navDrop = new Spring(0.5, 0.15, 14);
+        _filterX = new Spring(0.5, 0.15, -3);
+        _capX = new Spring(0.5, 0.15, -1);
+        _capScale = new Spring(0.35, 0.15, 0.6);
+        _springs.Add(_navPress, _ => NavDropShape());
+        _springs.Add(_filterPress, _ => FilterDropShape());
+        _springs.Add(_capPress, _ => CapDropShape());
+        _springs.Add(_navDrop, v => { NavDropMove.Y = v; NavDropShape(); });
+        _springs.Add(_filterX, v => { FilterDropMove.X = v; FilterDropShape(); });
+        _filterW = _springs.Add(new Spring(0.5, 0.15, 60), v => { FilterDrop.Width = Math.Max(20, v); FilterDrop.Sync(); });
+        _springs.Add(_capX, v => { CapDropMove.X = v; CapDropShape(); });
+        _springs.Add(_capScale, _ => CapDropShape());
         _inspX = _springs.Add(new Spring(0.5, 0, 344), v =>
         {
             InspectorMove.X = v;
@@ -714,23 +727,72 @@ public partial class MainWindow : Window
         _springs.To(_capX, -1 + 44 * i, instant: appearing);
         _springs.To(_capScale, 1);
         Fade(CapDrop, 1, 0.2);
-        CapDrop.Background = i == 2 ? RedDrop : (Brush)FindResource("DropFill");
-        CapDrop.BorderBrush = i == 2 ? RedDropRim : (Brush)FindResource("DropRim");
+        // под «Закрыть» капля краснеет за 0,25 с (доска: transition background .25s); появляясь, сразу нужного цвета
+        var danger = i == 2 ? 1.0 : 0.0;
+        if (appearing || SpringDriver.ReducedMotion) { CapDrop.BeginAnimation(Droplet.DangerProperty, null); CapDrop.Danger = danger; }
+        else CapDrop.BeginAnimation(Droplet.DangerProperty, new DoubleAnimation(danger, TimeSpan.FromSeconds(0.25)) { EasingFunction = Anim.Smooth });
     }
 
-    private void Caption_MouseLeave(object sender, MouseEventArgs e) => HideCapDrop();
+    // ───────────── форма капель: растяжение в пути и сжатие при нажатии (DESIGN_MOTION 3.3) ─────────────
+
+    /// <summary>Насколько капля вытягивается по ходу движения: от скорости пружины, не больше 14 %.</summary>
+    private static double Stretch(double velocity) => Math.Min(0.14, Math.Abs(velocity) / 2600);
+
+    /// <summary>Вытянулась вдоль — сузилась поперёк (объём «сохраняется»), и всё это умножается на сжатие нажатия.</summary>
+    private static void Shape(ScaleTransform t, double along, bool vertical, double press, double scale = 1)
+    {
+        var a = (1 + along) * press * scale;
+        var b = (1 - along * 0.45) * press * scale;
+        t.ScaleX = vertical ? b : a;
+        t.ScaleY = vertical ? a : b;
+    }
+
+    private void NavDropShape()
+    {
+        Shape(NavDropScale, Stretch(_navDrop.Velocity), vertical: true, _navPress.Value);
+        NavDrop.Sync();
+    }
+
+    private void FilterDropShape()
+    {
+        Shape(FilterDropScale, Stretch(_filterX.Velocity), vertical: false, _filterPress.Value);
+        FilterDrop.Sync();
+    }
+
+    private void CapDropShape()
+    {
+        Shape(CapDropScale, Stretch(_capX.Velocity), vertical: false, _capPress.Value, _capScale.Value);
+        CapDrop.Sync();
+    }
+
+    // нажали на пункт — капля сжимается; отпустили или ушли мышью — упруго возвращается и уже потом перетекает
+    private void Nav_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (e.OriginalSource is DependencyObject d && OverButton(d)) _springs.To(_navPress, 0.92); }
+    private void Nav_PreviewMouseUp(object sender, MouseEventArgs e) => _springs.To(_navPress, 1);
+    private void Filter_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (e.OriginalSource is DependencyObject d && OverButton(d)) _springs.To(_filterPress, 0.92); }
+    private void Filter_PreviewMouseUp(object sender, MouseEventArgs e) => _springs.To(_filterPress, 1);
+    private void Caption_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _springs.To(_capPress, 0.92);
+    private void Caption_PreviewMouseUp(object sender, MouseEventArgs e) => _springs.To(_capPress, 1);
+
+    /// <summary>Нажатие пришлось на кнопку или пункт (а не на пустое место панели).</summary>
+    private static bool OverButton(DependencyObject d)
+    {
+        for (DependencyObject? p = d; p is not null; p = p is Visual || p is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(p) : LogicalTreeHelper.GetParent(p))
+            if (p is System.Windows.Controls.Primitives.ButtonBase) return true;
+        return false;
+    }
+
+    private void Caption_MouseLeave(object sender, MouseEventArgs e)
+    {
+        _springs.To(_capPress, 1);
+        HideCapDrop();
+    }
 
     private void HideCapDrop(bool instant = false)
     {
         _springs.To(_capScale, 0.6, instant);
+        _springs.To(_capPress, 1, instant);
         Fade(CapDrop, 0, instant ? 0 : 0.2);
     }
-
-    private static readonly Brush RedDrop = Frozen(new LinearGradientBrush(new GradientStopCollection
-    {
-        new(Color.FromArgb(0x9E, 0xFF, 0x82, 0x76), 0), new(Color.FromArgb(0x85, 0xD6, 0x3A, 0x2E), 0.52), new(Color.FromArgb(0x94, 0xFF, 0x78, 0x6C), 1),
-    }, new Point(0.2, 0), new Point(0.8, 1)));
-    private static readonly Brush RedDropRim = Frozen(new SolidColorBrush(Color.FromArgb(0x73, 0xFF, 0xBE, 0xB4)));
 
     private static void Fade(UIElement el, double to, double seconds)
     {

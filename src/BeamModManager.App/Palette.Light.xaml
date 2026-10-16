@@ -51,20 +51,6 @@
     <SolidColorBrush x:Key="TileRimHover" Color="#590A1428"/>
     <SolidColorBrush x:Key="TileRimOn" Color="#D9141B2B"/>
 
-    <!-- капля на светлом стекле: плотнее белая, та же радужная кромка -->
-    <LinearGradientBrush x:Key="DropFill" StartPoint="0.2,0" EndPoint="0.8,1">
-        <GradientStop Color="#F2FFFFFF" Offset="0"/>
-        <GradientStop Color="#99FFFFFF" Offset="0.52"/>
-        <GradientStop Color="#CCFFFFFF" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="DropRim" StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="#FFFFFFFF" Offset="0"/>
-        <GradientStop Color="#A65AA8F0" Offset="0.18"/>
-        <GradientStop Color="#80FFFFFF" Offset="0.45"/>
-        <GradientStop Color="#99F05AB4" Offset="0.75"/>
-        <GradientStop Color="#B3FFFFFF" Offset="1"/>
-    </LinearGradientBrush>
-
     <LinearGradientBrush x:Key="TopFade" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#8CE4E9F2" Offset="0"/>
         <GradientStop Color="#8CE4E9F2" Offset="0.52"/>
