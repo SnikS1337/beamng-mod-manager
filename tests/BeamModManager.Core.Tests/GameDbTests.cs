@@ -405,6 +405,23 @@ public static class GameBridgeTests
             Assert.False(b.Send(new Dictionary<string, bool> { ["a.zip"] = true }) == id, "номера разные");
         });
 
+        t.Run("признак жизни: целые и дробные секунды, старый, из будущего, битый файл", () =>
+        {
+            using var g = new GameDbTests.Game();
+            var now = DateTimeOffset.FromUnixTimeSeconds(1760000000);
+            var b = new GameBridge(g.Mods, () => now);
+            Directory.CreateDirectory(Path.GetDirectoryName(b.StatePath)!);
+            void State(string json) => File.WriteAllText(b.StatePath, json);
+            State("""{"alive": 1759999998}"""); Assert.True(b.IsAlive(), "целое");
+            State("""{"alive": 1759999998.0}"""); Assert.True(b.IsAlive(), "дробное");
+            State("""{"alive": 1759999990}"""); Assert.False(b.IsAlive(), "старее 6 с");
+            State("""{"alive": 1760000100}"""); Assert.False(b.IsAlive(), "из будущего");
+            State("""{"alive": "x"}"""); Assert.False(b.IsAlive(), "не число");
+            State("""{"alive": 17599"""); Assert.False(b.IsAlive(), "недописан и не дописался");
+            State(""); Assert.False(b.IsAlive(), "пустой");
+            Assert.True(b.ReadAnswer() is null, "битый файл — ответа нет, без исключения");
+        });
+
         t.Run("ответ помощника читается", () =>
         {
             using var g = new GameDbTests.Game();

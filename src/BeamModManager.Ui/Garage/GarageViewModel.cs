@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using BeamModManager.Core.Game;
 using BeamModManager.Core.Library;
 using BeamModManager.Core.Versioning;
 using BeamModManager.Ui.Mvvm;
@@ -362,6 +363,15 @@ public sealed class GarageViewModel : Observable
     public void TickLive()
     {
         if (_pending.Count == 0) { _liveSentAt = null; _liveTries = 0; return; }
+        // помощник ответил, что применить не может: повторять бесполезно, ждём закрытия игры и говорим почему
+        if (_liveSentAt is not null && _backend.LiveAnswer() is { } answer && Declined(answer) is { } why)
+        {
+            _liveSentAt = null;
+            _liveTries = 2;
+            Refresh(); // что получилось, игра уже записала в db.json — эти ожидания снимутся
+            if (_pending.Count > 0) ShowToast(why, null);
+            return;
+        }
         var expired = _liveSentAt is { } t && _now() - t >= LiveTimeout;
         if ((_liveSentAt is null || expired) && _liveTries < 2 && _backend.IsGameRunning() && _backend.LiveAvailable && SendLive())
             expired = false; // помощник отвечает (или появился): передали заново
@@ -369,6 +379,21 @@ public sealed class GarageViewModel : Observable
         Refresh();
         if (expired && _pending.Count > 0)
             ShowToast("Игра не ответила. Изменения применятся, когда закроете её", null);
+    }
+
+    /// <summary>
+    /// Почему помощник не применил переданное (текст для тоста) или null, если ждать стоит: «stale» — команда пришла поздно
+    /// (игра грузилась), её просто передаём заново.
+    /// </summary>
+    private string? Declined(BridgeAnswer a)
+    {
+        if (a.Error is { } e)
+            return e == "stale" ? null : "Игра не смогла переключить мод. Изменения применятся, когда закроете её";
+        var unknown = _pending.Keys.Count(f => a.Results.TryGetValue(GameModDb.KeyOf(f), out var r) && r == "missing");
+        if (unknown == 0) return null;
+        return unknown == 1
+            ? "Игра пока не видит этот мод. Применится, когда закроете её"
+            : $"Игра пока не видит {unknown} {Ru.Plural(unknown, "мод", "мода", "модов")}. Применится, когда закроете её";
     }
 
     /// <summary>Окно заметило, что игра закрылась: применяем отложенное. Возвращает число неудач.</summary>

@@ -14,6 +14,7 @@ local version = 1
 local maxAge = 15 -- секунд: команда старше не выполняется (например, оставшаяся с прошлого запуска)
 
 local lastId = nil
+local off = false -- помощник выключили в меню модов игры: код уже в памяти, но он молчит и ничего не делает
 local lastAnswer = nil -- ответ на последнюю команду: повторяется в каждой записи, чтобы признак жизни его не затёр
 local pollTimer = 0
 local beatTimer = 0
@@ -72,6 +73,13 @@ local function poll()
   end
 end
 
+-- выключили в меню модов игры (архив отключён, а расширение осталось загруженным до перезапуска)
+local function switchedOff()
+  if not (core_modmanager and core_modmanager.getModDB) then return false end
+  local me = core_modmanager.getModDB(selfName)
+  return type(me) == 'table' and me.active == false
+end
+
 M.onExtensionLoaded = function()
   -- команду, оставшуюся с прошлого раза, не выполняем
   if FS:fileExists(cmdFile) then
@@ -87,12 +95,17 @@ M.onUpdate = function(dtReal)
   beatTimer = beatTimer + dt
   if pollTimer >= 0.5 then
     pollTimer = 0
-    local ok, err = pcall(poll)
-    if not ok then log('E', 'bmmBridge', tostring(err)) end
+    local okOff, isOff = pcall(switchedOff)
+    off = okOff and isOff
+    if not off then
+      local ok, err = pcall(poll)
+      if not ok then log('E', 'bmmBridge', tostring(err)) end
+    end
   end
+  -- выключенный помощник не подаёт признаков жизни: через 6 с менеджер перестаёт им пользоваться
   if beatTimer >= 2 then
     beatTimer = 0
-    pcall(writeState)
+    if not off then pcall(writeState) end
   end
 end
 

@@ -1,3 +1,4 @@
+using BeamModManager.Core.Game;
 using BeamModManager.Core.Library;
 
 namespace BeamModManager.Ui.Garage;
@@ -15,4 +16,5 @@ public sealed class SwitchingBackend : IGarageBackend
     public ToggleResult SetEnabled(string fileName, bool enabled) => Inner.SetEnabled(fileName, enabled);
     public bool LiveAvailable => Inner.LiveAvailable;
     public bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) => Inner.TrySendLive(wanted);
+    public BridgeAnswer? LiveAnswer() => Inner.LiveAnswer();
 }

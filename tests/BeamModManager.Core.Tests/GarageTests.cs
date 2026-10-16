@@ -23,6 +23,8 @@ public static class GarageTests
         public readonly List<IReadOnlyDictionary<string, bool>> Sent = new();
         public bool LiveAvailable => Live;
         public bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) { if (!Live) return false; Sent.Add(wanted); return true; }
+        public BeamModManager.Core.Game.BridgeAnswer? Answer;
+        public BeamModManager.Core.Game.BridgeAnswer? LiveAnswer() => Answer;
 
         public GarageSnapshot Load() => new(Mods.ToList(), Folder, LastChecked);
         public bool IsGameRunning() => Running;
@@ -416,6 +418,46 @@ public static class GarageTests
             now = now.AddSeconds(7); vm.TickLive();
             Assert.Eq(2, b.Sent.Count);
             Assert.Eq("Выключится, когда закроете игру", vm.Cards[0].PendingText);
+        });
+
+        t.Run("помощник ответил «мод игре неизвестен»: без повторов и ожидания 12 с, сразу говорим почему", () =>
+        {
+            var now = T0;
+            var b = new FakeBackend { Mods = new List<GarageMod> { Mod("A"), Mod("B") }, Running = true, Live = true };
+            var vm = new GarageViewModel(b, () => now);
+            vm.Refresh();
+            vm.Toggle(vm.Cards[0]);
+            vm.Toggle(vm.Cards[1]);
+            // B игра выключила, A ей неизвестен
+            b.Mods[1] = b.Mods[1] with { Mod = b.Mods[1].Mod with { Enabled = false } };
+            b.Answer = new("x", new Dictionary<string, string> { ["a"] = "missing", ["b"] = "ok" }, null);
+            now = now.AddSeconds(1);
+            vm.TickLive();
+            Assert.Eq("Игра пока не видит этот мод. Применится, когда закроете её", vm.Toast!.Text);
+            Assert.Eq("Выключится, когда закроете игру", vm.Cards[0].PendingText);
+            Assert.True(vm.Cards[1].PendingText is null && !vm.Cards[1].Enabled, "B применён и не ждёт");
+            now = now.AddSeconds(20); vm.TickLive();
+            Assert.Eq(2, b.Sent.Count); // повторно не передавали
+            b.Running = false;
+            vm.OnGameExited();
+            Assert.Eq(("a.zip", false), b.Calls.Single());
+        });
+
+        t.Run("помощник ответил «опоздала» (игра грузилась): это не отказ, передаём заново", () =>
+        {
+            var now = T0;
+            var b = new FakeBackend { Mods = new List<GarageMod> { Mod("A") }, Running = true, Live = true };
+            var vm = new GarageViewModel(b, () => now);
+            vm.Refresh();
+            vm.Toggle(vm.Cards[0]);
+            b.Answer = new("x", new Dictionary<string, string>(), "stale");
+            now = now.AddSeconds(1); vm.TickLive();
+            Assert.Eq("Выключается…", vm.Cards[0].PendingText);
+            now = now.AddSeconds(7); vm.TickLive();
+            Assert.Eq(2, b.Sent.Count);
+            b.Answer = new("y", new Dictionary<string, string>(), "boom");
+            now = now.AddSeconds(1); vm.TickLive();
+            Assert.Eq("Игра не смогла переключить мод. Изменения применятся, когда закроете её", vm.Toast!.Text);
         });
 
         t.Run("помощник появился позже: отложенное передаётся ему целиком", () =>
