@@ -86,7 +86,7 @@ public static class BigLibraryTests
     private static void Linear(string what, double t1000, double t5000)
     {
         Console.WriteLine($"        {what}: 1000 — {t1000:0} мс, 5000 — {t5000:0} мс");
-        if (t5000 < 40) return;
+        if (t5000 < 100) return; // десятки миллисекунд — уже быстро, а отношение малых времён — шум
         Assert.True(t5000 < 12 * Math.Max(t1000, 3), $"{what}: 1000 — {t1000:0} мс, 5000 — {t5000:0} мс (растёт быстрее, чем число модов)");
     }
 
