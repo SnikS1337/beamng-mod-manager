@@ -68,7 +68,9 @@ public sealed class Droplet : FrameworkElement
             _refraction = new RefractionEffect { Strength = 100, Lens = 26, Saturation = 1.65 };
             _lens.Effect = _refraction;
         }
-        _paint = new Paint(this);
+        // рисунок капли (кромка, блики, радужный край — сотни коротких штрихов) меняется только с формой и цветом, а капля
+        // в пути каждый кадр растягивается: кэш картинкой, иначе штрихи перерисовывались бы на каждом кадре
+        _paint = new Paint(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
         // тень — нарисованные слои, а не DropShadowEffect: эффект на капле пересчитывался бы каждый кадр вместе с линзой
         _shadow = new Shadow(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
         _children = new VisualCollection(this) { _shadow, _clip, _tint, _under, _paint };
