@@ -339,7 +339,10 @@ internal static class PendingFile
         try
         {
             if (pending.Count == 0) { if (File.Exists(path)) File.Delete(path); return; }
-            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(pending));
+            // через временный файл: выключили свет посреди записи — прежний список цел, а не обрывок, который не прочитается
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, System.Text.Json.JsonSerializer.Serialize(pending));
+            File.Move(tmp, path, overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
