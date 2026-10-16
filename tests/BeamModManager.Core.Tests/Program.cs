@@ -55,4 +55,5 @@ BackgroundThemeTests.Register(t);
 
 GlassTextureTests.Register(t);
 XamlTests.Register(t);
+FramePacerTests.Register(t);
 return t.Summary();

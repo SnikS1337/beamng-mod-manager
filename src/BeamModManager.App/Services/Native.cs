@@ -41,6 +41,32 @@ internal static class Native
     /// <summary>В Windows выбран светлый режим приложений (для оформления «Как в Windows»).</summary>
     public static bool SystemLight() => PersonalizeValue("AppsUseLightTheme") == 1;
 
+#pragma warning disable CS0649 // поля заполняет Windows
+    private struct SystemPowerStatus
+    {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public int BatteryLifeTime;
+        public int BatteryFullLifeTime;
+    }
+#pragma warning restore CS0649
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetSystemPowerStatus(out SystemPowerStatus status);
+
+    /// <summary>
+    /// Компьютер работает от батареи или в Windows включена экономия энергии: анимации не быстрее 60 кадров
+    /// (FramePolicy). Настольный компьютер без батареи и неизвестное состояние — нет.
+    /// </summary>
+    public static bool PowerSaving()
+    {
+        try { return GetSystemPowerStatus(out var s) && (s.ACLineStatus == 0 || s.SystemStatusFlag == 1); }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { return false; }
+    }
+
     private static int? PersonalizeValue(string name)
     {
         try

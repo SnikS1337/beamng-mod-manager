@@ -1,5 +1,6 @@
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using BeamModManager.Ui.Look;
 
 namespace BeamModManager.App.Motion;
 
@@ -44,10 +45,14 @@ public sealed class Spring
     }
 }
 
-/// <summary>Ведёт набор пружин по кадрам экрана и отписывается от кадров, когда все успокоились (ничего не рисуем зря).</summary>
+/// <summary>
+/// Ведёт набор пружин по кадрам экрана и отписывается от кадров, когда все успокоились (ничего не рисуем зря).
+/// Частота — по <see cref="FramePolicy"/>: как у экрана, но не выше 144; от батареи и при нехватке — ровные 60.
+/// </summary>
 public sealed class SpringDriver
 {
     private readonly List<(Spring S, Action<double> Apply)> _items = new();
+    private readonly FramePacer _pacer = new();
     private TimeSpan _last;
     private bool _on;
 
@@ -86,9 +91,15 @@ public sealed class SpringDriver
     private void OnFrame(object? sender, EventArgs e)
     {
         var t = e is RenderingEventArgs r ? r.RenderingTime : TimeSpan.Zero;
-        var dt = _last == TimeSpan.Zero ? 1.0 / 60 : (t - _last).TotalSeconds;
+        var first = _last == TimeSpan.Zero;
+        var dt = first ? 1.0 / 60 : (t - _last).TotalSeconds;
         if (dt <= 0) return; // тот же кадр
         _last = t;
+        if (!first)
+        {
+            dt = _pacer.Frame(dt);
+            if (dt <= 0) return; // экран быстрее разрешённой частоты: этот кадр пропускаем
+        }
         var busy = false;
         foreach (var (s, apply) in _items)
         {
@@ -96,7 +107,7 @@ public sealed class SpringDriver
             busy |= s.Step(dt);
             apply(s.Value);
         }
-        if (!busy) { _on = false; CompositionTarget.Rendering -= OnFrame; }
+        if (!busy) { _on = false; CompositionTarget.Rendering -= OnFrame; _pacer.BurstEnded(); }
     }
 }
 

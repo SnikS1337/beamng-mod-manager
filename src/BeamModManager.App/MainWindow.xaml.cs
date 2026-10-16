@@ -169,6 +169,9 @@ public partial class MainWindow : Window
         // в Windows переключили «Эффекты прозрачности» или анимацию: применяем сразу, без перезапуска
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         Closed += (_, _) => Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+        // ноутбук отключили от сети или включили экономию энергии — анимации не быстрее 60 кадров (и обратно)
+        Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        Closed += (_, _) => Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged;
 
         // вход окна (DESIGN.md 6 «Один вход»): не в снимках сборочной машины и не при выключенных анимациях.
         // Начальное положение ставим сразу, до первого кадра; сами анимации — в OnLoaded, карточки — в CardGridPanel.
@@ -467,6 +470,11 @@ public partial class MainWindow : Window
     private static string FolderKey(AppSettings s) => $"{s.ModsFolder}|{s.UserFolder}";
 
     /// <summary>В Windows переключили светлый режим, прозрачность или анимацию: применяем сразу, без перезапуска.</summary>
+    private static void OnPowerModeChanged(object? sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == Microsoft.Win32.PowerModes.StatusChange) FramePolicy.Shared.PowerSaving = Native.PowerSaving();
+    }
+
     private void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e) =>
         Dispatcher.BeginInvoke(() => { if (IsLoaded) ApplyLook(_host.Settings.Current); });
 
