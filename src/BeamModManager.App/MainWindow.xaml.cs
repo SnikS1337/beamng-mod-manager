@@ -266,6 +266,8 @@ public partial class MainWindow : Window
         _vm.Refresh();
         _lastRefresh = DateTime.UtcNow;
         LoadPreviews();
+        // картинки могли прийти из кэша сразу (без загрузки) или смениться с папкой — превью настроек обновляется
+        if (SettingsPanel.Visibility == Visibility.Visible) FillLookPreview();
     }
 
     /// <summary>Пользователь вернулся в окно: мог переключить моды в игре или положить новые архивы.</summary>
@@ -286,7 +288,7 @@ public partial class MainWindow : Window
         _ = loader.FillAsync(todo, (id, path) => Dispatcher.BeginInvoke(() =>
         {
             if (byId.TryGetValue(id, out var card)) card.PreviewPath = path;
-            if (SettingsPanel.IsVisible && _pvCards < 3) FillLookPreview();
+            if (SettingsPanel.Visibility == Visibility.Visible && _pvPaths.Count < 3) FillLookPreview();
         }), _previewCts.Token);
     }
 
@@ -770,15 +772,18 @@ public partial class MainWindow : Window
     }
 
     // нажали на пункт — капля сжимается; отпустили или ушли мышью — упруго возвращается и уже потом перетекает
-    private void Nav_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (e.OriginalSource is DependencyObject d && OverButton(d)) _springs.To(_navPress, 0.92); }
+    // при «Уменьшить анимацию» и выключенных анимациях капля не сжимается (DESIGN_MOTION 3.3)
+    private void Nav_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (Squish(e)) _springs.To(_navPress, 0.92); }
     // обработчики XAML должны совпадать с делегатом точно: шаблонные события создаются через Delegate.CreateDelegate
     private void Nav_PreviewMouseUp(object sender, MouseButtonEventArgs e) => _springs.To(_navPress, 1);
     private void Nav_MouseLeave(object sender, MouseEventArgs e) => _springs.To(_navPress, 1);
-    private void Filter_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (e.OriginalSource is DependencyObject d && OverButton(d)) _springs.To(_filterPress, 0.92); }
+    private void Filter_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (Squish(e)) _springs.To(_filterPress, 0.92); }
     private void Filter_PreviewMouseUp(object sender, MouseButtonEventArgs e) => _springs.To(_filterPress, 1);
     private void Filter_MouseLeave(object sender, MouseEventArgs e) => _springs.To(_filterPress, 1);
-    private void Caption_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _springs.To(_capPress, 0.92);
+    private void Caption_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (!SpringDriver.ReducedMotion) _springs.To(_capPress, 0.92); }
     private void Caption_PreviewMouseUp(object sender, MouseButtonEventArgs e) => _springs.To(_capPress, 1);
+
+    private static bool Squish(MouseButtonEventArgs e) => !SpringDriver.ReducedMotion && e.OriginalSource is DependencyObject d && OverButton(d);
 
     /// <summary>Нажатие пришлось на кнопку или пункт (а не на пустое место панели).</summary>
     private static bool OverButton(DependencyObject d)
@@ -854,8 +859,9 @@ public partial class MainWindow : Window
 
     // ───────────── «Как это выглядит» ─────────────
 
-    /// <summary>Сколько настоящих картинок модов уже стоит в превью (до трёх).</summary>
-    private int _pvCards = -1;
+    /// <summary>Картинки, которые сейчас стоят в превью (до трёх); null — превью ещё не собиралось.</summary>
+    private List<string> _pvPaths = new();
+    private bool _pvBuilt;
 
     /// <summary>
     /// Картинки превью — первые три мода с картинкой (сначала включённые), как карточки на доске: 250 и 200 px,
@@ -866,8 +872,10 @@ public partial class MainWindow : Window
         var paths = _vm.AllCards.Where(c => c.PreviewPath is not null)
                                 .OrderByDescending(c => c.Enabled)
                                 .Select(c => c.PreviewPath!).Take(3).ToList();
-        if (paths.Count == _pvCards && _pvCards > 0) return;
-        _pvCards = paths.Count;
+        // те же картинки — ничего не трогаем; сменилась папка или пришли новые — собираем заново
+        if (_pvBuilt && paths.SequenceEqual(_pvPaths, StringComparer.OrdinalIgnoreCase)) return;
+        _pvBuilt = true;
+        _pvPaths = paths;
         PvCards.Children.Clear();
         double[] widths = { 250, 200, 200 };
         for (var i = 0; i < widths.Length; i++)

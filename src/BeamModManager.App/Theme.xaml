@@ -414,7 +414,7 @@
                 <ControlTemplate TargetType="RadioButton">
                     <Grid Margin="1,0">
                         <!-- свечение выбранного: 0 0 16px rgba(170,205,255,.22); размытая кромка, а не заливка — внутри пункт не синеет -->
-                        <Border x:Name="Glow" CornerRadius="15" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Opacity="0" IsHitTestVisible="False">
+                        <Border x:Name="Glow" CornerRadius="15" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
                             <Border.Effect><BlurEffect Radius="14" RenderingBias="Performance"/></Border.Effect>
                         </Border>
                         <Border x:Name="B" CornerRadius="15" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="13,5">
@@ -427,6 +427,7 @@
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="B" Property="Background" Value="{DynamicResource SegOn}"/>
                             <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource SegOnRim}"/>
+                            <Setter TargetName="Glow" Property="Visibility" Value="Visible"/>
                             <Setter TargetName="Glow" Property="Opacity" Value="0.22"/>
                             <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
@@ -447,7 +448,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
                     <Grid>
-                        <Border x:Name="Glow" CornerRadius="16" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Opacity="0" IsHitTestVisible="False">
+                        <Border x:Name="Glow" CornerRadius="16" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
                             <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
                         </Border>
                         <Border x:Name="B" CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="14,9">
@@ -463,6 +464,7 @@
                             <Setter TargetName="B" Property="Background" Value="{DynamicResource RowOn}"/>
                             <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource RowOnRim}"/>
                             <Setter TargetName="B" Property="BorderThickness" Value="1.5"/>
+                            <Setter TargetName="Glow" Property="Visibility" Value="Visible"/>
                             <Setter TargetName="Glow" Property="Opacity" Value="0.3"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
@@ -526,7 +528,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
                     <Grid>
-                        <Border x:Name="Glow" CornerRadius="21" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Opacity="0" IsHitTestVisible="False">
+                        <Border x:Name="Glow" CornerRadius="21" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
                             <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
                         </Border>
                         <Border x:Name="B" CornerRadius="21" Background="Transparent" Padding="16,0">
@@ -537,6 +539,7 @@
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="{DynamicResource NavHover}"/></Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="B" Property="Background" Value="{DynamicResource NavOn}"/>
+                            <Setter TargetName="Glow" Property="Visibility" Value="Visible"/>
                             <Setter TargetName="Glow" Property="Opacity" Value="0.3"/>
                             <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
