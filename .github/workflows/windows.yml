@@ -88,6 +88,16 @@ jobs:
           # долгая работа: 300 кругов фильтров, поиска, перечитывания, переключений и разделов; память до и после
           Shot 'soak' @('--many', '300', '--perf', '--soak')
           Get-ChildItem shots -Filter *.perf.txt | ForEach-Object { Write-Host "── $($_.Name)"; Get-Content $_.FullName }
+          # пороги с запасом (на этой машине нет видеокарты): регресс сетки или сверки ловится здесь, а не у человека
+          function Ms($file, $what) {
+            $line = Get-Content "shots/$file" | Where-Object { $_.StartsWith($what) } | Select-Object -First 1
+            if (-not $line) { throw "${file}: нет строки «$what»" }
+            [int]($line -replace '.*: (\d+) мс.*', '$1')
+          }
+          $start = Ms 'many-5000.png.perf.txt' 'запуск до готовности'
+          $reset = Ms 'many-5000.png.perf.txt' 'поиск сброшен'
+          if ($start -gt 8000) { throw "5000 модов: запуск $start мс (порог 8000)" }
+          if ($reset -gt 1500) { throw "5000 модов: сброс поиска $reset мс (порог 1500)" }
           Get-ChildItem shots
       - name: Отправить снимки
         if: always()
