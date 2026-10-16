@@ -54,8 +54,6 @@ public sealed class Droplet : FrameworkElement
 
     public Droplet()
     {
-        IsHitTestVisible = false;
-        RenderTransformOrigin = new Point(0.5, 0.5);
         _sample = new Rectangle { Fill = _brush, Effect = _blur };
         _tint = new Rectangle();
         _under = new Rectangle();
@@ -71,6 +69,9 @@ public sealed class Droplet : FrameworkElement
         }
         _paint = new Paint(this);
         _children = new VisualCollection(this) { _clip, _tint, _under, _paint };
+        // свойства самой капли — только после детей: смена IsHitTestVisible уже обходит дочерние элементы
+        IsHitTestVisible = false;
+        RenderTransformOrigin = new Point(0.5, 0.5);
         // тень капли: 0 10px 20px rgba(4,8,20,.50)
         Effect = new DropShadowEffect { BlurRadius = 20, ShadowDepth = 8, Direction = 270, Color = Color.FromRgb(4, 8, 20), Opacity = 0.5, RenderingBias = RenderingBias.Performance };
         Loaded += (_, _) => Attach();
@@ -79,7 +80,8 @@ public sealed class Droplet : FrameworkElement
         SizeChanged += (_, _) => ShapeChanged();
     }
 
-    protected override int VisualChildrenCount => _children.Count;
+    // до конца конструктора WPF может спросить детей (при установке свойств) — их ещё нет
+    protected override int VisualChildrenCount => _children?.Count ?? 0;
     protected override Visual GetVisualChild(int index) => _children[index];
 
     protected override Size MeasureOverride(Size available)
