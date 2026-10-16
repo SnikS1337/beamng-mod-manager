@@ -59,4 +59,8 @@
         <GradientStop Color="#8CE4E9F2" Offset="0.52"/>
         <GradientStop Color="#00E4E9F2" Offset="1"/>
     </LinearGradientBrush>
+    <!-- свечение главной кнопки и тень стеклянных панелей: на светлом фоне большое свечение и тень читались как грязное
+         пятно вокруг кнопок (решено 2026-10-16) — здесь короткая мягкая тень снизу -->
+    <DropShadowEffect x:Key="PrimaryGlow" BlurRadius="12" ShadowDepth="3" Direction="270" Color="#1B2540" Opacity="0.18" RenderingBias="Performance"/>
+    <DropShadowEffect x:Key="GlassShadow" BlurRadius="36" ShadowDepth="10" Direction="270" Color="#1B2540" Opacity="0.12" RenderingBias="Performance"/>
 </ResourceDictionary>

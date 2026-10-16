@@ -207,11 +207,12 @@ public sealed class CardGridPanel : VirtualizingPanel
     private int _lastCols;
     private double _lastItemW;
 
-    // длительности с пружиной (×1,6 к ощущаемой): переезд ≈0,47 с, «доезжание» после смены колонок ≈0,28 с
-    private static readonly TimeSpan MoveTime = TimeSpan.FromSeconds(0.75);
-    private static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(0.45);
-    private static readonly TimeSpan AppearTime = TimeSpan.FromSeconds(0.6);
-    private static readonly TimeSpan RiseTime = TimeSpan.FromSeconds(0.8);
+    // длительности с пружиной (×1,6 к ощущаемой): переезд ≈0,31 с, «доезжание» после смены колонок ≈0,2 с
+    // (2026-10-16: «ускорить анимации» — раньше 0,47 и 0,28 с)
+    private static readonly TimeSpan MoveTime = TimeSpan.FromSeconds(0.5);
+    private static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(0.32);
+    private static readonly TimeSpan AppearTime = TimeSpan.FromSeconds(0.4);
+    private static readonly TimeSpan RiseTime = TimeSpan.FromSeconds(0.55);
     private const double RiseFrom = 18, AppearFrom = 12;
 
     private static object KeyOf(UIElement c) => c is FrameworkElement { DataContext: { } d } ? d : c;
@@ -295,10 +296,10 @@ public sealed class CardGridPanel : VirtualizingPanel
         c.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, AppearTime) { EasingFunction = Anim.Smooth });
     }
 
-    /// <summary>Вход окна: карточки всплывают по одной с шагом 45 мс (доска: rise .8s, задержка 60 + 45 × n мс).</summary>
+    /// <summary>Вход окна: карточки всплывают по одной с шагом 30 мс (доска: rise .8s, задержка 60 + 45 × n мс; ускорено).</summary>
     private static void Rise(UIElement c, int i)
     {
-        var delay = TimeSpan.FromMilliseconds(60 + 45 * i);
+        var delay = TimeSpan.FromMilliseconds(40 + 30 * i);
         var t = Anim.Mover(c);
         t.BeginAnimation(TranslateTransform.YProperty, Anim.Hold(RiseFrom, 0, delay, RiseTime, Anim.Lift));
         c.BeginAnimation(OpacityProperty, Anim.Hold(0, 1, delay, RiseTime, Anim.Smooth));
