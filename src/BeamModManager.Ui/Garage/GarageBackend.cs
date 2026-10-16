@@ -22,6 +22,12 @@ public sealed record GarageMod(
 {
     public bool Tracked => Binding is { Confirmed: true };
     public bool NeedsUpdate => Update is { IsDismissed: false };
+
+    /// <summary>Размер файла на сайте при последней проверке (для «Размер 142 → 151 МБ» в «Обновлениях»).</summary>
+    public long? SiteSizeBytes { get; init; }
+
+    /// <summary>Когда проверка в последний раз заметила изменение на странице.</summary>
+    public DateTimeOffset? SiteChangedUtc { get; init; }
 }
 
 public sealed record GarageSnapshot(IReadOnlyList<GarageMod> Mods, bool FolderAvailable, DateTimeOffset? LastCheckedUtc)
@@ -150,9 +156,16 @@ public sealed class LibraryGarageBackend : IGarageBackend
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // архив только что удалили или он занят
             }
             var entry = db.Find(m.FileName);
-            result.Add(new GarageMod(m, updates.GetValueOrDefault(m.Id), b, c?.LastCheckedUtc,
+            // обновление может быть найдено не на первой привязке: размер и дату берём с того сайта, где нашли
+            var u = updates.GetValueOrDefault(m.Id);
+            var uc = u is null ? c : _store.GetCheck(m.Id, u.Source) ?? c;
+            result.Add(new GarageMod(m, u, b, c?.LastCheckedUtc,
                 c is { MissCount: >= UpdateCheckPlanner.DeadAfterMisses }, _store.IsCheckingDeclined(m.Id),
-                path, preview, entry?.ModType, entry?.Repo?.Author));
+                path, preview, entry?.ModType, entry?.Repo?.Author)
+            {
+                SiteSizeBytes = uc?.LastSize,
+                SiteChangedUtc = uc?.LastChangedUtc,
+            });
         }
         // картинки удалённых и изменившихся архивов из кэша убираем раз за запуск
         if (!_pruned) { _pruned = true; _previews.Prune(stamps); }

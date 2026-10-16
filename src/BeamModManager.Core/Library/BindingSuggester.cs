@@ -55,7 +55,15 @@ public static class BindingSuggester
         return new GuessedName(s, author, version);
     }
 
-    public static IReadOnlyList<BindingSuggestion> Suggest(InstalledMod mod, IEnumerable<Listing> candidates, int max = 5)
+    public static IReadOnlyList<BindingSuggestion> Suggest(InstalledMod mod, IEnumerable<Listing> candidates, int max = 5) =>
+        Rank(mod, candidates, int.MaxValue).Where(s => s.Match.Verdict != MatchVerdict.Different).Take(max).ToList();
+
+    /// <summary>
+    /// Все кандидаты по убыванию сходства, без отсева. Для окна «Указать страницу»: записи уже найдены поиском сайта по
+    /// названию мода, человек выбирает сам; строгая проверка дублей («Toyota Sienna» против «Toyota Sienna (2011-2017)
+    /// версия 1.2») отсеяла бы почти всё.
+    /// </summary>
+    public static IReadOnlyList<BindingSuggestion> Rank(InstalledMod mod, IEnumerable<Listing> candidates, int max = 5)
     {
         var guess = FromFileName(mod.FileName);
         var probe = new Listing("installed", new Uri("https://installed.invalid/" + Uri.EscapeDataString(mod.Id)), mod.Id,
@@ -68,7 +76,6 @@ public static class BindingSuggester
 
         return candidates
             .Select(c => new BindingSuggestion(c, DuplicateMatcher.Compare(probe, c)))
-            .Where(s => s.Match.Verdict != MatchVerdict.Different)
             .OrderByDescending(s => s.Match.Score)
             .Take(max)
             .ToList();
