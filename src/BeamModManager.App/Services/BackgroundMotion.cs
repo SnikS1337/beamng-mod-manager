@@ -7,7 +7,7 @@ using System.Windows.Shapes;
 namespace BeamModManager.App.Services;
 
 /// <summary>
-/// Само движется только фон (DESIGN_MOTION раздел 2): плывущая цветная полоса, пятна света и огоньки, всё на 48 с.
+/// Само движется только фон (DESIGN_MOTION раздел 2): плывущая цветная полоса (36 с), пятна света (28 с) и огоньки.
 /// Останавливается, когда окно не видно, не в фокусе или запущена игра; при «Уменьшить анимацию» в Windows не запускается.
 /// Фон и огоньки — две отдельные истории: в настройках они включаются по отдельности («Анимированный фон», «Огоньки»).
 /// </summary>
@@ -32,9 +32,9 @@ public sealed class BackgroundMotion
         _owner = owner;
         _bg = new Part();
         _flies = new Part();
-        // фон медленный: 30 кадров в секунду глазу хватает, а стекло пересчитывает копию сцены вдвое реже (DESIGN.md 8)
-        Timeline.SetDesiredFrameRate(_bg.Sb, 30);
-        Timeline.SetDesiredFrameRate(_flies.Sb, 30);
+        // фон медленный: 24 кадров в секунду глазу хватает, а стекло пересчитывает копию сцены реже (DESIGN.md 8)
+        Timeline.SetDesiredFrameRate(_bg.Sb, 24);
+        Timeline.SetDesiredFrameRate(_flies.Sb, 24);
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
         var sb = _bg.Sb;
         void Anim(DependencyObject target, DependencyProperty prop, double from, double to, double seconds, bool reverse = true, double delay = 0)
@@ -51,14 +51,15 @@ public sealed class BackgroundMotion
             sb.Children.Add(a);
         }
 
-        Anim(gradeMove, TranslateTransform.XProperty, 0, 1, 48, reverse: false);
+        Anim(gradeMove, TranslateTransform.XProperty, 0, 1, 36, reverse: false);
 
-        // три размытых пятна света: места и цвета задаёт тема (окно, PlaceBlobs); здесь — их тихое движение.
-        // Дрейф по 48 с со сдвигом фазы 0 / 12 / 24 с и «дыхание» (масштаб 1 → 1,14) с разными периодами,
-        // поэтому пятна никогда не двигаются в такт и узор не повторяется заметно.
+        // три размытых пятна света: места и цвета задаёт тема (окно, PlaceBlobs); здесь — их движение.
+        // Дрейф по 28 с со сдвигом фазы 0 / 9 / 18 с и «дыхание» (масштаб 1 → 1,24) с разными периодами,
+        // поэтому пятна никогда не двигаются в такт и узор не повторяется заметно. Раньше (48 с и 140 px) движение
+        // было около 3 px в секунду — его не замечали; теперь оно видно, но остаётся спокойным.
         (double Dx, double Dy, double Delay, double Breath)[] paths =
         {
-            (140, -90, 0, 34), (-160, 110, 12, 41), (180, -120, 24, 47),
+            (280, -170, 0, 19), (-300, 210, 9, 23), (320, -230, 18, 27),
         };
         foreach (var d in paths)
         {
@@ -80,10 +81,10 @@ public sealed class BackgroundMotion
             e.RenderTransform = new TransformGroup { Children = { scale, move } };
             lights.Children.Add(e);
             _blobs.Add((e, brush));
-            Anim(move, TranslateTransform.XProperty, 0, d.Dx, 48, delay: d.Delay);
-            Anim(move, TranslateTransform.YProperty, 0, d.Dy, 48, delay: d.Delay);
-            Anim(scale, ScaleTransform.ScaleXProperty, 1, 1.14, d.Breath, delay: d.Delay);
-            Anim(scale, ScaleTransform.ScaleYProperty, 1, 1.14, d.Breath, delay: d.Delay);
+            Anim(move, TranslateTransform.XProperty, 0, d.Dx, 28, delay: d.Delay);
+            Anim(move, TranslateTransform.YProperty, 0, d.Dy, 28, delay: d.Delay);
+            Anim(scale, ScaleTransform.ScaleXProperty, 1, 1.24, d.Breath, delay: d.Delay);
+            Anim(scale, ScaleTransform.ScaleYProperty, 1, 1.24, d.Breath, delay: d.Delay);
         }
 
         // светлячки: 18 мягких огоньков 3–8 px, дрейф 14–30 с, мерцание 2,5–6,5 с; одно зерно — один и тот же рисунок

@@ -24,8 +24,8 @@ public enum GlassMode
 /// <summary>
 /// Стеклянная панель как на доске «Гараж» (DESIGN.md 3.2): снизу живая копия сцены (<see cref="Source"/>) с лёгким
 /// размытием и преломлением у краёв (шейдер <see cref="RefractionEffect"/>), над ней подложка, блик, яркая кромка
-/// (свет сверху слева), иней по краям и искры льда. Кромка и иней считаются под размер панели в фоне
-/// (<see cref="GlassTextures"/>, формулы макета) и пересчитываются после изменения размера.
+/// (свет сверху слева), изморозь по краям и искры льда. Кромку и изморозь рисует <see cref="GlassEdge"/> векторами под
+/// любой размер (после смены размера ничего не пересчитывается и не проявляется заново).
 /// Сцена не должна содержать само стекло, иначе копия будет копировать саму себя.
 /// </summary>
 public class Glass : ContentControl
@@ -132,9 +132,8 @@ public class Glass : ContentControl
     private Border? _clip;
     private Grid? _lens;
     private Rectangle? _sample;
-    private Rectangle? _rim, _ice;
+    private GlassEdge? _edge;
     private Canvas? _sparks;
-    private Grid? _deco;
     private Border? _contour, _highlight;
     private readonly VisualBrush _brush = new()
     {
@@ -156,8 +155,8 @@ public class Glass : ContentControl
         SizeChanged += (_, _) => { Sync(); ShapeChanged(); };
         IsVisibleChanged += (_, _) => RunSparks();
         RenderOptions.SetCachingHint(_brush, CachingHint.Unspecified);
-        _texTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(120) };
-        _texTimer.Tick += (_, _) => { _texTimer.Stop(); _ = RebuildTexturesAsync(); };
+        _sparkTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(150) };
+        _sparkTimer.Tick += (_, _) => { _sparkTimer.Stop(); RebuildSparks(); };
     }
 
     public override void OnApplyTemplate()
@@ -166,9 +165,7 @@ public class Glass : ContentControl
         _clip = GetTemplateChild("PART_Clip") as Border;
         _lens = GetTemplateChild("PART_Lens") as Grid;
         _sample = GetTemplateChild("PART_Sample") as Rectangle;
-        _rim = GetTemplateChild("PART_Rim") as Rectangle;
-        _ice = GetTemplateChild("PART_Ice") as Rectangle;
-        _deco = GetTemplateChild("PART_Deco") as Grid;
+        _edge = GetTemplateChild("PART_Edge") as GlassEdge;
         _sparks = GetTemplateChild("PART_Sparks") as Canvas;
         _contour = GetTemplateChild("PART_Contour") as Border;
         _highlight = GetTemplateChild("PART_Highlight") as Border;
@@ -205,9 +202,7 @@ public class Glass : ContentControl
             _lastBlur = r;
             _blur.Radius = r;
             _sample.Effect = r > 0 ? _blur : null;
-            var g = new RectangleGeometry(shape, Corner, Corner);
-            g.Freeze();
-            _clip.Clip = g;
+            UpdateMask();
             _sample.Margin = new Thickness(-r);
             _lastBox = Rect.Empty;
             if (_refraction is not null) { _refraction.Size = new Size(w, h); _refraction.Radius = Corner; }
@@ -241,11 +236,24 @@ public class Glass : ContentControl
             if (!ReferenceEquals(_lens.Effect, _refraction)) _lens.Effect = _refraction;
         }
         else _lens.Effect = null;
+        UpdateMask();
         _lens.Visibility = _mode == GlassMode.Flat ? Visibility.Collapsed : Visibility.Visible;
         // у матового стекла ровная кромка 1 px и нет блика; у жидкого — яркая кромка по карте и блик сверху слева
-        if (_rim is not null) _rim.Visibility = liquid ? Visibility.Visible : Visibility.Collapsed;
+        if (_edge is not null) { _edge.Specular = liquid ? 1 : 0; _edge.Lens = Lens; }
         if (_highlight is not null) _highlight.Visibility = liquid ? Visibility.Visible : Visibility.Collapsed;
         if (_contour is not null) _contour.BorderBrush = _light ? ContourLight : liquid ? ContourLiquid : ContourMatte;
+    }
+
+    /// <summary>
+    /// Скругление копии сцены. У жидкого стекла его делает шейдер (со сглаживанием по краю); у матового — маска.
+    /// Не Clip: обрезка в WPF не сглаживается, и углы стекла были «в пикселях».
+    /// </summary>
+    private void UpdateMask()
+    {
+        if (_clip is null) return;
+        var w = ActualWidth; var h = ActualHeight;
+        var shader = _mode == GlassMode.Liquid && _lens?.Effect is RefractionEffect;
+        _clip.OpacityMask = shader || w <= 0 || h <= 0 ? null : RoundMask(w, h, Corner);
     }
 
     private static readonly Brush ContourLiquid = Frozen(new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
@@ -255,110 +263,44 @@ public class Glass : ContentControl
     private void ApplyIce()
     {
         var on = _iceFactor > 0 && Ice > 0;
-        if (_ice is not null)
+        if (_edge is not null)
         {
-            _ice.Opacity = Math.Min(1, Ice * _iceFactor);
-            _ice.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            _edge.Frost = on ? Math.Min(1.4, Ice * _iceFactor) : 0;
+            _edge.Reach = IceReach;
         }
-        if (_sparks is not null) _sparks.Visibility = on && _sparksOn ? Visibility.Visible : Visibility.Collapsed;
+        // искры — отдельная настройка: их можно оставить и без изморози (решено 2026-10-16)
+        if (_sparks is not null) _sparks.Visibility = _sparksOn && Sparks > 0 ? Visibility.Visible : Visibility.Collapsed;
         RunSparks();
     }
 
-    // ───────────── кромка, иней и искры под размер панели ─────────────
+    // ───────────── кромка и искры под размер панели ─────────────
 
-    private readonly DispatcherTimer _texTimer;
-    private (int W, int H, double R, double Lens, double Reach, int Seed, int Sparks) _texKey;
-    private int _texGen;
+    private readonly DispatcherTimer _sparkTimer;
+    private (int W, int H, int Seed, int Sparks, double Corner) _sparkKey;
 
-    /// <summary>Размер или форма изменились: пересчитать текстуры, когда размер успокоится (не на каждом шаге растяжения окна).</summary>
+    /// <summary>
+    /// Размер или форма изменились. Кромку и изморозь элемент рисует сам под любой размер; искры стоят в пикселях от
+    /// краёв — их места пересчитываются, когда размер успокоится (не на каждом шаге растяжения окна), до этого их не видно.
+    /// </summary>
     private void ShapeChanged()
     {
-        if (_rim is null || ActualWidth < 2 || ActualHeight < 2) return;
-        // растянутая под новый размер кромка искажает скругления: прячем её, пока не готова новая
-        if (_deco is not null && !SameSize()) { _deco.BeginAnimation(OpacityProperty, null); _deco.Opacity = 0; }
-        _texTimer.Stop();
-        _texTimer.Start();
+        if (_edge is not null) { _edge.Reach = IceReach; _edge.Lens = Lens; }
+        if (_sparks is null || ActualWidth < 2 || ActualHeight < 2) return;
+        var key = ((int)Math.Round(ActualWidth), (int)Math.Round(ActualHeight), Seed, Sparks, Corner);
+        if (key == _sparkKey) return;
+        _sparks.Opacity = 0;
+        _sparkTimer.Stop();
+        _sparkTimer.Start();
     }
 
-    private bool SameSize() => _texKey.W == (int)Math.Round(ActualWidth) && _texKey.H == (int)Math.Round(ActualHeight);
-
-    private async Task RebuildTexturesAsync()
+    private void RebuildSparks()
     {
         var w = (int)Math.Round(ActualWidth);
         var h = (int)Math.Round(ActualHeight);
-        if (w < 2 || h < 2) return;
-        var key = (w, h, Corner, Lens, IceReach, Seed, Sparks);
-        if (key == _texKey) { ShowDeco(); return; }
-        _texKey = key;
-        var gen = ++_texGen;
-        // считаем в пикселях экрана, чтобы тонкая кромка была чёткой на масштабе 125–200 %; на огромных панелях
-        // масштаб ограничен: больше ~4 млн пикселей на текстуру не нужно и дорого по памяти
-        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
-        var scale = Math.Clamp(Math.Min(dpi, Math.Sqrt(4_000_000.0 / (w * (double)h))), 0.5, 3);
-        int pw = Math.Max(2, (int)Math.Round(w * scale)), ph = Math.Max(2, (int)Math.Round(h * scale));
-        BitmapSource rim, ice;
-        try
-        {
-            (rim, ice) = await Task.Run(() => (Textures.Get(TexKind.Rim, pw, ph, key.Corner * scale, key.Lens * scale, 0),
-                                               Textures.Get(TexKind.Ice, pw, ph, key.Corner * scale, key.IceReach * scale, key.Seed)));
-        }
-        catch (Exception e) when (e is OutOfMemoryException or ArgumentException or InvalidOperationException)
-        {
-            _texKey = default; // в следующий раз попробуем снова
-            return;
-        }
-        if (gen != _texGen) return; // пока считали, размер снова поменялся
-        if (_rim is not null) _rim.Fill = Frozen(new ImageBrush(rim) { Stretch = Stretch.Fill });
-        if (_ice is not null) _ice.Fill = Frozen(new ImageBrush(ice) { Stretch = Stretch.Fill });
+        if (w < 2 || h < 2 || _sparks is null) return;
+        _sparkKey = (w, h, Seed, Sparks, Corner);
         BuildSparks(w, h);
-        ShowDeco();
-    }
-
-    /// <summary>Кромка, иней и искры готовы под текущий размер: мягко проявляются.</summary>
-    private void ShowDeco()
-    {
-        if (_deco is null || _deco.Opacity >= 1 || !SameSize()) return;
-        if (Motion.SpringDriver.ReducedMotion) { _deco.Opacity = 1; return; }
-        _deco.BeginAnimation(OpacityProperty, new DoubleAnimation(_deco.Opacity, 1, TimeSpan.FromSeconds(0.25)));
-        _deco.Opacity = 1;
-    }
-
-    private enum TexKind { Rim, Ice }
-
-    /// <summary>
-    /// Готовые текстуры по размеру: панели одного размера (и тот же размер после возврата окна) не считаются заново.
-    /// Держим немного: при растягивании окна размеров много, нужны последние.
-    /// </summary>
-    private static class Textures
-    {
-        private static readonly object Gate = new();
-        private static readonly LinkedList<((TexKind, int, int, double, double, int) Key, BitmapSource Img)> Cache = new();
-        private const long MaxBytes = 48L * 1024 * 1024; // последние размеры всех панелей с запасом
-        private static long _bytes;
-
-        public static BitmapSource Get(TexKind kind, int w, int h, double r, double p, int seed)
-        {
-            var key = (kind, w, h, r, p, seed);
-            lock (Gate)
-                foreach (var e in Cache)
-                    if (e.Key == key) return e.Img;
-            var px = kind == TexKind.Rim ? GlassTextures.Rim(w, h, r, p) : GlassTextures.Ice(w, h, r, p, seed);
-            // точек на дюйм столько, чтобы картинка занимала размер панели (Fill всё равно растянет точно)
-            var img = BitmapSource.Create(w, h, 96, 96, PixelFormats.Pbgra32, null, px, w * 4);
-            img.Freeze();
-            lock (Gate)
-            {
-                Cache.AddFirst((key, img));
-                _bytes += px.LongLength;
-                while (_bytes > MaxBytes && Cache.Count > 1)
-                {
-                    var last = Cache.Last!.Value;
-                    Cache.RemoveLast();
-                    _bytes -= (long)last.Img.PixelWidth * last.Img.PixelHeight * 4;
-                }
-            }
-            return img;
-        }
+        _sparks.Opacity = 1;
     }
 
     private Storyboard? _sparkBoard;
@@ -472,4 +414,19 @@ public class Glass : ContentControl
     }));
 
     private static T Frozen<T>(T f) where T : Freezable { f.Freeze(); return f; }
+
+    /// <summary>
+    /// Маска скруглённого прямоугольника в координатах элемента. Заливка фигуры сглаживается (в отличие от Clip), поэтому
+    /// края стекла и капель ровные на любом масштабе.
+    /// </summary>
+    internal static Brush RoundMask(double w, double h, double r)
+    {
+        var drawing = new GeometryDrawing(Brushes.Black, null, new RectangleGeometry(new Rect(0, 0, w, h), r, r));
+        return Frozen(new DrawingBrush(drawing)
+        {
+            Stretch = Stretch.Fill,
+            ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, w, h),
+            ViewportUnits = BrushMappingMode.Absolute, Viewport = new Rect(0, 0, w, h),
+        });
+    }
 }

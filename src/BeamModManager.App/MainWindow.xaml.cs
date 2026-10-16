@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -104,19 +105,20 @@ public partial class MainWindow : Window
         }
 
         // пружины создаются до своих «применить»: те читают скорость и сжатие соседних пружин
-        _navPress = new Spring(0.4, 0.3, 1);
-        _filterPress = new Spring(0.4, 0.3, 1);
-        _capPress = new Spring(0.4, 0.3, 1);
-        _navDrop = new Spring(0.5, 0.15, 14);
-        _filterX = new Spring(0.5, 0.15, -3);
-        _capX = new Spring(0.5, 0.15, -1);
-        _capScale = new Spring(0.35, 0.15, 0.6);
+        // капли быстрые и живые (2026-10-16: «ускорить»): переезд ≈0,34 с с лёгким перелётом, нажатие ≈0,22 с
+        _navPress = new Spring(0.22, 0.3, 1);
+        _filterPress = new Spring(0.22, 0.3, 1);
+        _capPress = new Spring(0.22, 0.3, 1);
+        _navDrop = new Spring(0.34, 0.2, 14);
+        _filterX = new Spring(0.34, 0.2, -3);
+        _capX = new Spring(0.32, 0.2, -1);
+        _capScale = new Spring(0.24, 0.18, 0.6);
         _springs.Add(_navPress, _ => NavDropShape());
         _springs.Add(_filterPress, _ => FilterDropShape());
         _springs.Add(_capPress, _ => CapDropShape());
         _springs.Add(_navDrop, v => { NavDropMove.Y = v; NavDropShape(); });
         _springs.Add(_filterX, v => { FilterDropMove.X = v; FilterDropShape(); });
-        _filterW = _springs.Add(new Spring(0.5, 0.15, 60), v => { FilterDrop.Width = Math.Max(20, v); FilterDrop.Sync(); });
+        _filterW = _springs.Add(new Spring(0.34, 0.2, 60), v => { FilterDrop.Width = Math.Max(20, v); FilterDrop.Sync(); });
         _springs.Add(_capX, v => { CapDropMove.X = v; CapDropShape(); });
         _springs.Add(_capScale, _ => CapDropShape());
         _inspX = _springs.Add(new Spring(0.5, 0, 344), v =>
@@ -137,9 +139,8 @@ public partial class MainWindow : Window
         }
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
-        // иней выключенных карточек: тот же генератор, что у панелей, размер карточки ×2 (чётко до масштаба 200 %);
-        // ~60 мс один раз вместо картинки на 300 КБ в программе
-        var frostPx = BeamModManager.Ui.Glass.GlassTextures.Ice(616, 472, 52, 120, 15);
+        // изморозь выключенных карточек (чистая, без зерна: GlassTextures.Frost), размер карточки ×2 (чётко до масштаба 200 %)
+        var frostPx = BeamModManager.Ui.Glass.GlassTextures.Frost(616, 472, 52, 120);
         var frostImg = BitmapSource.Create(616, 472, 96, 96, PixelFormats.Pbgra32, null, frostPx, 616 * 4);
         Resources["CardFrost"] = Frozen(new ImageBrush(Frozen(frostImg)) { Stretch = Stretch.Fill });
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
@@ -188,13 +189,9 @@ public partial class MainWindow : Window
             Native.SetDarkFrame(this, _light != true);
             // фото карточек декодируются под масштаб Windows: на 150 % нужно в полтора раза больше пикселей
             ImageCache.DecodeHeight = (int)Math.Ceiling(260 * VisualTreeHelper.GetDpi(this).DpiScaleY);
-            // уход с «Развернуть» на соседнюю кнопку: WPF узнаёт о новой кнопке чуть позже — проверяем после него, иначе капля мигнёт
-            SnapLayouts.Attach(this, MaxButton, over =>
-                {
-                    if (over) CapButton_MouseEnter(MaxButton, null);
-                    else Dispatcher.BeginInvoke(() => { if (!Caption.IsMouseOver) HideCapDrop(); }, DispatcherPriority.Input);
-                },
-                () => Max_Click(MaxButton, new RoutedEventArgs()));
+            // плитки раскладок Windows 11 на «Развернуть» не показываем (решено 2026-10-16: мешают): кнопка — обычная кнопка окна.
+            // Пока окно тащат или тянут за край, фон и искры стоят: иначе каждый шаг ждал бы перерисовки всего стекла
+            if (HwndSource.FromHwnd(new WindowInteropHelper(this).Handle) is { } src) src.AddHook(SizeMoveHook);
         };
         Root.SizeChanged += (_, _) => { ApplyWidthClass(); PlaceBlobs(TimeSpan.Zero); };
         TopBar.SizeChanged += (_, _) => AdaptTopBar();
@@ -365,10 +362,23 @@ public partial class MainWindow : Window
     /// Фон движется, только когда окно на виду, в фокусе и игра не запущена (DESIGN.md раздел 8, «Бюджет»), и только то,
     /// что включено в настройках.
     /// </summary>
+    private bool _sizeMoving;
+
+    private IntPtr SizeMoveHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WM_ENTERSIZEMOVE = 0x0231, WM_EXITSIZEMOVE = 0x0232;
+        if (msg is WM_ENTERSIZEMOVE or WM_EXITSIZEMOVE)
+        {
+            _sizeMoving = msg == WM_ENTERSIZEMOVE;
+            UpdateMotion();
+        }
+        return IntPtr.Zero;
+    }
+
     private void UpdateMotion()
     {
         var s = _host.Settings.Current;
-        var live = IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && _host.ShotPath is null;
+        var live = IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && !_sizeMoving && _host.ShotPath is null;
         _motion.SetRunning(live && s.AnimatedBackground, live && s.Fireflies);
         // искры льда мерцают в том же ритме, что и фон; выключили «Анимированный фон» — стоят и они (DESIGN.md 6)
         foreach (var (g, _) in _glass) g.SetLive(live && s.AnimatedBackground);
@@ -515,65 +525,50 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Меняет словарь цветов (Palette.Dark / Palette.Light): всё, что взято через DynamicResource, перекрашивается сразу.
-    /// Чтобы смена не была резкой, сначала снимается кадр прежнего вида; он лежит поверх и «раскрывается» кругом от места
-    /// нажатия с мягким краем — новое оформление проступает изнутри наружу за 0,9 с.
+    /// Чтобы смена не была резкой, поверх ложится вуаль цвета нового фона и расходится кругом от места нажатия (≈0,6 с).
+    /// Раньше под раскрытием лежал снимок прежнего вида, но снимок окна WPF считает процессором вместе со всем стеклом
+    /// и тенями — это давало заметную паузу перед сменой.
     /// </summary>
     private void SwitchPalette(bool light, Point? origin)
     {
-        var shot = IsLoaded && _light is not null && !SpringDriver.ReducedMotion && _host.ShotPath is null ? SnapRoot() : null;
+        var veil = IsLoaded && _light is not null && !SpringDriver.ReducedMotion && _host.ShotPath is null;
         var dicts = Application.Current.Resources.MergedDictionaries;
         var palette = new ResourceDictionary { Source = new Uri($"pack://application:,,,/Palette.{(light ? "Light" : "Dark")}.xaml", UriKind.Absolute) };
         if (dicts.Count > 0 && dicts[0].Source?.OriginalString.Contains("Palette.", StringComparison.Ordinal) == true) dicts[0] = palette;
         else dicts.Insert(0, palette);
         _light = light;
         Native.SetDarkFrame(this, !light);
-        if (shot is not null) Reveal(shot, origin ?? new Point(Root.ActualWidth / 2, Root.ActualHeight / 2));
+        if (veil) Reveal(origin ?? new Point(Root.ActualWidth / 2, Root.ActualHeight / 2), light);
     }
 
-    /// <summary>Кадр всего окна в пикселях экрана (с уже идущим раскрытием, если оно не закончилось).</summary>
-    private BitmapSource? SnapRoot()
-    {
-        var w = Root.ActualWidth; var h = Root.ActualHeight;
-        if (w < 1 || h < 1) return null;
-        var dpi = VisualTreeHelper.GetDpi(this);
-        var rt = new RenderTargetBitmap((int)Math.Ceiling(w * dpi.DpiScaleX), (int)Math.Ceiling(h * dpi.DpiScaleY),
-            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
-        // через кисть, а не Render(Root): у развёрнутого окна у Root есть отступ, и прямой снимок съехал бы на его величину
-        var dv = new DrawingVisual();
-        using (var dc = dv.RenderOpen())
-            dc.DrawRectangle(new VisualBrush(Root) { ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, w, h) }, null, new Rect(0, 0, w, h));
-        rt.Render(dv);
-        rt.Freeze();
-        return rt;
-    }
-
-    private void Reveal(BitmapSource old, Point origin)
+    private void Reveal(Point origin, bool light)
     {
         var gen = ++_revealGen;
         var w = Root.ActualWidth; var h = Root.ActualHeight;
         // до самого дальнего угла и ещё на ширину мягкого края
         var far = new[] { new Point(0, 0), new Point(w, 0), new Point(0, h), new Point(w, h) }.Max(c => (c - origin).Length);
-        const double edge = 0.82; // доля радиуса, где кончается прозрачное «окно» и начинается мягкий край
+        const double edge = 0.7; // доля радиуса, где кончается прозрачное «окно» и начинается мягкий край
         var mask = new RadialGradientBrush
         {
             MappingMode = BrushMappingMode.Absolute,
             Center = origin, GradientOrigin = origin, RadiusX = 0, RadiusY = 0,
             GradientStops = { new GradientStop(Colors.Transparent, 0), new GradientStop(Colors.Transparent, edge), new GradientStop(Colors.Black, 1) },
         };
-        ModeVeil.Source = old;
+        ModeVeil.Fill = new SolidColorBrush(light ? Color.FromRgb(0xF2, 0xF5, 0xFA) : Color.FromRgb(0x10, 0x16, 0x26));
+        ModeVeil.Opacity = 0.7;
         ModeVeil.OpacityMask = mask;
         ModeVeil.Visibility = Visibility.Visible;
-        var time = TimeSpan.FromSeconds(1.2); // пружина без отскока: ощущается ≈0,75 с (длительность ×1,6, Motion/Spring.cs)
+        var time = TimeSpan.FromSeconds(0.9); // пружина без отскока: ощущается ≈0,55 с (длительность ×1,6, Motion/Spring.cs)
         var grow = new DoubleAnimation(0, far / edge + 40, time) { EasingFunction = Anim.Smooth };
         grow.Completed += (_, _) =>
         {
             if (gen != _revealGen) return; // уже идёт следующее раскрытие
             ModeVeil.Visibility = Visibility.Collapsed;
-            ModeVeil.Source = null;
             ModeVeil.OpacityMask = null;
         };
         mask.BeginAnimation(RadialGradientBrush.RadiusXProperty, grow);
         mask.BeginAnimation(RadialGradientBrush.RadiusYProperty, grow.Clone());
+        ModeVeil.BeginAnimation(OpacityProperty, new DoubleAnimation(0.7, 0, time) { EasingFunction = Anim.Smooth });
     }
 
     // ───────────── тема фона ─────────────
@@ -772,8 +767,8 @@ public partial class MainWindow : Window
 
     // ───────────── форма капель: растяжение в пути и сжатие при нажатии (DESIGN_MOTION 3.3) ─────────────
 
-    /// <summary>Насколько капля вытягивается по ходу движения: от скорости пружины, не больше 14 %.</summary>
-    private static double StretchOf(double velocity) => Math.Min(0.14, Math.Abs(velocity) / 2600);
+    /// <summary>Насколько капля вытягивается по ходу движения: от скорости пружины, не больше 22 % (как капля воды в пути).</summary>
+    private static double StretchOf(double velocity) => Math.Min(0.22, Math.Abs(velocity) / 1800);
 
     /// <summary>Вытянулась вдоль — сузилась поперёк (объём «сохраняется»), и всё это умножается на сжатие нажатия.</summary>
     private static void Shape(ScaleTransform t, double along, bool vertical, double press, double scale = 1)
@@ -932,9 +927,7 @@ public partial class MainWindow : Window
 
     private void LookPreview_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        var clip = new RectangleGeometry(new Rect(e.NewSize), 22, 22);
-        clip.Freeze();
-        LookPreview.Clip = clip;
+        LookPreview.OpacityMask = Glass.RoundMask(e.NewSize.Width, e.NewSize.Height, 22); // маска: края сглажены
     }
 
     /// <summary>Новое содержимое раздела: проявление и подъём на 10 px (≈0,35 с, пружина без отскока).</summary>

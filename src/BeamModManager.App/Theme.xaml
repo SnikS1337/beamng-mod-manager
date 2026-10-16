@@ -57,6 +57,8 @@
                 <ControlTemplate TargetType="c:Glass">
                     <Grid>
                         <Border x:Name="ShadowHost" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" Background="#0B1222">
+                            <!-- тень неподвижна: кэш, иначе размытие 56 px считалось бы заново на каждом кадре движущегося фона -->
+                            <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                             <Border.Effect>
                                 <DropShadowEffect BlurRadius="56" ShadowDepth="22" Direction="270" Color="#080C18" Opacity="0.38" RenderingBias="Performance"/>
                             </Border.Effect>
@@ -80,10 +82,11 @@
                         </Border>
                         <Border x:Name="PART_Contour" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" BorderThickness="1"
                                 BorderBrush="#1FFFFFFF" IsHitTestVisible="False"/>
-                        <!-- кромка, иней и искры: Rectangle не просит места у раскладки (картинка растянула бы панель) -->
-                        <Grid x:Name="PART_Deco" IsHitTestVisible="False" Opacity="0">
-                            <Rectangle x:Name="PART_Rim"/>
-                            <Rectangle x:Name="PART_Ice"/>
+                        <!-- блик по кромке, изморозь (векторы, под любой размер) и искры; кромка неподвижна — кэш картинкой -->
+                        <Grid x:Name="PART_Deco" IsHitTestVisible="False">
+                            <c:GlassEdge x:Name="PART_Edge" Corner="{Binding Corner, RelativeSource={RelativeSource TemplatedParent}}">
+                                <c:GlassEdge.CacheMode><BitmapCache SnapsToDevicePixels="False"/></c:GlassEdge.CacheMode>
+                            </c:GlassEdge>
                             <Canvas x:Name="PART_Sparks"/>
                         </Grid>
                         <ContentPresenter Margin="{TemplateBinding Padding}"/>
@@ -184,6 +187,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Border CornerRadius="22" Background="{DynamicResource PrimaryBack}">
+                        <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="30" ShadowDepth="0" Color="#AACDFF" Opacity="0.42" RenderingBias="Performance"/>
                         </Border.Effect>
@@ -352,28 +356,12 @@
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
                     <DockPanel Background="Transparent">
-                        <Grid DockPanel.Dock="Right" Width="52" Height="32" Margin="12,0,0,0" VerticalAlignment="Center">
-                            <Border x:Name="Track" CornerRadius="16" Background="{DynamicResource TrackOff}"/>
-                            <Ellipse x:Name="Knob" Width="26" Height="26" Fill="White" HorizontalAlignment="Left" Margin="3,0,0,0">
-                                <Ellipse.Effect>
-                                    <DropShadowEffect BlurRadius="6" ShadowDepth="2" Direction="270" Color="#060A16" Opacity="0.4" RenderingBias="Performance"/>
-                                </Ellipse.Effect>
-                            </Ellipse>
-                        </Grid>
+                        <c:GlassSwitch DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center" OffBrush="{DynamicResource TrackOff}"
+                                       IsOn="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}"
+                                       Pressed="{Binding IsPressed, RelativeSource={RelativeSource TemplatedParent}}"/>
                         <TextBlock Text="{TemplateBinding Content}" VerticalAlignment="Center" TextWrapping="Wrap"/>
                     </DockPanel>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Knob" Property="Margin" Value="23,0,0,0"/>
-                            <Setter TargetName="Track" Property="Background">
-                                <Setter.Value>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#C6DFFF" Offset="0"/>
-                                        <GradientStop Color="#8FBFFF" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Setter.Value>
-                            </Setter>
-                        </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -415,6 +403,7 @@
                 <ControlTemplate TargetType="RadioButton">
                     <Grid>
                         <Border x:Name="Glow" CornerRadius="16" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
+                            <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                             <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
                         </Border>
                         <Border x:Name="B" CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="14,10">
@@ -454,14 +443,9 @@
                 <ControlTemplate TargetType="CheckBox">
                     <Border x:Name="Row" CornerRadius="18" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="16,12">
                         <DockPanel>
-                            <Grid DockPanel.Dock="Right" Width="52" Height="32" Margin="16,0,0,0" VerticalAlignment="Center">
-                                <Border x:Name="Track" CornerRadius="16" Background="{DynamicResource TrackOff}"/>
-                                <Ellipse x:Name="Knob" Width="26" Height="26" Fill="White" HorizontalAlignment="Left" Margin="3,0,0,0">
-                                    <Ellipse.Effect>
-                                        <DropShadowEffect BlurRadius="6" ShadowDepth="2" Direction="270" Color="#060A16" Opacity="0.4" RenderingBias="Performance"/>
-                                    </Ellipse.Effect>
-                                </Ellipse>
-                            </Grid>
+                            <c:GlassSwitch DockPanel.Dock="Right" Margin="16,0,0,0" VerticalAlignment="Center" OffBrush="{DynamicResource TrackOff}"
+                                           IsOn="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}"
+                                           Pressed="{Binding IsPressed, RelativeSource={RelativeSource TemplatedParent}}"/>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="{TemplateBinding Content}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                 <TextBlock Text="{TemplateBinding Tag}" Style="{StaticResource Note}" Margin="0,2,0,0"/>
@@ -469,17 +453,6 @@
                         </DockPanel>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Knob" Property="Margin" Value="23,0,0,0"/>
-                            <Setter TargetName="Track" Property="Background">
-                                <Setter.Value>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#C6DFFF" Offset="0"/>
-                                        <GradientStop Color="#8FBFFF" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Setter.Value>
-                            </Setter>
-                        </Trigger>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource RowFillHover}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
@@ -495,13 +468,14 @@
             <Setter.Value>
                 <ControlTemplate TargetType="HeaderedContentControl">
                     <Border CornerRadius="18" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="16,12">
-                        <DockPanel>
-                            <ContentPresenter DockPanel.Dock="Right" Margin="16,0,0,0" VerticalAlignment="Center"/>
-                            <StackPanel VerticalAlignment="Center">
+                        <!-- выбор справа; если подписи остаётся меньше 200 px — под подписью (иначе текст рвался по буквам) -->
+                        <c:SideOrBelow Gap="16" MinText="200">
+                            <StackPanel>
                                 <TextBlock Text="{TemplateBinding Header}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                 <TextBlock Text="{TemplateBinding Tag}" Style="{StaticResource Note}" Margin="0,2,0,0"/>
                             </StackPanel>
-                        </DockPanel>
+                            <ContentPresenter/>
+                        </c:SideOrBelow>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
@@ -529,6 +503,7 @@
                     <Grid Margin="1,0">
                         <!-- свечение выбранного: 0 0 16px rgba(170,205,255,.22); размытая кромка, а не заливка — внутри пункт не синеет -->
                         <Border x:Name="Glow" CornerRadius="15" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
+                            <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                             <Border.Effect><BlurEffect Radius="14" RenderingBias="Performance"/></Border.Effect>
                         </Border>
                         <Border x:Name="B" CornerRadius="15" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="13,5">
@@ -563,6 +538,7 @@
                 <ControlTemplate TargetType="RadioButton">
                     <Grid>
                         <Border x:Name="Glow" CornerRadius="16" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
+                            <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                             <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
                         </Border>
                         <Border x:Name="B" CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="14,9">
@@ -643,6 +619,7 @@
                 <ControlTemplate TargetType="RadioButton">
                     <Grid>
                         <Border x:Name="Glow" CornerRadius="21" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
+                            <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                             <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
                         </Border>
                         <Border x:Name="B" CornerRadius="21" Background="Transparent" Padding="16,0">

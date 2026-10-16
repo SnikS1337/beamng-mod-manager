@@ -93,7 +93,9 @@ public static class SettingsScreenTests
             Assert.False(saved!.FrostSparks, "ушло на сохранение");
             Assert.True(vm.Preset is null, "набор стал своим");
             vm.Frost = false;
-            Assert.False(vm.FrostOptionsEnabled, "без инея искры недоступны");
+            Assert.False(vm.FrostOptionsEnabled, "без инея сила недоступна");
+            vm.FrostSparks = true;
+            Assert.True(saved!.FrostSparks && !saved.Frost, "искры включаются и без инея");
             vm.ResetAppearance();
             Assert.True(vm.FrostSparks && vm.IsIce, "«Сбросить» вернул искры");
         });
