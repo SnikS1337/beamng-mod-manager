@@ -39,7 +39,12 @@ public sealed class GameBridge
     public bool IsAlive()
     {
         var s = ReadState();
-        if (s?["alive"] is not JsonValue v || !v.TryGetValue<long>(out var alive)) return false;
+        if (s?["alive"] is not JsonValue v) return false;
+        // Lua пишет секунды целым числом, но кодировщик JSON игры может записать и дробное
+        long alive;
+        if (v.TryGetValue<long>(out var l)) alive = l;
+        else if (v.TryGetValue<double>(out var d) && double.IsFinite(d) && Math.Abs(d) < 1e11) alive = (long)d;
+        else return false;
         var age = _now() - DateTimeOffset.FromUnixTimeSeconds(alive);
         return age < AliveWindow && age > -AliveWindow;
     }
@@ -56,15 +61,23 @@ public sealed class GameBridge
             set[key] = on;
         }
         var cmd = new JsonObject { ["id"] = id, ["time"] = _now().ToUnixTimeSeconds(), ["set"] = set };
+        var tmp = CommandPath + $".{Environment.ProcessId}.tmp";
         try
         {
             Directory.CreateDirectory(_dir);
-            var tmp = CommandPath + $".{Environment.ProcessId}.tmp";
             File.WriteAllText(tmp, cmd.ToJsonString(), new System.Text.UTF8Encoding(false));
-            File.Move(tmp, CommandPath, overwrite: true);
-            return id;
+            // игра читает команду раз в полсекунды; попали ровно на чтение — файл занят, через миг свободен
+            for (var i = 0; ; i++)
+            {
+                try { File.Move(tmp, CommandPath, overwrite: true); return id; }
+                catch (Exception e) when (i < 2 && e is IOException or UnauthorizedAccessException) { Thread.Sleep(20); }
+            }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            try { File.Delete(tmp); } catch (Exception d) when (d is IOException or UnauthorizedAccessException) { }
+            return null;
+        }
     }
 
     public BridgeAnswer? ReadAnswer()
@@ -78,15 +91,24 @@ public sealed class GameBridge
         return new BridgeAnswer(Str(s, "ackId"), results, Str(s, "error"));
     }
 
+    /// <summary>
+    /// Игра пишет state.json прямо поверх (не через временный файл), раз в 2 с: можно попасть на недописанный файл.
+    /// Тогда читаем ещё раз через миг, иначе живой помощник на секунду показался бы пропавшим и переключение ушло бы
+    /// в ожидание закрытия игры.
+    /// </summary>
     private JsonObject? ReadState()
     {
-        try
+        for (var i = 0; ; i++)
         {
-            if (!File.Exists(StatePath)) return null;
-            using var fs = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            return JsonNode.Parse(fs) as JsonObject;
+            try
+            {
+                if (!File.Exists(StatePath)) return null;
+                using var fs = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return JsonNode.Parse(fs) as JsonObject;
+            }
+            catch (Exception e) when (i < 2 && e is IOException or JsonException) { Thread.Sleep(15); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return null; }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
     private static string? Str(JsonObject o, string k) => o[k] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;

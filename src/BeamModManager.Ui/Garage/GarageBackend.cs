@@ -47,6 +47,9 @@ public interface IGarageBackend
 
     /// <summary>Передать помощнику нужное состояние модов (имя файла → включён). false — не получилось, ждём закрытия игры.</summary>
     bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) => false;
+
+    /// <summary>Ответ помощника на последнюю переданную команду; null — ещё не ответил (или помощника нет).</summary>
+    BridgeAnswer? LiveAnswer() => null;
 }
 
 /// <summary>Гараж поверх настоящих библиотеки, папки модов и db.json игры.</summary>
@@ -98,7 +101,17 @@ public sealed class LibraryGarageBackend : IGarageBackend
 
     public bool LiveAvailable => _installer.ModsFolderAvailable && Bridge.IsAlive();
 
-    public bool TrySendLive(IReadOnlyDictionary<string, bool> wanted) => LiveAvailable && Bridge.Send(wanted) is not null;
+    public bool TrySendLive(IReadOnlyDictionary<string, bool> wanted)
+    {
+        if (!LiveAvailable) return false;
+        _liveId = Bridge.Send(wanted);
+        return _liveId is not null;
+    }
+
+    private string? _liveId;
+
+    public BridgeAnswer? LiveAnswer() =>
+        _liveId is { } id && _installer.ModsFolderAvailable && Bridge.ReadAnswer() is { } a && a.AckId == id ? a : null;
 
     public GarageSnapshot Load()
     {

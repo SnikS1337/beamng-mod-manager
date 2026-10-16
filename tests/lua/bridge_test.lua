@@ -72,6 +72,22 @@ files['/bmm_bridge/commands.json'] = { id = 'c4', time = now, set = { bmw = fals
 B.onUpdate(0.6)
 check(files['/bmm_bridge/state.json'].error ~= nil, 'ошибка записана в ответ')
 
+-- выключили помощник в меню модов игры: молчит и команд не выполняет, включили — снова работает
+core_modmanager.deactivateMod = function(n) table.insert(calls, '-' .. n); mods[n].active = false end
+mods.bmm_bridge.active = false
+local before = files['/bmm_bridge/state.json'].alive
+now = now + 5
+files['/bmm_bridge/commands.json'] = { id = 'c5', time = now, set = { map = false } }
+local n = #calls
+B.onUpdate(0.6); B.onUpdate(2.1)
+check(#calls == n, 'выключенный помощник команды не выполняет')
+check(files['/bmm_bridge/state.json'].alive == before, 'выключенный помощник не подаёт признаков жизни')
+mods.bmm_bridge.active = true
+B.onUpdate(0.6)
+check(calls[#calls] == '-map', 'включили снова — команда выполнена')
+B.onUpdate(2.1)
+check(files['/bmm_bridge/state.json'].alive == now, 'и признак жизни снова есть')
+
 -- скрипт мода
 dofile(arg[1] .. '/modScript.lua')
 check(loaded.bmmBridge, 'modScript загружает расширение')
