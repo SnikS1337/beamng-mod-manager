@@ -127,9 +127,29 @@ public sealed class LibraryUpdatesBackend : IUpdatesBackend
 
     public async Task<UpdateRunReport> CheckAsync(bool force, IProgress<UpdateProgress>? progress = null)
     {
-        // одна проверка пишет сотни состояний: на диск — одной записью в конце, а не на каждое
-        using ((_store as JsonLibraryStore)?.Batch())
-            return await _coordinator.CheckAsync(force, progress).ConfigureAwait(false);
+        // одна проверка пишет сотни состояний: на диск — не на каждое, а раз в 20 с и в конце. Проверка после долгого
+        // перерыва идёт частями до часа: если в это время выключат свет, теряется не больше 20 секунд
+        var js = _store as JsonLibraryStore;
+        using (js?.Batch())
+        {
+            var p = js is null ? progress : new FlushingProgress(progress, js, TimeSpan.FromSeconds(20));
+            return await _coordinator.CheckAsync(force, p).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Ход проверки дальше окну и заодно редкая запись библиотеки на диск.</summary>
+    private sealed class FlushingProgress(IProgress<UpdateProgress>? inner, JsonLibraryStore store, TimeSpan every) : IProgress<UpdateProgress>
+    {
+        private readonly System.Diagnostics.Stopwatch _since = System.Diagnostics.Stopwatch.StartNew();
+        private int _busy;
+
+        public void Report(UpdateProgress value)
+        {
+            inner?.Report(value);
+            if (_since.Elapsed < every || Interlocked.Exchange(ref _busy, 1) == 1) return;
+            try { store.Flush(); _since.Restart(); }
+            finally { Volatile.Write(ref _busy, 0); }
+        }
     }
 
     public void Cancel() => _coordinator.Cancel();

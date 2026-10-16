@@ -419,12 +419,17 @@ public static class UpdatesScreenTests
             await pending;
             Assert.Eq("Modland · Toyota Sienna · версия 2.2", p.LinkNote);
             Assert.True(p.CanApply && p.LinkOk, "ссылка подошла");
-            Assert.Eq("Следим на Modland", p.Apply());
+            Assert.Eq("Следим на Modland", await p.ApplyAsync());
             Assert.True(b.Bound.Single() is { Verified: true, Replace: null }, "проверенная запись");
             p.Select(p.Suggestions[0]);
             Assert.Eq("", p.LinkText);
-            Assert.Eq("Следим на STMods", p.Apply());
-            Assert.False(b.Bound[1].Verified, "подсказка поиска — не проверенная страница");
+            Assert.Eq("Следим на STMods", await p.ApplyAsync());
+            Assert.False(b.Bound[1].Verified, "страница подсказки не открылась (вернулась чужая) — следим без версии");
+            var full = new Listing("stmods", p.Suggestions[0].Listing.Url, "Sienna", "Sienna") { ModVersion = "2.3", SizeBytes = 90L * 1024 * 1024 };
+            b.Page = _ => Task.FromResult(new PageCheck(full, null));
+            p.Select(p.Suggestions[0]);
+            await p.ApplyAsync();
+            Assert.True(b.Bound[2] is { Verified: true } x && x.L.ModVersion == "2.3", "подсказку открыли: версия известна сразу");
         });
 
         t.Run("«Найти замену»: заголовок как в дизайне, пропавшая страница заменяется", async () =>
@@ -438,7 +443,7 @@ public static class UpdatesScreenTests
             await p.LoadAsync();
             Assert.True(replacing, "поиск без пропавшей страницы");
             p.Select(p.Suggestions[0]);
-            p.Apply();
+            await p.ApplyAsync();
             Assert.Eq("modland", b.Bound.Single().Replace);
         });
 

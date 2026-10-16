@@ -559,6 +559,9 @@ public static class GarageTests
             Assert.Eq("1 час назад", Ru.Ago(T0, T0.AddMinutes(61)));
             Assert.Eq("вчера", Ru.Ago(T0, T0.AddHours(30)));
             Assert.Eq("3 дня назад", Ru.Ago(T0, T0.AddDays(3)));
+            Assert.Eq("1 неделю назад", Ru.Ago(T0, T0.AddDays(8)));
+            Assert.Eq("3 недели назад", Ru.Ago(T0, T0.AddDays(21)));
+            Assert.True(Ru.Ago(T0, T0.AddDays(40)).Contains("2026"), "старше месяца — дата");
             Assert.Eq("312 МБ", Ru.Size(312L * 1024 * 1024));
             Assert.Eq("1,5 ГБ", Ru.Size(1536L * 1024 * 1024));
         });

@@ -393,9 +393,6 @@ public sealed class UpdatesViewModel : Observable
         return RunAsync(force, manual: true);
     }
 
-    /// <summary>Тихо проверить то, что пора (после «Следить на этой странице»): сайты не дёргаются зря, срок давности соблюдён.</summary>
-    public Task CheckSoonAsync() => RunAsync(false, manual: false);
-
     /// <summary>При запуске окна, если включено в настройках.</summary>
     public Task StartupAsync() => _settings.AutoCheckOnStart ? RunAsync(false, manual: false) : Task.CompletedTask;
 
