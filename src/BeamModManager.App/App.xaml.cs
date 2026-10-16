@@ -142,6 +142,7 @@ public partial class App : Application
                 DownloadsAllowed = true, // как на доске «Гараж»
                 ShotPath = shot,
                 ShotPerf = Array.IndexOf(Environment.GetCommandLineArgs(), "--perf") >= 0,
+                ShotFrames = Array.IndexOf(Environment.GetCommandLineArgs(), "--frames") >= 0,
                 ShotSelect = Arg("--select"),
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,

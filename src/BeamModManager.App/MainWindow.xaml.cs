@@ -37,6 +37,8 @@ public sealed class WindowHost
     public string? ShotSelect { get; init; }
     /// <summary>Вместе со снимком записать замеры (запуск, фильтр, поиск, перечитывание, память) в &lt;снимок&gt;.perf.txt.</summary>
     public bool ShotPerf { get; init; }
+    /// <summary>Вместе со снимком прогнать анимации и записать кадры в секунду в &lt;снимок&gt;.frames.txt (--frames).</summary>
+    public bool ShotFrames { get; init; }
     /// <summary>Размер с прошлого запуска (только если он не меньше 1000 × 680, AppSettings).</summary>
     public int StartWidth { get; init; }
     public int StartHeight { get; init; }
@@ -924,7 +926,7 @@ public partial class MainWindow : Window
     /// <summary>Новое содержимое раздела: проявление и подъём на 10 px (≈0,35 с, пружина без отскока).</summary>
     private void Arrive(UIElement fade, UIElement rise)
     {
-        if (SpringDriver.ReducedMotion || _host.ShotPath is not null) return;
+        if (SpringDriver.ReducedMotion || (_host.ShotPath is not null && !_probing)) return;
         fade.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.55, Anim.Smooth));
         Anim.Mover(rise).BeginAnimation(TranslateTransform.YProperty, Anim.Go(10, 0, 0.55, Anim.Smooth));
     }
@@ -1454,6 +1456,7 @@ public partial class MainWindow : Window
             WritePerf(path + ".perf.txt", startup);
             await Task.Delay(800); // после прокрутки туда-обратно картинки видимых карточек успевают встать
         }
+        if (_host.ShotFrames) await ProbeFrames(path + ".frames.txt");
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -1524,5 +1527,101 @@ public partial class MainWindow : Window
             lines.Add($"300 кругов действий: {watch.ElapsedMilliseconds} мс; куча {before} → {after} МБ; дескрипторы {handles} → {proc.HandleCount}");
         }
         try { File.WriteAllLines(file, lines); } catch (IOException) { }
+    }
+
+    // ───────────── кадры в секунду (сборочная машина, --frames) ─────────────
+
+    private bool _probing;
+
+    /// <summary>
+    /// Прогоняет анимации, на которые жаловались («будто 15 кадров»): выезд и уезд панели мода, каплю кнопок окна,
+    /// наведение на карточку, переход в «Настройки», живой фон. Считает кадры (CompositionTarget.Rendering) и худшую
+    /// паузу между ними. На сборочной машине нет видеокарты: числа ниже, чем у человека, важно их сравнение между сборками.
+    /// </summary>
+    private async Task ProbeFrames(string file)
+    {
+        var lines = new List<string>
+        {
+            $"видеокарта WPF: уровень {RenderCapability.Tier >> 16}; эффекты анимации Windows: {(SpringDriver.SystemReduced ? "выключены" : "включены")}",
+        };
+        _probing = true;
+        var reducedBefore = SpringDriver.AnimationsOff;
+        SpringDriver.AnimationsOff = false;
+        try
+        {
+            async Task Run(string what, Action start, double seconds = 0.9)
+            {
+                var times = new List<TimeSpan>();
+                void OnFrame(object? sender, EventArgs e)
+                {
+                    if (e is RenderingEventArgs r && (times.Count == 0 || r.RenderingTime != times[^1])) times.Add(r.RenderingTime);
+                }
+                await Task.Delay(300); // предыдущее успокоилось
+                CompositionTarget.Rendering += OnFrame;
+                start();
+                await Task.Delay(TimeSpan.FromSeconds(seconds));
+                CompositionTarget.Rendering -= OnFrame;
+                if (times.Count < 2) { lines.Add($"{what}: кадров нет"); return; }
+                var span = (times[^1] - times[0]).TotalSeconds;
+                var worst = 0.0;
+                for (var i = 1; i < times.Count; i++) worst = Math.Max(worst, (times[i] - times[i - 1]).TotalMilliseconds);
+                lines.Add($"{what}: {(times.Count - 1) / Math.Max(span, 0.001):0} кадр/с, худшая пауза {worst:0} мс");
+            }
+
+            var card = _vm.Cards.FirstOrDefault();
+            await Run("тишина", () => { });
+            if (card is not null)
+            {
+                await Run("панель мода выезжает", () => _vm.Selected = card);
+                await Run("панель мода уезжает", () => _vm.Selected = null);
+            }
+            void Later(double seconds, Action a) => _ = Task.Delay(TimeSpan.FromSeconds(seconds)).ContinueWith(_ => Dispatcher.BeginInvoke(a));
+            await Run("капля кнопок окна", () =>
+            {
+                CapButton_MouseEnter(MinButton, null);
+                Later(0.3, () => CapButton_MouseEnter(MaxButton, null));
+                Later(0.6, () => CapButton_MouseEnter(CloseButton, null));
+            });
+            HideCapDrop(instant: true);
+            if (FindCard() is { } btn && btn.Template.FindName("GlowHover", btn) is UIElement glow)
+            {
+                // то же, что делает наведение в шаблоне карточки: подъём, свечение и кромка
+                var rim = btn.Template.FindName("RimHover", btn) as UIElement;
+                var hover = btn.Template.FindName("Hover", btn) as TranslateTransform;
+                await Run("наведение на карточку", () =>
+                {
+                    glow.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.6, Anim.Smooth));
+                    rim?.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.45, Anim.Smooth));
+                    hover?.BeginAnimation(TranslateTransform.YProperty, Anim.Go(0, -5, 0.8, Anim.Lift));
+                });
+                glow.BeginAnimation(OpacityProperty, null);
+                rim?.BeginAnimation(OpacityProperty, null);
+                hover?.BeginAnimation(TranslateTransform.YProperty, null);
+            }
+            await Run("переход в «Настройки»", () => NavSettings.IsChecked = true);
+            await Run("обратно в моды", () => NavGarage.IsChecked = true);
+            await Run("живой фон и огоньки", () => _motion.SetRunning(true, true), 1.5);
+            _motion.SetRunning(false, false);
+        }
+        finally
+        {
+            _probing = false;
+            SpringDriver.AnimationsOff = reducedBefore;
+        }
+        try { File.WriteAllLines(file, lines); } catch (IOException) { }
+    }
+
+    /// <summary>Первая карточка гаража на экране (кнопка с шаблоном «Card»).</summary>
+    private Button? FindCard()
+    {
+        Button? found = null;
+        void Walk(DependencyObject d)
+        {
+            if (found is not null) return;
+            if (d is Button b && b.Template?.FindName("GlowHover", b) is not null) { found = b; return; }
+            for (var i = 0; i < VisualTreeHelper.GetChildrenCount(d); i++) Walk(VisualTreeHelper.GetChild(d, i));
+        }
+        Walk(Scroller);
+        return found;
     }
 }
