@@ -67,9 +67,7 @@ public sealed class SettingsStore
                     KeepBackups = Int(r, nameof(AppSettings.KeepBackups), d.KeepBackups, warnings),
                     MaxCardChecksPerSource = Int(r, nameof(AppSettings.MaxCardChecksPerSource), d.MaxCardChecksPerSource, warnings),
                     LiquidGlass = Bool(r, nameof(AppSettings.LiquidGlass), d.LiquidGlass, warnings),
-                    Frost = Bool(r, nameof(AppSettings.Frost), d.Frost, warnings),
-                    FrostStrength = Int(r, nameof(AppSettings.FrostStrength), d.FrostStrength, warnings),
-                    FrostSparks = Bool(r, nameof(AppSettings.FrostSparks), d.FrostSparks, warnings),
+                    // прежние «Frost», «FrostStrength», «FrostSparks» (иней и искры льда) больше не читаются: иней убран, искры — в «Огоньках»
                     // прежние «Background» (фото), «BackgroundDim», «BackgroundImage» больше не читаются: фото убрано
                     Theme = (BackgroundTheme)Int(r, nameof(AppSettings.Theme), (int)d.Theme, warnings),
                     Mode = (UiMode)Int(r, nameof(AppSettings.Mode), (int)d.Mode, warnings),

@@ -131,10 +131,8 @@ public sealed class SettingsViewModel : Observable
     public AppearancePreset? Preset => AppearancePresets.Detect(_current);
 
     // плитки наборов в окне — переключатели: выбор плитки выставляет набор, снятие ничего не делает
-    public bool IsIce { get => Preset == AppearancePreset.Ice; set { if (value) ApplyPreset(AppearancePreset.Ice); } }
-    public bool IsGlass { get => Preset == AppearancePreset.Glass; set { if (value) ApplyPreset(AppearancePreset.Glass); } }
-    public bool IsMatte { get => Preset == AppearancePreset.Matte; set { if (value) ApplyPreset(AppearancePreset.Matte); } }
-    public bool IsLight { get => Preset == AppearancePreset.Light; set { if (value) ApplyPreset(AppearancePreset.Light); } }
+    public bool IsBeautiful { get => Preset == AppearancePreset.Beautiful; set { if (value) ApplyPreset(AppearancePreset.Beautiful); } }
+    public bool IsFast { get => Preset == AppearancePreset.Fast; set { if (value) ApplyPreset(AppearancePreset.Fast); } }
 
     /// <summary>Подпись под наборами: какой выбран или что набор свой.</summary>
     public string PresetNote => Preset is null
@@ -143,20 +141,12 @@ public sealed class SettingsViewModel : Observable
 
     public void ApplyPreset(AppearancePreset p) => Update(s => AppearancePresets.Apply(s, p));
 
-    /// <summary>«Сбросить»: набор «Лёд», как при первом запуске.</summary>
-    public void ResetAppearance() => ApplyPreset(AppearancePreset.Ice);
+    /// <summary>«Сбросить»: набор «Красиво», как при первом запуске.</summary>
+    public void ResetAppearance() => ApplyPreset(AppearancePreset.Beautiful);
 
+    /// <summary>«Жидкое стекло»: панели преломляют фон, выбор — прозрачная капля-линза. Выключено: матовое стекло и
+    /// светлая полупрозрачная плашка вместо капель, движение то же.</summary>
     public bool LiquidGlass { get => _current.LiquidGlass; set => Update(s => s with { LiquidGlass = value }); }
-    public bool Frost { get => _current.Frost; set => Update(s => s with { Frost = value }); }
-
-    /// <summary>0 слабо, 1 средне, 2 сильно.</summary>
-    public int FrostStrength { get => _current.FrostStrength; set => Update(s => s with { FrostStrength = value }); }
-    public bool FrostWeak { get => FrostStrength == 0; set { if (value) FrostStrength = 0; } }
-    public bool FrostMedium { get => FrostStrength == 1; set { if (value) FrostStrength = 1; } }
-    public bool FrostStrong { get => FrostStrength == 2; set { if (value) FrostStrength = 2; } }
-
-    /// <summary>«Искры льда»: редкие блики на кромках стекла. Не зависит от инея (решено 2026-10-16).</summary>
-    public bool FrostSparks { get => _current.FrostSparks; set => Update(s => s with { FrostSparks = value }); }
 
     /// <summary>Оформление: тёмное, светлое, как в Windows.</summary>
     public UiMode Mode { get => _current.Mode; set => Update(s => s with { Mode = value }); }
@@ -189,10 +179,8 @@ public sealed class SettingsViewModel : Observable
 
     public bool UiAnimations { get => _current.UiAnimations; set => Update(s => s with { UiAnimations = value }); }
     public bool AnimatedBackground { get => _current.AnimatedBackground; set => Update(s => s with { AnimatedBackground = value }); }
+    /// <summary>«Огоньки»: светлые точки над фоном и редкие искры на кромках стекла (бывшие «Искры льда»).</summary>
     public bool Fireflies { get => _current.Fireflies; set => Update(s => s with { Fireflies = value }); }
-
-    /// <summary>Сила инея зависит от инея: при выключенном пункт тускнеет и не нажимается (значение хранится). Искры — отдельно.</summary>
-    public bool FrostOptionsEnabled => _current.Frost;
 
     // ───────────── загрузка модов ─────────────
 

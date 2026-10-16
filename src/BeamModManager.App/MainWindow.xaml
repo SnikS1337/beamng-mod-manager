@@ -99,21 +99,6 @@
                                     </Border.Background>
                                 </Border>
                             </Grid>
-                            <!-- иней: текстура считается при запуске окна (GlassTextures.Ice, как ice_card из design/mockup/tools/gen_ice.py). Включили мод — тает от краёв к центру,
-                                 выключили — нарастает от краёв внутрь (DESIGN_MOTION 3.1). Маска: непрозрачно до стопа 0, прозрачно
-                                 между стопами 1 и 2, снова непрозрачно после стопа 3. Растаял: 0, 0, 1, 1. Покрыт: 1, 1, 1, 1. -->
-                            <Border x:Name="Frost" CornerRadius="26" RenderTransformOrigin="0.5,0.5" Opacity="{DynamicResource FrostOpacity}" Background="{DynamicResource CardFrost}"
-                                    IsHitTestVisible="False" Visibility="Collapsed">
-                                <Border.RenderTransform><ScaleTransform x:Name="FrostScale" ScaleX="1.03" ScaleY="1.03"/></Border.RenderTransform>
-                                <Border.OpacityMask>
-                                    <RadialGradientBrush Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.75" RadiusY="0.75">
-                                        <GradientStop Color="#FF000000" Offset="0"/>
-                                        <GradientStop Color="#00000000" Offset="0"/>
-                                        <GradientStop Color="#00000000" Offset="1"/>
-                                        <GradientStop Color="#FF000000" Offset="1"/>
-                                    </RadialGradientBrush>
-                                </Border.OpacityMask>
-                            </Border>
                             <Border CornerRadius="26">
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -175,58 +160,19 @@
                                 <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="Snow" Property="Visibility" Value="Visible"/>
                             </DataTrigger>
-                            <!-- выключили: иней нарастает от краёв внутрь, медленно; включили: тает от краёв к центру (DESIGN_MOTION 3.1).
-                                 Серый налёт просто проявляется и гаснет. Если иней выключен в настройках (FrostOpacity 0), остаётся только он. -->
+                            <!-- выключили: мод «засыпает» — фото плавно становится серым с холодным налётом; включили — оживает (DESIGN_MOTION 3.1) -->
                             <DataTrigger Binding="{Binding Enabled}" Value="False">
                                 <DataTrigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:1.1" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:1.4" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:1.4" EasingFunction="{StaticResource Smooth}"/>
-                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="Visibility">
-                                                <DiscreteObjectKeyFrame KeyTime="0:0:0" Value="{x:Static Visibility.Visible}"/>
-                                            </ObjectAnimationUsingKeyFrames>
-                                            <!-- остаток прерванного таяния в центре быстро уходит, иней идёт от краёв (стопы 2 и 3);
-                                                 в конце маска переходит в равный по виду вид «1, 1, 1, 1», от него и тает -->
-                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[0].(GradientStop.Offset)">
-                                                <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="0" EasingFunction="{StaticResource Smooth}"/>
-                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
-                                            </DoubleAnimationUsingKeyFrames>
-                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[1].(GradientStop.Offset)">
-                                                <EasingDoubleKeyFrame KeyTime="0:0:0.15" Value="0" EasingFunction="{StaticResource Smooth}"/>
-                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
-                                            </DoubleAnimationUsingKeyFrames>
-                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[2].(GradientStop.Offset)">
-                                                <EasingDoubleKeyFrame KeyTime="0:0:1.1" Value="0" EasingFunction="{StaticResource Smooth}"/>
-                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
-                                            </DoubleAnimationUsingKeyFrames>
-                                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[3].(GradientStop.Offset)">
-                                                <EasingDoubleKeyFrame KeyTime="0:0:1.4" Value="0" EasingFunction="{StaticResource Smooth}"/>
-                                                <DiscreteDoubleKeyFrame KeyTime="0:0:1.42" Value="1"/>
-                                            </DoubleAnimationUsingKeyFrames>
+                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.45" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.EnterActions>
                                 <DataTrigger.ExitActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleX" To="1.03" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="FrostScale" Storyboard.TargetProperty="ScaleY" To="1.03" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
-                                            <!-- край прозрачности (стоп 1) идёт за непрозрачным (стоп 0) — мягкая кромка таяния;
-                                                 прерванное нарастание (стопы 2 и 3) уходит обратно к краям -->
-                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[0].(GradientStop.Offset)"
-                                                             To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[1].(GradientStop.Offset)"
-                                                             To="0" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[2].(GradientStop.Offset)"
-                                                             To="1" Duration="0:0:1" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="Frost" Storyboard.TargetProperty="(UIElement.OpacityMask).(GradientBrush.GradientStops)[3].(GradientStop.Offset)"
-                                                             To="1" Duration="0:0:0.8" EasingFunction="{StaticResource Smooth}"/>
-                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Frost" Storyboard.TargetProperty="Visibility">
-                                                <DiscreteObjectKeyFrame KeyTime="0:0:1" Value="{x:Static Visibility.Collapsed}"/>
-                                            </ObjectAnimationUsingKeyFrames>
+                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.ExitActions>
@@ -658,7 +604,7 @@
 
         <!-- Левая панель: x 16, y 16, 84 × 284 -->
         <c:Glass x:Name="Nav" Source="{Binding ElementName=Scene}" Corner="36" Blur="2" Tint="#700E182C"
-                 Lens="30" Refraction="105" Brightness="0.78" Ice="0.55" IceReach="34" Sparks="6" Seed="11"
+                 Lens="30" Refraction="105" Brightness="0.78" Sparks="6" Seed="11"
                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0" Width="84" Height="284"
                  WindowChrome.IsHitTestVisibleInChrome="True">
             <Canvas PreviewMouseLeftButtonDown="Nav_PreviewMouseDown" PreviewMouseLeftButtonUp="Nav_PreviewMouseUp" MouseLeave="Nav_MouseLeave">
@@ -695,7 +641,7 @@
 
         <!-- Верхняя панель: x 116, y 16, высота 52, до правой панели -->
         <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="26" Blur="3" Tint="#700E182C"
-                 Lens="26" Refraction="120" Brightness="0.60" Ice="0.34" IceReach="24" Sparks="8" Seed="13"
+                 Lens="26" Refraction="120" Brightness="0.60" Sparks="8" Seed="13"
                  VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
             <DockPanel Margin="22,0,12,0">
                 <TextBlock x:Name="SectionTitle" Text="Моды" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
@@ -749,7 +695,7 @@
 
         <!-- ═════ Настройки (DESIGN.md 5.1): одна стеклянная панель, слева разделы, справа выбранный; всё применяется сразу ═════ -->
         <c:Glass x:Name="SettingsPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="4" Tint="#700E182C"
-                 Lens="56" Refraction="144" Brightness="0.66" Ice="0.34" IceReach="50" Sparks="12" Seed="16"
+                 Lens="56" Refraction="144" Brightness="0.66" Sparks="12" Seed="16"
                  Margin="116,84,16,16" VerticalAlignment="Top" Visibility="Collapsed">
             <Grid x:Name="SettingsBody" Margin="20,24,8,24">
                 <Grid.ColumnDefinitions>
@@ -795,7 +741,7 @@
                                         <StackPanel x:Name="PvCards" Orientation="Horizontal" Margin="28,58,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
                                     </Grid>
                                     <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="28" Blur="5" Tint="#BD0C1426"
-                                             Lens="28" Refraction="120" Brightness="1" Ice="0.5" IceReach="22" Sparks="0" Seed="17"
+                                             Lens="28" Refraction="120" Brightness="1" Sparks="0" Seed="17"
                                              VerticalAlignment="Top" Margin="22,22,22,0" Height="56" IsHitTestVisible="False">
                                         <DockPanel Margin="22,0,13,0">
                                             <Grid DockPanel.Dock="Right" VerticalAlignment="Center">
@@ -811,10 +757,8 @@
 
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Готовые наборы"/>
                                 <UniformGrid Columns="2" Margin="0,0,-8,0">
-                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Лёд" Tag="стекло, иней, фон" IsChecked="{Binding IsIce}"/>
-                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Стекло" Tag="без инея" IsChecked="{Binding IsGlass}"/>
-                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Матовое" Tag="без преломления" IsChecked="{Binding IsMatte}"/>
-                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Лёгкое" Tag="ничего лишнего" IsChecked="{Binding IsLight}"/>
+                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Красиво" Tag="жидкое стекло, живой фон, огоньки" IsChecked="{Binding IsBeautiful}"/>
+                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Быстро" Tag="матовое стекло, фон стоит" IsChecked="{Binding IsFast}"/>
                                 </UniformGrid>
                                 <TextBlock Style="{StaticResource Note}" Text="{Binding PresetNote}" Margin="4,0,4,18"/>
 
@@ -823,27 +767,13 @@
                                           IsChecked="{Binding UiAnimations}" Margin="0,0,0,8"/>
                                 <CheckBox Style="{StaticResource Switch}" Content="Анимированный фон" Tag="По фону медленно плывут пятна света и цветная полоса."
                                           IsChecked="{Binding AnimatedBackground}" Margin="0,0,0,8"/>
-                                <CheckBox Style="{StaticResource Switch}" Content="Огоньки" Tag="Над фоном плавают светлые точки."
+                                <CheckBox Style="{StaticResource Switch}" Content="Огоньки" Tag="Над фоном плавают светлые точки, на кромках стекла изредка вспыхивают искры."
                                           IsChecked="{Binding Fireflies}" Margin="0,0,0,18"/>
                             </StackPanel>
                             <StackPanel x:Name="AppearanceRight" Grid.Column="1" Margin="14,0,0,0">
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Стекло"/>
-                                <CheckBox Style="{StaticResource Switch}" Content="Жидкое стекло" Tag="Края панелей преломляют фон. Выключено: обычное матовое стекло."
-                                          IsChecked="{Binding LiquidGlass}" Margin="0,0,0,8"/>
-                                <CheckBox Style="{StaticResource Switch}" Content="Иней на стекле" Tag="Мягкая изморозь по краям панелей и на карточках выключенных модов."
-                                          IsChecked="{Binding Frost}" Margin="0,0,0,8"/>
-                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Сила инея" Tag="От лёгкой дымки до плотной изморози."
-                                                        IsEnabled="{Binding FrostOptionsEnabled}" Margin="0,0,0,8">
-                                    <Border Style="{StaticResource SegmentBox}">
-                                        <StackPanel Orientation="Horizontal">
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="frost" Content="Слабо" IsChecked="{Binding FrostWeak}"/>
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="frost" Content="Средне" IsChecked="{Binding FrostMedium}"/>
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="frost" Content="Сильно" IsChecked="{Binding FrostStrong}"/>
-                                        </StackPanel>
-                                    </Border>
-                                </HeaderedContentControl>
-                                <CheckBox Style="{StaticResource Switch}" Content="Искры льда" Tag="Редкие блики на кромках стекла. Включаются и без инея."
-                                          IsChecked="{Binding FrostSparks}" Margin="0,0,0,18"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Жидкое стекло" Tag="Края панелей преломляют фон, выбор — прозрачная капля. Выключено: матовое стекло и светлая плашка, движение то же."
+                                          IsChecked="{Binding LiquidGlass}" Margin="0,0,0,18"/>
 
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Оформление"/>
                                 <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Тема" Tag="Светлое стекло с тёмным текстом или тёмное." Margin="0,0,0,18">
@@ -857,7 +787,7 @@
                                 </HeaderedContentControl>
 
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Фон"/>
-                                <ItemsControl ItemsSource="{Binding Themes}" Focusable="False" Margin="0,0,-8,10">
+                                <ItemsControl ItemsSource="{Binding Themes}" Focusable="False" Margin="0,0,-8,18">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate><UniformGrid Columns="3"/></ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
@@ -868,12 +798,10 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                                <TextBlock Style="{StaticResource Note}" Margin="4,0,4,18"
-                                           Text="Спокойные цвета: текст читается везде, ярче всего на экране — картинки модов. Меняются плавно."/>
                             </StackPanel>
                             <DockPanel x:Name="AppearanceFoot" Grid.Row="1" Grid.ColumnSpan="2" Margin="4,0,0,0">
                                 <Button DockPanel.Dock="Right" Style="{StaticResource Link}" Content="Сбросить" Click="ResetLook_Click" VerticalAlignment="Top"
-                                        ToolTip="Вернуть набор «Лёд»"/>
+                                        ToolTip="Вернуть набор «Красиво»"/>
                                 <TextBlock Style="{StaticResource Note}" MaxWidth="520" HorizontalAlignment="Left"
                                            Text="Если в Windows выключены эффекты анимации или прозрачности, программа учтёт это сама, даже когда здесь всё включено."/>
                             </DockPanel>
@@ -987,7 +915,7 @@
 
         <!-- Правая панель: x 1096, y 64 (под капсулой кнопок окна), 328 × 880 -->
         <c:Glass x:Name="Inspector" Source="{Binding ElementName=Scene}" Corner="32" Blur="5" Tint="#800E182C"
-                 Lens="56" Refraction="144" Brightness="0.70" Ice="0.16" IceReach="52" Sparks="12" Seed="14"
+                 Lens="56" Refraction="144" Brightness="0.70" Sparks="12" Seed="14"
                  HorizontalAlignment="Right" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
             <c:Glass.RenderTransform><TranslateTransform x:Name="InspectorMove" X="344"/></c:Glass.RenderTransform>
             <Grid>
@@ -1081,7 +1009,7 @@
 
         <!-- Панель «Проверка» (доска «Обновления»): когда проверяли, кнопка, ход, сайты, автопроверка. Под капсулой окна, как правая панель -->
         <c:Glass x:Name="CheckPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="5" Tint="#800E182C"
-                 Lens="56" Refraction="144" Brightness="0.70" Ice="0.16" IceReach="52" Sparks="10" Seed="18"
+                 Lens="56" Refraction="144" Brightness="0.70" Sparks="10" Seed="18"
                  HorizontalAlignment="Right" VerticalAlignment="Top" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
             <StackPanel x:Name="CheckBody" Margin="22,24,22,22">
                 <TextBlock Text="Проверка" FontSize="20" FontWeight="Bold"/>
@@ -1105,7 +1033,7 @@
         <Grid x:Name="BindLayer" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True">
             <Border Background="#8C060A14" MouseLeftButtonDown="BindDim_MouseDown"/>
             <c:Glass x:Name="BindPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="6" Tint="#B80E182C"
-                     Lens="48" Refraction="120" Brightness="0.66" Ice="0.2" IceReach="40" Sparks="6" Seed="21"
+                     Lens="48" Refraction="120" Brightness="0.66" Sparks="6" Seed="21"
                      Width="540" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
                      KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle">
                 <StackPanel x:Name="BindBody" Margin="26,24,26,24">
@@ -1169,7 +1097,7 @@
 
         <!-- Капсула кнопок окна 132 × 36 в правом верхнем углу; при наведении появляется капля, под «Закрыть» красная -->
         <c:Glass x:Name="Caption" Source="{Binding ElementName=Scene}" Corner="18" Blur="4" Tint="#700E182C"
-                 Lens="18" Refraction="0" Brightness="0.78" Ice="0"
+                 Lens="18" Refraction="0" Brightness="0.78"
                  HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0" Width="132" Height="36"
                  WindowChrome.IsHitTestVisibleInChrome="True" MouseLeave="Caption_MouseLeave"
                  PreviewMouseLeftButtonDown="Caption_PreviewMouseDown" PreviewMouseLeftButtonUp="Caption_PreviewMouseUp">
@@ -1197,7 +1125,7 @@
 
         <!-- Тост: что сделано и «Отменить» -->
         <c:Glass x:Name="ToastBox" Source="{Binding ElementName=Scene}" Corner="24" Blur="6" Tint="#B30E182C"
-                 Lens="24" Refraction="60" Brightness="0.70" Ice="0"
+                 Lens="24" Refraction="60" Brightness="0.70"
                  VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="116,0,360,28" Height="48" Padding="20,0,12,0"
                  Visibility="{Binding Toast, Converter={StaticResource NullToCollapsed}}">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

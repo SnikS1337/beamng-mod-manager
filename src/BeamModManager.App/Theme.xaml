@@ -47,7 +47,7 @@
     </Style>
 
     <!-- Стекло (DESIGN.md 3.2, доска «Гараж»): копия сцены с лёгким размытием и преломлением у краёв (PART_Lens),
-         подложка, блик сверху слева, кромка-блик по карте, контур 1 px, иней по краям и искры льда. Кромку, иней и искры
+         подложка, блик сверху слева, кромка-блик, контур 1 px и искры на кромке («Огоньки»). Кромку и искры
          окно считает под размер панели (Glass.cs). -->
     <Style TargetType="c:Glass">
         <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
@@ -82,7 +82,7 @@
                         </Border>
                         <Border x:Name="PART_Contour" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" BorderThickness="1"
                                 BorderBrush="#1FFFFFFF" IsHitTestVisible="False"/>
-                        <!-- блик по кромке, изморозь (векторы, под любой размер) и искры; кромка неподвижна — кэш картинкой -->
+                        <!-- блик по кромке (векторы, под любой размер) и искры; кромка неподвижна — кэш картинкой -->
                         <Grid x:Name="PART_Deco" IsHitTestVisible="False">
                             <c:GlassEdge x:Name="PART_Edge" Corner="{Binding Corner, RelativeSource={RelativeSource TemplatedParent}}">
                                 <c:GlassEdge.CacheMode><BitmapCache SnapsToDevicePixels="False"/></c:GlassEdge.CacheMode>

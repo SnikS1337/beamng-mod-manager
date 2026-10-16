@@ -59,14 +59,8 @@ public sealed record AppSettings
     /// <summary>«Жидкое стекло»: края панелей преломляют фон. Выключено: обычное матовое стекло.</summary>
     public bool LiquidGlass { get; init; } = true;
 
-    /// <summary>«Иней на стекле».</summary>
-    public bool Frost { get; init; } = true;
-
-    /// <summary>«Сила инея»: 0 слабо, 1 средне, 2 сильно.</summary>
-    public int FrostStrength { get; init; } = 1;
-
-    /// <summary>«Искры льда»: блики на кромках. Работают только при включённом инее.</summary>
-    public bool FrostSparks { get; init; } = true;
+    // «Иней на стекле», «Сила инея» и «Искры льда» убраны 2026-10-16: иней выглядел грязью, искры теперь часть «Огоньков».
+    // Старые поля Frost / FrostStrength / FrostSparks в файле настроек просто не читаются.
 
     /// <summary>«Оформление»: тёмное, светлое или как в Windows.</summary>
     public UiMode Mode { get; init; } = UiMode.Dark;
@@ -80,7 +74,7 @@ public sealed record AppSettings
     /// <summary>«Анимированный фон»: по градиенту медленно плывут пятна света и цветная полоса.</summary>
     public bool AnimatedBackground { get; init; } = true;
 
-    /// <summary>«Огоньки»: светлые точки над фоном.</summary>
+    /// <summary>«Огоньки»: светлые точки над фоном и редкие искры на кромках стекла.</summary>
     public bool Fireflies { get; init; } = true;
 
     /// <summary>«Наклон фона за мышкой» (DESIGN_MOTION.md 3.8). По умолчанию выключен.</summary>
@@ -103,7 +97,6 @@ public sealed record AppSettings
     /// <summary>Приводит значения к допустимым и убирает мусор. Возвращает исправленное.</summary>
     public AppSettings Normalize() => this with
     {
-        FrostStrength = Math.Clamp(FrostStrength, 0, 2),
         Theme = Enum.IsDefined(Theme) ? Theme : BackgroundTheme.Night,
         Mode = Enum.IsDefined(Mode) ? Mode : UiMode.Dark,
         ActiveModsWarnAbove = Math.Clamp(ActiveModsWarnAbove, 0, 1000),

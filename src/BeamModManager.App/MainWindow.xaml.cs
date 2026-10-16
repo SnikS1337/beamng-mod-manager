@@ -139,10 +139,6 @@ public partial class MainWindow : Window
         }
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
-        // изморозь выключенных карточек (чистая, без зерна: GlassTextures.Frost), размер карточки ×2 (чётко до масштаба 200 %)
-        var frostPx = BeamModManager.Ui.Glass.GlassTextures.Frost(616, 472, 52, 120);
-        var frostImg = BitmapSource.Create(616, 472, 96, 96, PixelFormats.Pbgra32, null, frostPx, 616 * 4);
-        Resources["CardFrost"] = Frozen(new ImageBrush(Frozen(frostImg)) { Stretch = Stretch.Fill });
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
         _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         // «Обновления»: список из тех же карточек гаража, проверка через один координатор
@@ -380,8 +376,8 @@ public partial class MainWindow : Window
         var s = _host.Settings.Current;
         var live = IsVisible && WindowState != WindowState.Minimized && IsActive && !_gameRunning && !_sizeMoving && _host.ShotPath is null;
         _motion.SetRunning(live && s.AnimatedBackground, live && s.Fireflies);
-        // искры льда мерцают в том же ритме, что и фон; выключили «Анимированный фон» — стоят и они (DESIGN.md 6)
-        foreach (var (g, _) in _glass) g.SetLive(live && s.AnimatedBackground);
+        // искры на кромках стекла — часть «Огоньков» и мерцают вместе с ними (DESIGN.md 6)
+        foreach (var (g, _) in _glass) g.SetLive(live && s.Fireflies);
         _motionLive = live;
         UpdateBadgePulse();
     }
@@ -428,7 +424,6 @@ public partial class MainWindow : Window
     private string _folderKey;
     private ThemePalette? _palette;
     private bool? _light;
-    private double _frost = -1;
 
     /// <summary>
     /// Нет видеокарты для WPF (удалённый рабочий стол, виртуальная машина): шейдеры и размытие считает процессор на каждом
@@ -475,7 +470,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Применяет внешний вид сразу, без перезапуска: оформление (тёмное/светлое), стекло, иней, тема фона, движение.
+    /// Применяет внешний вид сразу, без перезапуска: оформление (тёмное/светлое), стекло, тема фона, движение.
     /// <paramref name="origin"/> — откуда раскрывается новое оформление (место нажатия); null — из центра окна.
     /// </summary>
     private void ApplyLook(AppSettings s, Point? origin = null)
@@ -487,16 +482,12 @@ public partial class MainWindow : Window
         if (_light != light) SwitchPalette(light, origin);
 
         SpringDriver.AnimationsOff = !s.UiAnimations;
-        // ресурс меняем, только если значение другое: замена ресурса обходит всё дерево окна (сотни карточек)
-        var frost = s.Frost ? s.FrostStrength switch { 0 => 0.55, 2 => 1.0, _ => 0.95 } : 0.0; // на доске иней на карточке .95
-        if (frost != _frost) { _frost = frost; Resources["FrostOpacity"] = frost; }
 
         // «Уменьшить прозрачность» в Windows сильнее настроек: стекло плоское (DESIGN.md 3.2, «Плоское»)
         var mode = Native.TransparencyOff() ? GlassMode.Flat : s.LiquidGlass && !WeakGraphics() ? GlassMode.Liquid : GlassMode.Matte;
-        var ice = s.Frost ? s.FrostStrength switch { 0 => 0.5, 2 => 1.8, _ => 1.0 } : 0.0; // --k на доске
         foreach (var (g, tint) in _glass)
         {
-            g.SetLook(mode, ice, s.FrostSparks, light);
+            g.SetLook(mode, s.Fireflies, light);
             g.Tint = (mode, light) switch
             {
                 (GlassMode.Flat, false) => FlatTint,

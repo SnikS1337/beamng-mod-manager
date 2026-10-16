@@ -15,11 +15,11 @@ public static class SettingsScreenTests
             var vm = new SettingsViewModel(new AppSettings());
             var got = new List<AppSettings>();
             vm.Changed += got.Add;
-            vm.Frost = false;
+            vm.LiquidGlass = false;
             Assert.Eq(1, got.Count);
-            Assert.False(got[0].Frost, "иней выключен");
-            Assert.False(vm.Current.Frost, "и в текущих");
-            vm.Frost = false; // то же значение
+            Assert.False(got[0].LiquidGlass, "жидкое стекло выключено");
+            Assert.False(vm.Current.LiquidGlass, "и в текущих");
+            vm.LiquidGlass = false; // то же значение
             Assert.Eq(1, got.Count, "повтор не пишет файл зря");
         });
 
@@ -48,56 +48,74 @@ public static class SettingsScreenTests
             vm.MoreWarn(); Assert.Eq(1, vm.WarnAbove);
         });
 
-        t.Run("набор выставляет переключатели; ручная правка делает набор «своим», «Сбросить» возвращает «Лёд»", () =>
+        t.Run("набор выставляет переключатели; ручная правка делает набор «своим», «Сбросить» возвращает «Красиво»", () =>
         {
             var vm = new SettingsViewModel(new AppSettings());
-            Assert.True(vm.IsIce, "по умолчанию «Лёд»");
-            vm.ApplyPreset(AppearancePreset.Light);
-            Assert.True(vm.IsLight, "«Лёгкое»");
-            Assert.False(vm.Current.UiAnimations, "анимации выключены");
+            Assert.True(vm.IsBeautiful && !vm.IsFast, "по умолчанию «Красиво»");
+            vm.ApplyPreset(AppearancePreset.Fast);
+            Assert.True(vm.IsFast && !vm.IsBeautiful, "«Быстро»");
+            Assert.False(vm.Current.LiquidGlass, "без жидкого стекла");
+            Assert.False(vm.Current.AnimatedBackground, "фон стоит");
             Assert.False(vm.Current.Fireflies, "огоньков нет");
+            Assert.True(vm.Current.UiAnimations, "анимации интерфейса остаются");
             vm.Fireflies = true;
             Assert.Null<object>(vm.Preset);
+            Assert.False(vm.IsBeautiful || vm.IsFast, "ни одна плитка не отмечена");
             Assert.True(vm.PresetNote.StartsWith("Свой набор"), vm.PresetNote);
             vm.ResetAppearance();
-            Assert.True(vm.IsIce, "сброс");
+            Assert.True(vm.IsBeautiful, "сброс");
+            Assert.True(vm.PresetNote.StartsWith("Набор выставляет"), vm.PresetNote);
+        });
+
+        t.Run("плитки наборов: выбор плитки выставляет набор, снятие отметки ничего не делает", () =>
+        {
+            var vm = new SettingsViewModel(new AppSettings());
+            var n = 0;
+            vm.Changed += _ => n++;
+            vm.IsBeautiful = false; // WPF снимает старую плитку отдельно — это не изменение
+            Assert.Eq(0, n);
+            Assert.True(vm.IsBeautiful, "осталось «Красиво»");
+            vm.IsFast = true;
+            Assert.Eq(1, n);
+            Assert.True(vm.IsFast, "«Быстро»");
+            vm.IsFast = true; // повтор
+            Assert.Eq(1, n, "тот же набор не пишет файл зря");
+            vm.IsBeautiful = true;
+            Assert.True(vm.Current.LiquidGlass && vm.Current.AnimatedBackground && vm.Current.Fireflies && vm.Current.UiAnimations, "всё вернулось");
         });
 
         t.Run("набор не трогает папки, проверки и окно", () =>
         {
             var vm = new SettingsViewModel(new AppSettings { ModsFolder = @"D:\mods", CheckAppUpdates = false, WindowWidth = 1300, ActiveModsWarnAbove = 50 });
-            vm.ApplyPreset(AppearancePreset.Light);
+            vm.ApplyPreset(AppearancePreset.Fast);
             Assert.Eq(@"D:\mods", vm.Current.ModsFolder);
             Assert.False(vm.Current.CheckAppUpdates, "проверка программы");
             Assert.Eq(1300, vm.Current.WindowWidth);
             Assert.Eq(50, vm.Current.ActiveModsWarnAbove);
         });
 
-        t.Run("зависимые пункты тускнеют, но значения хранятся", () =>
-        {
-            var vm = new SettingsViewModel(new AppSettings { FrostStrength = 2 });
-            vm.Frost = false;
-            Assert.False(vm.FrostOptionsEnabled, "сила инея недоступна");
-            Assert.Eq(2, vm.FrostStrength, "значение осталось");
-            vm.Frost = true;
-            Assert.True(vm.FrostStrong, "вернулось «Сильно»");
-        });
-
-        t.Run("«Искры льда»: свой включатель, сохраняется, переводит набор в «свой»", () =>
+        t.Run("«Огоньки» — один включатель для точек над фоном и искр на стекле; сохраняется и переводит набор в «свой»", () =>
         {
             var vm = new SettingsViewModel(new AppSettings());
             AppSettings? saved = null;
             vm.Changed += s => saved = s;
-            Assert.True(vm.FrostSparks && vm.IsIce, "по умолчанию включены, набор «Лёд»");
-            vm.FrostSparks = false;
-            Assert.False(saved!.FrostSparks, "ушло на сохранение");
+            Assert.True(vm.Fireflies && vm.IsBeautiful, "по умолчанию включены, набор «Красиво»");
+            vm.Fireflies = false;
+            Assert.False(saved!.Fireflies, "ушло на сохранение");
             Assert.True(vm.Preset is null, "набор стал своим");
-            vm.Frost = false;
-            Assert.False(vm.FrostOptionsEnabled, "без инея сила недоступна");
-            vm.FrostSparks = true;
-            Assert.True(saved!.FrostSparks && !saved.Frost, "искры включаются и без инея");
             vm.ResetAppearance();
-            Assert.True(vm.FrostSparks && vm.IsIce, "«Сбросить» вернул искры");
+            Assert.True(vm.Fireflies && vm.IsBeautiful, "«Сбросить» вернул огоньки");
+        });
+
+        t.Run("«Быстро» с включённым жидким стеклом — уже «свой» набор; выключили снова — опять «Быстро»", () =>
+        {
+            var vm = new SettingsViewModel(new AppSettings());
+            vm.IsFast = true;
+            vm.LiquidGlass = true;
+            Assert.True(vm.Preset is null, "свой");
+            vm.LiquidGlass = false;
+            Assert.True(vm.IsFast, "снова «Быстро»");
+            Assert.True(AppearancePresets.Detect(vm.Current with { BackgroundTilt = true }) == AppearancePreset.Fast, "наклон фона набор не меняет");
         });
 
         t.Run("переключатели-сегменты: снятие одного пункта ничего не меняет, выбор другого меняет", () =>
@@ -105,10 +123,8 @@ public static class SettingsScreenTests
             var vm = new SettingsViewModel(new AppSettings());
             var n = 0;
             vm.Changed += _ => n++;
-            vm.FrostMedium = false; // WPF снимает старый пункт отдельно — это не изменение
+            vm.ModeDark = false; // WPF снимает старый пункт отдельно — это не изменение
             Assert.Eq(0, n);
-            vm.FrostWeak = true;
-            Assert.Eq(0, vm.FrostStrength);
             vm.Repeat6 = true;
             Assert.Eq(6, vm.Current.AutoCheckEveryHours);
             vm.RepeatOff = true;
@@ -160,9 +176,9 @@ public static class SettingsScreenTests
             Assert.True(vm.Themes.Count(t => t.IsSelected) == 1 && vm.Themes[0].IsSelected, "по умолчанию «Ночь»");
             vm.Themes[1].IsSelected = true;
             Assert.True(vm.Themes.Count(t => t.IsSelected) == 1 && vm.Themes[1].IsSelected, "одна отмечена");
-            vm.ApplyPreset(AppearancePreset.Light);
+            vm.ApplyPreset(AppearancePreset.Fast);
             Assert.True(vm.Current.Theme == BackgroundTheme.Deep, "набор тему не трогает");
-            Assert.True(vm.IsLight, "а набор распознаётся");
+            Assert.True(vm.IsFast, "а набор распознаётся");
             var p = Path.Combine(Path.GetTempPath(), "bmm-set-" + Guid.NewGuid().ToString("N") + ".json");
             try
             {
@@ -188,7 +204,7 @@ public static class SettingsScreenTests
             Assert.False(vm.EffectiveLight, "в Windows тёмное");
             vm.SystemLight = true;
             Assert.True(vm.EffectiveLight, "в Windows стало светлое");
-            vm.ApplyPreset(AppearancePreset.Light);
+            vm.ApplyPreset(AppearancePreset.Fast);
             Assert.True(vm.Current.Mode == UiMode.System, "набор оформление не трогает");
             vm.ModeDark = false; // снятие отметки — не изменение
             Assert.True(vm.Current.Mode == UiMode.System, "осталось");
