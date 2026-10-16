@@ -269,7 +269,7 @@ public partial class MainWindow : Window
     private const double EnterTop = -18, EnterLeft = -24;
 
     /// <summary>
-    /// Один раз при открытии: верхняя панель опускается, левая выезжает слева, обе проявляются (0,9 с, пружина без отскока).
+    /// Один раз при открытии: верхняя панель опускается, левая выезжает слева, обе проявляются (0,6 с, пружина без отскока).
     /// Карточки всплывают сами (CardGridPanel, свойство Rise), правая панель выезжает как обычно.
     /// </summary>
     private void PlayEntrance()
@@ -286,7 +286,7 @@ public partial class MainWindow : Window
     private static void Enter(Glass g, DependencyProperty axis, double from, double delay)
     {
         var start = TimeSpan.FromSeconds(delay);
-        var time = TimeSpan.FromSeconds(0.9);
+        var time = TimeSpan.FromSeconds(0.6);
         var move = Anim.Hold(from, 0, start, time, Anim.Smooth);
         move.CurrentTimeInvalidated += (_, _) => g.InvalidateArrange();
         var mover = Anim.Mover(g);
@@ -568,7 +568,7 @@ public partial class MainWindow : Window
         ModeVeil.Opacity = 0.7;
         ModeVeil.OpacityMask = mask;
         ModeVeil.Visibility = Visibility.Visible;
-        var time = TimeSpan.FromSeconds(0.9); // пружина без отскока: ощущается ≈0,55 с (длительность ×1,6, Motion/Spring.cs)
+        var time = TimeSpan.FromSeconds(0.6); // пружина без отскока: ощущается ≈0,38 с (длительность ×1,6, Motion/Spring.cs)
         var grow = new DoubleAnimation(0, far / edge + 40, time) { EasingFunction = Anim.Smooth };
         grow.Completed += (_, _) =>
         {
@@ -584,13 +584,13 @@ public partial class MainWindow : Window
     // ───────────── тема фона ─────────────
 
     /// <summary>
-    /// Тема фона: цвета основы, полосы, вуали и пятен перетекают в новые за 0,8 с по мягкой S-кривой, а пятна плавно
+    /// Тема фона: цвета основы, полосы, вуали и пятен перетекают в новые за 0,6 с по мягкой S-кривой, а пятна плавно
     /// переезжают на свои места, — все слои одновременно и с одной скоростью, без вспышки. Без анимаций — 0,25 с.
     /// </summary>
     private void ApplyTheme(ThemePalette p, bool animate)
     {
         _palette = p;
-        var time = !animate ? TimeSpan.Zero : TimeSpan.FromSeconds(SpringDriver.ReducedMotion ? 0.25 : 0.8);
+        var time = !animate ? TimeSpan.Zero : TimeSpan.FromSeconds(SpringDriver.ReducedMotion ? 0.25 : 0.6);
         void To(GradientStop stop, Color c)
         {
             if (time == TimeSpan.Zero) { stop.BeginAnimation(GradientStop.ColorProperty, null); stop.Color = c; return; }
