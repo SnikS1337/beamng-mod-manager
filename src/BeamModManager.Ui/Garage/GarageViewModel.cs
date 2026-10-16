@@ -38,7 +38,7 @@ public sealed record EmptyState(string Title, string Text, string? ActionLabel, 
 public sealed record Toast(string Text, bool CanUndo, long Serial);
 
 /// <summary>Главная кнопка правой панели меняется по состоянию мода (DESIGN.md раздел 4).</summary>
-public enum MainAction { None, Update, OpenPage, Enable, FindReplacement }
+public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPage }
 
 /// <summary>Строка блока данных в правой панели: «Размер — 312 МБ».</summary>
 public sealed record Fact(string Label, string Value);
@@ -205,7 +205,11 @@ public sealed class GarageViewModel : Observable
         Raise(nameof(HasPending));
         Rebuild();
         if (_snap.Notice is { } n) ShowToast(n, null);
+        Refreshed?.Invoke();
     }
+
+    /// <summary>Гараж перечитан: «Обновления» строят свой список из тех же карточек.</summary>
+    public event Action? Refreshed;
 
     private void Rebuild()
     {
@@ -418,6 +422,9 @@ public sealed class GarageViewModel : Observable
     /// <summary>Сообщение без «Отменить» (например, «Программа обновлена до 0.1.30»).</summary>
     public void Notify(string text) => ShowToast(text, null);
 
+    /// <summary>Тост от другого раздела («Версия 1.5 скрыта» в «Обновлениях»), с «Отменить», если передано действие.</summary>
+    public void Notify(string text, Action? undo) => ShowToast(text, undo);
+
     private void ShowToast(string text, Action? undo)
     {
         _undo = undo;
@@ -487,6 +494,14 @@ public sealed class GarageViewModel : Observable
         {
             act = MainAction.Enable;
             label = "Включить";
+        }
+        else if (!d.Tracked)
+        {
+            // без страницы на сайте новую версию не узнать: предлагаем её указать (DESIGN_FLOWS 6.4)
+            act = MainAction.SetPage;
+            label = "Указать страницу";
+            hint = d.CheckingDeclined ? "Сейчас не проверяем по вашему выбору. Укажете страницу — снова будем следить"
+                : "Тогда менеджер будет сам замечать новые версии";
         }
         else act = MainAction.None;
 

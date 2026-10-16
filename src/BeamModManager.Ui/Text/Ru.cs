@@ -32,6 +32,18 @@ public static class Ru
 
     public static string Date(DateTimeOffset when) => when.ToLocalTime().ToString("d MMMM yyyy", C);
 
+    /// <summary>Когда было, по-человечески и с временем: «сегодня в 14:02», «вчера в 9:10», «12 октября в 9:10», «3 марта 2025».</summary>
+    public static string When(DateTimeOffset when, DateTimeOffset now)
+    {
+        var w = when.ToLocalTime();
+        var n = now.ToLocalTime();
+        var time = w.ToString("H:mm", C);
+        if (w.Date == n.Date) return "сегодня в " + time;
+        if (w.Date == n.Date.AddDays(-1)) return "вчера в " + time;
+        if (w.Year == n.Year && w <= n) return w.ToString("d MMMM", C) + " в " + time;
+        return Date(when);
+    }
+
     public static string Size(long bytes)
     {
         if (bytes < 1024) return $"{bytes} Б";

@@ -36,6 +36,12 @@ public abstract class SiteAdapter : IModSource
     /// <summary>Главная страница сайта: по ней проверяем, что адрес карточки действительно принадлежит этому сайту.</summary>
     protected abstract Uri SiteRoot { get; }
 
+    /// <summary>Главная страница сайта (кнопка «Открыть сайт», сброс паузы после проверки «вы человек?»).</summary>
+    public Uri Home => SiteRoot;
+
+    /// <summary>Адрес страницы этого сайта (а не чужого): по нему окно «Указать страницу» выбирает адаптер.</summary>
+    public bool Owns(Uri url) => BelongsToSite(url);
+
     /// <summary>Адрес привязки вводит пользователь; чужой сайт, другая схема или «file://» этим адаптером не открываются.</summary>
     protected bool BelongsToSite(Uri url)
     {

@@ -208,7 +208,8 @@ public static class GarageTests
             Assert.Eq(MainAction.Enable, vm.Details!.Action);
             Assert.True(vm.Details.ToggleLabel is null, "«Включить» уже главная кнопка, внизу не дублируем");
             vm.Selected = vm.Cards[3];
-            Assert.Eq(MainAction.None, vm.Details!.Action);
+            Assert.Eq(MainAction.SetPage, vm.Details!.Action);
+            Assert.Eq("Указать страницу", vm.Details.ActionLabel);
             Assert.True(vm.Details.Facts.Contains(new Fact("Следим на", "Страница не указана")), "без страницы");
         });
 
