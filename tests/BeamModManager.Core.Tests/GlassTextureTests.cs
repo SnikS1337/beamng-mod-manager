@@ -3,7 +3,7 @@ using BeamModManager.Ui.Glass;
 
 namespace BeamModManager.Core.Tests;
 
-/// <summary>Текстуры стекла: блик по краю, иней, карта смещения.</summary>
+/// <summary>Текстуры стекла: блик по краю и карта смещения (иней убран 2026-10-16).</summary>
 public static class GlassTextureTests
 {
     private static int A(byte[] px, int w, int x, int y) => px[(y * w + x) * 4 + 3];
@@ -18,9 +18,8 @@ public static class GlassTextureTests
         t.Run("размер массива: 4 байта на пиксель, строка = ширина * 4", () =>
         {
             Assert.Eq(84 * 284 * 4, GlassTextures.Rim(84, 284, 36, 30).Length);
-            Assert.Eq(84 * 284 * 4, GlassTextures.Ice(84, 284, 36, 34, 1).Length);
             Assert.Eq(84 * 284 * 4, GlassTextures.Displacement(84, 284, 36, 30).Length);
-            Assert.Eq(1 * 1 * 4, GlassTextures.Ice(1, 1, 0, 10, 1).Length);
+            Assert.Eq(1 * 1 * 4, GlassTextures.Rim(1, 1, 0, 10).Length);
             // строка: левый край строки y = 100 — полупрозрачный блик, сразу за ним идёт следующий пиксель той же строки
             var rim = GlassTextures.Rim(84, 284, 36, 30);
             Assert.True(A(rim, 84, 0, 100) > 0, "левый край строки виден");
@@ -31,14 +30,14 @@ public static class GlassTextureTests
         t.Run("нулевые и отрицательные размеры дают пустой массив", () =>
         {
             Assert.Eq(0, GlassTextures.Rim(0, 10, 4, 10).Length);
-            Assert.Eq(0, GlassTextures.Ice(10, 0, 4, 10, 1).Length);
+            Assert.Eq(0, GlassTextures.Rim(10, 0, 4, 10).Length);
             Assert.Eq(0, GlassTextures.Displacement(-5, 10, 4, 10).Length);
-            Assert.Eq(0, GlassTextures.Ice(-1, -1, 4, 10, 1).Length);
+            Assert.Eq(0, GlassTextures.Displacement(-1, -1, 4, 10).Length);
         });
 
         t.Run("странные радиус и ширина не ломают расчёт", () =>
         {
-            var a = GlassTextures.Ice(40, 20, 500, 0, 3);    // радиус больше половины, иней нулевой
+            var a = GlassTextures.Rim(40, 20, 500, 0);       // радиус больше половины, свечение нулевое
             var b = GlassTextures.Rim(40, 20, -3, -1);
             var c = GlassTextures.Displacement(40, 20, double.NaN, 0);
             Assert.Eq(40 * 20 * 4, a.Length);
@@ -61,7 +60,7 @@ public static class GlassTextureTests
         {
             const int w = 120, h = 90; const double r = 30;
             var rim = GlassTextures.Rim(w, h, r, 40);
-            var ice = GlassTextures.Ice(w, h, r, 40, 7);
+            var map = GlassTextures.Displacement(w, h, r, 40);
             int outside = 0;
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
@@ -72,7 +71,7 @@ public static class GlassTextureTests
                     for (int k = 0; k < 4; k++)
                     {
                         Assert.Eq(0, (int)rim[i + k], $"блик снаружи ({x},{y})");
-                        Assert.Eq(0, (int)ice[i + k], $"иней снаружи ({x},{y})");
+                        Assert.Eq(k is 0 or 1 or 2 ? 128 : 255, (int)map[i + k], $"смещение снаружи нулевое ({x},{y})");
                     }
                 }
             Assert.True(outside > 4 * 100, "снаружи есть пиксели во всех четырёх углах");
@@ -101,80 +100,20 @@ public static class GlassTextureTests
 
         t.Run("предумножение: цвет не больше прозрачности", () =>
         {
-            foreach (var px in new[] { GlassTextures.Rim(160, 120, 26, 40), GlassTextures.Ice(160, 120, 26, 60, 4) })
+            foreach (var px in new[] { GlassTextures.Rim(160, 120, 26, 40), GlassTextures.Rim(33, 517, 80, 7) })
                 for (int i = 0; i < px.Length; i += 4)
                 {
                     int a = px[i + 3];
                     if (px[i] > a || px[i + 1] > a || px[i + 2] > a)
                         throw new AssertionException($"пиксель {i / 4}: цвет больше прозрачности {a}");
                 }
-            // у плотного инея синий (255 * a) почти равен прозрачности, красный заметно меньше — холодный оттенок
-            var ice = GlassTextures.Ice(160, 120, 26, 60, 4);
-            int k = 0;
-            for (int i = 0; i < ice.Length; i += 4)
-                if (ice[i + 3] > 150) { k = i; break; }
-            Assert.True(ice[k + 3] > 150, "есть плотный иней");
-            Assert.True(ice[k] >= ice[k + 3] - 1, "синий во всю силу");
-            Assert.True(ice[k + 2] < ice[k], "красного меньше, чем синего");
-        });
-
-        t.Run("иней: прозрачность не выше 0.9 и спадает к центру", () =>
-        {
-            const int w = 328, h = 540; const double r = 32, f = 50;
-            var ice = GlassTextures.Ice(w, h, r, f, 11);
-            double nearSum = 0, farSum = 0; int nearN = 0, farN = 0, max = 0;
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    int a = A(ice, w, x, y);
-                    if (a > max) max = a;
-                    double d = GlassTextures.InsideDistance(x, y, w, h, r);
-                    if (d >= 0 && d < 6) { nearSum += a; nearN++; }
-                    else if (d >= f * 2) { farSum += a; farN++; }
-                }
-            double near = nearSum / nearN, far = farSum / farN;
-            Assert.True(max <= 229, $"максимум {max} не выше 0.9 * 255");
-            Assert.True(max >= 180, $"у края есть плотный иней (максимум {max})");
-            Assert.True(near > 100, $"у края в среднем густо ({near:F1})");
-            Assert.True(far < 20, $"в глубине почти прозрачно ({far:F1})");
-            Assert.True(near > far * 6, $"у края {near:F1} много больше, чем в глубине {far:F1}");
-        });
-
-        t.Run("иней: дальность растёт с параметром reach", () =>
-        {
-            const int w = 300, h = 300; const double r = 30;
-            double Band(byte[] px)
-            {
-                double s = 0; int n = 0;
-                for (int y = 0; y < h; y++)
-                    for (int x = 0; x < w; x++)
-                    {
-                        double d = GlassTextures.InsideDistance(x, y, w, h, r);
-                        if (d >= 30 && d < 45) { s += A(px, w, x, y); n++; }
-                    }
-                return s / n;
-            }
-            double shortReach = Band(GlassTextures.Ice(w, h, r, 20, 5));
-            double longReach = Band(GlassTextures.Ice(w, h, r, 60, 5));
-            Assert.True(longReach > shortReach * 2, $"на глубине 30–45: {longReach:F1} против {shortReach:F1}");
-        });
-
-        t.Run("иней: одно зерно — одна картинка, другое зерно — другая", () =>
-        {
-            var a = GlassTextures.Ice(200, 120, 26, 40, 5);
-            var b = GlassTextures.Ice(200, 120, 26, 40, 5);
-            var c = GlassTextures.Ice(200, 120, 26, 40, 6);
-            Assert.True(a.AsSpan().SequenceEqual(b), "повтор с тем же зерном совпадает");
-            int diff = 0;
-            for (int i = 3; i < a.Length; i += 4) if (a[i] != c[i]) diff++;
-            Assert.True(diff > a.Length / 4 / 10, $"с другим зерном отличается заметно ({diff} пикселей)");
         });
 
         t.Run("одновременные вызовы из разных потоков дают то же, что по очереди", () =>
         {
-            var expected = GlassTextures.Ice(400, 300, 32, 50, 9);
+            var expected = GlassTextures.Rim(400, 300, 32, 50);
             var got = new byte[6][];
-            Parallel.For(0, got.Length, i => got[i] = GlassTextures.Ice(400, 300, 32, 50, 9));
+            Parallel.For(0, got.Length, i => got[i] = GlassTextures.Rim(400, 300, 32, 50));
             foreach (var g in got) Assert.True(expected.AsSpan().SequenceEqual(g), "результат не зависит от соседних вызовов");
         });
 
@@ -198,74 +137,14 @@ public static class GlassTextureTests
             Assert.Eq(128, B(m, w, 0, 0));
         });
 
-        t.Run("иней на большую панель считается быстро", () =>
+        t.Run("блик на большую панель считается быстро", () =>
         {
-            GlassTextures.Ice(200, 100, 26, 40, 1); // прогрев
+            GlassTextures.Rim(200, 100, 26, 40); // прогрев
             var sw = Stopwatch.StartNew();
-            var px = GlassTextures.Ice(1308, 760, 32, 50, 1);
+            var px = GlassTextures.Rim(1308, 760, 32, 50);
             sw.Stop();
             Assert.Eq(1308 * 760 * 4, px.Length);
-            Assert.True(sw.Elapsed.TotalSeconds < 1.5, $"Ice 1308x760 заняло {sw.Elapsed.TotalMilliseconds:F0} мс");
+            Assert.True(sw.Elapsed.TotalSeconds < 1.5, $"Rim 1308x760 заняло {sw.Elapsed.TotalMilliseconds:F0} мс");
         });
-    
-        t.Group("Изморозь (вместо инея с зерном, 2026-10-16)");
-
-        t.Run("изморозь гладкая: соседние пиксели почти не отличаются (ни зерна, ни прожилок)", () =>
-        {
-            int w = 308, h = 236;
-            var px = GlassTextures.Frost(w, h, 26, 60);
-            var worst = 0;
-            for (var y = 4; y < h - 4; y++)
-                for (var x = 4; x < w - 4; x++)
-                {
-                    if (GlassTextures.InsideDistance(x, y, w, h, 26) < 4) continue; // сглаженная граница формы — не зерно
-                    worst = Math.Max(worst, Math.Abs(A(px, w, x, y) - A(px, w, x + 1, y)));
-                    worst = Math.Max(worst, Math.Abs(A(px, w, x, y) - A(px, w, x, y + 1)));
-                }
-            Assert.True(worst <= 24, $"скачок между соседями {worst}");
-            var old = GlassTextures.Ice(w, h, 26, 60, 3);
-            var oldWorst = 0;
-            for (var y = 4; y < h - 4; y++)
-                for (var x = 4; x < w - 4; x++)
-                    if (GlassTextures.InsideDistance(x, y, w, h, 26) >= 4) oldWorst = Math.Max(oldWorst, Math.Abs(A(old, w, x, y) - A(old, w, x + 1, y)));
-            Assert.True(oldWorst > worst * 2, $"старый иней зернистее ({oldWorst} против {worst})");
-        });
-
-        t.Run("изморозь: у края плотнее, в углу гуще, сверху слева светлее, в середине почти прозрачно, снаружи пусто", () =>
-        {
-            int w = 400, h = 300;
-            var px = GlassTextures.Frost(w, h, 30, 60, veil: 0);
-            Assert.True(A(px, w, 200, 3) > A(px, w, 200, 40), "у верхнего края плотнее, чем глубже");
-            Assert.True(A(px, w, 200, 150) < 8, "середина почти прозрачна");
-            Assert.True(A(px, w, 14, 14) > A(px, w, 200, 14), "в углу гуще, чем посередине края");
-            Assert.True(A(px, w, 20, 150) > A(px, w, w - 21, 150), "слева (к свету) светлее, чем справа");
-            Assert.Eq(0, A(px, w, 0, 0), "за скруглённым углом пусто");
-        });
-
-        t.Run("изморозь: дымка по площади, цвет холодный белый, альфа предумножена", () =>
-        {
-            int w = 200, h = 160;
-            var px = GlassTextures.Frost(w, h, 20, 30, veil: 0.1);
-            var a = A(px, w, 100, 80);
-            Assert.True(Math.Abs(a - 26) <= 2, $"дымка 0,1 ≈ 26, а не {a}");
-            for (var y = 0; y < h; y += 7)
-                for (var x = 0; x < w; x += 7)
-                {
-                    int al = A(px, w, x, y);
-                    Assert.True(R(px, w, x, y) <= al && G(px, w, x, y) <= al && B(px, w, x, y) <= al, "цвет не больше альфы");
-                    Assert.True(B(px, w, x, y) >= R(px, w, x, y), "холодный: синего не меньше красного");
-                }
-            Assert.True(GlassTextures.Frost(w, h, 20, 30).SequenceEqual(GlassTextures.Frost(w, h, 20, 30)), "одна и та же картинка");
-            Assert.Eq(0, GlassTextures.Frost(0, 5, 3, 3).Length);
-            Assert.Eq(4, GlassTextures.Frost(1, 1, 50, 0).Length);
-        });
-
-        t.Run("изморозь на карточку ×2 считается быстро", () =>
-        {
-            var sw = Stopwatch.StartNew();
-            var px = GlassTextures.Frost(616, 472, 52, 120);
-            Assert.Eq(616 * 472 * 4, px.Length);
-            Assert.True(sw.Elapsed.TotalSeconds < 1.0, $"{sw.Elapsed.TotalMilliseconds:F0} мс");
-        });
-}
+    }
 }

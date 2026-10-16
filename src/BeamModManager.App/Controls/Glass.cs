@@ -24,8 +24,8 @@ public enum GlassMode
 /// <summary>
 /// Стеклянная панель как на доске «Гараж» (DESIGN.md 3.2): снизу живая копия сцены (<see cref="Source"/>) с лёгким
 /// размытием и преломлением у краёв (шейдер <see cref="RefractionEffect"/>), над ней подложка, блик, яркая кромка
-/// (свет сверху слева), изморозь по краям и искры льда. Кромку и изморозь рисует <see cref="GlassEdge"/> векторами под
-/// любой размер (после смены размера ничего не пересчитывается и не проявляется заново).
+/// (свет сверху слева) и искры на кромке («Огоньки»). Кромку рисует <see cref="GlassEdge"/> векторами под любой размер
+/// (после смены размера ничего не пересчитывается и не проявляется заново).
 /// Сцена не должна содержать само стекло, иначе копия будет копировать саму себя.
 /// </summary>
 public class Glass : ContentControl
@@ -55,12 +55,6 @@ public class Glass : ContentControl
     public static readonly DependencyProperty BrightnessProperty = DependencyProperty.Register(
         nameof(Brightness), typeof(double), typeof(Glass), new PropertyMetadata(0.78, (d, _) => ((Glass)d).ApplyMode()));
 
-    public static readonly DependencyProperty IceProperty = DependencyProperty.Register(
-        nameof(Ice), typeof(double), typeof(Glass), new PropertyMetadata(0.55, (d, _) => ((Glass)d).ApplyIce()));
-
-    public static readonly DependencyProperty IceReachProperty = DependencyProperty.Register(
-        nameof(IceReach), typeof(double), typeof(Glass), new PropertyMetadata(34.0, (d, _) => ((Glass)d).ShapeChanged()));
-
     public static readonly DependencyProperty SparksProperty = DependencyProperty.Register(
         nameof(Sparks), typeof(int), typeof(Glass), new PropertyMetadata(0, (d, _) => ((Glass)d).ShapeChanged()));
 
@@ -80,13 +74,9 @@ public class Glass : ContentControl
     public double Refraction { get => (double)GetValue(RefractionProperty); set => SetValue(RefractionProperty, value); }
     /// <summary>Яркость копии сцены под стеклом (brightness() макета): текст на светлых местах остаётся читаемым.</summary>
     public double Brightness { get => (double)GetValue(BrightnessProperty); set => SetValue(BrightnessProperty, value); }
-    /// <summary>Сила инея на этой панели при средней силе в настройках (на доске 0,55; у текстовых панелей слабее).</summary>
-    public double Ice { get => (double)GetValue(IceProperty); set => SetValue(IceProperty, value); }
-    /// <summary>Как далеко иней заходит от края, px.</summary>
-    public double IceReach { get => (double)GetValue(IceReachProperty); set => SetValue(IceReachProperty, value); }
-    /// <summary>Сколько искр льда на кромке (доска: 6 слева, 8 сверху, 12 справа).</summary>
+    /// <summary>Сколько искр на кромке (доска: 6 слева, 8 сверху, 12 справа). Включаются «Огоньками».</summary>
     public int Sparks { get => (int)GetValue(SparksProperty); set => SetValue(SparksProperty, value); }
-    /// <summary>Зерно узора инея и места искр: у каждой панели своё, узор не меняется от размера к размеру.</summary>
+    /// <summary>Зерно мест искр: у каждой панели своё, расклад не меняется от размера к размеру.</summary>
     public int Seed { get => (int)GetValue(SeedProperty); set => SetValue(SeedProperty, value); }
 
     public CornerRadius CornerRadius => new(Corner);
@@ -94,7 +84,6 @@ public class Glass : ContentControl
     // ───────────── общий вид, задаётся окном из настроек для всех панелей сразу ─────────────
 
     private GlassMode _mode = GlassMode.Liquid;
-    private double _iceFactor = 1;
     private bool _sparksOn = true;
     private bool _live;
     private bool _light;
@@ -108,21 +97,20 @@ public class Glass : ContentControl
     /// <summary>Вид стекла изменился (режим, оформление, подложка): капли на панели перерисовываются.</summary>
     public event Action? LookChanged;
 
-    /// <summary>Режим стекла, сила инея (0 — без инея; 0,5 / 1 / 1,8 — слабо, средне, сильно), искры и оформление.</summary>
-    public void SetLook(GlassMode mode, double iceFactor, bool sparks, bool light = false)
+    /// <summary>Режим стекла, искры на кромке («Огоньки») и оформление.</summary>
+    public void SetLook(GlassMode mode, bool sparks, bool light = false)
     {
         var modeChanged = mode != _mode;
         _mode = mode;
         _light = light;
-        _iceFactor = iceFactor;
         _sparksOn = sparks;
         if (modeChanged) { _lastBlur = -1; _lastBox = Rect.Empty; Sync(); }
         ApplyMode();
-        ApplyIce();
+        ApplySparks();
         LookChanged?.Invoke();
     }
 
-    /// <summary>Искры мерцают в общем ритме 6 с, только пока движется фон (окно на виду, игра не запущена).</summary>
+    /// <summary>Искры мерцают в общем ритме 6 с, пока живы огоньки (окно на виду и в фокусе, игра не запущена).</summary>
     public void SetLive(bool live)
     {
         _live = live;
@@ -178,7 +166,7 @@ public class Glass : ContentControl
         _lastShape = Rect.Empty;
         Sync();
         ApplyMode();
-        ApplyIce();
+        ApplySparks();
         ShapeChanged();
     }
 
@@ -260,15 +248,9 @@ public class Glass : ContentControl
     private static readonly Brush ContourMatte = Frozen(new SolidColorBrush(Color.FromArgb(0x42, 0xFF, 0xFF, 0xFF)));
     private static readonly Brush ContourLight = Frozen(new SolidColorBrush(Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF)));
 
-    private void ApplyIce()
+    private void ApplySparks()
     {
-        var on = _iceFactor > 0 && Ice > 0;
-        if (_edge is not null)
-        {
-            _edge.Frost = on ? Math.Min(1.4, Ice * _iceFactor) : 0;
-            _edge.Reach = IceReach;
-        }
-        // искры — отдельная настройка: их можно оставить и без изморози (решено 2026-10-16)
+        // искры — часть «Огоньков» (решено 2026-10-16, «Искры льда» убраны вместе с инеем)
         if (_sparks is not null) _sparks.Visibility = _sparksOn && Sparks > 0 ? Visibility.Visible : Visibility.Collapsed;
         RunSparks();
     }
@@ -279,12 +261,12 @@ public class Glass : ContentControl
     private (int W, int H, int Seed, int Sparks, double Corner) _sparkKey;
 
     /// <summary>
-    /// Размер или форма изменились. Кромку и изморозь элемент рисует сам под любой размер; искры стоят в пикселях от
+    /// Размер или форма изменились. Кромку элемент рисует сам под любой размер; искры стоят в пикселях от
     /// краёв — их места пересчитываются, когда размер успокоится (не на каждом шаге растяжения окна), до этого их не видно.
     /// </summary>
     private void ShapeChanged()
     {
-        if (_edge is not null) { _edge.Reach = IceReach; _edge.Lens = Lens; }
+        if (_edge is not null) _edge.Lens = Lens;
         if (_sparks is null || ActualWidth < 2 || ActualHeight < 2) return;
         var key = ((int)Math.Round(ActualWidth), (int)Math.Round(ActualHeight), Seed, Sparks, Corner);
         if (key == _sparkKey) return;
@@ -307,7 +289,7 @@ public class Glass : ContentControl
     private bool _sparkRunning;
 
     /// <summary>
-    /// Искры льда (доска build_ice.py): крестики 9–15 px у самой кромки, вспыхивают по очереди в ритме 6 с: долго
+    /// Искры на кромке (доска build_ice.py): крестики 9–15 px у самой кромки, вспыхивают по очереди в ритме 6 с: долго
     /// невидимы, на 82 % удара раскрываются с лёгким поворотом и гаснут. Места — по зерну панели.
     /// </summary>
     private void BuildSparks(int w, int h)
