@@ -104,25 +104,6 @@ jobs:
           $upd = Ms 'many-5000.png.perf.txt' 'раздел «Обновления»'
           if ($upd -gt 1500) { throw "5000 модов: раздел «Обновления» $upd мс (порог 1500)" }
           Get-ChildItem shots
-      # временно: кадры этой сборки и сборки до правок плавности (8561ea5) на одной и той же машине, по очереди три раза —
-      # машины сборки бывают разной скорости, сравнивать числа из разных запусков нельзя
-      - name: Кадры против прошлой сборки
-        if: always()
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          git fetch -q --depth 1 origin 8561ea548d20e65985aaf6e67c4be3744b621d0f
-          git worktree add -q ../base FETCH_HEAD
-          dotnet build ../base/src/BeamModManager.App -c Release -nologo -clp:NoSummary | Out-Null
-          $new = "src/BeamModManager.App/bin/Release/net10.0-windows/BeamModManager.exe"
-          $old = "../base/src/BeamModManager.App/bin/Release/net10.0-windows/BeamModManager.exe"
-          foreach ($i in 1..3) {
-            foreach ($pair in @(@('old', $old), @('new', $new))) {
-              $p = Start-Process $pair[1] -ArgumentList @('--demo', 'design/demo', '--shot', "shots/ab-$($pair[0])-$i.png", '--frames') -PassThru
-              if (-not $p.WaitForExit(120000)) { $p.Kill() }
-            }
-          }
-          Get-ChildItem shots -Filter 'ab-*.frames.txt' | ForEach-Object { Write-Host "── $($_.Name)"; Get-Content $_.FullName }
       - name: Отправить снимки
         if: always()
         shell: pwsh
