@@ -231,12 +231,17 @@ public sealed class LibraryUpdatesBackend : IUpdatesBackend
             return new PageCheck(null, "Этот сайт менеджер не знает. Подойдут Modland, ModsGaming, STMods и репозиторий BeamNG");
         if (!_settings().IsSourceEnabled(src.Id))
             return new PageCheck(null, $"{SiteNames.Of(src.Id)} выключен в настройках. Включите его в «Настройки → Сайты»");
+        // раздел, поиск, профиль: открываются, но следить на них не за чем
+        if (!src.IsModPage(url))
+            return new PageCheck(null, "Это раздел сайта, а не страница мода. Откройте сам мод и скопируйте ссылку оттуда");
         try
         {
             var listing = await src.GetListingAsync(url, ct).ConfigureAwait(false);
-            return listing is null
-                ? new PageCheck(null, "Такой страницы на сайте нет. Проверьте ссылку")
-                : new PageCheck(listing, null);
+            if (listing is null) return new PageCheck(null, "Такой страницы на сайте нет. Проверьте ссылку");
+            // ни версии, ни размера, ни файла: либо это не мод, либо сайт поменял вёрстку и разбор её не понимает
+            if (!SiteAdapter.Readable(listing))
+                return new PageCheck(null, $"Страница открылась, но на ней не нашлось ни версии, ни файла. Возможно, {SiteNames.Of(src.Id)} изменил страницы — следить так не получится");
+            return new PageCheck(listing, null);
         }
         catch (SourceException e) when (e.Status == SourceStatus.NeedsHumanCheck)
         {

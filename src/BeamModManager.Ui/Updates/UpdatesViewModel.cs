@@ -376,7 +376,8 @@ public sealed class UpdatesViewModel : Observable
                 : r.NeedsHuman ? (SiteDot.Warn, "нужна проверка")
                 : _resolved.Contains(s.Id) ? (SiteDot.Off, "проверим в следующий раз")
                 : rep is { Status: SourceStatus.Unavailable } ? (SiteDot.Warn, "не отвечает")
-                : rep is { Note: not null } ? (SiteDot.Warn, rep.Note.Contains("вёрстк", StringComparison.Ordinal) ? "возможно, сайт изменился" : "не всё успели")
+                : rep is { LayoutChanged: true } ? (SiteDot.Warn, "возможно, сайт изменился")
+                : rep is { Note: not null } ? (SiteDot.Warn, "не всё успели")
                 : s.Tracked == 0 ? (SiteDot.Off, "нет модов")
                 : rep is not null ? (SiteDot.Ok, "готово")
                 : (SiteDot.Off, Ru.Mods(s.Tracked));
@@ -469,6 +470,9 @@ public sealed class UpdatesViewModel : Observable
         {
             var (done, total) = _backend.Coverage(started);
             var why = failed.Count > 0 ? $" Не ответили: {string.Join(", ", failed)}." : "";
+            // сайт ответил, но страницы не понял: это не «обновлений нет», об этом надо сказать прямо
+            var changed = r.Sources.Where(s => s.Status == SourceStatus.Ok && s.LayoutChanged).Select(s => SiteNames.Of(s.Source)).ToList();
+            if (changed.Count > 0) why += $" Не смогли прочитать страницы: {string.Join(", ", changed)}. Возможно, сайт изменился.";
             var head = total > 0 && done < total ? $"Проверили {done} из {total}. Остальные при следующей проверке." : "Проверили не всё.";
             return string.Join(" ", new[] { found, head + why }.Where(x => x is not null));
         }
