@@ -40,6 +40,23 @@ public sealed class PreviewCache
     public CacheState State(ArchiveStamp s) =>
         File.Exists(ImagePath(s)) ? CacheState.Image : File.Exists(NonePath(s)) ? CacheState.NoImage : CacheState.Missing;
 
+    /// <summary>
+    /// Состояние многих архивов разом: один список папки кэша вместо двух обращений к диску на каждый мод
+    /// (гараж спрашивает про все моды при каждом перечитывании). Нет папки или она не читается — всё «нет в кэше».
+    /// </summary>
+    public Func<ArchiveStamp, CacheState> Snapshot()
+    {
+        HashSet<string> names;
+        try
+        {
+            names = Directory.Exists(Folder)
+                ? new HashSet<string>(Directory.EnumerateFiles(Folder).Select(f => Path.GetFileName(f)), StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { names = new HashSet<string>(); }
+        return s => names.Contains(s.Key + ".jpg") ? CacheState.Image : names.Contains(s.Key + ".none") ? CacheState.NoImage : CacheState.Missing;
+    }
+
     public string PutImage(ArchiveStamp s, ReadOnlySpan<byte> jpeg)
     {
         Directory.CreateDirectory(Folder);

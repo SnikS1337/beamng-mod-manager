@@ -133,14 +133,17 @@ public sealed class LibraryGarageBackend : IGarageBackend
         // помощник для переключения на ходу: кладём (или обновляем) один раз за запуск; запущенная игра подхватит его сама
         if (!_bridgeChecked) { _bridgeChecked = true; GameBridge.EnsureInstalled(_installer.Layout.ModsDir); }
         GameDbReadResult db;
+        // папку читаем один раз: и для сверки, и для карточек
+        var scan = _installer.ScanDetailed();
         using ((_store as JsonLibraryStore)?.Batch())
         {
             db = GameModDb.ReadStable(GameModDb.PathIn(_installer.Layout.ModsDir));
-            GameDbSync.Reconcile(_store, _installer, db);
+            GameDbSync.Reconcile(_store, _installer, db, scan);
             GameDbSync.ApplyRepoInfo(_store, db);
         }
 
-        var disk = _installer.ScanDetailed().ToDictionary(d => d.FileName, StringComparer.OrdinalIgnoreCase);
+        var disk = scan.ToDictionary(d => d.FileName, StringComparer.OrdinalIgnoreCase);
+        var cached = _previews.Snapshot();
         var updates = UpdateCheckService.Pending(_store, includeDismissed: true).ToDictionary(f => f.ModId);
         var bindings = _store.Bindings().Where(b => b.Confirmed).ToLookup(b => b.ModId);
         var result = new List<GarageMod>();
@@ -157,9 +160,11 @@ public sealed class LibraryGarageBackend : IGarageBackend
             {
                 try
                 {
-                    var stamp = ArchiveStamp.Of(path);
+                    // размер и дата уже известны из списка папки — без отдельного обращения к каждому архиву
+                    var d = disk[m.FileName];
+                    var stamp = d.ModifiedUtc is { } mt ? new ArchiveStamp(d.FileName, d.SizeBytes, mt) : ArchiveStamp.Of(path);
                     stamps.Add(stamp);
-                    if (_previews.State(stamp) == CacheState.Image) preview = _previews.ImagePath(stamp);
+                    if (cached(stamp) == CacheState.Image) preview = _previews.ImagePath(stamp);
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // архив только что удалили или он занят
             }

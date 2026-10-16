@@ -38,9 +38,12 @@ public static class GameDbSync
     /// Сверка с уже прочитанным db.json. Если он не прочитался (игра как раз пишет), «включён ли мод» берётся из библиотеки,
     /// а не из пустого списка: иначе все выключенные на мгновение показались бы включёнными.
     /// </summary>
-    public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer, GameDbReadResult db)
+    public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer, GameDbReadResult db) =>
+        Reconcile(store, installer, db, installer.ScanDetailed());
+
+    /// <summary>Сверка с уже прочитанными db.json и папкой (гараж читает папку один раз за перечитывание).</summary>
+    public static SyncReport Reconcile(ILibraryStore store, ModInstaller installer, GameDbReadResult db, IReadOnlyList<DiskMod> disk)
     {
-        var disk = installer.ScanDetailed();
         IReadOnlyList<DiskMod> view;
         if (db.Unreadable)
         {
@@ -50,10 +53,15 @@ public static class GameDbSync
         else view = Overlay(disk, db);
         var report = LibrarySync.Reconcile(store, view, installer.ModsFolderAvailable);
         // мод, который уже лежал в папке: «Установлен» — когда его добавила игра, а не день первого запуска менеджера
-        foreach (var f in report.Added)
-            if (db.Find(f)?.DateAdded is { } added &&
-                store.Mods().FirstOrDefault(m => string.Equals(m.FileName, f, StringComparison.OrdinalIgnoreCase)) is { } m && added < m.InstalledAtUtc)
-                store.UpsertMod(m with { InstalledAtUtc = added });
+        if (report.Added.Count > 0)
+        {
+            // словарь один раз: при первом запуске с тысячами модов поиск по списку на каждый новый был бы квадратичным
+            var byFile = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
+            foreach (var m in store.Mods()) byFile.TryAdd(m.FileName, m);
+            foreach (var f in report.Added)
+                if (db.Find(f)?.DateAdded is { } added && byFile.TryGetValue(f, out var m) && added < m.InstalledAtUtc)
+                    store.UpsertMod(m with { InstalledAtUtc = added });
+        }
         return report;
     }
 
@@ -65,6 +73,7 @@ public static class GameDbSync
     public static int ApplyRepoInfo(ILibraryStore store, GameDbReadResult db)
     {
         var added = 0;
+        HashSet<string>? bound = null; // моды с подтверждённой привязкой к репозиторию: список привязок читаем один раз
         foreach (var mod in store.Mods())
         {
             if (db.Find(mod.FileName)?.Repo is not { } r) continue;
@@ -74,7 +83,8 @@ public static class GameDbSync
             if (updated != mod) store.UpsertMod(updated);
 
             if (r.ResourceId is not { } rid || r.PageUrl is not { } url || store.IsCheckingDeclined(mod.Id)) continue;
-            if (store.Bindings().Any(b => b.ModId == mod.Id && b.Source == BeamNgRepoParser.SourceId && b.Confirmed)) continue;
+            bound ??= store.Bindings().Where(b => b.Source == BeamNgRepoParser.SourceId && b.Confirmed).Select(b => b.ModId).ToHashSet();
+            if (bound.Contains(mod.Id)) continue;
             store.UpsertBinding(new ModBinding(mod.Id, BeamNgRepoParser.SourceId, rid.ToString(System.Globalization.CultureInfo.InvariantCulture), url, true));
             added++;
         }

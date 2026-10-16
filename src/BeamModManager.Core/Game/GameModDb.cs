@@ -42,12 +42,30 @@ public sealed record GameDbReadResult(bool Exists, double? FormatVersion, IReadO
     /// </summary>
     public bool Unreadable { get; init; }
 
-    /// <summary>Запись по имени файла архива (регистр не важен). Null — игра этот файл ещё не видела.</summary>
+    /// <summary>
+    /// Запись по имени файла архива (регистр не важен). Null — игра этот файл ещё не видела. Поиск по словарю, который
+    /// строится при первом обращении: гараж спрашивает про каждый мод, и на тысячах модов перебор списка был бы квадратичным.
+    /// </summary>
     public GameModEntry? Find(string fileName)
     {
-        var key = GameModDb.KeyOf(fileName);
-        return Mods.FirstOrDefault(m => m.Key == key) ??
-               Mods.FirstOrDefault(m => string.Equals(m.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        var (byKey, byFile) = _index ??= BuildIndex(Mods);
+        return byKey.TryGetValue(GameModDb.KeyOf(fileName), out var e) ? e
+            : byFile.TryGetValue(fileName, out var f) ? f : null;
+    }
+
+    private (Dictionary<string, GameModEntry> ByKey, Dictionary<string, GameModEntry> ByFile)? _index;
+
+    private static (Dictionary<string, GameModEntry>, Dictionary<string, GameModEntry>) BuildIndex(IReadOnlyList<GameModEntry> mods)
+    {
+        // как раньше: при повторах побеждает первая запись
+        var byKey = new Dictionary<string, GameModEntry>(StringComparer.Ordinal);
+        var byFile = new Dictionary<string, GameModEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in mods)
+        {
+            byKey.TryAdd(m.Key, m);
+            byFile.TryAdd(m.FileName, m);
+        }
+        return (byKey, byFile);
     }
 }
 

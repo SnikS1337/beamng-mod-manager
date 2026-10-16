@@ -34,6 +34,8 @@ public sealed class WindowHost
     /// <summary>Сделать снимок окна в этот файл и закрыться (сборочная машина).</summary>
     public string? ShotPath { get; init; }
     public string? ShotSelect { get; init; }
+    /// <summary>Вместе со снимком записать замеры (запуск, фильтр, поиск, перечитывание, память) в &lt;снимок&gt;.perf.txt.</summary>
+    public bool ShotPerf { get; init; }
     /// <summary>Размер с прошлого запуска (только если он не меньше 1000 × 680, AppSettings).</summary>
     public int StartWidth { get; init; }
     public int StartHeight { get; init; }
@@ -1448,8 +1450,10 @@ public partial class MainWindow : Window
 
     private async void TakeShot()
     {
+        var startup = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
         await Task.Delay(1500); // картинки и пружины успевают встать на место
         var path = _host.ShotPath!;
+        if (_host.ShotPerf) WritePerf(path + ".perf.txt", startup);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -1465,5 +1469,33 @@ public partial class MainWindow : Window
         {
             Close();
         }
+    }
+
+    /// <summary>Замер большой библиотеки (сборочная машина, --perf): сколько стоят запуск и обычные действия вместе с раскладкой окна.</summary>
+    private void WritePerf(string file, TimeSpan startup)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var lines = new List<string> { $"карточек: {_vm.AllCards.Count}", $"запуск до готовности: {startup.TotalMilliseconds:0} мс" };
+        void Lap(string what)
+        {
+            Root.UpdateLayout();
+            Dispatcher.Invoke(() => { }, DispatcherPriority.Render); // кадр нарисован
+            lines.Add($"{what}: {sw.ElapsedMilliseconds} мс");
+            sw.Restart();
+        }
+        Lap("раскладка");
+        var all = _vm.Filter;
+        _vm.Filter = _vm.Filters[1].Filter; Lap("фильтр «Включены»");
+        _vm.Filter = all; Lap("фильтр обратно");
+        _vm.SearchText = "номер 12"; Lap("поиск");
+        _vm.SearchText = ""; Lap("поиск сброшен");
+        _vm.Refresh(); Lap("перечитать");
+        if (_vm.Cards.Count > 0) { _vm.Toggle(_vm.Cards[0]); Lap("переключить мод"); }
+        Scroller.ScrollToEnd(); Lap("прокрутка в конец");
+        Scroller.ScrollToHome(); Lap("прокрутка в начало");
+        GC.Collect();
+        var proc = System.Diagnostics.Process.GetCurrentProcess();
+        lines.Add($"память: {proc.WorkingSet64 / 1024 / 1024} МБ (пик {proc.PeakWorkingSet64 / 1024 / 1024} МБ), куча {GC.GetTotalMemory(false) / 1024 / 1024} МБ");
+        try { File.WriteAllLines(file, lines); } catch (IOException) { }
     }
 }

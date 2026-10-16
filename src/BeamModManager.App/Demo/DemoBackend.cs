@@ -13,7 +13,8 @@ public sealed class DemoBackend : IGarageBackend
 {
     private readonly List<GarageMod> _mods = new();
 
-    public DemoBackend(string photos)
+    /// <param name="many">Сколько ещё модов добавить к пятнадцати (замер большой библиотеки на сборочной машине, --many).</param>
+    public DemoBackend(string photos, int many = 0)
     {
         var now = DateTimeOffset.UtcNow;
         string? P(string n) { var p = Path.Combine(photos, n + ".jpg"); return File.Exists(p) ? Path.GetFullPath(p) : null; }
@@ -46,6 +47,10 @@ public sealed class DemoBackend : IGarageBackend
         Add("Mazda RX-7 FD", "1.0", 83, "нет-картинки");
         Add("Alpine Pass", "2.0", 512, "нет-картинки", type: "terrain", tracked: false);
         Add("Volga 24 Classic", "1.0", 64, "нет-картинки", type: "sound");
+        string[] photosCycle = { "dacia", "truck", "lambo", "mustang", "tractor", "coupe", "station", "lebedka", "нет-картинки" };
+        for (var i = 0; i < Math.Min(many, 20000); i++)
+            Add($"Мод номер {i + 1} ({(i % 7 == 0 ? "карта" : "машина")})", $"1.{i % 10}", 20 + i % 300, photosCycle[i % photosCycle.Length],
+                latest: i % 11 == 0 ? $"1.{i % 10 + 1}" : null, on: i % 4 != 0, tracked: i % 3 != 0, type: i % 7 == 0 ? "terrain" : "vehicle");
     }
 
     /// <summary>Демо-«Обновления» меняют те же моды (скрыть версию, не проверять).</summary>

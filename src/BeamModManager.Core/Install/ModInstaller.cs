@@ -56,6 +56,9 @@ public sealed record InstallResult(
 /// из репозитория BeamNG; null — корень mods или папка выключенных.</param>
 public sealed record DiskMod(string FileName, bool Enabled, long SizeBytes, string? SubFolder = null)
 {
+    /// <summary>Когда файл менялся (из того же списка папки, без отдельного обращения к диску). Null — не знаем.</summary>
+    public DateTime? ModifiedUtc { get; init; }
+
     /// <summary>Мод из репозитория игры: файлом управляет игра, менеджер его не переносит и не заменяет.</summary>
     public bool FromGameRepo => SubFolder is not null;
 }
@@ -354,12 +357,19 @@ public sealed class ModInstaller
         {
             var result = new List<DiskMod>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (name, on) in Scan())
+            // размер и дата приходят вместе со списком папки: на тысячах модов отдельный запрос к диску на каждый файл
+            // (а в Windows его ещё и проверяет антивирус) стоил бы заметных долей секунды при каждом перечитывании
+            var found = new List<(FileInfo File, bool On)>();
+            foreach (var (dir, on) in new[] { (_layout.ModsDir, true), (_layout.DisabledDir, false) })
+                if (Directory.Exists(dir))
+                    found.AddRange(new DirectoryInfo(dir).EnumerateFiles("*.zip")
+                        .Where(f => f.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) // «*.zip» в Windows захватывает и «.zipx»
+                        .Select(f => (f, on)));
+            foreach (var (fi, on) in found.OrderBy(x => x.File.Name, StringComparer.OrdinalIgnoreCase))
             {
                 try
                 {
-                    var fi = new FileInfo(Path.Combine(on ? _layout.ModsDir : _layout.DisabledDir, name));
-                    if (fi.Exists && seen.Add(name)) result.Add(new DiskMod(name, on, fi.Length));
+                    if (seen.Add(fi.Name)) result.Add(new DiskMod(fi.Name, on, fi.Length) { ModifiedUtc = fi.LastWriteTimeUtc });
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* файл исчез или занят: в этот раз пропускаем */ }
             }
@@ -368,7 +378,11 @@ public sealed class ModInstaller
             foreach (var (name, sub, path) in SubfolderZips())
             {
                 if (!seen.Add(name)) continue;
-                try { result.Add(new DiskMod(name, true, new FileInfo(path).Length, sub)); }
+                try
+                {
+                    var fi = new FileInfo(path);
+                    result.Add(new DiskMod(name, true, fi.Length, sub) { ModifiedUtc = fi.LastWriteTimeUtc });
+                }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             }
             // помощник менеджера внутри игры — служебный, в гараже его нет
