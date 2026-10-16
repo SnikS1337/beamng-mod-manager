@@ -52,6 +52,28 @@ public interface IUpdatesBackend
     bool Bind(string modId, Listing listing, string? replaceSource, bool verified);
 }
 
+/// <summary>Проверять нечем (папка модов не задана в демо или раздел ещё не подключён): всё пусто, ничего не делается.</summary>
+public sealed class NoUpdates : IUpdatesBackend
+{
+    public bool IsRunning => false;
+    public UpdateRunReport? LastReport => null;
+    public Task<UpdateRunReport> CheckAsync(bool force, IProgress<UpdateProgress>? progress = null) =>
+        Task.FromResult(new UpdateRunReport(Array.Empty<UpdateFinding>(), Array.Empty<SourceRunReport>(), 0, 0));
+    public void Cancel() { }
+    public IReadOnlyList<SiteInfo> Sites() => Array.Empty<SiteInfo>();
+    public DateTimeOffset? LastCheckedUtc() => null;
+    public (int Checked, int Total) Coverage(DateTimeOffset since) => (0, 0);
+    public bool Dismiss(string modId) => false;
+    public void Restore(string modId) { }
+    public DeclineUndo? Decline(string modId) => null;
+    public bool UndoDecline(DeclineUndo undo) => false;
+    public void ResolveHumanCheck(string source) { }
+    public Task<IReadOnlyList<BindingSuggestion>> SuggestAsync(string modId, bool replacing, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<BindingSuggestion>>(Array.Empty<BindingSuggestion>());
+    public Task<PageCheck> CheckPageAsync(string text, CancellationToken ct = default) => Task.FromResult(new PageCheck(null, null));
+    public bool Bind(string modId, Listing listing, string? replaceSource, bool verified) => false;
+}
+
 /// <summary>Короткие названия сайтов для интерфейса.</summary>
 public static class SiteNames
 {

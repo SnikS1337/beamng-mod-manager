@@ -76,6 +76,12 @@ jobs:
           Shot 'settings-updates' @('--page', 'settings', '--section', 'Updates')
           Shot 'settings-sites' @('--page', 'settings', '--section', 'Sites', '--width', '1100', '--height', '760')
           Shot 'settings-1000' @('--page', 'settings', '--width', '1000', '--height', '700')
+          Shot 'updates' @('--page', 'updates')
+          Shot 'updates-missing' @('--page', 'updates', '--filter', 'Missing', '--width', '1360')
+          Shot 'updates-1000' @('--page', 'updates', '--width', '1000', '--height', '700')
+          Shot 'light-updates' @('--mode', 'Light', '--page', 'updates')
+          Shot 'bind' @('--page', 'bind')
+          Shot 'light-bind' @('--mode', 'Light', '--page', 'bind', '--width', '1100', '--height', '760')
           Get-ChildItem shots
       - name: Отправить снимки
         if: always()

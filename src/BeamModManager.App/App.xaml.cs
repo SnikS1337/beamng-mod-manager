@@ -13,6 +13,9 @@ using BeamModManager.Ui.Garage;
 using BeamModManager.Ui.AppUpdate;
 using BeamModManager.Ui.Previews;
 using BeamModManager.Ui.Settings;
+using BeamModManager.Ui.Updates;
+using BeamModManager.Core.Net;
+using BeamModManager.Core.Sources;
 
 namespace BeamModManager.App;
 
@@ -92,9 +95,11 @@ public partial class App : Application
         WindowHost host;
         if (demo is not null)
         {
+            var demoGarage = new DemoBackend(demo);
             host = new WindowHost
             {
-                Backend = new DemoBackend(demo),
+                Backend = demoGarage,
+                Updates = new DemoUpdatesBackend(demoGarage),
                 DownloadsAllowed = true, // как на доске «Гараж»
                 ShotPath = shot,
                 ShotSelect = Arg("--select"),
@@ -110,6 +115,7 @@ public partial class App : Application
                     ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")),
                 },
                 StartPage = Arg("--page"),
+                StartFilter = Arg("--filter"),
                 StartSection = Enum.TryParse<SettingsSection>(Arg("--section"), true, out var sec) && Enum.IsDefined(sec) ? sec : SettingsSection.Appearance,
             };
         }
@@ -255,10 +261,16 @@ public partial class App : Application
             Use(currentDir);
         };
 
+        // проверка обновлений и привязка страниц: один вежливый загрузчик на все сайты (паузы, кэш, «вы человек?»)
+        var fetcher = new PoliteFetcher(new HttpPageFetcher());
+        IModSource[] sources = { new ModlandSource(fetcher), new ModsGamingSource(fetcher), new StModsSource(fetcher), new BeamNgRepoSource(fetcher) };
+        var updates = new LibraryUpdatesBackend(store, sources, () => svm.Current, null, fetcher.ClearCache, fetcher.ResetHost, fetcher.StatusOf);
+
         var pendingPath = Path.Combine(appDir, "pending.json");
         return new WindowHost
         {
             Backend = switching,
+            Updates = updates,
             Settings = svm,
             Updater = CreateUpdater(),
             CheckUpdatesOnStart = settings.CheckAppUpdates,

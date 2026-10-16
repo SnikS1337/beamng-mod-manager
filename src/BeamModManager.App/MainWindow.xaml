@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="clr-namespace:BeamModManager.App.Controls"
         xmlns:g="clr-namespace:BeamModManager.Ui.Garage;assembly=BeamModManager.Ui"
+        xmlns:u="clr-namespace:BeamModManager.Ui.Updates;assembly=BeamModManager.Ui"
         Title="ModManager BeamNG" Width="1440" Height="960" MinWidth="1000" MinHeight="680"
         WindowStyle="None" ResizeMode="CanResize" Background="{DynamicResource WindowBack}"
         FontFamily="{StaticResource Font}" Foreground="{DynamicResource Ink}" FontSize="14"
@@ -281,6 +282,209 @@
             <Setter Property="Width" Value="88"/>
             <Setter Property="Foreground" Value="{DynamicResource Ink3}"/>
         </Style>
+
+        <!-- ═════ «Обновления» (доска «Обновления») ═════ -->
+
+        <!-- Белая кнопка на фото-карточке: карточка — фото с затемнением в обоих оформлениях, кнопка всегда белая -->
+        <Style x:Key="CardPrimary" TargetType="Button">
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Padding" Value="27,0"/>
+            <Setter Property="FontSize" Value="14.5"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#111111"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform"><Setter.Value><ScaleTransform/></Setter.Value></Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border CornerRadius="19" Background="White" Padding="{TemplateBinding Padding}">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="26" ShadowDepth="0" Color="#AACDFF" Opacity="0.34" RenderingBias="Performance"/>
+                            </Border.Effect>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.97" ScaleY="0.97"/></Setter.Value></Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Текстовая кнопка на фото-карточке: белая, без подчёркивания (на доске — просто слова) -->
+        <Style x:Key="CardLink" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="2,8"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <TextBlock x:Name="T" Text="{TemplateBinding Content}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="T" Property="TextDecorations" Value="Underline"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Прокрутка, как у сетки гаража: полоса поверх края, а не рядом -->
+        <ControlTemplate x:Key="OverlayScroll" TargetType="ScrollViewer">
+            <Grid>
+                <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" CanContentScroll="{TemplateBinding CanContentScroll}"/>
+                <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Margin="0,84,-12,16"
+                           Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}"
+                           Value="{TemplateBinding VerticalOffset}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+            </Grid>
+        </ControlTemplate>
+
+        <!-- Карточка обновления (доска «Обновления»): фото слева уходит в тень, справа название, «1.0 → 1.5», пояснение и кнопки -->
+        <DataTemplate x:Key="UpdateCard" DataType="{x:Type u:UpdateItem}">
+            <Grid x:Name="Root" Height="196" Margin="0,0,0,20" SizeChanged="UpdCard_SizeChanged">
+                <Grid.RenderTransform><TranslateTransform x:Name="Hover"/></Grid.RenderTransform>
+                <Border x:Name="GlowHover" CornerRadius="26" Background="#1D2533" Opacity="0">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="34" ShadowDepth="0" Color="#AACDFF" Opacity="0.22" RenderingBias="Performance"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="26" Background="#1D2533">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="32" ShadowDepth="14" Direction="270" Color="#040814" Opacity="0.5" RenderingBias="Performance"/>
+                    </Border.Effect>
+                </Border>
+                <!-- фото: без картинки — спокойная заглушка; у пропавшей страницы серое, как у выключенного мода -->
+                <Border x:Name="Photo" CornerRadius="26,0,0,26" HorizontalAlignment="Left" Width="560">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#2A3446" Offset="0"/>
+                            <GradientStop Color="#1B2232" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <Grid>
+                        <Border CornerRadius="26,0,0,26" Visibility="{Binding Gray, Converter={StaticResource BoolToCollapsed}}">
+                            <Border.Background>
+                                <MultiBinding Converter="{StaticResource PreviewBrush}">
+                                    <Binding Path="Card.PreviewPath"/>
+                                </MultiBinding>
+                            </Border.Background>
+                        </Border>
+                        <Border CornerRadius="26,0,0,26" Visibility="{Binding Gray, Converter={StaticResource BoolToVis}}" Opacity="0.85">
+                            <Border.Background>
+                                <MultiBinding Converter="{StaticResource PreviewBrush}" ConverterParameter="gray">
+                                    <Binding Path="Card.PreviewPath"/>
+                                </MultiBinding>
+                            </Border.Background>
+                        </Border>
+                    </Grid>
+                </Border>
+                <!-- фото уходит в тень к тексту: прозрачно до 24 %, плотно с 36 % (fadeR на доске) -->
+                <Border x:Name="Fade" CornerRadius="26">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Color="#00080E1C" Offset="0"/>
+                            <GradientStop Color="#00080E1C" Offset="0.24"/>
+                            <GradientStop Color="#DB080E1C" Offset="0.36"/>
+                            <GradientStop Color="#F0080E1C" Offset="0.46"/>
+                            <GradientStop Color="#F5080E1C" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
+                <!-- кромка: ярче сверху, как у карточек гаража -->
+                <Border CornerRadius="26" BorderThickness="1" IsHitTestVisible="False">
+                    <Border.BorderBrush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#8CFFFFFF" Offset="0"/>
+                            <GradientStop Color="#38FFFFFF" Offset="0.12"/>
+                            <GradientStop Color="#1FFFFFFF" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.BorderBrush>
+                </Border>
+                <Border x:Name="RimHover" CornerRadius="26" BorderThickness="1.5" BorderBrush="#99DCEBFF" Opacity="0" IsHitTestVisible="False"/>
+
+                <StackPanel x:Name="Body" Margin="372,0,26,0" VerticalAlignment="Center" TextElement.Foreground="White">
+                    <Border HorizontalAlignment="Left" CornerRadius="12" Height="24" Padding="10,0,11,0" Margin="0,0,0,8" Background="#CC0A101E"
+                            BorderBrush="#38FFFFFF" BorderThickness="1" Visibility="{Binding Chip, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="7" Height="7" Fill="#FFB340" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding Chip}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="{Binding Card.Name}" FontSize="15" FontWeight="SemiBold" Opacity="0.92" Margin="0,0,0,3" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock FontSize="26" FontWeight="Bold" LineHeight="29" Visibility="{Binding HasVersions, Converter={StaticResource BoolToVis}}" TextTrimming="CharacterEllipsis">
+                        <Run Text="{Binding OldVersion, Mode=OneWay}" FontWeight="Medium" Foreground="#C7FFFFFF" TextDecorations="Strikethrough"/><Run Text=" → " FontWeight="Medium" Foreground="#D6FFFFFF"/><Run Text="{Binding NewVersion, Mode=OneWay}"/>
+                    </TextBlock>
+                    <TextBlock Text="{Binding Line1}" FontSize="13.5" Margin="0,8,0,0" TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Line2}" FontSize="12.5" Foreground="#E0FFFFFF" Margin="0,2,0,0" TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis"/>
+                    <WrapPanel Margin="0,12,0,0">
+                        <Button Style="{StaticResource CardPrimary}" Content="{Binding PrimaryLabel}" Tag="{Binding Primary}" Click="UpdAction_Click" Margin="0,2,22,2"
+                                Visibility="{Binding PrimaryLabel, Converter={StaticResource NullToCollapsed}}"/>
+                        <Button Style="{StaticResource CardLink}" Content="{Binding SecondLabel}" Tag="{Binding Second}" Click="UpdAction_Click" Margin="0,0,22,0"
+                                Visibility="{Binding SecondLabel, Converter={StaticResource NullToCollapsed}}"/>
+                        <Button Style="{StaticResource CardLink}" Content="{Binding ThirdLabel}" Tag="{Binding Third}" Click="UpdAction_Click" FontWeight="Medium" Foreground="#E0FFFFFF"
+                                Visibility="{Binding ThirdLabel, Converter={StaticResource NullToCollapsed}}"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Grid>
+            <DataTemplate.Triggers>
+                <Trigger SourceName="Root" Property="IsMouseOver" Value="True">
+                    <Trigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-4" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
+                                <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.45" EasingFunction="{StaticResource Smooth}"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.EnterActions>
+                    <Trigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
+                                <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.ExitActions>
+                </Trigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <!-- Строка сайта в панели «Проверка»: точка, название, состояние; «вы человек?» — «Открыть сайт», потом «Готово» -->
+        <DataTemplate x:Key="SiteRowTemplate" DataType="{x:Type u:SiteRow}">
+            <Border x:Name="Row" BorderBrush="{DynamicResource DataLine}" BorderThickness="0,1,0,0" Padding="14,0" MinHeight="42" ToolTip="{Binding Note}">
+                <DockPanel VerticalAlignment="Center">
+                    <Ellipse x:Name="Dot" Width="8" Height="8" Fill="#30D158" Margin="0,0,9,0" VerticalAlignment="Center"/>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding State}" FontSize="12.5" Foreground="{DynamicResource Ink2}" VerticalAlignment="Center"/>
+                        <Button Style="{StaticResource Link}" Content="Открыть сайт" FontSize="12.5" Margin="8,0,0,0" Click="SiteOpen_Click"
+                                Visibility="{Binding ShowOpen, Converter={StaticResource BoolToVis}}"/>
+                        <Button Style="{StaticResource Link}" Content="Готово" FontSize="12.5" Margin="8,0,0,0" Click="SiteDone_Click"
+                                Visibility="{Binding AwaitingConfirm, Converter={StaticResource BoolToVis}}"/>
+                    </StackPanel>
+                    <TextBlock Text="{Binding Name}" FontWeight="Medium" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ContentPresenter}}" Value="0">
+                    <Setter TargetName="Row" Property="BorderThickness" Value="0"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Dot}" Value="{x:Static u:SiteDot.Warn}">
+                    <Setter TargetName="Dot" Property="Fill" Value="#FFB340"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Dot}" Value="{x:Static u:SiteDot.Off}">
+                    <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource Ink3}"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
     </Window.Resources>
 
     <Grid x:Name="Root" ClipToBounds="True" MouseLeftButtonDown="Root_MouseLeftButtonDown">
@@ -391,6 +595,15 @@
                 </StackPanel>
             </ScrollViewer>
 
+            <!-- «Обновления»: карточки во всю ширину, прокручиваются под верхней панелью и преломляются в её стекле -->
+            <ScrollViewer x:Name="UpdScroller" Margin="116,0,360,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Focusable="False" PanningMode="VerticalOnly" Template="{StaticResource OverlayScroll}" Visibility="Collapsed">
+                <StackPanel x:Name="UpdBody" Margin="0,84,0,28">
+                    <ItemsControl x:Name="UpdList" ItemsSource="{Binding Items}" ItemTemplate="{StaticResource UpdateCard}" Focusable="False"
+                                  KeyboardNavigation.TabNavigation="Continue"/>
+                </StackPanel>
+            </ScrollViewer>
+
             <!-- под верхней панелью карточки уходят в тень, чтобы подписи панели читались -->
             <Border x:Name="TopFade" Background="{DynamicResource TopFade}" IsHitTestVisible="False" VerticalAlignment="Top" Height="98" Margin="104,0,348,0">
                 <Border.OpacityMask>
@@ -411,6 +624,15 @@
             <TextBlock Text="{Binding Empty.Text}" Foreground="{DynamicResource Ink2}" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
             <Button Style="{StaticResource Secondary}" Margin="0,16,0,0" HorizontalAlignment="Center" MinWidth="170" Padding="18,0"
                     Content="{Binding Empty.ActionLabel}" Click="EmptyAction_Click"
+                    Visibility="{Binding Empty.ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
+        </StackPanel>
+
+        <!-- пустое состояние «Обновлений» -->
+        <StackPanel x:Name="UpdEmptyBox" Margin="116,84,360,0" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420" Visibility="Collapsed">
+            <TextBlock Text="{Binding Empty.Title}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+            <TextBlock Text="{Binding Empty.Text}" Foreground="{DynamicResource Ink2}" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+            <Button Style="{StaticResource Secondary}" Margin="0,16,0,0" HorizontalAlignment="Center" MinWidth="170" Padding="18,0"
+                    Content="{Binding Empty.ActionLabel}" Click="UpdEmpty_Click"
                     Visibility="{Binding Empty.ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
         </StackPanel>
 
@@ -844,6 +1066,93 @@
                 <Image x:Name="InspectorGhost" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" Visibility="Collapsed"/>
             </Grid>
         </c:Glass>
+
+        <!-- Панель «Проверка» (доска «Обновления»): когда проверяли, кнопка, ход, сайты, автопроверка. Под капсулой окна, как правая панель -->
+        <c:Glass x:Name="CheckPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="5" Tint="#800E182C"
+                 Lens="56" Refraction="144" Brightness="0.70" Ice="0.16" IceReach="52" Sparks="10" Seed="18"
+                 HorizontalAlignment="Right" VerticalAlignment="Top" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
+            <StackPanel x:Name="CheckBody" Margin="22,24,22,22">
+                <TextBlock Text="Проверка" FontSize="20" FontWeight="Bold"/>
+                <TextBlock Text="{Binding CheckText}" FontSize="13" Foreground="{DynamicResource Ink2}" Margin="0,3,0,0" TextWrapping="Wrap" LineHeight="18"/>
+                <Button Style="{StaticResource Primary}" Content="{Binding CheckButton}" Margin="0,16,0,0" Click="CheckNow_Click"
+                        ToolTip="Проверить обновления (F5)"/>
+                <StackPanel Margin="2,12,2,0" Visibility="{Binding ProgressText, Converter={StaticResource NullToCollapsed}}">
+                    <ProgressBar Style="{StaticResource ThinProgress}" Value="{Binding ProgressValue, Mode=OneWay}"/>
+                    <TextBlock Text="{Binding ProgressText}" FontSize="12.5" Foreground="{DynamicResource Ink2}" Margin="0,6,0,0"/>
+                </StackPanel>
+                <TextBlock Style="{StaticResource GroupTitle}" Text="Сайты" Foreground="{DynamicResource Ink2}" Margin="4,18,4,8"/>
+                <Border CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1">
+                    <ItemsControl ItemsSource="{Binding Sites}" ItemTemplate="{StaticResource SiteRowTemplate}" Focusable="False" AlternationCount="1000"/>
+                </Border>
+                <CheckBox Style="{StaticResource MiniSwitch}" Content="Проверять при запуске" IsChecked="{Binding AutoCheckOnStart}" Margin="4,16,2,0"/>
+                <TextBlock Style="{StaticResource Note}" Text="{Binding AutoNote}" Margin="4,12,4,0"/>
+            </StackPanel>
+        </c:Glass>
+
+        <!-- «Указать страницу» / «Найти замену» (DESIGN_FLOWS 6.4, 6.5): затемнение и стеклянная плашка по центру -->
+        <Grid x:Name="BindLayer" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Border Background="#8C060A14" MouseLeftButtonDown="BindDim_MouseDown"/>
+            <c:Glass x:Name="BindPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="6" Tint="#B80E182C"
+                     Lens="48" Refraction="120" Brightness="0.66" Ice="0.2" IceReach="40" Sparks="6" Seed="21"
+                     Width="540" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
+                <StackPanel x:Name="BindBody" Margin="26,24,26,24">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Left" Width="88" Height="60" CornerRadius="14" Margin="0,0,16,0">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#2A3446" Offset="0"/>
+                                    <GradientStop Color="#1B2232" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <Border CornerRadius="14" BorderBrush="#33FFFFFF" BorderThickness="1">
+                                <Border.Background>
+                                    <MultiBinding Converter="{StaticResource PreviewBrush}">
+                                        <Binding Path="Card.PreviewPath"/>
+                                    </MultiBinding>
+                                </Border.Background>
+                            </Border>
+                        </Border>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" TextWrapping="Wrap"/>
+                            <TextBlock Text="{Binding Card.Name}" Foreground="{DynamicResource Ink2}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <TextBlock Style="{StaticResource Note}" Text="{Binding Lead}" Margin="2,16,2,12" FontSize="13"/>
+                    <Grid>
+                        <TextBox x:Name="BindLink" Style="{StaticResource GlassField}" Text="{Binding LinkText, UpdateSourceTrigger=PropertyChanged}"
+                                 TextChanged="BindLink_TextChanged" AutomationProperties.Name="Ссылка на страницу мода"/>
+                        <TextBlock x:Name="BindLinkHint" Text="https://www.modland.net/…" Foreground="{DynamicResource InkHint}" FontSize="13.5" Margin="16,0,0,0"
+                                   VerticalAlignment="Center" IsHitTestVisible="False"/>
+                    </Grid>
+                    <TextBlock x:Name="BindLinkNote" Text="{Binding LinkNote}" FontSize="12.5" Margin="4,6,4,0" TextWrapping="Wrap"
+                               Foreground="{DynamicResource Ink2}" Visibility="{Binding LinkNote, Converter={StaticResource NullToCollapsed}}"/>
+                    <TextBlock Style="{StaticResource GroupTitle}" Text="Похожие на сайтах" Margin="4,18,4,8"/>
+                    <TextBlock Style="{StaticResource Note}" Text="{Binding SearchNote}" Margin="4,0,4,8"
+                               Visibility="{Binding SearchNote, Converter={StaticResource NullToCollapsed}}"/>
+                    <ItemsControl ItemsSource="{Binding Suggestions}" Focusable="False">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type u:PageSuggestion}">
+                                <RadioButton Style="{StaticResource PickRow}" GroupName="bindPick" IsChecked="{Binding IsSelected, Mode=TwoWay}" Click="BindPick_Click">
+                                    <StackPanel>
+                                        <TextBlock FontSize="12" Foreground="{DynamicResource Ink2}" FontWeight="SemiBold" Text="{Binding Site}"/>
+                                        <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Details}" FontSize="12" Foreground="{DynamicResource Ink2}" Margin="0,2,0,0"
+                                                   Visibility="{Binding Details, Converter={StaticResource NullToCollapsed}}"/>
+                                    </StackPanel>
+                                </RadioButton>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <DockPanel Margin="0,14,0,0" LastChildFill="False">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Primary}" Content="{Binding ApplyLabel}" Padding="26,0" MinWidth="210"
+                                IsEnabled="{Binding CanApply}" Click="BindApply_Click"/>
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Link}" Content="Отмена" Margin="0,0,16,0" VerticalAlignment="Center" Click="BindCancel_Click"/>
+                        <Button DockPanel.Dock="Left" Style="{StaticResource Link}" Content="Не проверять этот мод" VerticalAlignment="Center" Click="BindDecline_Click"
+                                Visibility="{Binding Replacing, Converter={StaticResource BoolToVis}}"/>
+                    </DockPanel>
+                </StackPanel>
+            </c:Glass>
+        </Grid>
 
         <!-- Капсула кнопок окна 132 × 36 в правом верхнем углу; при наведении появляется капля, под «Закрыть» красная -->
         <c:Glass x:Name="Caption" Source="{Binding ElementName=Scene}" Corner="18" Blur="4" Tint="#700E182C"

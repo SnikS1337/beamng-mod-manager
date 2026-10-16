@@ -15,6 +15,7 @@ using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
 using BeamModManager.Ui.Look;
 using BeamModManager.Ui.Settings;
+using BeamModManager.Ui.Updates;
 using BeamModManager.Ui.Previews;
 
 namespace BeamModManager.App;
@@ -54,14 +55,21 @@ public sealed class WindowHost
     public double? ShotHeight { get; init; }
     /// <summary>Экран «Настройки»: всё применяется сразу; файл пишет App по событию <see cref="SettingsViewModel.Changed"/>.</summary>
     public required SettingsViewModel Settings { get; init; }
+    /// <summary>Раздел «Обновления»: проверка, действия, привязка страниц. null — проверять нечем (раздел покажет пустоту).</summary>
+    public IUpdatesBackend? Updates { get; init; }
     /// <summary>Открыть при запуске (снимки сборочной машины): "settings" — настройки.</summary>
     public string? StartPage { get; init; }
     public SettingsSection StartSection { get; init; }
+    /// <summary>Фильтр «Обновлений» при запуске (снимки): Available, Hidden, Missing.</summary>
+    public string? StartFilter { get; init; }
 }
 
 public partial class MainWindow : Window
 {
     private readonly GarageViewModel _vm;
+    private readonly UpdatesViewModel _upd;
+    /// <summary>Повтор проверки раз в N часов (настройка «Повторять»): раз в минуту смотрим, не пора ли.</summary>
+    private readonly DispatcherTimer _autoCheckTimer = new() { Interval = TimeSpan.FromMinutes(1) };
     private readonly WindowHost _host;
     private readonly SpringDriver _springs = new();
     private readonly Spring _navDrop, _filterX, _filterW, _capX, _capScale, _inspX;
@@ -133,7 +141,12 @@ public partial class MainWindow : Window
         var frostImg = BitmapSource.Create(616, 472, 96, 96, PixelFormats.Pbgra32, null, frostPx, 616 * 4);
         Resources["CardFrost"] = Frozen(new ImageBrush(Frozen(frostImg)) { Stretch = Stretch.Fill });
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
-        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar }.Select(g => (G: g, Tint: g.Tint)).ToArray();
+        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
+        // «Обновления»: список из тех же карточек гаража, проверка через один координатор
+        _upd = new UpdatesViewModel(vm, host.Updates ?? new NoUpdates(), host.Settings, a => Dispatcher.BeginInvoke(a));
+        UpdScroller.DataContext = UpdEmptyBox.DataContext = CheckPanel.DataContext = _upd;
+        _upd.PropertyChanged += Upd_PropertyChanged;
+        foreach (var f in _upd.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         SettingsPanel.DataContext = host.Settings;
         // «Как это выглядит»: под полоской стекла — тот же фон окна (живой) и картинки модов
         PvBack.Fill = new VisualBrush(Backdrop) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top };
@@ -163,6 +176,8 @@ public partial class MainWindow : Window
         vm.PropertyChanged += Vm_PropertyChanged;
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); };
         _gameTimer.Tick += (_, _) => CheckGame();
+        _autoCheckTimer.Tick += (_, _) => _ = _upd.TickAsync();
+        _linkTimer.Tick += LinkTimer_Tick;
         _liveTimer.Tick += (_, _) => { _vm.TickLive(); if (!_vm.LiveWaiting) _liveTimer.Stop(); };
 
         SourceInitialized += (_, _) =>
@@ -222,6 +237,19 @@ public partial class MainWindow : Window
                 }, DispatcherPriority.ApplicationIdle);
         }
         if (_host.StartPage == "settings") NavSettings.IsChecked = true;
+        if (_host.StartPage is "updates" or "bind") NavUpdates.IsChecked = true;
+        if (Enum.TryParse<UpdatesFilter>(_host.StartFilter, true, out var uf) && Enum.IsDefined(uf)) _upd.Filter = uf;
+        if (_host.StartPage == "bind" && _vm.AllCards.FirstOrDefault(c => !c.Data.Tracked) is { } untracked) OpenBind(untracked, null);
+        if (_host.ShotPath is null)
+        {
+            // проверка при запуске (настройка) — когда окно уже на экране и картинки грузятся, не мешая им
+            Dispatcher.BeginInvoke(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                if (IsLoaded) await _upd.StartupAsync();
+            }, DispatcherPriority.ApplicationIdle);
+            _autoCheckTimer.Start();
+        }
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
         if (_host.ShotPath is not null) Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, TakeShot);
     }
@@ -637,13 +665,14 @@ public partial class MainWindow : Window
     private void PlaceInspector(bool instant = false)
     {
         var open = _vm.Selected is not null;
-        var beside = open && !_narrow; // панель занимает место рядом с сеткой
+        // у «Обновлений» справа всегда панель «Проверка»: место под неё держим и на узком окне
+        var beside = (open && !_narrow) || NavUpdates.IsChecked == true; // панель занимает место рядом с сеткой
         var right = beside ? 360 : 16;
         var gridMargin = new Thickness(116, 0, right, 0);
         if (Scroller.Margin != gridMargin)
         {
-            Scroller.Margin = gridMargin;
-            EmptyBox.Margin = SoonBox.Margin = new Thickness(116, 84, right, 0);
+            Scroller.Margin = UpdScroller.Margin = gridMargin;
+            EmptyBox.Margin = SoonBox.Margin = UpdEmptyBox.Margin = new Thickness(116, 84, right, 0);
             ToastBox.Margin = new Thickness(116, 0, right, 28);
             TopFade.Margin = new Thickness(104, 0, right - 12, 0);
             TopBar.Margin = new Thickness(116, 16, beside ? 360 : 132 + 16 + 16, 0);
@@ -678,7 +707,7 @@ public partial class MainWindow : Window
     {
         var avail = TopBar.ActualWidth - 34;
         if (avail <= 0) return;
-        if (NavGarage.IsChecked != true) { SectionTitle.Visibility = Visibility.Visible; return; } // кроме заголовка там ничего нет
+        if (NavGarage.IsChecked != true && !UpdatesPage) { SectionTitle.Visibility = Visibility.Visible; return; } // кроме заголовка там ничего нет
         // ширины меряем по тексту, а не по раскладке: у скрытого элемента она нулевая, и панель прыгала бы
         // между «влезает» и «не влезает» (заголовок то показывается, то прячется)
         FilterBox.Measure(new Size(double.PositiveInfinity, 52));
@@ -817,6 +846,8 @@ public partial class MainWindow : Window
         _closing.Cancel(); // проверка или загрузка обновления прерываются без следов
         _gameTimer.Stop();
         _liveTimer.Stop();
+        _autoCheckTimer.Stop();
+        _bindCts?.Cancel();
         _previewCts?.Cancel();
         _host.SaveWindow?.Invoke(this);
         _host.SavePending?.Invoke(_vm.PendingChanges);
@@ -832,18 +863,23 @@ public partial class MainWindow : Window
         _springs.To(_navDrop, Canvas.GetTop(rb), instant: !IsLoaded);
         var garage = rb == NavGarage;
         var settings = rb == NavSettings;
+        var updates = rb == NavUpdates;
         if (!garage) _vm.Selected = null; // правая панель — про мод из гаража, в других разделах ей не место
         SectionTitle.Text = (string)rb.Content;
         if (!garage) SectionTitle.Visibility = Visibility.Visible; // на узком окне гараж мог спрятать заголовок
         Scroller.Visibility = garage ? Visibility.Visible : Visibility.Collapsed;
         EmptyBox.Visibility = garage && _vm.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
-        SoonBox.Visibility = garage || settings ? Visibility.Collapsed : Visibility.Visible;
+        UpdScroller.Visibility = CheckPanel.Visibility = updates ? Visibility.Visible : Visibility.Collapsed;
+        UpdEmptyBox.Visibility = updates && _upd.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
+        SoonBox.Visibility = garage || settings || updates ? Visibility.Collapsed : Visibility.Visible;
         SettingsPanel.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
         SoonTitle.Text = (string)rb.Content;
-        // фильтры, поиск и число модов — про список модов; в других разделах им не место
-        var gv = garage ? Visibility.Visible : Visibility.Collapsed;
+        // фильтры, поиск и число — у гаража и «Обновлений» свои, панель общая; в других разделах им не место
+        var gv = garage || updates ? Visibility.Visible : Visibility.Collapsed;
         FilterBox.Visibility = SearchField.Visibility = CountLabel.Visibility = gv;
-        if (garage) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+        BindTopBar(updates);
+        PlaceInspector(instant: !IsLoaded);
+        if (garage || updates) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         if (garage) EmptyBox.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(GarageViewModel.Empty)) { Converter = (System.Windows.Data.IValueConverter)FindResource("NullToCollapsed") });
         // раздел «Обновления» открыли: найденное просмотрено, бейдж больше не пульсирует до конца сеанса
         if (rb == NavUpdates && !_updatesSeen) { _updatesSeen = true; UpdateBadgePulse(); }
@@ -852,6 +888,7 @@ public partial class MainWindow : Window
         if (IsLoaded)
         {
             if (garage) { Arrive(Scroller, Scroller); Arrive(EmptyBox, EmptyBox); }
+            else if (updates) { Arrive(UpdScroller, UpdBody); Arrive(UpdEmptyBox, UpdEmptyBox); Arrive(CheckPanel, CheckBody); }
             else if (settings) Arrive(SettingsPanel, SettingsBody); // стекло только проявляется: его фон берётся по месту
             else Arrive(SoonBox, SoonBox);
         }
@@ -909,13 +946,36 @@ public partial class MainWindow : Window
 
     private void Filter_Click(object sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).DataContext is FilterItem f) _vm.Filter = f.Filter;
+        switch (((FrameworkElement)sender).DataContext)
+        {
+            case FilterItem f: _vm.Filter = f.Filter; break;
+            case UpdatesFilterItem u: _upd.Filter = u.Filter; break;
+        }
     }
+
+    /// <summary>
+    /// Верхняя панель общая у гаража и «Обновлений»: фильтры, поиск и число модов переключаются на раздел. Капля фильтра
+    /// при этом не уезжает издалека, а сразу встаёт под активный пункт нового раздела.
+    /// </summary>
+    private void BindTopBar(bool updates)
+    {
+        object source = updates ? _upd : _vm;
+        var wanted = updates ? (System.Collections.IEnumerable)_upd.Filters : _vm.Filters;
+        if (ReferenceEquals(FilterList.ItemsSource, wanted)) return;
+        FilterList.ItemsSource = wanted;
+        SearchBox.SetBinding(TextBox.TextProperty, new System.Windows.Data.Binding("SearchText") { Source = source, UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged });
+        CountLabel.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("CountText") { Source = source });
+        SearchHint.Text = updates ? "Найти" : "Найти мод";
+        System.Windows.Automation.AutomationProperties.SetName(SearchBox, updates ? "Найти среди найденных обновлений" : "Найти среди установленных модов");
+        _filterPlaced = false; // следующая раскладка ставит каплю сразу
+    }
+
+    private bool UpdatesPage => NavUpdates.IsChecked == true;
 
     /// <summary>Капля фильтра ложится под активный пункт; пункты меняют ширину (числа), поэтому меряем по факту.</summary>
     private void PlaceFilterDrop(bool instant)
     {
-        var item = _vm.Filters.FirstOrDefault(f => f.IsActive);
+        object? item = UpdatesPage ? _upd.Filters.FirstOrDefault(f => f.IsActive) : _vm.Filters.FirstOrDefault(f => f.IsActive);
         if (item is null || FilterList.ItemContainerGenerator.ContainerFromItem(item) is not FrameworkElement el || el.ActualWidth <= 0) return;
         var x = el.TransformToAncestor(FilterList).Transform(new Point(0, 0)).X;
         var targetX = x - 3;
@@ -1110,7 +1170,12 @@ public partial class MainWindow : Window
             case MainAction.OpenPage: OpenPage_Click(sender, e); break;
             // загрузки и поиска по сайтам в этой сборке ещё нет: «Обновить» ведёт на страницу, «Найти замену» — в раздел «Поиск»
             case MainAction.Update: OpenPage_Click(sender, e); break;
-            case MainAction.FindReplacement: NavSearch.IsChecked = true; break;
+            case MainAction.FindReplacement:
+                if (_vm.Selected is { } dead) OpenBind(dead, dead.Data.Binding?.Source);
+                break;
+            case MainAction.SetPage:
+                if (_vm.Selected is { } sel) OpenBind(sel, null);
+                break;
         }
     }
 
@@ -1124,7 +1189,10 @@ public partial class MainWindow : Window
             case EmptyAction.ShowAll: _vm.Filter = GarageFilter.All; break;
             case EmptyAction.OpenSearch:
             case EmptyAction.SearchSites: NavSearch.IsChecked = true; break;
-            case EmptyAction.CheckNow: NavUpdates.IsChecked = true; break;
+            case EmptyAction.CheckNow:
+                NavUpdates.IsChecked = true;
+                _ = _upd.CheckNowAsync();
+                break;
         }
     }
 
@@ -1146,6 +1214,20 @@ public partial class MainWindow : Window
         if (ctrl && e.Key == Key.D2) { NavUpdates.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D3) { NavSearch.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.OemComma) { NavSettings.IsChecked = true; e.Handled = true; return; }
+        // проверить обновления (DESIGN_FLOWS 7): F5 или Ctrl+R, из любого раздела
+        if (BindLayer.Visibility != Visibility.Visible && (e.Key == Key.F5 || (ctrl && e.Key == Key.R)))
+        {
+            NavUpdates.IsChecked = true;
+            if (!_upd.Checking) _ = _upd.CheckNowAsync();
+            e.Handled = true;
+            return;
+        }
+        if (BindLayer.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Escape) { CloseBind(); e.Handled = true; }
+            else if (e.Key == Key.Enter && _bind is { CanApply: true }) { BindApply_Click(this, new RoutedEventArgs()); e.Handled = true; }
+            return; // окно поверх: остальные клавиши — его полям и кнопкам
+        }
         if (e.Key == Key.Escape)
         {
             if (typing && SearchBox.Text.Length > 0) SearchBox.Clear();
@@ -1169,6 +1251,197 @@ public partial class MainWindow : Window
         }
         e.Handled = true;
         FocusSelected();
+    }
+
+    // ───────────── «Обновления» ─────────────
+
+    private void Upd_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(UpdatesViewModel.Filter):
+                PlaceFilterDrop(instant: false);
+                break;
+            case nameof(UpdatesViewModel.Empty):
+                if (UpdatesPage) UpdEmptyBox.Visibility = _upd.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
+                break;
+            case nameof(UpdatesViewModel.CountText):
+                if (UpdatesPage) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Карточка обновления подстраивается под ширину: на доске фото 560 и текст с 372 px; на узкой — фото уходит под текст.
+    /// </summary>
+    private void UpdCard_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not FrameworkElement root || Named(root, "Photo") is not FrameworkElement photo || Named(root, "Body") is not FrameworkElement body) return;
+        var w = e.NewSize.Width;
+        if (w <= 0) return;
+        var wide = w >= 760;
+        photo.Width = wide ? Math.Min(560, w * 0.58) : w;
+        photo.Opacity = wide ? 1 : 0.45;
+        var left = wide ? Math.Min(372, w * 0.386) : 26;
+        if (body.Margin.Left != left) body.Margin = new Thickness(left, 0, 26, 0);
+    }
+
+    /// <summary>Элемент шаблона по имени (имена шаблона в своей области: FindName снаружи их не видит).</summary>
+    private static FrameworkElement? Named(DependencyObject root, string name)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var c = VisualTreeHelper.GetChild(root, i);
+            if (c is FrameworkElement { Name: var n } fe && n == name) return fe;
+            if (Named(c, name) is { } deeper) return deeper;
+        }
+        return null;
+    }
+
+    private void UpdAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: UpdateItem item, Tag: ItemAction act }) return;
+        switch (act)
+        {
+            // загрузки в программе пока нет: «Обновить» тоже ведёт на страницу мода
+            case ItemAction.OpenPage:
+            case ItemAction.Update:
+                OpenUrl(item.PageUrl);
+                break;
+            case ItemAction.FindReplacement:
+                OpenBind(item.Card, item.Card.Data.Binding?.Source);
+                break;
+            default:
+                _upd.Act(item, act);
+                break;
+        }
+    }
+
+    private void CheckNow_Click(object sender, RoutedEventArgs e) => _ = _upd.CheckNowAsync();
+
+    private void UpdEmpty_Click(object sender, RoutedEventArgs e)
+    {
+        switch (_upd.Empty?.Action)
+        {
+            case EmptyAction.CheckNow: _ = _upd.CheckNowAsync(); break;
+            case EmptyAction.PickFolder: PickFolder(); break;
+            case EmptyAction.ShowAll:
+                // «Перейти к модам»: сразу к тем, у кого страница не указана
+                NavGarage.IsChecked = true;
+                _vm.Filter = GarageFilter.NotTracked;
+                break;
+        }
+    }
+
+    private void SiteOpen_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SiteRow row }) return;
+        OpenUrl(row.Home);
+        _upd.SiteOpened(row);
+    }
+
+    private void SiteDone_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: SiteRow row }) _upd.SiteConfirmed(row);
+    }
+
+    private void OpenUrl(Uri? url)
+    {
+        if (url is null || (url.Scheme != Uri.UriSchemeHttps && url.Scheme != Uri.UriSchemeHttp)) return;
+        try { Process.Start(new ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true }); }
+        catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException) { _vm.Notify("Не удалось открыть браузер"); }
+    }
+
+    // ───────────── «Указать страницу» и «Найти замену» ─────────────
+
+    private PageBindViewModel? _bind;
+    private CancellationTokenSource? _bindCts;
+    private readonly DispatcherTimer _linkTimer = new() { Interval = TimeSpan.FromMilliseconds(450) };
+    private IInputElement? _focusBeforeBind;
+
+    /// <summary>Окно поверх раздела: подсказки поиска грузятся сразу, ссылка проверяется после паузы в наборе.</summary>
+    private void OpenBind(ModCard card, string? replaceSource)
+    {
+        if (_host.Updates is not { } backend) { _vm.Notify("Указать страницу здесь нельзя"); return; }
+        _bindCts?.Cancel();
+        _bindCts = new CancellationTokenSource();
+        _bind = new PageBindViewModel(backend, card, replaceSource);
+        BindLayer.DataContext = _bind;
+        BindLinkHint.Visibility = Visibility.Visible;
+        _focusBeforeBind = Keyboard.FocusedElement;
+        BindLayer.Visibility = Visibility.Visible;
+        if (!SpringDriver.ReducedMotion && _host.ShotPath is null)
+        {
+            BindLayer.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.35, Anim.Smooth));
+            Anim.Mover(BindBody).BeginAnimation(TranslateTransform.YProperty, Anim.Go(12, 0, 0.55, Anim.Smooth));
+        }
+        Dispatcher.BeginInvoke(() => BindLink.Focus(), DispatcherPriority.Input);
+        var token = _bindCts.Token;
+        var vm = _bind;
+        _ = vm.LoadAsync(token);
+    }
+
+    private void CloseBind()
+    {
+        _linkTimer.Stop();
+        _bindCts?.Cancel();
+        _bind = null;
+        BindLayer.Visibility = Visibility.Collapsed;
+        BindLayer.DataContext = null;
+        if (_focusBeforeBind is UIElement { IsVisible: true } f) f.Focus();
+    }
+
+    private void BindLink_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        BindLinkHint.Visibility = BindLink.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // проверяем, когда человек перестал печатать или вставил ссылку целиком
+        _linkTimer.Stop();
+        _linkTimer.Start();
+    }
+
+    private void LinkTimer_Tick(object? sender, EventArgs e)
+    {
+        _linkTimer.Stop();
+        if (_bind is { } vm && _bindCts is { } cts) _ = vm.CheckLinkAsync(cts.Token);
+    }
+
+    private void BindPick_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PageSuggestion s } && _bind is { } vm) vm.Select(s);
+    }
+
+    private void BindApply_Click(object sender, RoutedEventArgs e)
+    {
+        if (_bind is not { } vm) return;
+        var toast = vm.Apply();
+        if (toast is null) { _vm.Notify("Не получилось: мода уже нет в библиотеке"); CloseBind(); return; }
+        CloseBind();
+        Refresh();
+        _vm.Notify(toast);
+        // новую страницу проверяем сразу (то, что уже проверено, сайты не дёргает)
+        _ = _upd.CheckSoonAsync();
+    }
+
+    private void BindCancel_Click(object sender, RoutedEventArgs e) => CloseBind();
+
+    private void BindDim_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        CloseBind();
+        e.Handled = true;
+    }
+
+    /// <summary>«Не проверять этот мод» прямо из «Найти замену».</summary>
+    private void BindDecline_Click(object sender, RoutedEventArgs e)
+    {
+        if (_bind is not { } vm) return;
+        var card = vm.Card;
+        CloseBind();
+        if (_upd.Items.FirstOrDefault(i => i.ModId == card.Id) is { } item) _upd.Act(item, ItemAction.Decline);
+        else if (_host.Updates is { } be && be.Decline(card.Id) is { } undo)
+        {
+            Refresh();
+            _vm.Notify($"Не проверяем «{card.Name}». Мод в фильтре «Не проверяются»", () => { be.UndoDecline(undo); Refresh(); });
+        }
     }
 
     // ───────────── снимок для сборочной машины ─────────────

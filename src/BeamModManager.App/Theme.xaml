@@ -193,6 +193,8 @@
                         <Trigger Property="IsPressed" Value="True">
                             <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.97" ScaleY="0.97"/></Setter.Value></Setter>
                         </Trigger>
+                        <!-- недоступная (ещё ничего не выбрано): тусклее, но на месте -->
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -320,6 +322,118 @@
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
         <Setter Property="Margin" Value="4,0,4,8"/>
+    </Style>
+
+    <!-- Тонкая полоса хода (проверка обновлений): дорожка и заполнение, без рамок и блеска стандартной -->
+    <Style x:Key="ThinProgress" TargetType="ProgressBar">
+        <Setter Property="Height" Value="4"/>
+        <Setter Property="Minimum" Value="0"/>
+        <Setter Property="Maximum" Value="1"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Grid>
+                        <Border x:Name="PART_Track" CornerRadius="2" Background="{DynamicResource SoftFill}"/>
+                        <Border x:Name="PART_Indicator" CornerRadius="2" HorizontalAlignment="Left" Background="{DynamicResource Ink}"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Включатель без строки: подпись слева, дорожка 52 × 32 справа (панель «Проверка») -->
+    <Style x:Key="MiniSwitch" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FontSize" Value="13.5"/>
+        <Setter Property="FontWeight" Value="Medium"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <DockPanel Background="Transparent">
+                        <Grid DockPanel.Dock="Right" Width="52" Height="32" Margin="12,0,0,0" VerticalAlignment="Center">
+                            <Border x:Name="Track" CornerRadius="16" Background="{DynamicResource TrackOff}"/>
+                            <Ellipse x:Name="Knob" Width="26" Height="26" Fill="White" HorizontalAlignment="Left" Margin="3,0,0,0">
+                                <Ellipse.Effect>
+                                    <DropShadowEffect BlurRadius="6" ShadowDepth="2" Direction="270" Color="#060A16" Opacity="0.4" RenderingBias="Performance"/>
+                                </Ellipse.Effect>
+                            </Ellipse>
+                        </Grid>
+                        <TextBlock Text="{TemplateBinding Content}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                    </DockPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Knob" Property="Margin" Value="23,0,0,0"/>
+                            <Setter TargetName="Track" Property="Background">
+                                <Setter.Value>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#C6DFFF" Offset="0"/>
+                                        <GradientStop Color="#8FBFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Поле ввода на стекле (ссылка в «Указать страницу»): таблетка, как поиск в верхней панели -->
+    <Style x:Key="GlassField" TargetType="TextBox">
+        <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+        <Setter Property="CaretBrush" Value="{DynamicResource Ink}"/>
+        <Setter Property="FontSize" Value="13.5"/>
+        <Setter Property="Height" Value="40"/>
+        <Setter Property="Padding" Value="14,0"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="B" CornerRadius="20" Background="{DynamicResource SoftFill}" BorderBrush="{DynamicResource SecRim}" BorderThickness="1">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center" Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource FocusRing}"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Подсказка-страница в «Указать страницу»: строка с сайтом и названием; выбранная — светлее, с кромкой и свечением -->
+    <Style x:Key="PickRow" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Margin" Value="0,0,0,8"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Grid>
+                        <Border x:Name="Glow" CornerRadius="16" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Visibility="Collapsed" IsHitTestVisible="False">
+                            <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
+                        </Border>
+                        <Border x:Name="B" CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="14,10">
+                            <ContentPresenter/>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="{DynamicResource RowFillHover}"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="{DynamicResource RowOn}"/>
+                            <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource RowOnRim}"/>
+                            <Setter TargetName="B" Property="BorderThickness" Value="1.5"/>
+                            <Setter TargetName="Glow" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="Glow" Property="Opacity" Value="0.3"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- Пояснение под группой и в строках -->
