@@ -607,7 +607,8 @@
                  WindowChrome.IsHitTestVisibleInChrome="True">
             <Canvas PreviewMouseLeftButtonDown="Nav_PreviewMouseDown" PreviewMouseLeftButtonUp="Nav_PreviewMouseUp" MouseLeave="Nav_MouseLeave">
                 <!-- капля жидкого стекла (Controls/Droplet.cs): линза, объём, радужная кромка; в пути вытягивается, при нажатии сжимается -->
-                <c:Droplet x:Name="NavDrop" Corner="29" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
+                <!-- капля шире пункта (76 из 84): подпись «Обновления» помещается внутри скругления, не наезжает на кромку -->
+                <c:Droplet x:Name="NavDrop" Corner="27" Width="76" Height="58" Canvas.Left="4" Canvas.Top="0">
                     <c:Droplet.RenderTransform>
                         <TransformGroup>
                             <ScaleTransform x:Name="NavDropScale"/>
