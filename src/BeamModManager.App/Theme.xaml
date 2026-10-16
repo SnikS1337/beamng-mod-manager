@@ -56,12 +56,11 @@
             <Setter.Value>
                 <ControlTemplate TargetType="c:Glass">
                     <Grid>
-                        <Border x:Name="ShadowHost" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" Background="#0B1222">
-                            <!-- тень неподвижна: кэш, иначе размытие 56 px считалось бы заново на каждом кадре движущегося фона -->
+                        <!-- тень неподвижна: кэш, иначе размытие 56 px считалось бы заново на каждом кадре движущегося фона;
+                             у светлого оформления своя, короткая и светлая (Palette.*.xaml, GlassShadow) -->
+                        <Border x:Name="ShadowHost" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" Background="#0B1222"
+                                Effect="{DynamicResource GlassShadow}">
                             <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="56" ShadowDepth="22" Direction="270" Color="#080C18" Opacity="0.38" RenderingBias="Performance"/>
-                            </Border.Effect>
                         </Border>
                         <Border x:Name="PART_Clip" ClipToBounds="True">
                             <Grid x:Name="PART_Lens">
@@ -186,11 +185,9 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border CornerRadius="22" Background="{DynamicResource PrimaryBack}">
+                    <!-- свечение у тёмного оформления, короткая тень у светлого (Palette.*.xaml, PrimaryGlow) -->
+                    <Border CornerRadius="22" Background="{DynamicResource PrimaryBack}" Effect="{DynamicResource PrimaryGlow}">
                         <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
-                        <Border.Effect>
-                            <DropShadowEffect BlurRadius="30" ShadowDepth="0" Color="#AACDFF" Opacity="0.42" RenderingBias="Performance"/>
-                        </Border.Effect>
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>

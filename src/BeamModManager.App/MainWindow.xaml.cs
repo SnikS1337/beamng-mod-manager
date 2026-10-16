@@ -113,7 +113,7 @@ public partial class MainWindow : Window
         _capPress = new Spring(0.22, 0.3, 1);
         _navDrop = new Spring(0.34, 0.2, 14);
         _filterX = new Spring(0.34, 0.2, -3);
-        _capX = new Spring(0.32, 0.2, -1);
+        _capX = new Spring(0.3, 0.15, 2);
         _capScale = new Spring(0.24, 0.18, 0.6);
         _springs.Add(_navPress, _ => NavDropShape());
         _springs.Add(_filterPress, _ => FilterDropShape());
@@ -121,11 +121,20 @@ public partial class MainWindow : Window
         _springs.Add(_navDrop, v => { NavDropMove.Y = v; NavDropShape(); });
         _springs.Add(_filterX, v => { FilterDropMove.X = v; FilterDropShape(); });
         _filterW = _springs.Add(new Spring(0.34, 0.2, 60), v => { FilterDrop.Width = Math.Max(20, v); FilterDrop.Sync(); });
-        _springs.Add(_capX, v => { CapDropMove.X = v; CapDropShape(); });
+        // перелёт пружины у крайних кнопок не выносит каплю за капсулу
+        _springs.Add(_capX, v => { CapDropMove.X = Math.Clamp(v, 2, 90); CapDropShape(); });
         _springs.Add(_capScale, _ => CapDropShape());
-        _inspX = _springs.Add(new Spring(0.5, 0, 344), v =>
+        // панель мода выезжает быстро (≈0,25 с, без отскока). В пути она кэширована картинкой: сдвиг готовой картинки
+        // почти ничего не стоит, а без кэша на каждом кадре заново считались стекло, преломление и всё содержимое
+        var insp = new Spring(0.34, 0, 344);
+        _inspX = _springs.Add(insp, v =>
         {
+            // последние доли пикселя пружина тянула бы ещё ≈0,5 с — встаём на место сразу
+            if (!insp.Resting && Math.Abs(v - insp.Target) < 0.5 && Math.Abs(insp.Velocity) < 30) { insp.Snap(insp.Target); v = insp.Target; }
             InspectorMove.X = v;
+            var moving = !insp.Resting;
+            if (moving && Inspector.CacheMode is null) Inspector.CacheMode = new BitmapCache { SnapsToDevicePixels = true };
+            else if (!moving && Inspector.CacheMode is not null) { Inspector.CacheMode = null; Inspector.InvalidateArrange(); }
             if (v >= 343 && _vm.Selected is null) Inspector.Visibility = Visibility.Collapsed; // уехала: стекло не считаем зря
         });
 
@@ -658,7 +667,8 @@ public partial class MainWindow : Window
         // у «Обновлений» справа всегда панель «Проверка»: место под неё держим и на узком окне
         var beside = (open && !_narrow) || NavUpdates.IsChecked == true; // панель занимает место рядом с сеткой
         var right = beside ? 360 : 16;
-        var gridMargin = new Thickness(116, 0, right, 0);
+        // прокрутка шире сетки на поля (44 слева, 24 справа — StackPanel внутри): тени карточек у краёв не обрезаются
+        var gridMargin = new Thickness(116 - 44, 0, right - 24, 0);
         if (Scroller.Margin != gridMargin)
         {
             Scroller.Margin = UpdScroller.Margin = gridMargin;
@@ -668,6 +678,10 @@ public partial class MainWindow : Window
             TopBar.Margin = new Thickness(116, 16, beside ? 360 : 132 + 16 + 16, 0);
         }
         Dim.Visibility = open && _narrow ? Visibility.Visible : Visibility.Collapsed;
+        // рядом с сеткой карточки под панель не заходят: сквозь неё виден только фон, и наведение на карточки её стекло
+        // не перерисовывает; на узком окне панель лежит поверх карточек — видна вся сцена
+        Visual source = _narrow ? Scene : Backdrop;
+        if (!ReferenceEquals(Inspector.Source, source)) Inspector.Source = source;
         if (open) Inspector.Visibility = Visibility.Visible;
         _springs.To(_inspX, open ? 0 : 344, instant);
         if (!open && (instant || SpringDriver.ReducedMotion)) Inspector.Visibility = Visibility.Collapsed;
@@ -749,7 +763,7 @@ public partial class MainWindow : Window
     {
         var i = sender == MinButton ? 0 : sender == MaxButton ? 1 : 2;
         var appearing = CapDrop.Opacity < 0.5;
-        _springs.To(_capX, -1 + 44 * i, instant: appearing);
+        _springs.To(_capX, 2 + 44 * i, instant: appearing);
         _springs.To(_capScale, 1);
         Fade(CapDrop, 1, 0.2);
         // под «Закрыть» капля краснеет за 0,25 с (доска: transition background .25s); появляясь, сразу нужного цвета
@@ -878,10 +892,10 @@ public partial class MainWindow : Window
         // сменился раздел: двигается только содержимое, оно проявляется с лёгким подъёмом; капля уже перетекает
         if (IsLoaded)
         {
-            if (garage) { Arrive(Scroller, Scroller); Arrive(EmptyBox, EmptyBox); }
-            else if (updates) { Arrive(UpdScroller, UpdBody); Arrive(UpdEmptyBox, UpdEmptyBox); Arrive(CheckPanel, CheckBody); }
-            else if (settings) Arrive(SettingsPanel, SettingsBody); // стекло только проявляется: его фон берётся по месту
-            else Arrive(SoonBox, SoonBox);
+            if (garage) { Arrive(Scroller); Arrive(EmptyBox); }
+            else if (updates) { Arrive(UpdScroller); Arrive(UpdEmptyBox); Arrive(CheckPanel, rise: false); }
+            else if (settings) Arrive(SettingsPanel, rise: false); // стекло только проявляется: его фон берётся по месту
+            else Arrive(SoonBox);
         }
     }
 
@@ -923,12 +937,35 @@ public partial class MainWindow : Window
         LookPreview.OpacityMask = Glass.RoundMask(e.NewSize.Width, e.NewSize.Height, 22); // маска: края сглажены
     }
 
-    /// <summary>Новое содержимое раздела: проявление и подъём на 10 px (≈0,35 с, пружина без отскока).</summary>
-    private void Arrive(UIElement fade, UIElement rise)
+    private readonly Dictionary<UIElement, int> _arriving = new();
+    private int _arriveGen;
+
+    /// <summary>
+    /// Новое содержимое раздела: проявление и подъём на 10 px (≈0,2 с, пружина без отскока). На время появления элемент
+    /// кэшируется картинкой: прозрачность и сдвиг тогда — наложение готовой картинки, а не перерисовка всех карточек,
+    /// стекла и переключателей на каждом кадре (из-за этого вход в «Настройки» казался вечностью). Стеклянные панели не
+    /// сдвигаются (<paramref name="rise"/> = false): копия фона под стеклом берётся по месту.
+    /// </summary>
+    private void Arrive(UIElement el, bool rise = true)
     {
         if (SpringDriver.ReducedMotion || (_host.ShotPath is not null && !_probing)) return;
-        fade.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.55, Anim.Smooth));
-        Anim.Mover(rise).BeginAnimation(TranslateTransform.YProperty, Anim.Go(10, 0, 0.55, Anim.Smooth));
+        const double seconds = 0.36;
+        var gen = ++_arriveGen;
+        var ours = el.CacheMode is null || _arriving.ContainsKey(el);
+        if (ours)
+        {
+            _arriving[el] = gen;
+            el.CacheMode ??= new BitmapCache { SnapsToDevicePixels = true };
+        }
+        var fade = Anim.Go(0, 1, seconds, Anim.Smooth);
+        if (ours)
+            fade.Completed += (_, _) =>
+            {
+                // последнее появление этого элемента закончилось — кэш больше не нужен (иначе текст и стекло «застынут»)
+                if (_arriving.TryGetValue(el, out var g) && g == gen) { _arriving.Remove(el); el.CacheMode = null; }
+            };
+        el.BeginAnimation(OpacityProperty, fade);
+        if (rise) Anim.Mover(el).BeginAnimation(TranslateTransform.YProperty, Anim.Go(10, 0, seconds, Anim.Smooth));
     }
 
     // ───────────── фильтры и поиск ─────────────
@@ -1373,7 +1410,7 @@ public partial class MainWindow : Window
         if (!SpringDriver.ReducedMotion && _host.ShotPath is null)
         {
             BindLayer.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.35, Anim.Smooth));
-            Anim.Mover(BindBody).BeginAnimation(TranslateTransform.YProperty, Anim.Go(12, 0, 0.55, Anim.Smooth));
+            Anim.Mover(BindBody).BeginAnimation(TranslateTransform.YProperty, Anim.Go(12, 0, 0.4, Anim.Smooth));
         }
         Dispatcher.BeginInvoke(() => BindLink.Focus(), DispatcherPriority.Input);
         var token = _bindCts.Token;

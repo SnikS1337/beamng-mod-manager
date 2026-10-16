@@ -54,4 +54,5 @@ BackgroundThemeTests.Register(t);
 
 
 GlassTextureTests.Register(t);
+XamlTests.Register(t);
 return t.Summary();

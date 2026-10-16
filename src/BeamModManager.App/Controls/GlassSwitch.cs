@@ -14,6 +14,8 @@ namespace BeamModManager.App.Controls;
 /// <item>при переключении бегунок едет пружиной с лёгким перелётом, по ходу вытягивается, как капля, и, встав на место,
 ///   снова становится белым.</item>
 /// </list>
+/// При выключенном жидком стекле (панель матовая или плоская) бегунок остаётся белым и только подрастает при нажатии:
+/// ни линзы, ни бликов, ни радужного края — движение то же.
 /// Рисуется сам (несколько фигур) и не ловит мышь: нажатие получает сам флажок шаблона, сюда приходят IsOn и Pressed.
 /// </summary>
 public sealed class GlassSwitch : FrameworkElement
@@ -46,7 +48,31 @@ public sealed class GlassSwitch : FrameworkElement
         Height = TrackH;
         _drv.Add(_pos, _ => OnFrame());
         _drv.Add(_glass, _ => InvalidateVisual());
+        Loaded += (_, _) => Attach();
+        Unloaded += (_, _) => Detach();
     }
+
+    // ───────────── стекло-хозяин: жидкое или нет ─────────────
+
+    private Glass? _owner;
+
+    private void Attach()
+    {
+        Detach();
+        for (DependencyObject? p = VisualTreeHelper.GetParent(this); p is not null; p = VisualTreeHelper.GetParent(p))
+            if (p is Glass g) { _owner = g; break; }
+        if (_owner is not null) _owner.LookChanged += InvalidateVisual;
+        InvalidateVisual();
+    }
+
+    private void Detach()
+    {
+        if (_owner is not null) _owner.LookChanged -= InvalidateVisual;
+        _owner = null;
+    }
+
+    /// <summary>Бегунок становится стеклянной линзой только на жидком стекле.</summary>
+    private bool Liquid => _owner is null or { Mode: GlassMode.Liquid };
 
     private void OnChanged(bool on)
     {
@@ -81,7 +107,8 @@ public sealed class GlassSwitch : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         var p = Math.Clamp(_pos.Value, -0.15, 1.15); // перелёт пружины чуть заходит за края — в пределах дорожки
-        var g = Math.Clamp(_glass.Value, 0, 1);
+        var lift = Math.Clamp(_glass.Value, 0, 1);       // насколько бегунок «поднят» (нажат или в пути)
+        var g = Liquid ? lift : 0;                       // и насколько он при этом стеклянный
         // ── дорожка ──
         var off = OffBrush is SolidColorBrush tb ? tb.Color : Color.FromArgb(0x38, 255, 255, 255);
         var light = off.R < 0x80; // в светлом оформлении выключенная дорожка — тёмная полупрозрачная
@@ -99,7 +126,7 @@ public sealed class GlassSwitch : FrameworkElement
 
         // ── бегунок ──
         var stretch = Math.Min(0.24, Math.Abs(_pos.Velocity) * 0.045); // вытягивается по ходу, как капля
-        var grow = 1 + 0.26 * g;                                        // поднятый (стеклянный) — крупнее дорожки
+        var grow = 1 + 0.26 * lift;                                     // поднятый — крупнее дорожки
         var tw = ThumbW * grow * (1 + stretch);
         var th = ThumbH * grow * (1 - stretch * 0.35);
         var cx = Inset + ThumbW / 2 + p * (TrackW - ThumbW - 2 * Inset);
@@ -126,7 +153,7 @@ public sealed class GlassSwitch : FrameworkElement
         // стекло: блик сверху слева, светлый серп снизу, яркая кромка и радужный край
         if (g > 0.02)
         {
-            Spot(dc, shape, new Point(thumb.X + tw * 0.32, thumb.Y + th * 0.28), tw * 0.34, th * 0.34, Color.FromArgb((byte)(255 * 0.55 * g), 255, 255, 255));
+            Spot(dc, shape, new Point(thumb.X + tw * 0.32, thumb.Y + th * 0.28), tw * 0.34, th * 0.34, Color.FromArgb((byte)(255 * 0.26 * g), 255, 255, 255));
             Spot(dc, shape, new Point(thumb.X + tw * 0.56, thumb.Bottom + th * 0.05), tw * 0.42, th * 0.34, Color.FromArgb((byte)(255 * 0.30 * g), 225, 240, 255));
             var rim = new LinearGradientBrush(new GradientStopCollection
             {
@@ -137,10 +164,10 @@ public sealed class GlassSwitch : FrameworkElement
             dc.DrawRoundedRectangle(null, new Pen(rim, 1.2), Deflate(thumb, 0.6), tr - 0.6, tr - 0.6);
             var prism = new LinearGradientBrush(new GradientStopCollection
             {
-                new(Color.FromArgb((byte)(255 * 0.75 * g), 110, 200, 255), 0),
+                new(Color.FromArgb((byte)(255 * 0.40 * g), 110, 200, 255), 0),
                 new(Color.FromArgb(0, 255, 255, 255), 0.35),
                 new(Color.FromArgb(0, 255, 255, 255), 0.65),
-                new(Color.FromArgb((byte)(255 * 0.70 * g), 255, 120, 205), 1),
+                new(Color.FromArgb((byte)(255 * 0.38 * g), 255, 120, 205), 1),
             }, new Point(0, 0.5), new Point(1, 0.5));
             dc.DrawRoundedRectangle(null, new Pen(prism, 1.1), Deflate(thumb, 1.6), tr - 1.6, tr - 1.6);
         }

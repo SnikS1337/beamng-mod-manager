@@ -33,25 +33,31 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Grid x:Name="Lift">
-                            <!-- карточка с тенями и фото кэшируется картинкой: фон под ней движется каждый кадр, без кэша три
-                                 размытые тени и фото пересчитывались бы постоянно (и ещё раз в каждом стекле, под которым карточка) -->
-                            <Grid.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Grid.CacheMode>
                             <Grid.RenderTransform>
                                 <TransformGroup>
                                     <TranslateTransform x:Name="Hover"/>
                                     <TranslateTransform x:Name="Pick"/>
                                 </TransformGroup>
                             </Grid.RenderTransform>
-                            <Border x:Name="GlowHover" CornerRadius="26" Background="#1D2533" Opacity="0">
+                            <!-- Слои, которые анимируются при наведении и выборе, кэшированы каждый сам по себе и лежат вне кэша
+                                 карточки: меняется только их прозрачность и сдвиг, а это сводится к наложению готовых картинок.
+                                 Раньше свечения лежали внутри общего кэша, и каждый кадр наведения заново считал три размытые тени,
+                                 фото и подписи (и ещё раз в каждом стекле над карточкой) — анимация шла рывками. -->
+                            <Border x:Name="GlowHover" CornerRadius="26" Background="#1D2533" Opacity="0" IsHitTestVisible="False">
+                                <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                                 <Border.Effect>
                                     <DropShadowEffect BlurRadius="34" ShadowDepth="0" Color="#AACDFF" Opacity="0.24" RenderingBias="Performance"/>
                                 </Border.Effect>
                             </Border>
-                            <Border x:Name="GlowPick" CornerRadius="26" Background="#1D2533" Opacity="0">
+                            <Border x:Name="GlowPick" CornerRadius="26" Background="#1D2533" Opacity="0" IsHitTestVisible="False">
+                                <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                                 <Border.Effect>
                                     <DropShadowEffect BlurRadius="46" ShadowDepth="0" Color="#96C8FF" Opacity="0.34" RenderingBias="Performance"/>
                                 </Border.Effect>
                             </Border>
+                            <!-- сама карточка (тень, фото, подписи) неподвижна внутри себя — кэш картинкой -->
+                            <Grid x:Name="Body">
+                            <Grid.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Grid.CacheMode>
                             <Border CornerRadius="26" Background="#1D2533">
                                 <Border.Effect>
                                     <DropShadowEffect BlurRadius="32" ShadowDepth="14" Direction="270" Color="#040814" Opacity="0.5" RenderingBias="Performance"/>
@@ -134,6 +140,7 @@
                                     </LinearGradientBrush>
                                 </Border.BorderBrush>
                             </Border>
+                            </Grid>
                             <!-- наведение: мягко проявляется светлая окантовка, видно, на какой карточке мышь -->
                             <Border x:Name="RimHover" CornerRadius="26" BorderThickness="1.5" IsHitTestVisible="False" Opacity="0">
                                 <Border.BorderBrush>
@@ -185,18 +192,18 @@
                                 <Trigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-5" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.45" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-5" Duration="0:0:0.5" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.3" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.EnterActions>
                                 <Trigger.ExitActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
-                                            <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.5" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
@@ -207,16 +214,16 @@
                                 <DataTrigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="-4" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="GlowPick" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="-4" Duration="0:0:0.5" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowPick" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.EnterActions>
                                 <DataTrigger.ExitActions>
                                     <BeginStoryboard>
                                         <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                            <DoubleAnimation Storyboard.TargetName="GlowPick" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                            <DoubleAnimation Storyboard.TargetName="Pick" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.5" EasingFunction="{StaticResource Lift}"/>
+                                            <DoubleAnimation Storyboard.TargetName="GlowPick" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </DataTrigger.ExitActions>
@@ -291,7 +298,7 @@
         <ControlTemplate x:Key="OverlayScroll" TargetType="ScrollViewer">
             <Grid>
                 <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" CanContentScroll="{TemplateBinding CanContentScroll}"/>
-                <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Margin="0,84,-12,16"
+                <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Margin="0,84,12,16"
                            Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}"
                            Value="{TemplateBinding VerticalOffset}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
             </Grid>
@@ -300,13 +307,17 @@
         <!-- Карточка обновления (доска «Обновления»): фото слева уходит в тень, справа название, «1.0 → 1.5», пояснение и кнопки -->
         <DataTemplate x:Key="UpdateCard" DataType="{x:Type u:UpdateItem}">
             <Grid x:Name="Root" Height="196" Margin="0,0,0,20" SizeChanged="UpdCard_SizeChanged">
-                <Grid.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Grid.CacheMode>
                 <Grid.RenderTransform><TranslateTransform x:Name="Hover"/></Grid.RenderTransform>
-                <Border x:Name="GlowHover" CornerRadius="26" Background="#1D2533" Opacity="0">
+                <!-- как у карточки гаража: свечение и кромка наведения — свои кэши вне кэша карточки, наведение их только
+                     проявляет (без перерисовки фото, теней и подписей на каждом кадре) -->
+                <Border x:Name="GlowHover" CornerRadius="26" Background="#1D2533" Opacity="0" IsHitTestVisible="False">
+                    <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="34" ShadowDepth="0" Color="#AACDFF" Opacity="0.22" RenderingBias="Performance"/>
                     </Border.Effect>
                 </Border>
+                <Grid x:Name="Card">
+                <Grid.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Grid.CacheMode>
                 <Border CornerRadius="26" Background="#1D2533">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="32" ShadowDepth="14" Direction="270" Color="#040814" Opacity="0.5" RenderingBias="Performance"/>
@@ -359,7 +370,6 @@
                         </LinearGradientBrush>
                     </Border.BorderBrush>
                 </Border>
-                <Border x:Name="RimHover" CornerRadius="26" BorderThickness="1.5" BorderBrush="#99DCEBFF" Opacity="0" IsHitTestVisible="False"/>
 
                 <StackPanel x:Name="Body" Margin="372,0,26,0" VerticalAlignment="Center" TextElement.Foreground="White">
                     <Border HorizontalAlignment="Left" CornerRadius="12" Height="24" Padding="10,0,11,0" Margin="0,0,0,8" Background="#CC0A101E"
@@ -384,24 +394,26 @@
                                 Visibility="{Binding ThirdLabel, Converter={StaticResource NullToCollapsed}}"/>
                     </WrapPanel>
                 </StackPanel>
+                </Grid>
+                <Border x:Name="RimHover" CornerRadius="26" BorderThickness="1.5" BorderBrush="#99DCEBFF" Opacity="0" IsHitTestVisible="False"/>
             </Grid>
             <DataTemplate.Triggers>
                 <Trigger SourceName="Root" Property="IsMouseOver" Value="True">
                     <Trigger.EnterActions>
                         <BeginStoryboard>
                             <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-4" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
-                                <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.45" EasingFunction="{StaticResource Smooth}"/>
+                                <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="-4" Duration="0:0:0.5" EasingFunction="{StaticResource Lift}"/>
+                                <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
+                                <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.3" EasingFunction="{StaticResource Smooth}"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </Trigger.EnterActions>
                     <Trigger.ExitActions>
                         <BeginStoryboard>
                             <Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.8" EasingFunction="{StaticResource Lift}"/>
-                                <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
-                                <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.6" EasingFunction="{StaticResource Smooth}"/>
+                                <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.5" EasingFunction="{StaticResource Lift}"/>
+                                <DoubleAnimation Storyboard.TargetName="GlowHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
+                                <DoubleAnimation Storyboard.TargetName="RimHover" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
                             </Storyboard>
                         </BeginStoryboard>
                     </Trigger.ExitActions>
@@ -481,20 +493,21 @@
                 <Canvas x:Name="Flies"/>
             </Grid>
 
-            <ScrollViewer x:Name="Scroller" Margin="116,0,360,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+            <!-- прокрутка шире сетки на 44 px слева и 24 px справа (поля внутри): тени и свечение карточек у краёв не обрезаются -->
+            <ScrollViewer x:Name="Scroller" Margin="72,0,336,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                           Focusable="False" PanningMode="VerticalOnly">
                 <!-- полоса прокрутки поверх края сетки, а не рядом: иначе она отнимает ширину и колонок становится меньше -->
                 <ScrollViewer.Template>
                     <ControlTemplate TargetType="ScrollViewer">
                         <Grid>
                             <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" CanContentScroll="{TemplateBinding CanContentScroll}"/>
-                            <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Margin="0,84,-12,16"
+                            <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Margin="0,84,12,16"
                                        Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}"
                                        Value="{TemplateBinding VerticalOffset}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
                         </Grid>
                     </ControlTemplate>
                 </ScrollViewer.Template>
-                <StackPanel Margin="0,84,0,28">
+                <StackPanel Margin="44,84,24,28">
                     <!-- самообновление: «Вышла новая версия» → «Обновить» → загрузка → перезапуск -->
                     <Border x:Name="UpdateBox" CornerRadius="20" MinHeight="44" Margin="0,0,0,12" Padding="18,6,10,6" DataContext="{x:Null}"
                             Visibility="{Binding Visible, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
@@ -547,9 +560,9 @@
             </ScrollViewer>
 
             <!-- «Обновления»: карточки во всю ширину, прокручиваются под верхней панелью и преломляются в её стекле -->
-            <ScrollViewer x:Name="UpdScroller" Margin="116,0,360,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+            <ScrollViewer x:Name="UpdScroller" Margin="72,0,336,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                           Focusable="False" PanningMode="VerticalOnly" Template="{StaticResource OverlayScroll}" Visibility="Collapsed">
-                <StackPanel x:Name="UpdBody" Margin="0,84,0,28">
+                <StackPanel x:Name="UpdBody" Margin="44,84,24,28">
                     <!-- только видимые карточки (RowListPanel): шаг ряда — высота карточки 196 и отступ 20 из шаблона UpdateCard -->
                     <ItemsControl x:Name="UpdList" ItemsSource="{Binding Items}" ItemTemplate="{StaticResource UpdateCard}" Focusable="False"
                                   KeyboardNavigation.TabNavigation="Continue">
@@ -602,8 +615,9 @@
 
         <!-- ═════ Стекло ═════ -->
 
-        <!-- Левая панель: x 16, y 16, 84 × 284 -->
-        <c:Glass x:Name="Nav" Source="{Binding ElementName=Scene}" Corner="36" Blur="2" Tint="#700E182C"
+        <!-- Левая панель: x 16, y 16, 84 × 284. Карточки под неё не заходят, поэтому сквозь неё видно только фон
+             (Backdrop, а не вся сцена): наведение и прокрутка карточек не перерисовывают её стекло -->
+        <c:Glass x:Name="Nav" Source="{Binding ElementName=Backdrop}" Corner="36" Blur="2" Tint="#700E182C"
                  Lens="30" Refraction="105" Brightness="0.78" Sparks="6" Seed="11"
                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0" Width="84" Height="284"
                  WindowChrome.IsHitTestVisibleInChrome="True">
@@ -938,8 +952,14 @@
                             </UniformGrid>
                         </StackPanel>
 
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-                            <StackPanel>
+                        <!-- прокрутка шире содержимого на поля панели: свечение главной кнопки не обрезается по бокам краем прокрутки -->
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Margin="-22,-14,-22,0">
+                            <ScrollViewer.Resources>
+                                <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
+                                    <Setter Property="Margin" Value="0,14,8,0"/>
+                                </Style>
+                            </ScrollViewer.Resources>
+                            <StackPanel Margin="22,14,22,0">
                                 <Grid Height="132">
                                     <Border CornerRadius="20">
                                         <Border.Background>
@@ -1008,7 +1028,7 @@
         </c:Glass>
 
         <!-- Панель «Проверка» (доска «Обновления»): когда проверяли, кнопка, ход, сайты, автопроверка. Под капсулой окна, как правая панель -->
-        <c:Glass x:Name="CheckPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="5" Tint="#800E182C"
+        <c:Glass x:Name="CheckPanel" Source="{Binding ElementName=Backdrop}" Corner="32" Blur="5" Tint="#800E182C"
                  Lens="56" Refraction="144" Brightness="0.70" Sparks="10" Seed="18"
                  HorizontalAlignment="Right" VerticalAlignment="Top" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
             <StackPanel x:Name="CheckBody" Margin="22,24,22,22">
@@ -1096,18 +1116,22 @@
         </Grid>
 
         <!-- Капсула кнопок окна 132 × 36 в правом верхнем углу; при наведении появляется капля, под «Закрыть» красная -->
-        <c:Glass x:Name="Caption" Source="{Binding ElementName=Scene}" Corner="18" Blur="4" Tint="#700E182C"
+        <!-- сквозь капсулу виден только фон: под ней край верхней тени, карточки там почти не видны, а капля на каждом шаге
+             перерисовывала бы под собой всю сцену с карточками -->
+        <c:Glass x:Name="Caption" Source="{Binding ElementName=Backdrop}" Corner="18" Blur="4" Tint="#700E182C"
                  Lens="18" Refraction="0" Brightness="0.78"
                  HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0" Width="132" Height="36"
                  WindowChrome.IsHitTestVisibleInChrome="True" MouseLeave="Caption_MouseLeave"
                  PreviewMouseLeftButtonDown="Caption_PreviewMouseDown" PreviewMouseLeftButtonUp="Caption_PreviewMouseUp">
             <Grid>
                 <Canvas>
-                    <c:Droplet x:Name="CapDrop" Corner="17" Width="46" Height="34" Canvas.Top="1" Opacity="0">
+                    <!-- капля на 3 px меньше капсулы со всех сторон: в пути и на перелёте она не наезжает на блик кромки капсулы
+                         (раньше край капли резал светлую линию сверху — «артефакт сверху капли») -->
+                    <c:Droplet x:Name="CapDrop" Corner="15" Width="40" Height="30" Canvas.Top="3" Opacity="0">
                         <c:Droplet.RenderTransform>
                             <TransformGroup>
                                 <ScaleTransform x:Name="CapDropScale" ScaleX="0.6" ScaleY="0.6"/>
-                                <TranslateTransform x:Name="CapDropMove" X="-1"/>
+                                <TranslateTransform x:Name="CapDropMove" X="2"/>
                             </TransformGroup>
                         </c:Droplet.RenderTransform>
                     </c:Droplet>
