@@ -57,8 +57,11 @@ public sealed class SpringDriver
     /// <summary>«Анимации интерфейса» выключены в настройках программы.</summary>
     public static bool AnimationsOff { get; set; }
 
+    /// <summary>Замер кадров на сборочной машине (--frames): анимации идут, даже если в Windows они выключены.</summary>
+    public static bool ForceMotion { get; set; }
+
     /// <summary>Интерфейс не анимируется: капли, панели и карточки встают на место сразу. Фон этим не управляется.</summary>
-    public static bool ReducedMotion => SystemReduced || AnimationsOff;
+    public static bool ReducedMotion => (SystemReduced && !ForceMotion) || AnimationsOff;
 
     public Spring Add(Spring s, Action<double> apply)
     {
