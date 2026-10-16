@@ -31,13 +31,15 @@ public sealed class AppUpdater
     private readonly string _updateDir;
     private readonly Func<string, Version?> _versionOf;
     private readonly Func<DateTimeOffset> _now;
+    private readonly Version? _skipped;
     private readonly object _g = new();
     private Task? _running;
     private UpdateState _state = new(UpdateStage.Idle);
 
     public AppUpdater(UpdateDownloader net, Uri manifestUrl, Version current, string currentExe, string updateDir,
-        Func<string, Version?> versionOf, Func<DateTimeOffset>? now = null)
+        Func<string, Version?> versionOf, Func<DateTimeOffset>? now = null, Version? skipped = null)
     {
+        _skipped = skipped is null ? null : AppVersion.Normalize(skipped);
         _net = net;
         _manifestUrl = manifestUrl;
         _current = AppVersion.Normalize(current);
@@ -48,6 +50,9 @@ public sealed class AppUpdater
     }
 
     public Version Current => _current;
+
+    /// <summary>Версия, которая уже не запустилась на этом компьютере (вернули прежнюю): её не предлагаем.</summary>
+    public Version? Skipped => _skipped;
     public UpdateState State { get { lock (_g) return _state; } }
 
     /// <summary>
@@ -84,6 +89,8 @@ public sealed class AppUpdater
             lock (_g)
             {
                 if (m is null) Set(new UpdateState(UpdateStage.Failed, Error: err, CheckedAt: _now()));
+                else if (AppVersion.IsNewer(m.Version, _current) && AppVersion.Normalize(m.Version) == _skipped)
+                    Set(new UpdateState(UpdateStage.UpToDate, m, Error: $"версия {AppVersion.Display(m.Version)} не запустилась у вас, ждём следующую", CheckedAt: _now()));
                 else if (AppVersion.IsNewer(m.Version, _current)) Set(new UpdateState(UpdateStage.Available, m, CheckedAt: _now()));
                 else Set(new UpdateState(UpdateStage.UpToDate, m, CheckedAt: _now()));
             }

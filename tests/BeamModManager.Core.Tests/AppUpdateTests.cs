@@ -59,14 +59,14 @@ public static class AppUpdateTests
         public Version ArchiveVersion = new(0, 1, 30);
         public readonly AppUpdater U;
 
-        public Rig(string current = "0.1.29")
+        public Rig(string current = "0.1.29", string? skipped = null)
         {
             Directory.CreateDirectory(Path.Combine(Dir, "app"));
             Exe = Path.Combine(Dir, "app", "BeamModManager.exe");
             File.WriteAllText(Exe, "старая версия");
             var http = new HttpClient(Net);
             U = new AppUpdater(new UpdateDownloader(http), new Uri(ManifestUrl), AppVersion.Parse(current)!, Exe, Path.Combine(Dir, "update"),
-                _ => ArchiveVersion, () => Now);
+                _ => ArchiveVersion, () => Now, AppVersion.Parse(skipped));
         }
 
         public byte[] Publish(string version = "0.1.30", byte[]? zip = null, string? sha = null)
@@ -83,6 +83,11 @@ public static class AppUpdateTests
 
     public static void Register(TestRunner t)
     {
+        static async Task Until(Func<bool> cond)
+        {
+            for (var i = 0; i < 200 && !cond(); i++) await Task.Delay(10);
+        }
+
         t.Group("Самообновление: описание версии");
 
         t.Run("правильное описание разбирается; «v0.1.30» и «0.1.30.0» — одна версия", () =>
@@ -217,6 +222,259 @@ public static class AppUpdateTests
             Assert.False(File.Exists(r.Exe + ".old") || Directory.Exists(Path.Combine(r.Dir, "update")), "убрано");
         });
 
+        t.Run("подмена идёт через копию рядом с программой: после неё нет ни «*.new», ни частичных файлов", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "elsewhere", "BeamModManager.exe"); // папка обновления — в другом месте (на другом диске)
+            Directory.CreateDirectory(Path.GetDirectoryName(neu)!);
+            File.WriteAllText(neu, "новая");
+            var moves = new List<(string, string)>();
+            Assert.True(UpdateInstaller.Swap(r.Exe, neu, (a, b) => { moves.Add((a, b)); File.Move(a, b); }) is null, "встала");
+            Assert.Eq("новая", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "копия стала программой");
+            // переименования только внутри папки программы (на одном диске — мгновенно); новая версия копируется заранее
+            Assert.Eq(2, moves.Count);
+            Assert.True(moves.All(m => Path.GetDirectoryName(m.Item1) == Path.GetDirectoryName(r.Exe) && Path.GetDirectoryName(m.Item2) == Path.GetDirectoryName(r.Exe)), "только рядом с exe");
+            Assert.Eq((r.Exe, r.Exe + UpdateInstaller.OldSuffix), moves[0]);
+            Assert.Eq((r.Exe + UpdateInstaller.NewSuffix, r.Exe), moves[1]);
+            Assert.True(File.Exists(neu), "подготовленный файл не тронут (его уберёт уборка)");
+        });
+
+        t.Run("копию не положить рядом с программой: текущая не тронута, причина понятна", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая");
+            Directory.CreateDirectory(r.Exe + UpdateInstaller.NewSuffix); // место занято папкой — записать нельзя
+            var err = UpdateInstaller.Swap(r.Exe, neu);
+            Assert.True(err is not null, "отказ");
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.OldSuffix), "текущую не отодвигали");
+        });
+
+        t.Run("оставшийся от оборванной попытки «*.new» не мешает", () =>
+        {
+            using var r = new Rig();
+            File.WriteAllText(r.Exe + UpdateInstaller.NewSuffix, "обрывок");
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая целиком");
+            Assert.True(UpdateInstaller.Swap(r.Exe, neu) is null, "встала");
+            Assert.Eq("новая целиком", File.ReadAllText(r.Exe));
+        });
+
+        t.Run("новая не встала на место: прежняя возвращается, «*.new» убран", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая");
+            var err = UpdateInstaller.Swap(r.Exe, neu, (a, b) =>
+            {
+                if (a.EndsWith(UpdateInstaller.NewSuffix)) throw new IOException("файл занят");
+                File.Move(a, b);
+            });
+            Assert.True(err!.Contains("не встала"), err);
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "копия убрана");
+        });
+
+        t.Run("текущую не отодвинуть (нет прав): ничего не тронуто, совет перенести папку", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая");
+            var err = UpdateInstaller.Swap(r.Exe, neu, (a, b) => throw new UnauthorizedAccessException());
+            Assert.True(err!.Contains("нет прав"), err);
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix) || File.Exists(r.Exe + UpdateInstaller.OldSuffix), "следов нет");
+        });
+
+        t.Run("и новая не встала, и прежняя не вернулась: сказано, что переименовать", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая");
+            var first = true;
+            var err = UpdateInstaller.Swap(r.Exe, neu, (a, b) =>
+            {
+                if (first) { first = false; File.Move(a, b); return; }
+                throw new IOException("занято");
+            });
+            Assert.True(err!.Contains("BeamModManager.exe.old") && err.Contains("обратно"), err);
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe + UpdateInstaller.OldSuffix));
+        });
+
+        t.Run("программы нет на месте: подмена отказывается и ничего не создаёт", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая");
+            File.Delete(r.Exe);
+            Assert.True(UpdateInstaller.Swap(r.Exe, neu) is not null, "отказ");
+            Assert.False(File.Exists(r.Exe) || File.Exists(r.Exe + UpdateInstaller.NewSuffix), "ничего не появилось");
+        });
+
+        t.Run("папка программы с русскими буквами, пробелами и скобками: подмена и откат работают", () =>
+        {
+            using var r = new Rig();
+            var dir = Path.Combine(r.Dir, "Мои программы (2)", "Mod Manager — BeamNG");
+            Directory.CreateDirectory(dir);
+            var exe = Path.Combine(dir, "BeamModManager.exe");
+            File.WriteAllText(exe, "старая");
+            var neu = Path.Combine(r.Dir, "обновление", "BeamModManager.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(neu)!);
+            File.WriteAllText(neu, "новая");
+            Assert.True(UpdateInstaller.Swap(exe, neu) is null, "встала");
+            Assert.Eq("новая", File.ReadAllText(exe));
+            Assert.True(UpdateInstaller.Rollback(exe), "откат");
+            Assert.Eq("старая", File.ReadAllText(exe));
+        });
+
+        t.Group("Самообновление: новая версия не запустилась");
+
+        t.Run("новая версия падает при запуске и возвращает прежнюю сама: себя в «*.bad», прежнюю на место", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая");
+            Assert.True(UpdateInstaller.Swap(r.Exe, neu) is null, "встала");
+            Assert.True(UpdateInstaller.RollbackFromRunning(r.Exe), "вернула");
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.Eq("новая", File.ReadAllText(r.Exe + UpdateInstaller.BadSuffix));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.OldSuffix), "прежняя уже на месте");
+            UpdateInstaller.Cleanup(r.Exe, Path.Combine(r.Dir, "update"));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.BadSuffix), "неудачная убрана при следующем запуске");
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+        });
+
+        t.Run("возвращать нечего (обычный запуск, без «*.old»): ничего не трогается", () =>
+        {
+            using var r = new Rig();
+            Assert.False(UpdateInstaller.RollbackFromRunning(r.Exe), "нечего");
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.BadSuffix), "себя не переименовала");
+            Assert.False(UpdateInstaller.Rollback(r.Exe), "и прежнему процессу нечего");
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+        });
+
+        t.Run("новая умерла сама (прежний процесс возвращает себя): новый файл заменяется прежним", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "new.exe");
+            File.WriteAllText(neu, "новая");
+            UpdateInstaller.Swap(r.Exe, neu);
+            File.WriteAllText(r.Exe + UpdateInstaller.BadSuffix, "старый мусор");
+            Assert.True(UpdateInstaller.Rollback(r.Exe), "вернул");
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.OldSuffix), "старой копии нет");
+        });
+
+        t.Run("уборка: «*.old», «*.new», «*.bad» и папка обновления; без них — ничего не ломает", () =>
+        {
+            using var r = new Rig();
+            foreach (var suf in new[] { UpdateInstaller.OldSuffix, UpdateInstaller.NewSuffix, UpdateInstaller.BadSuffix })
+                File.WriteAllText(r.Exe + suf, "x");
+            Directory.CreateDirectory(Path.Combine(r.Dir, "update", "0.1.30", "exe"));
+            UpdateInstaller.Cleanup(r.Exe, Path.Combine(r.Dir, "update"));
+            Assert.Eq(1, Directory.GetFiles(Path.GetDirectoryName(r.Exe)!).Length);
+            Assert.False(Directory.Exists(Path.Combine(r.Dir, "update")), "папки нет");
+            UpdateInstaller.Cleanup(r.Exe, Path.Combine(r.Dir, "update")); // второй раз — тихо
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+        });
+
+        t.Run("не запустившаяся версия запоминается; мусор в файле и его отсутствие — ничего не пропускаем", () =>
+        {
+            using var r = new Rig();
+            var path = Path.Combine(r.Dir, "cfg", "update-skip.txt");
+            Assert.True(UpdateInstaller.ReadSkipped(path) is null, "файла нет");
+            UpdateInstaller.WriteSkipped(path, new Version(0, 1, 58));
+            Assert.Eq(new Version(0, 1, 58, 0), UpdateInstaller.ReadSkipped(path));
+            File.WriteAllText(path, "сломано");
+            Assert.True(UpdateInstaller.ReadSkipped(path) is null, "мусор");
+        });
+
+        t.Run("не запустившуюся версию больше не предлагаем; следующую — предлагаем", async () =>
+        {
+            Rig Make(string skipped) => new Rig("0.1.57", skipped);
+            using (var r = Make("0.1.58"))
+            {
+                r.Publish("0.1.58");
+                await r.U.CheckAsync(manual: false);
+                Assert.Eq(UpdateStage.UpToDate, r.U.State.Stage);
+                Assert.True(r.U.State.Error!.Contains("0.1.58"), r.U.State.Error);
+                await r.U.InstallAsync();
+                Assert.False(File.Exists(r.Exe + UpdateInstaller.OldSuffix), "и не ставится");
+            }
+            using (var r = Make("0.1.58"))
+            {
+                r.Publish("0.1.59");
+                r.ArchiveVersion = new Version(0, 1, 59);
+                await r.U.CheckAsync(manual: false);
+                Assert.Eq(UpdateStage.Available, r.U.State.Stage);
+            }
+        });
+
+        t.Run("плашка: автопроверка о пропущенной версии молчит, по кнопке объясняет", async () =>
+        {
+            using var r = new Rig("0.1.57", "0.1.58");
+            r.Publish("0.1.58");
+            var b = new UpdateBanner(r.U, a => a(), () => { });
+            await b.CheckOnStartAsync();
+            await Task.Delay(50);
+            Assert.False(b.Visible, "молчит");
+            r.Now = r.Now.AddMinutes(1);
+            await b.CheckNowAsync();
+            await Until(() => b.Text.StartsWith("У вас"));
+            Assert.Eq("У вас версия 0.1.57: версия 0.1.58 не запустилась у вас, ждём следующую", b.Text);
+            Assert.True(b.ActionLabel is null, "кнопки «Обновить» нет");
+        });
+
+        t.Group("Самообновление: выпуски из папки (проверка на сборочной машине)");
+
+        t.Run("файлы отдаются по последней части адреса; чужое имя и выход из папки — 404", async () =>
+        {
+            using var r = new Rig();
+            var feed = Path.Combine(r.Dir, "feed");
+            Directory.CreateDirectory(feed);
+            File.WriteAllText(Path.Combine(feed, "latest.json"), "{}");
+            File.WriteAllText(Path.Combine(r.Dir, "secret.txt"), "нельзя");
+            using var http = new HttpClient(new LocalFeedHandler(feed));
+            var ok = await http.GetAsync(ManifestUrl);
+            Assert.Eq(HttpStatusCode.OK, ok.StatusCode);
+            Assert.Eq("{}", await ok.Content.ReadAsStringAsync());
+            Assert.Eq(HttpStatusCode.NotFound, (await http.GetAsync(ZipUrl)).StatusCode);
+            Assert.Eq(HttpStatusCode.NotFound, (await http.GetAsync("https://github.com/o/r/..%2Fsecret.txt")).StatusCode);
+            Assert.Eq(HttpStatusCode.NotFound, (await http.GetAsync("https://github.com/")).StatusCode);
+        });
+
+        t.Run("полный круг через папку: найдено, скачано, проверено, подменено — как с GitHub", async () =>
+        {
+            using var r = new Rig();
+            var feed = Path.Combine(r.Dir, "feed");
+            Directory.CreateDirectory(feed);
+            var zip = ReleaseZip();
+            File.WriteAllBytes(Path.Combine(feed, "ModManagerBeamNG.zip"), zip);
+            File.WriteAllText(Path.Combine(feed, "latest.json"), ManifestJson("0.1.30", zip));
+            var u = new AppUpdater(new UpdateDownloader(new HttpClient(new LocalFeedHandler(feed))), new Uri(ManifestUrl),
+                new Version(0, 1, 29), r.Exe, Path.Combine(r.Dir, "update"), _ => new Version(0, 1, 30));
+            await u.CheckAsync(false);
+            Assert.Eq(UpdateStage.Available, u.State.Stage);
+            await u.InstallAsync();
+            Assert.Eq(UpdateStage.ReadyToRestart, u.State.Stage);
+            Assert.True(File.ReadAllBytes(r.Exe).Take(2).SequenceEqual("MZ"u8.ToArray()), "новая на месте");
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "без «*.new»");
+            // подменённый архив в папке не проходит проверку суммы так же, как скачанный
+            var bad = (byte[])zip.Clone();
+            bad[^1] ^= 1;
+            File.WriteAllBytes(Path.Combine(feed, "ModManagerBeamNG.zip"), bad);
+            using var r2 = new Rig();
+            var u2 = new AppUpdater(new UpdateDownloader(new HttpClient(new LocalFeedHandler(feed))), new Uri(ManifestUrl),
+                new Version(0, 1, 29), r2.Exe, Path.Combine(r2.Dir, "update"), _ => new Version(0, 1, 30));
+            await u2.CheckAsync(false);
+            await u2.InstallAsync();
+            Assert.True(u2.State.Error!.Contains("контрольная сумма"), u2.State.Error);
+            Assert.Eq("старая версия", File.ReadAllText(r2.Exe));
+        });
+
         t.Group("Самообновление: порядок действий и защита от нажатий");
 
         t.Run("вышла новая версия: найдена; та же или старше — «последняя версия»", async () =>
@@ -309,11 +567,6 @@ public static class AppUpdateTests
         });
     
         t.Group("Самообновление: плашка в окне");
-
-        static async Task Until(Func<bool> cond)
-        {
-            for (var i = 0; i < 200 && !cond(); i++) await Task.Delay(10);
-        }
 
         t.Run("автопроверка молчит, если обновлений нет или нет выпусков", async () =>
         {
