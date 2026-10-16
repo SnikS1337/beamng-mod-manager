@@ -1547,8 +1547,23 @@ public partial class MainWindow : Window
         _probing = true;
         var reducedBefore = SpringDriver.AnimationsOff;
         SpringDriver.AnimationsOff = false;
+        SpringDriver.ForceMotion = true;
         try
         {
+            // первое появление: сколько окно стоит, пока впервые строит экран настроек и каплю кнопок окна
+            long Cold(Action act)
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                act();
+                Root.UpdateLayout();
+                Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                return sw.ElapsedMilliseconds;
+            }
+            lines.Add($"первое открытие «Настроек»: {Cold(() => NavSettings.IsChecked = true)} мс");
+            NavGarage.IsChecked = true;
+            lines.Add($"первая капля кнопок окна: {Cold(() => CapButton_MouseEnter(MinButton, null))} мс");
+            HideCapDrop(instant: true);
+
             async Task Run(string what, Action start, double seconds = 0.9)
             {
                 var times = new List<TimeSpan>();
@@ -1606,6 +1621,7 @@ public partial class MainWindow : Window
         finally
         {
             _probing = false;
+            SpringDriver.ForceMotion = false;
             SpringDriver.AnimationsOff = reducedBefore;
         }
         try { File.WriteAllLines(file, lines); } catch (IOException) { }
