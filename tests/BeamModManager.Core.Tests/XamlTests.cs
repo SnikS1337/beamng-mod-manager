@@ -145,6 +145,13 @@ public static class XamlTests
                     $"{(string?)glow.Attribute(X + "Name")}: размытая тень свечения кэширована сама");
         });
 
+        t.Run("серый налёт выключенного мода ведёт SleepFade, а не триггер (иначе карточки «засыпают» заново при прокрутке)", () =>
+        {
+            var main = Read("MainWindow.xaml");
+            Assert.False(main.Contains("Storyboard.TargetName=\"Sleep\"", StringComparison.Ordinal), "анимация налёта в триггере");
+            Assert.True(main.Contains("c:SleepFade.Awake=\"{Binding Enabled}\"", StringComparison.Ordinal), "налёт привязан к Enabled");
+        });
+
         t.Run("сквозь левую панель и капсулу окна видно только фон, а не сетку карточек", () =>
         {
             var xaml = XDocument.Parse(Read("MainWindow.xaml"));
