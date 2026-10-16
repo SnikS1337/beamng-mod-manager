@@ -29,6 +29,24 @@ public partial class App : Application
     private static Mutex? _single;
 
     /// <summary>
+    /// Анимации разметки (наведение, проявление, перестроение сетки) по умолчанию WPF ограничивает 60 кадрами. Поднимаем
+    /// потолок до 144: выше экрана WPF всё равно не рисует, а на экране 120–144 Гц они становятся плавнее. От батареи
+    /// и в режиме экономии — 60 (FramePolicy, DESIGN.md 8). Задаётся один раз до первой анимации; пружины капель и
+    /// панелей подстраиваются и на ходу. Фон, огоньки и искры задают свои 24–30 кадров сами.
+    /// </summary>
+    static App()
+    {
+        var saving = BeamModManager.App.Services.Native.PowerSaving();
+        BeamModManager.Ui.Look.FramePolicy.Shared.PowerSaving = saving;
+        try
+        {
+            System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(typeof(System.Windows.Media.Animation.Timeline),
+                new FrameworkPropertyMetadata { DefaultValue = saving ? 60 : 144 });
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException) { } // уже задано — остаётся 60
+    }
+
+    /// <summary>
     /// Откуда брать обновления: публичный репозиторий только с готовыми сборками (код остаётся закрытым).
     /// latest.json пишет сборочная машина (windows.yml, задание release).
     /// </summary>
