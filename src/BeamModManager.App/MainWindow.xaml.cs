@@ -133,8 +133,11 @@ public partial class MainWindow : Window
         var frostImg = BitmapSource.Create(616, 472, 96, 96, PixelFormats.Pbgra32, null, frostPx, 616 * 4);
         Resources["CardFrost"] = Frozen(new ImageBrush(Frozen(frostImg)) { Stretch = Stretch.Fill });
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
-        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
+        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         SettingsPanel.DataContext = host.Settings;
+        // «Как это выглядит»: под полоской стекла — тот же фон окна (живой) и картинки модов
+        PvBack.Fill = new VisualBrush(Backdrop) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top };
+        PvCount.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(GarageViewModel.CountText)) { Source = vm });
         host.Settings.Section = host.StartSection;
         host.Settings.Changed += OnSettingsChanged;
         _folderKey = FolderKey(host.Settings.Current);
@@ -283,6 +286,7 @@ public partial class MainWindow : Window
         _ = loader.FillAsync(todo, (id, path) => Dispatcher.BeginInvoke(() =>
         {
             if (byId.TryGetValue(id, out var card)) card.PreviewPath = path;
+            if (SettingsPanel.IsVisible && _pvCards < 3) FillLookPreview();
         }), _previewCts.Token);
     }
 
@@ -838,6 +842,7 @@ public partial class MainWindow : Window
         if (garage) EmptyBox.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(GarageViewModel.Empty)) { Converter = (System.Windows.Data.IValueConverter)FindResource("NullToCollapsed") });
         // раздел «Обновления» открыли: найденное просмотрено, бейдж больше не пульсирует до конца сеанса
         if (rb == NavUpdates && !_updatesSeen) { _updatesSeen = true; UpdateBadgePulse(); }
+        if (settings) FillLookPreview();
         // сменился раздел: двигается только содержимое, оно проявляется с лёгким подъёмом; капля уже перетекает
         if (IsLoaded)
         {
@@ -845,6 +850,43 @@ public partial class MainWindow : Window
             else if (settings) Arrive(SettingsPanel, SettingsBody); // стекло только проявляется: его фон берётся по месту
             else Arrive(SoonBox, SoonBox);
         }
+    }
+
+    // ───────────── «Как это выглядит» ─────────────
+
+    /// <summary>Сколько настоящих картинок модов уже стоит в превью (до трёх).</summary>
+    private int _pvCards = -1;
+
+    /// <summary>
+    /// Картинки превью — первые три мода с картинкой (сначала включённые), как карточки на доске: 250 и 200 px,
+    /// скругление 16, низ уходит за край. Модов с картинками нет — тёмные заглушки, стекло всё равно видно.
+    /// </summary>
+    private void FillLookPreview()
+    {
+        var paths = _vm.AllCards.Where(c => c.PreviewPath is not null)
+                                .OrderByDescending(c => c.Enabled)
+                                .Select(c => c.PreviewPath!).Take(3).ToList();
+        if (paths.Count == _pvCards && _pvCards > 0) return;
+        _pvCards = paths.Count;
+        PvCards.Children.Clear();
+        double[] widths = { 250, 200, 200 };
+        for (var i = 0; i < widths.Length; i++)
+        {
+            var img = i < paths.Count ? ImageCache.Load(paths[i]) : null;
+            Brush fill = img is not null
+                ? Frozen(new ImageBrush(img) { Stretch = Stretch.UniformToFill })
+                : PvPlaceholder;
+            PvCards.Children.Add(new Border { Width = widths[i], Height = 140, CornerRadius = new CornerRadius(16), Margin = new Thickness(0, 0, 12, 0), Background = fill });
+        }
+    }
+
+    private static readonly Brush PvPlaceholder = Frozen(new LinearGradientBrush(Color.FromRgb(0x2A, 0x34, 0x46), Color.FromRgb(0x1B, 0x22, 0x32), 45));
+
+    private void LookPreview_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var clip = new RectangleGeometry(new Rect(e.NewSize), 22, 22);
+        clip.Freeze();
+        LookPreview.Clip = clip;
     }
 
     /// <summary>Новое содержимое раздела: проявление и подъём на 10 px (≈0,35 с, пружина без отскока).</summary>

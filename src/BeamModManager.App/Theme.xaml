@@ -401,7 +401,7 @@
     <Style x:Key="SegmentBox" TargetType="Border">
         <Setter Property="CornerRadius" Value="19"/>
         <Setter Property="Padding" Value="3"/>
-        <Setter Property="Background" Value="{DynamicResource SegBack}"/>
+        <Setter Property="Background" Value="{DynamicResource SetSegBack}"/>
     </Style>
     <Style x:Key="Segment" TargetType="RadioButton">
         <Setter Property="Foreground" Value="{DynamicResource InkSoft}"/>
@@ -412,13 +412,22 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
-                    <Border x:Name="B" CornerRadius="15" Background="Transparent" Padding="14,6" Margin="1,0">
-                        <TextBlock Text="{TemplateBinding Content}" HorizontalAlignment="Center"/>
-                    </Border>
+                    <Grid Margin="1,0">
+                        <!-- свечение выбранного: 0 0 16px rgba(170,205,255,.22); размытая кромка, а не заливка — внутри пункт не синеет -->
+                        <Border x:Name="Glow" CornerRadius="15" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Opacity="0" IsHitTestVisible="False">
+                            <Border.Effect><BlurEffect Radius="14" RenderingBias="Performance"/></Border.Effect>
+                        </Border>
+                        <Border x:Name="B" CornerRadius="15" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="13,5">
+                            <TextBlock Text="{TemplateBinding Content}" HorizontalAlignment="Center"/>
+                        </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="{DynamicResource SegHover}"/></Trigger>
+                        <!-- выбранный: светлее, с тонкой светлой кромкой и свечением (доска «Настройки») -->
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="B" Property="Background" Value="{DynamicResource SegOn}"/>
+                            <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource SegOnRim}"/>
+                            <Setter TargetName="Glow" Property="Opacity" Value="0.22"/>
                             <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                         </Trigger>
@@ -437,18 +446,24 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
-                    <Border x:Name="B" CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="14,9">
-                        <StackPanel>
-                            <TextBlock Text="{TemplateBinding Content}" FontSize="14" FontWeight="SemiBold"/>
-                            <TextBlock Text="{TemplateBinding Tag}" FontSize="12" Foreground="{DynamicResource Ink2}" Margin="0,2,0,0"/>
-                        </StackPanel>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="Glow" CornerRadius="16" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Opacity="0" IsHitTestVisible="False">
+                            <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
+                        </Border>
+                        <Border x:Name="B" CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="14,9">
+                            <StackPanel>
+                                <TextBlock Text="{TemplateBinding Content}" FontSize="14" FontWeight="SemiBold"/>
+                                <TextBlock Text="{TemplateBinding Tag}" FontSize="12" Foreground="{DynamicResource Ink2}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="{DynamicResource RowFillHover}"/></Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="B" Property="Background" Value="{DynamicResource RowOn}"/>
                             <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource RowOnRim}"/>
                             <Setter TargetName="B" Property="BorderThickness" Value="1.5"/>
+                            <Setter TargetName="Glow" Property="Opacity" Value="0.3"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -510,13 +525,19 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
-                    <Border x:Name="B" CornerRadius="21" Background="Transparent" Padding="16,0">
-                        <TextBlock Text="{TemplateBinding Content}" VerticalAlignment="Center"/>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="Glow" CornerRadius="21" BorderBrush="{DynamicResource SelGlow}" BorderThickness="4" Opacity="0" IsHitTestVisible="False">
+                            <Border.Effect><BlurEffect Radius="18" RenderingBias="Performance"/></Border.Effect>
+                        </Border>
+                        <Border x:Name="B" CornerRadius="21" Background="Transparent" Padding="16,0">
+                            <TextBlock Text="{TemplateBinding Content}" VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="{DynamicResource NavHover}"/></Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="B" Property="Background" Value="{DynamicResource NavOn}"/>
+                            <Setter TargetName="Glow" Property="Opacity" Value="0.3"/>
                             <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                         </Trigger>
