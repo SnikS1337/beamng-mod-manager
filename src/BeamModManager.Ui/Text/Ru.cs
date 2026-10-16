@@ -27,6 +27,7 @@ public static class Ru
         if (d < TimeSpan.FromDays(1)) return Count((long)d.TotalHours, "час", "часа", "часов") + " назад";
         if (d < TimeSpan.FromDays(2)) return "вчера";
         if (d < TimeSpan.FromDays(7)) return Count((long)d.TotalDays, "день", "дня", "дней") + " назад";
+        if (d < TimeSpan.FromDays(28)) return Count((long)d.TotalDays / 7, "неделю", "недели", "недель") + " назад";
         return Date(when);
     }
 

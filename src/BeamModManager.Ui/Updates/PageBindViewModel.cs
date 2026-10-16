@@ -57,7 +57,7 @@ public sealed class PageBindViewModel : Observable
     public string Lead => Replacing
         ? "Выберите похожую запись или вставьте ссылку на новую страницу мода."
         : "Вставьте ссылку на страницу мода или выберите одну из похожих записей.";
-    public string ApplyLabel => Replacing ? "Следить здесь" : "Следить на этой странице";
+    public string ApplyLabel => Applying ? "Открываем страницу…" : Replacing ? "Следить здесь" : "Следить на этой странице";
 
     public ObservableCollection<PageSuggestion> Suggestions { get; } = new();
 
@@ -96,7 +96,7 @@ public sealed class PageBindViewModel : Observable
 
     public PageSuggestion? Selected => Suggestions.FirstOrDefault(s => s.IsSelected);
 
-    public bool CanApply => LinkOk || (Selected is not null && _link.Trim().Length == 0);
+    public bool CanApply => !Applying && (LinkOk || (Selected is not null && _link.Trim().Length == 0));
 
     /// <summary>Выбрать подсказку (радио): ссылка в поле при этом стирается.</summary>
     public void Select(PageSuggestion s)
@@ -150,13 +150,33 @@ public sealed class PageBindViewModel : Observable
             : r.Problem;
     }
 
-    /// <summary>«Следить на этой странице». Возвращает текст тоста или null, если ничего не выбрано (или мода уже нет).</summary>
-    public string? Apply()
+    private bool _applying;
+    /// <summary>Идёт «Следить на этой странице» (подсказку открываем на сайте): кнопка недоступна.</summary>
+    public bool Applying { get => _applying; private set { if (Set(ref _applying, value)) { Raise(nameof(CanApply)); Raise(nameof(ApplyLabel)); } } }
+
+    /// <summary>
+    /// «Следить на этой странице». Проверенная ссылка привязывается сразу; подсказку поиска сначала открываем на сайте
+    /// (одна страница): тогда её версия и размер известны и обновление видно без отдельной проверки. Не открылась —
+    /// всё равно следим, версию узнает следующая проверка. Возвращает текст тоста или null (ничего не выбрано, мода нет).
+    /// </summary>
+    public async Task<string?> ApplyAsync(CancellationToken ct = default)
     {
         Listing? chosen;
-        bool verified;
+        var verified = false;
         if (LinkOk) { chosen = _linkResult!.Listing; verified = true; }
-        else if (Selected is { } s && _link.Trim().Length == 0) { chosen = s.Listing; verified = false; }
+        else if (Selected is { } s && _link.Trim().Length == 0)
+        {
+            chosen = s.Listing;
+            Applying = true;
+            try
+            {
+                var page = await _backend.CheckPageAsync(s.Listing.Url.AbsoluteUri, ct);
+                if (page.Listing is { } full && full.Source == s.Listing.Source) { chosen = full; verified = true; }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return null; }
+            catch (Exception e) when (e is not OutOfMemoryException) { }
+            finally { Applying = false; }
+        }
         else return null;
         if (!_backend.Bind(Card.Id, chosen!, _replaceSource, verified)) return null;
         return $"Следим на {SiteNames.Of(chosen!.Source)}";

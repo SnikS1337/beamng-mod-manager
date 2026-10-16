@@ -727,7 +727,7 @@ public partial class MainWindow : Window
         if (SectionTitle.Visibility != tv) SectionTitle.Visibility = tv;
         var cv = co ? Visibility.Visible : Visibility.Collapsed;
         if (CountLabel.Visibility != cv) CountLabel.Visibility = cv;
-        var hint = s >= 150 ? "Найти мод" : "Найти";
+        var hint = UpdatesPage || s < 150 ? "Найти" : "Найти мод";
         if (SearchHint.Text != hint) SearchHint.Text = hint;
     }
 
@@ -965,7 +965,6 @@ public partial class MainWindow : Window
         FilterList.ItemsSource = wanted;
         SearchBox.SetBinding(TextBox.TextProperty, new System.Windows.Data.Binding("SearchText") { Source = source, UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged });
         CountLabel.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("CountText") { Source = source });
-        SearchHint.Text = updates ? "Найти" : "Найти мод";
         System.Windows.Automation.AutomationProperties.SetName(SearchBox, updates ? "Найти среди найденных обновлений" : "Найти среди установленных модов");
         _filterPlaced = false; // следующая раскладка ставит каплю сразу
     }
@@ -1209,24 +1208,24 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (BindLayer.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Escape) { CloseBind(); e.Handled = true; }
+            else if (e.Key == Key.Enter && _bind is { CanApply: true }) { BindApply_Click(this, new RoutedEventArgs()); e.Handled = true; }
+            return; // окно поверх: остальные клавиши (и переходы по разделам) — его полям и кнопкам
+        }
         if (ctrl && e.Key == Key.F) { NavGarage.IsChecked = true; SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.D1) { NavGarage.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D2) { NavUpdates.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D3) { NavSearch.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.OemComma) { NavSettings.IsChecked = true; e.Handled = true; return; }
         // проверить обновления (DESIGN_FLOWS 7): F5 или Ctrl+R, из любого раздела
-        if (BindLayer.Visibility != Visibility.Visible && (e.Key == Key.F5 || (ctrl && e.Key == Key.R)))
+        if (e.Key == Key.F5 || (ctrl && e.Key == Key.R))
         {
             NavUpdates.IsChecked = true;
             if (!_upd.Checking) _ = _upd.CheckNowAsync();
             e.Handled = true;
             return;
-        }
-        if (BindLayer.Visibility == Visibility.Visible)
-        {
-            if (e.Key == Key.Escape) { CloseBind(); e.Handled = true; }
-            else if (e.Key == Key.Enter && _bind is { CanApply: true }) { BindApply_Click(this, new RoutedEventArgs()); e.Handled = true; }
-            return; // окно поверх: остальные клавиши — его полям и кнопкам
         }
         if (e.Key == Key.Escape)
         {
@@ -1410,16 +1409,16 @@ public partial class MainWindow : Window
         if (sender is FrameworkElement { DataContext: PageSuggestion s } && _bind is { } vm) vm.Select(s);
     }
 
-    private void BindApply_Click(object sender, RoutedEventArgs e)
+    private async void BindApply_Click(object sender, RoutedEventArgs e)
     {
-        if (_bind is not { } vm) return;
-        var toast = vm.Apply();
-        if (toast is null) { _vm.Notify("Не получилось: мода уже нет в библиотеке"); CloseBind(); return; }
+        if (_bind is not { CanApply: true } vm || _bindCts is not { } cts) return;
+        // выбранную подсказку сначала открываем: версия и размер страницы сразу известны, обновление видно без проверки
+        var toast = await vm.ApplyAsync(cts.Token);
+        if (!ReferenceEquals(_bind, vm)) return; // окно закрыли, пока открывали страницу
         CloseBind();
+        if (toast is null) { _vm.Notify("Не получилось: мода уже нет в библиотеке"); return; }
         Refresh();
         _vm.Notify(toast);
-        // новую страницу проверяем сразу (то, что уже проверено, сайты не дёргает)
-        _ = _upd.CheckSoonAsync();
     }
 
     private void BindCancel_Click(object sender, RoutedEventArgs e) => CloseBind();
