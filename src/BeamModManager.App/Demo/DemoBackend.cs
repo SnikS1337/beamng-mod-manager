@@ -50,7 +50,7 @@ public sealed class DemoBackend : IGarageBackend
         string[] photosCycle = { "dacia", "truck", "lambo", "mustang", "tractor", "coupe", "station", "lebedka", "нет-картинки" };
         for (var i = 0; i < Math.Min(many, 20000); i++)
             Add($"Мод номер {i + 1} ({(i % 7 == 0 ? "карта" : "машина")})", $"1.{i % 10}", 20 + i % 300, photosCycle[i % photosCycle.Length],
-                latest: i % 11 == 0 ? $"1.{i % 10 + 1}" : null, on: i % 4 != 0, tracked: i % 3 != 0, type: i % 7 == 0 ? "terrain" : "vehicle");
+                latest: i % 11 == 0 && i % 3 != 0 ? $"1.{i % 10 + 1}" : null, on: i % 4 != 0, tracked: i % 3 != 0, type: i % 7 == 0 ? "terrain" : "vehicle");
     }
 
     /// <summary>Демо-«Обновления» меняют те же моды (скрыть версию, не проверять).</summary>

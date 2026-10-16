@@ -49,6 +49,7 @@ UpdatesScreenTests.Register(t);
 SiteChangeTests.Register(t);
 PathsTests.Register(t);
 BigLibraryTests.Register(t);
+LongRunTests.Register(t);
 BackgroundThemeTests.Register(t);
 
 

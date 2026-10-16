@@ -1493,9 +1493,34 @@ public partial class MainWindow : Window
         if (_vm.Cards.Count > 0) { _vm.Toggle(_vm.Cards[0]); Lap("переключить мод"); }
         Scroller.ScrollToEnd(); Lap("прокрутка в конец");
         Scroller.ScrollToHome(); Lap("прокрутка в начало");
-        GC.Collect();
+        static long Heap() { GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); return GC.GetTotalMemory(true) / 1024 / 1024; }
         var proc = System.Diagnostics.Process.GetCurrentProcess();
-        lines.Add($"память: {proc.WorkingSet64 / 1024 / 1024} МБ (пик {proc.PeakWorkingSet64 / 1024 / 1024} МБ), куча {GC.GetTotalMemory(false) / 1024 / 1024} МБ");
+        lines.Add($"память: {proc.WorkingSet64 / 1024 / 1024} МБ (пик {proc.PeakWorkingSet64 / 1024 / 1024} МБ), куча {Heap()} МБ");
+        if (Array.IndexOf(Environment.GetCommandLineArgs(), "--soak") >= 0)
+        {
+            // долгая работа: одни и те же действия много раз; память после них не должна расти
+            var before = Heap();
+            var handles = proc.HandleCount;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            for (var i = 0; i < 300; i++)
+            {
+                _vm.Filter = _vm.Filters[i % 4].Filter;
+                _vm.SearchText = i % 3 == 0 ? "номер " + i % 50 : "";
+                if (i % 5 == 0) _vm.Refresh();
+                if (i % 7 == 0 && _vm.Cards.Count > 0) _vm.Toggle(_vm.Cards[i % _vm.Cards.Count]);
+                if (i % 9 == 0 && _vm.Cards.Count > 0) _vm.Selected = _vm.Cards[i % _vm.Cards.Count];
+                if (i % 11 == 0) { NavUpdates.IsChecked = true; Root.UpdateLayout(); NavGarage.IsChecked = true; }
+                if (i % 13 == 0) { NavSettings.IsChecked = true; Root.UpdateLayout(); NavGarage.IsChecked = true; }
+                Root.UpdateLayout();
+                Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            }
+            _vm.Filter = all;
+            _vm.SearchText = "";
+            Root.UpdateLayout();
+            var after = Heap();
+            proc.Refresh();
+            lines.Add($"300 кругов действий: {watch.ElapsedMilliseconds} мс; куча {before} → {after} МБ; дескрипторы {handles} → {proc.HandleCount}");
+        }
         try { File.WriteAllLines(file, lines); } catch (IOException) { }
     }
 }
