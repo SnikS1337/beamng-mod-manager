@@ -1465,7 +1465,11 @@ public partial class MainWindow : Window
         var startup = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
         await Task.Delay(1500); // картинки и пружины успевают встать на место
         var path = _host.ShotPath!;
-        if (_host.ShotPerf) WritePerf(path + ".perf.txt", startup);
+        if (_host.ShotPerf)
+        {
+            WritePerf(path + ".perf.txt", startup);
+            await Task.Delay(800); // после прокрутки туда-обратно картинки видимых карточек успевают встать
+        }
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -1505,6 +1509,8 @@ public partial class MainWindow : Window
         if (_vm.Cards.Count > 0) { _vm.Toggle(_vm.Cards[0]); Lap("переключить мод"); }
         Scroller.ScrollToEnd(); Lap("прокрутка в конец");
         Scroller.ScrollToHome(); Lap("прокрутка в начало");
+        NavUpdates.IsChecked = true; Lap($"раздел «Обновления» ({_upd.Items.Count} карточек)");
+        NavGarage.IsChecked = true; Lap("обратно в гараж");
         static long Heap() { GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); return GC.GetTotalMemory(true) / 1024 / 1024; }
         var proc = System.Diagnostics.Process.GetCurrentProcess();
         lines.Add($"память: {proc.WorkingSet64 / 1024 / 1024} МБ (пик {proc.PeakWorkingSet64 / 1024 / 1024} МБ), куча {Heap()} МБ");
