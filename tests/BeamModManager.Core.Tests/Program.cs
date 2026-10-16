@@ -46,6 +46,7 @@ GarageCardTests.Register(t);
 SwitchingBackendTests.Register(t);
 SettingsScreenTests.Register(t);
 UpdatesScreenTests.Register(t);
+SiteChangeTests.Register(t);
 BackgroundThemeTests.Register(t);
 
 

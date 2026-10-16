@@ -14,7 +14,17 @@ public sealed record SourceRunReport(
     int CardsFetched,
     int Postponed,
     IReadOnlyList<string> MissingMods,
-    string? Note);
+    string? Note)
+{
+    /// <summary>
+    /// Моды, чьи страницы открылись, но не прочитались (ни версии, ни размера, хотя раньше были): прошлое не трогаем,
+    /// срок проверки не сдвигаем — проверим снова.
+    /// </summary>
+    public IReadOnlyList<string> UnreadableMods { get; init; } = Array.Empty<string>();
+
+    /// <summary>Похоже, сайт поменял вёрстку: лента пуста, карточки не находятся или не читаются.</summary>
+    public bool LayoutChanged { get; init; }
+}
 
 public sealed record UpdateRunReport(
     IReadOnlyList<UpdateFinding> Findings,
@@ -87,6 +97,8 @@ public static class UpdateRunner
         var feedPagesDone = new Dictionary<string, int>();
         var cardsDone = new Dictionary<string, int>();
         var missing = new Dictionary<string, List<string>>();
+        var unreadable = new Dictionary<string, List<string>>();
+        var layout = new HashSet<string>();
         var postponedAll = new List<TrackedBinding>();
 
         // Сайты независимы (у каждого своя очередь запросов и свои паузы), поэтому идут параллельно:
@@ -110,6 +122,8 @@ public static class UpdateRunner
             if (o.FeedPages > 0) feedPagesDone[o.Source] = o.FeedPages;
             if (o.CardsDone is { } cd) cardsDone[o.Source] = cd;
             if (o.Missing.Count > 0) missing[o.Source] = o.Missing;
+            if (o.Unreadable.Count > 0) unreadable[o.Source] = o.Unreadable;
+            if (o.LayoutChanged) layout.Add(o.Source);
             if (o.Note is not null) notes[o.Source] = o.Note;
             if (o.Failure is { } fl) failed[o.Source] = fl;
             postponedAll.AddRange(o.Postponed);
@@ -148,7 +162,7 @@ public static class UpdateRunner
                         o.FeedPages = p;
                         if (page.Count == 0)
                         {
-                            if (p == 1) o.Note = "лента пуста: возможно, изменилась вёрстка сайта";
+                            if (p == 1) { o.Note = "лента пуста: возможно, изменилась вёрстка сайта"; o.LayoutChanged = true; }
                             break;
                         }
                         foreach (var l in page)
@@ -220,6 +234,14 @@ public static class UpdateRunner
                             misses.Add(b);
                             continue;
                         }
+                        // Страница есть, но разбор не нашёл на ней ничего, хотя раньше находил: это не «без изменений»,
+                        // а «не поняли» (сайт поменял вёрстку, вместо мода открылась заглушка). Прошлое и срок не трогаем.
+                        if (current.ModVersion is null && current.SizeBytes is null
+                            && store.GetCheck(b.ModId, b.Source) is { } prev && (prev.LastVersion is not null || prev.LastSize is not null))
+                        {
+                            o.Unreadable.Add(store.GetMod(b.ModId)?.Name ?? b.ModId);
+                            continue;
+                        }
                         UpdateCheckService.ApplyCard(store, b, current, now);
                     }
                     catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -231,9 +253,20 @@ public static class UpdateRunner
                 }
                 // Не нашлись сразу много карточек подряд: скорее сломались адреса или вёрстка, чем всё удалили.
                 if (attempted >= 3 && o.Missing.Count == attempted)
-                    o.Note = "карточки не найдены ни у одного мода: возможно, изменились адреса или вёрстка сайта"; // промахи не считаем: виноват сайт, а не моды
+                {
+                    // промахи не считаем: виноват сайт, а не моды (эта строка точнее, чем «лента пуста»)
+                    o.Note = "карточки не найдены ни у одного мода: возможно, изменились адреса или вёрстка сайта";
+                    o.LayoutChanged = true;
+                }
                 else
                     foreach (var b in misses) UpdateCheckService.ApplyMissing(store, b, now);
+                if (o.Unreadable.Count > 0 && o.Note is null)
+                {
+                    o.Note = o.Unreadable.Count == attempted - o.Missing.Count
+                        ? "страницы модов открываются, но не читаются: возможно, изменилась вёрстка сайта"
+                        : $"не прочитали {o.Unreadable.Count} из {attempted} страниц: возможно, изменилась вёрстка сайта";
+                    o.LayoutChanged = true;
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -266,7 +299,11 @@ public static class UpdateRunner
                 cardsDone.GetValueOrDefault(source),
                 postponedBy.GetValueOrDefault(source),
                 missing.TryGetValue(source, out var mm) ? mm : Array.Empty<string>(),
-                note);
+                note)
+            {
+                UnreadableMods = unreadable.TryGetValue(source, out var ur) ? ur : Array.Empty<string>(),
+                LayoutChanged = layout.Contains(source),
+            };
         }
 
         progress?.Report(new UpdateProgress("", "готово", 1, 1));
@@ -288,9 +325,10 @@ internal sealed class SourceOutcome
     public string Source { get; }
     public int Requests, UpToDate, FeedPages;
     public int? CardsDone;
-    public bool Cancelled, StoppedByTime;
+    public bool Cancelled, StoppedByTime, LayoutChanged;
     public string? Note;
     public (SourceStatus Status, string Note)? Failure;
     public List<string> Missing { get; } = new();
+    public List<string> Unreadable { get; } = new();
     public List<TrackedBinding> Postponed { get; } = new();
 }

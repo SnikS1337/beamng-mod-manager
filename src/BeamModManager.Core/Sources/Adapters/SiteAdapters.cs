@@ -42,6 +42,21 @@ public abstract class SiteAdapter : IModSource
     /// <summary>Адрес страницы этого сайта (а не чужого): по нему окно «Указать страницу» выбирает адаптер.</summary>
     public bool Owns(Uri url) => BelongsToSite(url);
 
+    /// <summary>
+    /// Адрес похож на страницу одного мода, а не на раздел, поиск или профиль. Нужен окну «Указать страницу»: раздел
+    /// тоже открывается, но следить на нём не за чем (размер первого мода в списке менялся бы каждый день).
+    /// </summary>
+    public bool IsModPage(Uri url) => BelongsToSite(url) && IsModPath(url.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>Части пути адреса («beamng_drive», «mods», «bmw_e34»): страница ли это одного мода.</summary>
+    protected abstract bool IsModPath(string[] segments);
+
+    /// <summary>
+    /// На странице есть хоть что-то, по чему видно обновление: версия, размер или файл. Нет ничего — это не страница мода
+    /// или сайт поменял вёрстку, и разбор её больше не понимает.
+    /// </summary>
+    public static bool Readable(Listing l) => l.ModVersion is not null || l.SizeBytes is not null || l.Offers.Count > 0;
+
     /// <summary>Адрес привязки вводит пользователь; чужой сайт, другая схема или «file://» этим адаптером не открываются.</summary>
     protected bool BelongsToSite(Uri url)
     {
@@ -135,6 +150,9 @@ public sealed class ModlandSource : SiteAdapter
     protected override string SlugOf(Uri url) => ModlandParser.SlugOf(url);
     protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "beamng.drive-mods" : $"beamng.drive-mods/page/{page}");
+    // /beamng.drive-mods/cars/toyota-sienna-4.html (бывает и без раздела); разделы, страницы ленты и моды других игр — нет
+    protected override bool IsModPath(string[] p) =>
+        p.Length >= 2 && p[0].Equals("beamng.drive-mods", StringComparison.OrdinalIgnoreCase) && p[^1].EndsWith(".html", StringComparison.OrdinalIgnoreCase) && p[^1].Length > ".html".Length;
     // Запрос из одних точек («..») превратился бы в переход вверх по адресу.
     protected override Uri? SearchUrl(string q) => q.Trim('.', ' ').Length == 0 ? null : new(Root, "search/" + Uri.EscapeDataString(q));
 }
@@ -152,6 +170,8 @@ public sealed class StModsSource : SiteAdapter
     protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "beamng_drive/" : $"beamng_drive/?page={page}");
     protected override Uri? SearchUrl(string q) => new(Root, "search.php?search_request=" + Uri.EscapeDataString(q));
+    // /beamng_drive/mods/bmw_e34_by_matissator_for_beamng/; /beamng_drive/ и /beamng_drive/mods/ — разделы
+    protected override bool IsModPath(string[] p) => p.Length >= 3 && p[0].Equals("beamng_drive", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>ModsGaming: лента раздела «BeamNG Машины», карточки и поиск (результаты — таблицы, а не карточки).</summary>
@@ -169,6 +189,9 @@ public sealed class ModsGamingSource : SiteAdapter
     protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "load/beamng_drive/mashiny/38" : $"load/beamng_drive/mashiny/38-{page}");
     protected override Uri? SearchUrl(string q) => new(Root, "search/?q=" + Uri.EscapeDataString(q) + "&t=0");
+    // /load/beamng_drive/mashiny/38-1-0-160435 или …/mod_vaz_2106_…; раздел — /load/beamng_drive/mashiny/38 и 38-2 (страницы)
+    protected override bool IsModPath(string[] p) =>
+        p.Length >= 4 && p[0].Equals("load", StringComparison.OrdinalIgnoreCase) && p[1].Equals("beamng_drive", StringComparison.OrdinalIgnoreCase) && !Regex.IsMatch(p[^1], @"^\d+(?:-\d+)?$");
 
     private static string Slug(Uri url)
     {
@@ -196,4 +219,6 @@ public sealed class BeamNgRepoSource : SiteAdapter
     protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "resources/" : $"resources/?page={page}");
     protected override Uri? SearchUrl(string q) => null;
+    // /resources/acng-tire-heat.34567/ (и вкладки записи: …/updates); лента /resources/ и разделы /resources/categories/… — нет
+    protected override bool IsModPath(string[] p) => p.Length >= 2 && p[0].Equals("resources", StringComparison.OrdinalIgnoreCase) && Regex.IsMatch(p[1], @"\.\d+$");
 }

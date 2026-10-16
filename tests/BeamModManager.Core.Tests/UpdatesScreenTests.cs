@@ -325,6 +325,25 @@ public static class UpdatesScreenTests
             Assert.False(vm.Checking, "окно живо, проверка снята");
         });
 
+        t.Run("сайт ответил, но страницы не понял: итог прямо говорит «не смогли прочитать», у сайта — «возможно, сайт изменился»", async () =>
+        {
+            var (vm, _, _, b, _) = Make(Board());
+            b.Cov = (4, 5);
+            b.OnCheck = (_, _) => Task.FromResult(new UpdateRunReport(Array.Empty<UpdateFinding>(),
+                new[] { new SourceRunReport("modland", SourceStatus.Ok, 1, 3, 0, Array.Empty<string>(), "не прочитали 1 из 3 страниц: возможно, изменилась вёрстка сайта")
+                    { LayoutChanged = true, UnreadableMods = new[] { "Dacia" } } }, 4, 2));
+            await vm.CheckNowAsync();
+            Assert.Eq("Проверили 4 из 5. Остальные при следующей проверке. Не смогли прочитать страницы: Modland. Возможно, сайт изменился.", vm.CheckText);
+            Assert.Eq("возможно, сайт изменился", vm.Sites.Single().State);
+            Assert.True(vm.Sites.Single().Note!.Contains("1 из 3"), vm.Sites.Single().Note ?? "");
+            // обычная неполная проверка без признаков вёрстки — «не всё успели», без слов про изменённый сайт
+            b.OnCheck = (_, _) => Task.FromResult(new UpdateRunReport(Array.Empty<UpdateFinding>(),
+                new[] { new SourceRunReport("modland", SourceStatus.Ok, 1, 3, 2, Array.Empty<string>(), "не хватило времени, продолжится при следующей проверке") }, 4, 2));
+            await vm.CheckNowAsync();
+            Assert.Eq("не всё успели", vm.Sites.Single().State);
+            Assert.False(vm.CheckText!.Contains("изменился"), vm.CheckText);
+        });
+
         t.Run("сайты: выключен, нет модов, ещё не проверяли; «вы человек?» — «Открыть сайт», потом «Готово»", () =>
         {
             var (vm, _, _, b, _) = Make(Board());
