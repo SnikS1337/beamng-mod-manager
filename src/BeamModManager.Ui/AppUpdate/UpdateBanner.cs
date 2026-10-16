@@ -112,6 +112,9 @@ public sealed class UpdateBanner : Observable
             case UpdateStage.Checking when _manual:
                 Show("Проверяем обновления…", null, dismiss: false);
                 break;
+            case UpdateStage.UpToDate when _manual && s.Error is not null:
+                Show($"У вас версия {AppVersion.Display(_updater.Current)}: {s.Error}", null, dismiss: true);
+                break;
             case UpdateStage.UpToDate when _manual:
                 Show($"У вас последняя версия {AppVersion.Display(_updater.Current)}", null, dismiss: true);
                 break;

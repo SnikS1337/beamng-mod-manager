@@ -33,8 +33,28 @@ public partial class App : Application
     /// </summary>
     public const string UpdateManifestUrl = "https://github.com/SnikS1337/ModManagerBeamNG/releases/latest/download/latest.json";
 
+    /// <summary>Код выхода новой версии, которая не запустилась и сама вернула прежнюю (прежнему процессу делать нечего).</summary>
+    private const int RolledBackExitCode = 3;
+
+    private static string AppDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager");
+    private static string LogPath => Path.Combine(AppDir, "errors.log");
+    private static string SkipPath => Path.Combine(AppDir, "update-skip.txt");
+    private static Version ThisVersion => typeof(App).Assembly.GetName().Version ?? new Version(0, 0);
+
     private readonly CancellationTokenSource _life = new();
+    /// <summary>Путь exe на момент запуска: после подмены файл под ним уже другой, а путь тот же.</summary>
+    private string? _exePath;
     private string? _restartExe;
+    private Version? _restartVersion;
+    private AppUpdater? _updater;
+    /// <summary>Окно показалось: запуск удался. До этого любая ошибка — «не запустилась».</summary>
+    private bool _healthy;
+    /// <summary>Запущены прежней версией сразу после обновления (--after-update &lt;pid&gt;).</summary>
+    private bool _afterUpdate;
+    private int _parentPid;
+    private Version? _rolledBack;
+    /// <summary>Папка с выпусками вместо GitHub: проверка самообновления на сборочной машине (BMM_TEST_UPDATE_FEED).</summary>
+    private string? _testFeed;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -47,9 +67,12 @@ public partial class App : Application
 
         var demo = Arg("--demo");
         var shot = Arg("--shot");
-
-        // после самообновления: прежний процесс ещё закрывается и держит «один экземпляр» — ждём его
-        if (int.TryParse(Arg("--after-update"), out var oldPid)) WaitForExit(oldPid);
+        _exePath = Environment.ProcessPath;
+        // после самообновления прежний процесс ждёт, пока новая версия покажет окно (и отпустил «один экземпляр»)
+        _afterUpdate = int.TryParse(Arg("--after-update"), out _parentPid);
+        _rolledBack = AppVersion.Parse(Arg("--rolled-back"));
+        if (demo is null && Environment.GetEnvironmentVariable("BMM_TEST_UPDATE_FEED") is { Length: > 0 } feed && Directory.Exists(feed))
+            _testFeed = Path.GetFullPath(feed);
 
         // два менеджера над одной библиотекой и одним db.json мешали бы друг другу
         if (demo is null)
@@ -58,23 +81,21 @@ public partial class App : Application
             var shown = 0;
             DispatcherUnhandledException += (_, a) =>
             {
-                var log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager", "errors.log");
-                try
-                {
-                    // журнал не растёт бесконечно: больше мегабайта — начинаем заново
-                    if (File.Exists(log) && new FileInfo(log).Length > 1024 * 1024) File.Delete(log);
-                    File.AppendAllText(log, $"{DateTimeOffset.Now:u}\n{a.Exception}\n\n");
-                }
-                catch (IOException) { } catch (UnauthorizedAccessException) { }
                 a.Handled = true;
+                // окна нет: продолжать нечего, иначе останется невидимый процесс, держащий «один экземпляр».
+                // Сразу после обновления любая ошибка до первого кадра — повод вернуть прежнюю версию.
+                if (!_healthy && (_afterUpdate || MainWindow is not { IsVisible: true })) { StartupFailed(a.Exception); return; }
+                Log(a.Exception);
                 // повторяющаяся ошибка не должна засыпать окнами: три сообщения за запуск, дальше только журнал
-                if (++shown <= 3)
-                    MessageBox.Show($"Что-то пошло не так: {a.Exception.Message}\n\nПодробности записаны в {log}. Моды и библиотека не тронуты.",
+                if (++shown <= 3 && _testFeed is null)
+                    MessageBox.Show($"Что-то пошло не так: {a.Exception.Message}\n\nПодробности записаны в {LogPath}. Моды и библиотека не тронуты.",
                         "ModManager BeamNG", MessageBoxButton.OK, MessageBoxImage.Warning);
             };
             _single = new Mutex(true, @"Local\BeamModManager.Single", out var first);
             if (!first)
             {
+                _single.Dispose();
+                _single = null;
                 MessageBox.Show("Менеджер уже открыт. Окно может быть свёрнуто на панели задач.", "ModManager BeamNG",
                     MessageBoxButton.OK, MessageBoxImage.Information);
                 Shutdown();
@@ -92,6 +113,21 @@ public partial class App : Application
             DispatcherUnhandledException += (_, a) => Crash(a.Exception);
             AppDomain.CurrentDomain.UnhandledException += (_, a) => Crash(a.ExceptionObject);
         }
+        try { Start(demo, shot, Arg); }
+        catch (Exception x) when (demo is null && x is not OutOfMemoryException) { StartupFailed(x); }
+    }
+
+    private void Start(string? demo, string? shot, Func<string, string?> Arg)
+    {
+        if (_afterUpdate && _testFeed is not null && AppVersion.Parse(Environment.GetEnvironmentVariable("BMM_TEST_CRASH_VERSION")) == AppVersion.Normalize(ThisVersion))
+        {
+            // проверка на сборочной машине: «сломанный выпуск». hard — процесс умирает сам (как при сбое до кода программы)
+            if (Environment.GetEnvironmentVariable("BMM_TEST_CRASH_HARD") == "1") Environment.Exit(42);
+            throw new InvalidOperationException("проверка: новая версия падает при запуске");
+        }
+        // версия, которая не запустилась, больше не предлагается (до следующей)
+        if (_rolledBack is { } rb) UpdateInstaller.WriteSkipped(SkipPath, rb);
+
         WindowHost host;
         if (demo is not null)
         {
@@ -119,19 +155,19 @@ public partial class App : Application
                 StartSection = Enum.TryParse<SettingsSection>(Arg("--section"), true, out var sec) && Enum.IsDefined(sec) ? sec : SettingsSection.Appearance,
             };
         }
-        else host = RealHost();
+        else host = RealHost(CreateUpdater());
 
         var vm = new GarageViewModel(host.Backend)
         {
             DownloadsAllowed = host.DownloadsAllowed,
             ManyEnabledThreshold = host.ManyEnabledThreshold,
         };
+        _updater = host.Updater;
         if (host.Updater is { } up)
         {
-            if (Arg("--after-update") is not null) host.StartupToast = $"Программа обновлена до {AppVersion.Display(up.Current)}";
-            // прежний exe и скачанное больше не нужны; убираем при каждом запуске — вдруг прошлый перезапуск прервался
-            var exe = Environment.ProcessPath!;
-            _ = Task.Run(() => UpdateInstaller.Cleanup(exe, UpdateDir));
+            if (_afterUpdate) host.StartupToast = $"Программа обновлена до {AppVersion.Display(up.Current)}";
+            if (_rolledBack is { } bad)
+                host.StartupToast = $"Версия {AppVersion.Display(bad)} не запустилась, вернули {AppVersion.Display(up.Current)}. Подождём следующую";
         }
         host.Banner = new UpdateBanner(host.Updater, a => Dispatcher.BeginInvoke(a), RestartIntoUpdate);
         host.Settings.CanUpdateApp = host.Updater is not null;
@@ -140,36 +176,101 @@ public partial class App : Application
             : "Сборка для разработки: сама не обновляется";
         var w = new MainWindow(vm, host);
         MainWindow = w;
+        w.ContentRendered += (_, _) => OnHealthy(host);
         w.Show();
     }
 
-    private static string UpdateDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager", "update");
+    /// <summary>
+    /// Окно показалось. Новая версия говорит прежнему процессу «запустилась» (он ждёт, чтобы вернуть себя, если нет),
+    /// и только теперь убирает прежний exe и скачанное: до этого из них возвращали бы прежнюю версию.
+    /// </summary>
+    private void OnHealthy(WindowHost host)
+    {
+        if (_healthy) return;
+        _healthy = true;
+        if (_afterUpdate) SignalStarted(_parentPid);
+        var cleanup = host.Updater is not null && _exePath is { } exe
+            ? Task.Run(() => UpdateInstaller.Cleanup(exe, UpdateDir))
+            : Task.CompletedTask;
+        if (_testFeed is not null && host.Updater is { } up) _ = SelfTestAsync(up, cleanup);
+    }
+
+    /// <summary>
+    /// Запуск не удался (ошибка до окна). Сразу после обновления — возвращаем прежнюю версию и запускаем её;
+    /// иначе — сообщение и выход, а не невидимый процесс, из-за которого следующий запуск скажет «уже открыт».
+    /// </summary>
+    private void StartupFailed(Exception x)
+    {
+        Log(x);
+        if (_afterUpdate && _exePath is { } exe && UpdateInstaller.RollbackFromRunning(exe))
+        {
+            ReleaseSingle();
+            try { Process.Start(new ProcessStartInfo(exe, $"--rolled-back {AppVersion.Display(ThisVersion)}") { UseShellExecute = false }); }
+            catch (Exception y) when (y is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(y); }
+            Environment.Exit(RolledBackExitCode);
+        }
+        if (_testFeed is null)
+            MessageBox.Show($"Программа не смогла запуститься: {x.Message}\n\nПодробности записаны в {LogPath}. Моды и библиотека не тронуты.",
+                "ModManager BeamNG", MessageBoxButton.OK, MessageBoxImage.Error);
+        ReleaseSingle();
+        Environment.Exit(1);
+    }
+
+    private static void Log(object? x)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppDir);
+            // журнал не растёт бесконечно: больше мегабайта — начинаем заново
+            if (File.Exists(LogPath) && new FileInfo(LogPath).Length > 1024 * 1024) File.Delete(LogPath);
+            File.AppendAllText(LogPath, $"{DateTimeOffset.Now:u} {AppVersion.Display(ThisVersion)}\n{x}\n\n");
+        }
+        catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
+
+    private static void ReleaseSingle()
+    {
+        try { _single?.ReleaseMutex(); } catch (ApplicationException) { }
+        _single?.Dispose();
+        _single = null;
+    }
+
+    private static string StartedEventName(int parentPid) => $@"Local\BeamModManager.Started.{parentPid}";
+
+    private static void SignalStarted(int parentPid)
+    {
+        try
+        {
+            if (EventWaitHandle.TryOpenExisting(StartedEventName(parentPid), out var ev))
+                using (ev) ev.Set();
+        }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException) { }
+    }
+
+    private static string UpdateDir => Path.Combine(AppDir, "update");
 
     /// <summary>
     /// Самообновление возможно только у настоящей сборки: один BeamModManager.exe с номером версии от сборочной машины.
     /// При запуске через dotnet run, из папки разработки (версия 1.0.0 по умолчанию) и в демо — нет.
     /// </summary>
-    private static AppUpdater? CreateUpdater()
+    private AppUpdater? CreateUpdater()
     {
-        var exe = Environment.ProcessPath;
-        var ver = typeof(App).Assembly.GetName().Version;
-        if (exe is null || ver is null || !string.Equals(Path.GetFileName(exe), UpdateInstaller.ExeName, StringComparison.OrdinalIgnoreCase)) return null;
+        var exe = _exePath;
+        var ver = ThisVersion;
+        if (exe is null || !string.Equals(Path.GetFileName(exe), UpdateInstaller.ExeName, StringComparison.OrdinalIgnoreCase)) return null;
         if (ver.Major != 0 || ver.Build <= 0) return null; // 1.0.0.0 — сборка без номера (не с машины сборки)
-        var http = UpdateDownloader.CreateClient($"ModManagerBeamNG/{AppVersion.Display(ver)}");
+        var http = _testFeed is { } feed
+            ? new HttpClient(new LocalFeedHandler(feed))
+            : UpdateDownloader.CreateClient($"ModManagerBeamNG/{AppVersion.Display(ver)}");
         return new AppUpdater(new UpdateDownloader(http), new Uri(UpdateManifestUrl), ver, exe, UpdateDir,
-            p => AppVersion.Parse(FileVersionInfo.GetVersionInfo(p).FileVersion));
-    }
-
-    private static void WaitForExit(int pid)
-    {
-        try { using var p = Process.GetProcessById(pid); p.WaitForExit(20000); }
-        catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { } // уже вышел
+            p => AppVersion.Parse(FileVersionInfo.GetVersionInfo(p).FileVersion), skipped: UpdateInstaller.ReadSkipped(SkipPath));
     }
 
     /// <summary>Новая версия уже на месте: закрываемся как обычно (окно сохраняет своё), на выходе запускаем её.</summary>
     private void RestartIntoUpdate()
     {
-        _restartExe = Environment.ProcessPath;
+        _restartExe = _exePath;
+        _restartVersion = _updater?.State.Manifest?.Version;
         MainWindow?.Close();
     }
 
@@ -178,24 +279,75 @@ public partial class App : Application
         _life.Cancel();
         if (_restartExe is { } exe)
         {
-            try { _single?.ReleaseMutex(); } catch (ApplicationException) { }
-            _single?.Dispose();
-            _single = null;
-            try { Process.Start(new ProcessStartInfo(exe, $"--after-update {Environment.ProcessId}") { UseShellExecute = false }); }
-            catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
-            {
-                // новая версия не запустилась: возвращаем прежнюю и запускаем её
-                if (UpdateInstaller.Rollback(exe))
-                    try { Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false }); }
-                    catch (Exception y) when (y is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { }
-            }
+            ReleaseSingle();
+            using var started = new EventWaitHandle(false, EventResetMode.ManualReset, StartedEventName(Environment.ProcessId));
+            Process? child = null;
+            try { child = Process.Start(new ProcessStartInfo(exe, $"--after-update {Environment.ProcessId}") { UseShellExecute = false }); }
+            catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
+            if (child is null) RollbackAndRestart(exe);
+            else using (child) WatchNewVersion(child, started, exe);
         }
         base.OnExit(e);
     }
 
-    private static WindowHost RealHost()
+    /// <summary>
+    /// Окно прежней версии уже закрыто; ждём, пока новая покажет своё (до минуты). Если она умерла раньше (сбой, который
+    /// она сама не поймала: антивирус, повреждённый файл) — возвращаем прежнюю и запускаем её.
+    /// </summary>
+    private void WatchNewVersion(Process child, EventWaitHandle started, string exe)
     {
-        var appDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeamModManager");
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed < TimeSpan.FromSeconds(60))
+        {
+            if (started.WaitOne(250)) return;
+            bool exited;
+            try { exited = child.HasExited; }
+            catch (Exception x) when (x is InvalidOperationException or System.ComponentModel.Win32Exception) { return; }
+            if (!exited) continue;
+            // 0 — закрылась обычным образом; RolledBackExitCode — уже вернула прежнюю сама
+            if (child.ExitCode is not (0 or RolledBackExitCode)) RollbackAndRestart(exe);
+            return;
+        }
+    }
+
+    private void RollbackAndRestart(string exe)
+    {
+        if (!UpdateInstaller.Rollback(exe)) return;
+        var args = _restartVersion is { } v ? $"--rolled-back {AppVersion.Display(v)}" : "";
+        try { Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = false }); }
+        catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
+    }
+
+    /// <summary>
+    /// Проверка самообновления на сборочной машине (BMM_TEST_UPDATE_FEED): записать в log.txt этой папки, какая версия
+    /// запустилась и как, проверить обновление и поставить его (плашка сама перезапустит программу); иначе закрыться.
+    /// </summary>
+    private async Task SelfTestAsync(AppUpdater up, Task cleanup)
+    {
+        await cleanup;
+        var log = Path.Combine(_testFeed!, "log.txt");
+        void Note(string s)
+        {
+            try { File.AppendAllText(log, s + "\n"); } catch (Exception x) when (x is IOException or UnauthorizedAccessException) { }
+        }
+        var exe = _exePath!;
+        var mode = _afterUpdate ? "after-update" : _rolledBack is not null ? "rolled-back" : "normal";
+        Note($"start {AppVersion.Display(up.Current)} {mode} old={File.Exists(exe + UpdateInstaller.OldSuffix)} new={File.Exists(exe + UpdateInstaller.NewSuffix)} bad={File.Exists(exe + UpdateInstaller.BadSuffix)} skip={(up.Skipped is { } sk ? AppVersion.Display(sk) : "-")}");
+        await up.CheckAsync(manual: false, _life.Token);
+        var s = up.State;
+        Note($"check {s.Stage} {s.Error}");
+        if (s.Stage == UpdateStage.Available)
+        {
+            await up.InstallAsync(_life.Token);
+            Note($"install {up.State.Stage} {up.State.Error}");
+            if (up.State.Stage == UpdateStage.ReadyToRestart) return; // плашка перезапускает сама
+        }
+        MainWindow?.Close();
+    }
+
+    private static WindowHost RealHost(AppUpdater? updater)
+    {
+        var appDir = AppDir;
         Directory.CreateDirectory(appDir);
         // копии фото для фона из прошлой версии больше не нужны (фото убрано 2026-10-15)
         try { foreach (var f in Directory.EnumerateFiles(appDir, "background-*.*")) File.Delete(f); }
@@ -272,7 +424,7 @@ public partial class App : Application
             Backend = switching,
             Updates = updates,
             Settings = svm,
-            Updater = CreateUpdater(),
+            Updater = updater,
             CheckUpdatesOnStart = settings.CheckAppUpdates,
             // загрузки в этой сборке ещё нет: кнопки «Обновить» не показываем, даже если в настройках разрешено
             DownloadsAllowed = false,

@@ -96,13 +96,101 @@ jobs:
           git commit -q -m "Снимки для $env:GITHUB_SHA"
           git push -f -q origin HEAD:ci-shots
 
+  # Самообновление целиком на настоящей Windows: две сборки как у выпуска (0.1.1 и 0.1.2); выпуск лежит в папке вместо
+  # GitHub (BMM_TEST_UPDATE_FEED — подменяется только сеть, проверки те же). Программа — на другом диске, чем профиль
+  # (D: и C:), в папке с русскими буквами и пробелами. Программа сама пишет в log.txt папки выпуска, что запустилось.
+  selfupdate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Две сборки как у выпуска
+        shell: pwsh
+        run: |
+          foreach ($v in '0.1.1', '0.1.2') {
+            dotnet publish src/BeamModManager.App -c Release -r win-x64 --self-contained true `
+              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+              -p:DebugType=none -p:Version=$v -nologo -o "pub-$v"
+            if ($LASTEXITCODE -ne 0) { throw "publish $v не прошёл" }
+          }
+          $feed = Join-Path $env:RUNNER_TEMP 'feed'
+          New-Item -ItemType Directory $feed -Force | Out-Null
+          Copy-Item tools/release/README.txt "pub-0.1.2/Как запустить.txt"
+          Compress-Archive -Path pub-0.1.2/* -DestinationPath "$feed/ModManagerBeamNG.zip" -Force
+          $zip = Get-Item "$feed/ModManagerBeamNG.zip"
+          [ordered]@{
+            version   = '0.1.2'
+            url       = 'https://github.com/SnikS1337/ModManagerBeamNG/releases/download/v0.1.2/ModManagerBeamNG.zip'
+            size      = $zip.Length
+            sha256    = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            notes     = 'проверка'
+            published = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          } | ConvertTo-Json | Out-File -Encoding utf8NoBOM "$feed/latest.json"
+          Get-Content "$feed/latest.json"
+      - name: Обновление, падение новой версии, нет прав
+        shell: pwsh
+        run: |
+          $feed = Join-Path $env:RUNNER_TEMP 'feed'
+          $app = Join-Path (Split-Path $env:GITHUB_WORKSPACE) 'Мои программы (тест)\Mod Manager BeamNG'
+          $data = Join-Path $env:LOCALAPPDATA 'BeamModManager'
+          Write-Host "программа: $app; профиль: $data"
+          if ((Split-Path -Qualifier $app) -eq (Split-Path -Qualifier $data)) { Write-Host "::warning::программа и профиль на одном диске" }
+
+          function Scenario($name, [hashtable]$envs, [string]$expectVer, [string[]]$expectLog, [scriptblock]$prepare) {
+            Write-Host "── $name"
+            Get-Process BeamModManager -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep 1
+            if (Test-Path $app) { icacls $app /reset /T /Q | Out-Null }
+            Remove-Item -Recurse -Force $app, $data, "$feed/log.txt" -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory $app -Force | Out-Null
+            Copy-Item pub-0.1.1/BeamModManager.exe $app/
+            foreach ($k in 'BMM_TEST_CRASH_VERSION', 'BMM_TEST_CRASH_HARD') { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+            foreach ($k in $envs.Keys) { Set-Item "env:$k" $envs[$k] }
+            $env:BMM_TEST_UPDATE_FEED = $feed
+            if ($prepare) { & $prepare }
+            Start-Process (Join-Path $app 'BeamModManager.exe')
+            # обновление перезапускает программу 1–2 раза; ждём, пока не останется ни одного процесса
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            Start-Sleep 3
+            while ((Get-Process BeamModManager -ErrorAction SilentlyContinue) -and $sw.Elapsed.TotalSeconds -lt 240) { Start-Sleep 1 }
+            $alive = Get-Process BeamModManager -ErrorAction SilentlyContinue
+            $alive | Stop-Process -Force -ErrorAction SilentlyContinue
+            icacls $app /reset /T /Q | Out-Null
+            $log = @(if (Test-Path "$feed/log.txt") { Get-Content "$feed/log.txt" })
+            $log | ForEach-Object { Write-Host "   $_" }
+            if (Test-Path "$data/errors.log") { Get-Content "$data/errors.log" -TotalCount 12 | ForEach-Object { Write-Host "   errors.log: $_" } }
+            if ($alive) { throw "${name}: программа не закрылась за 4 минуты" }
+            $fv = (Get-Item (Join-Path $app 'BeamModManager.exe')).VersionInfo.FileVersion
+            if (-not $fv.StartsWith($expectVer)) { throw "${name}: на месте версия $fv, ждали $expectVer" }
+            $joined = $log -join "`n"
+            foreach ($p in $expectLog) { if ($joined -notmatch $p) { throw "${name}: в журнале нет «$p»" } }
+            $left = @(Get-ChildItem $app | ForEach-Object Name)
+            if ($left.Count -ne 1) { throw "${name}: в папке программы лишнее: $($left -join ', ')" }
+            Write-Host "   ок: $fv"
+          }
+
+          Scenario 'обычное обновление' @{} '0.1.2' @(
+            'start 0\.1\.1 normal', 'check Available', 'install ReadyToRestart',
+            'start 0\.1\.2 after-update old=False new=False bad=False', 'check UpToDate')
+          Scenario 'новая версия падает при запуске: возвращает прежнюю сама' @{ BMM_TEST_CRASH_VERSION = '0.1.2' } '0.1.1' @(
+            'install ReadyToRestart', 'start 0\.1\.1 rolled-back old=False new=False bad=False skip=0\.1\.2',
+            'check UpToDate версия 0\.1\.2 не запустилась')
+          Scenario 'новая версия умирает сама: прежнюю возвращает прежний процесс' @{ BMM_TEST_CRASH_VERSION = '0.1.2'; BMM_TEST_CRASH_HARD = '1' } '0.1.1' @(
+            'install ReadyToRestart', 'start 0\.1\.1 rolled-back .*skip=0\.1\.2', 'check UpToDate')
+          Scenario 'нет прав на папку программы: ничего не тронуто' @{} '0.1.1' @(
+            'check Available', 'install Available нет прав') {
+            icacls $app /deny "${env:USERNAME}:(OI)(CI)(W,D,DC)" /Q | Out-Null
+          }
+
   # Готовая программа: один exe без установки .NET (self-contained). Только по команде: пометка [release] в описании
   # коммита или «Run workflow» на странице Actions. Обычные изменения выпусков не создают (решено 2026-10-15).
   # 1) выпуск «latest» в этом (закрытом) репозитории — как раньше;
   # 2) выпуск v<версия> в публичном SnikS1337/ModManagerBeamNG c latest.json — оттуда программа обновляется сама.
   #    Нужен секрет RELEASES_TOKEN (токен с правом Contents: write на публичный репозиторий); без него шаг пропускается.
   release:
-    needs: [build, app, lua]
+    needs: [build, app, lua, selfupdate]
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: windows-latest
     # выпуски по одному: более старая сборка, закончившая позже, не должна стать «последней»
