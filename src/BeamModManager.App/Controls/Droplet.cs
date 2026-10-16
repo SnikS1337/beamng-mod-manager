@@ -17,7 +17,7 @@ namespace BeamModManager.App.Controls;
 ///   изнутри и тонкий светлый контур (.30);</item>
 /// <item>радужная кромка по кругу (conic-gradient от 210°: голубая слева сверху, розовая справа снизу), 1,5 px.</item>
 /// </list>
-/// Тень даёт DropShadowEffect самой капли. Вариант «опасно» (<see cref="Danger"/>, кнопка «Закрыть») плавно перекрашивает
+/// Тень — нарисованные слои под каплей (кэш картинкой), блики — как у капли воды. Вариант «опасно» (<see cref="Danger"/>, кнопка «Закрыть») плавно перекрашивает
 /// заливку и блики в красный. Капля не перехватывает мышь.
 /// </summary>
 public sealed class Droplet : FrameworkElement
@@ -42,6 +42,7 @@ public sealed class Droplet : FrameworkElement
     private readonly Grid _clip, _lens;
     private readonly Rectangle _sample, _tint, _under;
     private readonly Paint _paint;
+    private readonly Shadow _shadow;
     private readonly VisualBrush _brush = new()
     {
         ViewboxUnits = BrushMappingMode.Absolute, Stretch = Stretch.Fill,
@@ -63,17 +64,17 @@ public sealed class Droplet : FrameworkElement
         _clip = new Grid { ClipToBounds = true, Children = { _lens } };
         if (RefractionEffect.IsAvailable)
         {
-            // линза капли сильнее, чем у панели: scale 44 на доске, ×1,5 как у остального стекла
-            _refraction = new RefractionEffect { Strength = 66, Lens = 20, Saturation = 1.5 };
+            // линза капли заметно сильнее, чем у панели (2026-10-16: «как капля»): широкая и сильная, насыщенный цвет
+            _refraction = new RefractionEffect { Strength = 100, Lens = 26, Saturation = 1.65 };
             _lens.Effect = _refraction;
         }
         _paint = new Paint(this);
-        _children = new VisualCollection(this) { _clip, _tint, _under, _paint };
+        // тень — нарисованные слои, а не DropShadowEffect: эффект на капле пересчитывался бы каждый кадр вместе с линзой
+        _shadow = new Shadow(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
+        _children = new VisualCollection(this) { _shadow, _clip, _tint, _under, _paint };
         // свойства самой капли — только после детей: смена IsHitTestVisible уже обходит дочерние элементы
         IsHitTestVisible = false;
         RenderTransformOrigin = new Point(0.5, 0.5);
-        // тень капли: 0 10px 20px rgba(4,8,20,.50)
-        Effect = new DropShadowEffect { BlurRadius = 20, ShadowDepth = 8, Direction = 270, Color = Color.FromRgb(4, 8, 20), Opacity = 0.5, RenderingBias = RenderingBias.Performance };
         Loaded += (_, _) => Attach();
         Unloaded += (_, _) => Detach();
         LayoutUpdated += (_, _) => Sync();
@@ -141,13 +142,13 @@ public sealed class Droplet : FrameworkElement
         var w = ActualWidth; var h = ActualHeight;
         if (w <= 0 || h <= 0) return;
         var r = Math.Min(Corner, Math.Min(w, h) / 2);
-        var clip = new RectangleGeometry(new Rect(0, 0, w, h), r, r);
-        clip.Freeze();
-        _clip.Clip = clip;
+        // скругление линзы делает шейдер со сглаживанием; без шейдера — маска (не Clip: он не сглаживается)
+        _clip.OpacityMask = _refraction is null ? Glass.RoundMask(w, h, r) : null;
         _tint.RadiusX = _tint.RadiusY = _under.RadiusX = _under.RadiusY = r;
         if (_refraction is not null) { _refraction.Size = new Size(w, h); _refraction.Radius = r; }
         _lastBox = Rect.Empty;
         _paint.InvalidateVisual();
+        _shadow.InvalidateVisual();
         Sync();
     }
 
@@ -175,6 +176,31 @@ public sealed class Droplet : FrameworkElement
     }
 
     // ───────────── рисунок капли ─────────────
+
+    /// <summary>
+    /// Мягкая тень под каплей (0 8px 20px rgba(4,8,20,.5) на доске): стопка расширяющихся скруглённых фигур с убывающей
+    /// прозрачностью. Неподвижна относительно капли — кэшируется картинкой; растяжение капли её только масштабирует.
+    /// </summary>
+    private sealed class Shadow : FrameworkElement
+    {
+        private readonly Droplet _d;
+        public Shadow(Droplet d) { _d = d; IsHitTestVisible = false; }
+
+        protected override void OnRender(DrawingContext dc)
+        {
+            var w = ActualWidth; var h = ActualHeight;
+            if (w < 2 || h < 2) return;
+            var r = Math.Min(_d.Corner, Math.Min(w, h) / 2);
+            const int steps = 10;
+            for (var i = steps; i >= 1; i--)
+            {
+                var g = i * 1.8; // на сколько тень шире капли
+                var a = 0.5 * 0.16 * (1 - (i - 1) / (double)steps);
+                var rect = new Rect(-g / 2 + 1, 6 - g / 2 + 3, w + g - 2, h + g - 2);
+                dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb((byte)Math.Round(a * 255), 4, 8, 20)), null, rect, r + g / 2, r + g / 2);
+            }
+        }
+    }
 
     /// <summary>Заливка, блики и кромка — свой элемент поверх линзы (OnRender самой капли рисовал бы под ней).</summary>
     private sealed class Paint : FrameworkElement
@@ -214,10 +240,15 @@ public sealed class Droplet : FrameworkElement
             double[] soft = { 0.62, 0.38, 0.18, 0.06 };
             for (var i = 0; i < soft.Length; i++)
             {
-                Ring(dc, w, h, r, 0.9 + i, 1.1, Diagonal(hiTop, 0.85 * soft[i], topLeft: true));
+                Ring(dc, w, h, r, 0.9 + i, 1.1, Diagonal(hiTop, 1.0 * soft[i], topLeft: true));
                 Ring(dc, w, h, r, 0.9 + i, 1.1, Diagonal(hiBottom, 0.45 * soft[i], topLeft: false));
             }
             dc.Pop();
+
+            // как у капли воды: светлое пятно-блик сверху слева и светлый серп снизу, где свет выходит из капли.
+            // Пересечение фигур, а не обрезка: край остаётся сглаженным
+            Spot(dc, shape, new Point(w * 0.30, h * 0.24), w * 0.32, h * 0.26, Color.FromArgb(A(0.30 * (1 - danger * 0.5)), 255, 255, 255));
+            Spot(dc, shape, new Point(w * 0.58, h * 1.02), w * 0.46, h * 0.30, Color.FromArgb(A(light ? 0.16 : 0.22), 220, 238, 255));
 
             // тонкий светлый контур (inset 0 0 0 1px .30; у красной — розовый .45; на светлом стекле — тёмный штрих)
             var rim = light && danger < 0.5 ? Color.FromArgb(A(0.16), 10, 20, 40) : Mix(Color.FromArgb(A(0.30), 255, 255, 255), Color.FromArgb(A(0.45), 255, 190, 180), danger);
@@ -225,6 +256,16 @@ public sealed class Droplet : FrameworkElement
 
             // радужная кромка по кругу, 1,5 px внутри края
             ConicRim(dc, w, h, r);
+        }
+
+        /// <summary>Мягкое пятно света (радиальный градиент) внутри формы капли.</summary>
+        private static void Spot(DrawingContext dc, Geometry shape, Point c, double rx, double ry, Color color)
+        {
+            var brush = new RadialGradientBrush(color, Color.FromArgb(0, color.R, color.G, color.B))
+            {
+                MappingMode = BrushMappingMode.Absolute, Center = c, GradientOrigin = c, RadiusX = rx, RadiusY = ry,
+            };
+            dc.DrawGeometry(brush, null, new CombinedGeometry(GeometryCombineMode.Intersect, shape, new EllipseGeometry(c, rx, ry)));
         }
 
         /// <summary>Кольцо по скруглённому прямоугольнику, отступив <paramref name="inset"/> внутрь.</summary>

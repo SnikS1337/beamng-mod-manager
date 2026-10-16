@@ -33,6 +33,9 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Grid x:Name="Lift">
+                            <!-- карточка с тенями и фото кэшируется картинкой: фон под ней движется каждый кадр, без кэша три
+                                 размытые тени и фото пересчитывались бы постоянно (и ещё раз в каждом стекле, под которым карточка) -->
+                            <Grid.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Grid.CacheMode>
                             <Grid.RenderTransform>
                                 <TransformGroup>
                                     <TranslateTransform x:Name="Hover"/>
@@ -300,6 +303,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border CornerRadius="19" Background="White" Padding="{TemplateBinding Padding}">
+                            <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                             <Border.Effect>
                                 <DropShadowEffect BlurRadius="26" ShadowDepth="0" Color="#AACDFF" Opacity="0.34" RenderingBias="Performance"/>
                             </Border.Effect>
@@ -350,6 +354,7 @@
         <!-- Карточка обновления (доска «Обновления»): фото слева уходит в тень, справа название, «1.0 → 1.5», пояснение и кнопки -->
         <DataTemplate x:Key="UpdateCard" DataType="{x:Type u:UpdateItem}">
             <Grid x:Name="Root" Height="196" Margin="0,0,0,20" SizeChanged="UpdCard_SizeChanged">
+                <Grid.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Grid.CacheMode>
                 <Grid.RenderTransform><TranslateTransform x:Name="Hover"/></Grid.RenderTransform>
                 <Border x:Name="GlowHover" CornerRadius="26" Background="#1D2533" Opacity="0">
                     <Border.Effect>
@@ -658,7 +663,7 @@
                  WindowChrome.IsHitTestVisibleInChrome="True">
             <Canvas PreviewMouseLeftButtonDown="Nav_PreviewMouseDown" PreviewMouseLeftButtonUp="Nav_PreviewMouseUp" MouseLeave="Nav_MouseLeave">
                 <!-- капля жидкого стекла (Controls/Droplet.cs): линза, объём, радужная кромка; в пути вытягивается, при нажатии сжимается -->
-                <c:Droplet x:Name="NavDrop" Corner="24" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
+                <c:Droplet x:Name="NavDrop" Corner="29" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
                     <c:Droplet.RenderTransform>
                         <TransformGroup>
                             <ScaleTransform x:Name="NavDropScale"/>
@@ -825,9 +830,9 @@
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Стекло"/>
                                 <CheckBox Style="{StaticResource Switch}" Content="Жидкое стекло" Tag="Края панелей преломляют фон. Выключено: обычное матовое стекло."
                                           IsChecked="{Binding LiquidGlass}" Margin="0,0,0,8"/>
-                                <CheckBox Style="{StaticResource Switch}" Content="Иней на стекле" Tag="Морозный узор по краям панелей и на карточках выключенных модов."
+                                <CheckBox Style="{StaticResource Switch}" Content="Иней на стекле" Tag="Мягкая изморозь по краям панелей и на карточках выключенных модов."
                                           IsChecked="{Binding Frost}" Margin="0,0,0,8"/>
-                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Сила инея" Tag="От лёгкой дымки до густого мороза."
+                                <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Сила инея" Tag="От лёгкой дымки до плотной изморози."
                                                         IsEnabled="{Binding FrostOptionsEnabled}" Margin="0,0,0,8">
                                     <Border Style="{StaticResource SegmentBox}">
                                         <StackPanel Orientation="Horizontal">
@@ -837,8 +842,8 @@
                                         </StackPanel>
                                     </Border>
                                 </HeaderedContentControl>
-                                <CheckBox Style="{StaticResource Switch}" Content="Искры льда" Tag="Редкие блики на кромках."
-                                          IsChecked="{Binding FrostSparks}" IsEnabled="{Binding FrostOptionsEnabled}" Margin="0,0,0,18"/>
+                                <CheckBox Style="{StaticResource Switch}" Content="Искры льда" Tag="Редкие блики на кромках стекла. Включаются и без инея."
+                                          IsChecked="{Binding FrostSparks}" Margin="0,0,0,18"/>
 
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Оформление"/>
                                 <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Тема" Tag="Светлое стекло с тёмным текстом или тёмное." Margin="0,0,0,18">
@@ -946,7 +951,7 @@
                             <CheckBox Style="{StaticResource Switch}" Content="Проверять обновления модов при запуске" Margin="0,0,0,8"
                                       Tag="Программа сама смотрит на сайтах, не вышли ли новые версии ваших модов."
                                       IsChecked="{Binding AutoCheckOnStart}"/>
-                            <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Повторять, пока программа открыта" Tag="Если программа открыта подолгу." Margin="0,0,0,10">
+                            <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Проверять ещё раз через" Tag="Если менеджер не закрывать, он сам проверит снова через это время. «Нет» — только при запуске и по кнопке." Margin="0,0,0,10">
                                 <Border Style="{StaticResource SegmentBox}">
                                     <StackPanel Orientation="Horizontal">
                                         <RadioButton Style="{StaticResource Segment}" GroupName="repeat" Content="Нет" IsChecked="{Binding RepeatOff}"/>
@@ -1203,6 +1208,7 @@
         </c:Glass>
 
         <!-- смена оформления: кадр прежнего вида поверх всего, он раскрывается кругом от места нажатия (MainWindow.Reveal) -->
-        <Image x:Name="ModeVeil" Stretch="Fill" IsHitTestVisible="False" Visibility="Collapsed"/>
+        <!-- смена оформления: вуаль цвета нового фона расходится кругом от места нажатия (без снимка окна — он долгий) -->
+        <Rectangle x:Name="ModeVeil" IsHitTestVisible="False" Visibility="Collapsed"/>
     </Grid>
 </Window>

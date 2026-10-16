@@ -207,5 +207,65 @@ public static class GlassTextureTests
             Assert.Eq(1308 * 760 * 4, px.Length);
             Assert.True(sw.Elapsed.TotalSeconds < 1.5, $"Ice 1308x760 заняло {sw.Elapsed.TotalMilliseconds:F0} мс");
         });
-    }
+    
+        t.Group("Изморозь (вместо инея с зерном, 2026-10-16)");
+
+        t.Run("изморозь гладкая: соседние пиксели почти не отличаются (ни зерна, ни прожилок)", () =>
+        {
+            int w = 308, h = 236;
+            var px = GlassTextures.Frost(w, h, 26, 60);
+            var worst = 0;
+            for (var y = 4; y < h - 4; y++)
+                for (var x = 4; x < w - 4; x++)
+                {
+                    if (GlassTextures.InsideDistance(x, y, w, h, 26) < 4) continue; // сглаженная граница формы — не зерно
+                    worst = Math.Max(worst, Math.Abs(A(px, w, x, y) - A(px, w, x + 1, y)));
+                    worst = Math.Max(worst, Math.Abs(A(px, w, x, y) - A(px, w, x, y + 1)));
+                }
+            Assert.True(worst <= 24, $"скачок между соседями {worst}");
+            var old = GlassTextures.Ice(w, h, 26, 60, 3);
+            var oldWorst = 0;
+            for (var y = 4; y < h - 4; y++)
+                for (var x = 4; x < w - 4; x++)
+                    if (GlassTextures.InsideDistance(x, y, w, h, 26) >= 4) oldWorst = Math.Max(oldWorst, Math.Abs(A(old, w, x, y) - A(old, w, x + 1, y)));
+            Assert.True(oldWorst > worst * 2, $"старый иней зернистее ({oldWorst} против {worst})");
+        });
+
+        t.Run("изморозь: у края плотнее, в углу гуще, сверху слева светлее, в середине почти прозрачно, снаружи пусто", () =>
+        {
+            int w = 400, h = 300;
+            var px = GlassTextures.Frost(w, h, 30, 60, veil: 0);
+            Assert.True(A(px, w, 200, 3) > A(px, w, 200, 40), "у верхнего края плотнее, чем глубже");
+            Assert.True(A(px, w, 200, 150) < 8, "середина почти прозрачна");
+            Assert.True(A(px, w, 14, 14) > A(px, w, 200, 14), "в углу гуще, чем посередине края");
+            Assert.True(A(px, w, 20, 150) > A(px, w, w - 21, 150), "слева (к свету) светлее, чем справа");
+            Assert.Eq(0, A(px, w, 0, 0), "за скруглённым углом пусто");
+        });
+
+        t.Run("изморозь: дымка по площади, цвет холодный белый, альфа предумножена", () =>
+        {
+            int w = 200, h = 160;
+            var px = GlassTextures.Frost(w, h, 20, 30, veil: 0.1);
+            var a = A(px, w, 100, 80);
+            Assert.True(Math.Abs(a - 26) <= 2, $"дымка 0,1 ≈ 26, а не {a}");
+            for (var y = 0; y < h; y += 7)
+                for (var x = 0; x < w; x += 7)
+                {
+                    int al = A(px, w, x, y);
+                    Assert.True(R(px, w, x, y) <= al && G(px, w, x, y) <= al && B(px, w, x, y) <= al, "цвет не больше альфы");
+                    Assert.True(B(px, w, x, y) >= R(px, w, x, y), "холодный: синего не меньше красного");
+                }
+            Assert.True(GlassTextures.Frost(w, h, 20, 30).SequenceEqual(GlassTextures.Frost(w, h, 20, 30)), "одна и та же картинка");
+            Assert.Eq(0, GlassTextures.Frost(0, 5, 3, 3).Length);
+            Assert.Eq(4, GlassTextures.Frost(1, 1, 50, 0).Length);
+        });
+
+        t.Run("изморозь на карточку ×2 считается быстро", () =>
+        {
+            var sw = Stopwatch.StartNew();
+            var px = GlassTextures.Frost(616, 472, 52, 120);
+            Assert.Eq(616 * 472 * 4, px.Length);
+            Assert.True(sw.Elapsed.TotalSeconds < 1.0, $"{sw.Elapsed.TotalMilliseconds:F0} мс");
+        });
+}
 }

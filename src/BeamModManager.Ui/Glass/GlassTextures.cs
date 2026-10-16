@@ -55,6 +55,56 @@ public static class GlassTextures
     }
 
     /// <summary>
+    /// Чистая изморозь (решено 2026-10-16 вместо инея с «пальцами» и зерном, который на тёмном стекле читался как грязь):
+    /// мягкое светлое свечение от края внутрь, гуще в углах, светлее сверху слева (там свет), тонкая светлая кромка у самого
+    /// края и лёгкая дымка по всей площади. Ни шума, ни зерна: соседние пиксели отличаются плавно.
+    /// Предумноженный BGRA (Pbgra32). reach — как далеко изморозь заходит от края (пиксели); veil — дымка по всей площади (0..1).
+    /// </summary>
+    public static byte[] Frost(int width, int height, double radius, double reach, double veil = 0.06)
+    {
+        if (width <= 0 || height <= 0) return Array.Empty<byte>();
+        int w = width, h = height;
+        double r = ClampRadius(w, h, radius);
+        double f = PositiveOr(reach);
+        var d = DistanceField(w, h, r);
+        var px = new byte[w * h * 4];
+        double cornerReach = f * 2.2;
+        Bands(w, h, (y0, y1) =>
+        {
+            for (int y = y0; y < y1; y++)
+            {
+                int row = y * w;
+                double fy = (y + 0.5) / h;
+                double dyTop = y + 0.5, dyBottom = h - y - 0.5;
+                for (int x = 0; x < w; x++)
+                {
+                    double dd = d[row + x];
+                    double cover = Clamp01(dd + 0.5); // полпикселя сглаживания на краю
+                    if (cover <= 0) continue;
+                    double fx = (x + 0.5) / w;
+                    double light = 1.15 - 0.4 * (fx + fy) * 0.5;                 // свет сверху слева
+                    double t = Clamp01(1 - dd / f);
+                    double edge = Math.Pow(t, 2.2) * 0.62 * light;                 // свечение от края
+                    double dxLeft = x + 0.5, dxRight = w - x - 0.5;
+                    double cx = Math.Min(dxLeft, dxRight), cy = Math.Min(dyTop, dyBottom);
+                    double corner = Clamp01(1 - Math.Sqrt(cx * cx + cy * cy) / cornerReach);
+                    corner = corner * corner * 0.38;                               // в углах гуще
+                    double rim = Smooth(0.6, 1.4, dd) * (1 - Smooth(2.2, 3.4, dd)) * 0.32 * light; // тонкая кромка
+                    double a = Clamp01(edge + corner + rim + veil) * cover;
+                    if (a > 0.92) a = 0.92;
+                    int i = (row + x) * 4;
+                    // холодный белый (232, 243, 255), предумноженный
+                    px[i] = (byte)Math.Round(255 * a);
+                    px[i + 1] = (byte)Math.Round(243 * a);
+                    px[i + 2] = (byte)Math.Round(232 * a);
+                    px[i + 3] = (byte)Math.Round(255 * a);
+                }
+            }
+        });
+        return px;
+    }
+
+    /// <summary>
     /// Иней по краям панели: «пальцы» растут от края внутрь, зерно, редкие прожилки, лёгкая дымка, искры.
     /// Возвращает предумноженный BGRA (Pbgra32). reach — насколько иней заходит внутрь (пиксели),
     /// seed — зерно случайности (одно зерно — одна и та же картинка).
