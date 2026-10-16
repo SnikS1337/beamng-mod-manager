@@ -61,6 +61,56 @@ public static class GameFolders
         return result;
     }
 
+    /// <summary>
+    /// Папка mods без настроек. Сначала папка пользователя из startup.ini установленной игры (её переносят на другой диск,
+    /// и тогда игра берёт моды оттуда), затем стандартные места. <paramref name="gameDirs"/> — папки игры (из Steam).
+    /// null — не нашли; ошибки доступа к отдельным папкам не мешают искать дальше.
+    /// </summary>
+    public static string? AutoDetect(IEnumerable<string> gameDirs, IEnumerable<string> userRoots)
+    {
+        var roots = new List<string>();
+        foreach (var g in gameDirs)
+            if (Game.GameInfo.UserRootFromStartupIni(g) is { } custom) roots.Add(custom);
+        roots.AddRange(userRoots);
+        foreach (var root in roots)
+        {
+            try
+            {
+                if (FindModsFolders(root).FirstOrDefault() is { } found) return found;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Выбранная папка — mods старой версии игры (…\0.36\mods), а рядом уже есть папка новее (current\mods или 0.37\mods):
+    /// игра обновилась и берёт моды оттуда. Возвращает новую папку, иначе null.
+    /// </summary>
+    public static string? NewerModsFolder(string modsDir)
+    {
+        try
+        {
+            var full = Path.GetFullPath(modsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!string.Equals(Path.GetFileName(full), "mods", StringComparison.OrdinalIgnoreCase)) return null;
+            var verDir = Path.GetDirectoryName(full);
+            var name = verDir is null ? null : Path.GetFileName(verDir);
+            if (name is null || !VersionDir.IsMatch(name)) return null;
+            var root = Path.GetDirectoryName(verDir!);
+            if (root is null) return null;
+            var current = Path.Combine(root, "current", "mods");
+            if (Directory.Exists(current)) return current;
+            var mine = Version(name);
+            return Directory.EnumerateDirectories(root)
+                .Select(d => (Dir: d, Name: Path.GetFileName(d)))
+                .Where(x => VersionDir.IsMatch(x.Name) && Version(x.Name) > mine && Directory.Exists(Path.Combine(x.Dir, "mods")))
+                .OrderByDescending(x => Version(x.Name))
+                .Select(x => Path.Combine(x.Dir, "mods"))
+                .FirstOrDefault();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
+    }
+
     /// <summary>Путь из поля ввода: без кавычек вокруг («Копировать как путь» в проводнике их добавляет), с раскрытыми %переменными%.</summary>
     public static string CleanPath(string raw)
     {

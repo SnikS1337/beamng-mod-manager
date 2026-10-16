@@ -101,6 +101,8 @@ jobs:
   # (D: и C:), в папке с русскими буквами и пробелами. Программа сама пишет в log.txt папки выпуска, что запустилось.
   selfupdate:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -133,11 +135,16 @@ jobs:
         shell: pwsh
         run: |
           $feed = Join-Path $env:RUNNER_TEMP 'feed'
+          New-Item -ItemType Directory selfupdate -Force | Out-Null
+          Start-Transcript -Path selfupdate/transcript.txt -Force | Out-Null
+          # причина сбоя — пометкой (её видно через API), полный ход — в ветке ci-selfupdate
+          trap { Write-Host "::error::$_"; Stop-Transcript | Out-Null; exit 1 }
           $app = Join-Path (Split-Path $env:GITHUB_WORKSPACE) 'Мои программы (тест)\Mod Manager BeamNG'
           $data = Join-Path $env:LOCALAPPDATA 'BeamModManager'
           Write-Host "программа: $app; профиль: $data"
           if ((Split-Path -Qualifier $app) -eq (Split-Path -Qualifier $data)) { Write-Host "::warning::программа и профиль на одном диске" }
 
+          $script:idx = 0
           function Scenario($name, [hashtable]$envs, [string]$expectVer, [string[]]$expectLog, [scriptblock]$prepare) {
             Write-Host "── $name"
             Get-Process BeamModManager -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -160,7 +167,11 @@ jobs:
             icacls $app /reset /T /Q | Out-Null
             $log = @(if (Test-Path "$feed/log.txt") { Get-Content "$feed/log.txt" })
             $log | ForEach-Object { Write-Host "   $_" }
-            if (Test-Path "$data/errors.log") { Get-Content "$data/errors.log" -TotalCount 12 | ForEach-Object { Write-Host "   errors.log: $_" } }
+            if (Test-Path "$data/errors.log") { Get-Content "$data/errors.log" -TotalCount 40 | ForEach-Object { Write-Host "   errors.log: $_" } }
+            $script:idx++
+            if (Test-Path "$feed/log.txt") { Copy-Item "$feed/log.txt" "selfupdate/$($script:idx)-log.txt" }
+            if (Test-Path "$data/errors.log") { Copy-Item "$data/errors.log" "selfupdate/$($script:idx)-errors.log" }
+            Write-Host "   в папке программы: $((Get-ChildItem $app -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')"
             if ($alive) { throw "${name}: программа не закрылась за 4 минуты" }
             $fv = (Get-Item (Join-Path $app 'BeamModManager.exe')).VersionInfo.FileVersion
             if (-not $fv.StartsWith($expectVer)) { throw "${name}: на месте версия $fv, ждали $expectVer" }
@@ -183,6 +194,19 @@ jobs:
             'check Available', 'install Available нет прав') {
             icacls $app /deny "${env:USERNAME}:(OI)(CI)(W,D,DC)" /Q | Out-Null
           }
+          Stop-Transcript | Out-Null
+      - name: Журнал в ветку ci-selfupdate
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path selfupdate)) { exit 0 }
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan ci-selfupdate-tmp
+          git rm -r -q --cached .
+          git add -f selfupdate
+          git commit -q -m "Самообновление для $env:GITHUB_SHA"
+          git push -f -q origin HEAD:ci-selfupdate
 
   # Готовая программа: один exe без установки .NET (self-contained). Только по команде: пометка [release] в описании
   # коммита или «Run workflow» на странице Actions. Обычные изменения выпусков не создают (решено 2026-10-15).
