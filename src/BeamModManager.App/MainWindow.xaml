@@ -427,7 +427,7 @@
                  Lens="30" Refraction="105" Brightness="0.78" Ice="0.55" IceReach="34" Sparks="6" Seed="11"
                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0" Width="84" Height="284"
                  WindowChrome.IsHitTestVisibleInChrome="True">
-            <Canvas PreviewMouseLeftButtonDown="Nav_PreviewMouseDown" PreviewMouseLeftButtonUp="Nav_PreviewMouseUp" MouseLeave="Nav_PreviewMouseUp">
+            <Canvas PreviewMouseLeftButtonDown="Nav_PreviewMouseDown" PreviewMouseLeftButtonUp="Nav_PreviewMouseUp" MouseLeave="Nav_MouseLeave">
                 <!-- капля жидкого стекла (Controls/Droplet.cs): линза, объём, радужная кромка; в пути вытягивается, при нажатии сжимается -->
                 <c:Droplet x:Name="NavDrop" Corner="24" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
                     <c:Droplet.RenderTransform>
@@ -483,7 +483,7 @@
                 </Border>
 
                 <!-- фильтры: активен один, под активным — капля -->
-                <Border x:Name="FilterBox" PreviewMouseLeftButtonDown="Filter_PreviewMouseDown" PreviewMouseLeftButtonUp="Filter_PreviewMouseUp" MouseLeave="Filter_PreviewMouseUp" DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center"
+                <Border x:Name="FilterBox" PreviewMouseLeftButtonDown="Filter_PreviewMouseDown" PreviewMouseLeftButtonUp="Filter_PreviewMouseUp" MouseLeave="Filter_MouseLeave" DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center"
                         WindowChrome.IsHitTestVisibleInChrome="True">
                     <Grid>
                         <Canvas>
