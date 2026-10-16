@@ -397,7 +397,7 @@ public sealed class UpdatesViewModel : Observable
     /// <summary>При запуске окна, если включено в настройках.</summary>
     public Task StartupAsync() => _settings.AutoCheckOnStart ? RunAsync(false, manual: false) : Task.CompletedTask;
 
-    /// <summary>Окно зовёт раз в минуту: повтор раз в N часов (настройка «Повторять»), пока программа открыта.</summary>
+    /// <summary>Окно зовёт раз в минуту: повтор раз в N часов (настройка «Проверять ещё раз через»), пока программа открыта.</summary>
     public Task TickAsync()
     {
         var hours = _settings.AutoCheckEveryHours;
