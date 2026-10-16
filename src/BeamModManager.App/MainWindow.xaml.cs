@@ -848,6 +848,7 @@ public partial class MainWindow : Window
         _liveTimer.Stop();
         _autoCheckTimer.Stop();
         _bindCts?.Cancel();
+        _host.Updates?.Cancel(); // идущая проверка останавливается; найденное уже в библиотеке, Flush ниже допишет его на диск
         _previewCts?.Cancel();
         _host.SaveWindow?.Invoke(this);
         _host.SavePending?.Invoke(_vm.PendingChanges);
