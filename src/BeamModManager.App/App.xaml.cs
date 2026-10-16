@@ -273,6 +273,8 @@ public partial class App : Application
     /// <summary>Новая версия уже на месте: закрываемся как обычно (окно сохраняет своё), на выходе запускаем её.</summary>
     private void RestartIntoUpdate()
     {
+        // проверка на сборочной машине: записать до закрытия окна (после него процесс может закончиться раньше)
+        if (_testFeed is not null) TestNote($"install {_updater?.State.Stage} {_updater?.State.Error}");
         _restartExe = _exePath;
         _restartVersion = _updater?.State.Manifest?.Version;
         MainWindow?.Close();
@@ -346,11 +348,7 @@ public partial class App : Application
     private async Task SelfTestAsync(AppUpdater up, Task cleanup)
     {
         await cleanup;
-        var log = Path.Combine(_testFeed!, "log.txt");
-        void Note(string s)
-        {
-            try { File.AppendAllText(log, s + "\n"); } catch (Exception x) when (x is IOException or UnauthorizedAccessException) { }
-        }
+        void Note(string s) => TestNote(s);
         var exe = _exePath!;
         var mode = _afterUpdate ? "after-update" : _rolledBack is not null ? "rolled-back" : "normal";
         Note($"start {AppVersion.Display(up.Current)} {mode} old={File.Exists(exe + UpdateInstaller.OldSuffix)} new={File.Exists(exe + UpdateInstaller.NewSuffix)} bad={File.Exists(exe + UpdateInstaller.BadSuffix)} skip={(up.Skipped is { } sk ? AppVersion.Display(sk) : "-")}");
@@ -360,10 +358,17 @@ public partial class App : Application
         if (s.Stage == UpdateStage.Available)
         {
             await up.InstallAsync(_life.Token);
+            // готово — плашка перезапускает сама и пишет строку в журнал (RestartIntoUpdate)
+            if (up.State.Stage == UpdateStage.ReadyToRestart) return;
             Note($"install {up.State.Stage} {up.State.Error}");
-            if (up.State.Stage == UpdateStage.ReadyToRestart) return; // плашка перезапускает сама
         }
         MainWindow?.Close();
+    }
+
+    private void TestNote(string line)
+    {
+        try { File.AppendAllText(Path.Combine(_testFeed!, "log.txt"), line + "\n"); }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>Папки BeamNG.drive в библиотеках Steam (путь к Steam — из реестра). Нет Steam — пусто.</summary>
