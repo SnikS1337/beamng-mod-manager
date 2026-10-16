@@ -767,11 +767,14 @@ public partial class MainWindow : Window
 
     // нажали на пункт — капля сжимается; отпустили или ушли мышью — упруго возвращается и уже потом перетекает
     private void Nav_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (e.OriginalSource is DependencyObject d && OverButton(d)) _springs.To(_navPress, 0.92); }
-    private void Nav_PreviewMouseUp(object sender, MouseEventArgs e) => _springs.To(_navPress, 1);
+    // обработчики XAML должны совпадать с делегатом точно: шаблонные события создаются через Delegate.CreateDelegate
+    private void Nav_PreviewMouseUp(object sender, MouseButtonEventArgs e) => _springs.To(_navPress, 1);
+    private void Nav_MouseLeave(object sender, MouseEventArgs e) => _springs.To(_navPress, 1);
     private void Filter_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (e.OriginalSource is DependencyObject d && OverButton(d)) _springs.To(_filterPress, 0.92); }
-    private void Filter_PreviewMouseUp(object sender, MouseEventArgs e) => _springs.To(_filterPress, 1);
+    private void Filter_PreviewMouseUp(object sender, MouseButtonEventArgs e) => _springs.To(_filterPress, 1);
+    private void Filter_MouseLeave(object sender, MouseEventArgs e) => _springs.To(_filterPress, 1);
     private void Caption_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _springs.To(_capPress, 0.92);
-    private void Caption_PreviewMouseUp(object sender, MouseEventArgs e) => _springs.To(_capPress, 1);
+    private void Caption_PreviewMouseUp(object sender, MouseButtonEventArgs e) => _springs.To(_capPress, 1);
 
     /// <summary>Нажатие пришлось на кнопку или пункт (а не на пустое место панели).</summary>
     private static bool OverButton(DependencyObject d)
