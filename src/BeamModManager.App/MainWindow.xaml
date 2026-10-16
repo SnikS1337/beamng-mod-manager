@@ -599,8 +599,15 @@
             <ScrollViewer x:Name="UpdScroller" Margin="116,0,360,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                           Focusable="False" PanningMode="VerticalOnly" Template="{StaticResource OverlayScroll}" Visibility="Collapsed">
                 <StackPanel x:Name="UpdBody" Margin="0,84,0,28">
+                    <!-- только видимые карточки (RowListPanel): шаг ряда — высота карточки 196 и отступ 20 из шаблона UpdateCard -->
                     <ItemsControl x:Name="UpdList" ItemsSource="{Binding Items}" ItemTemplate="{StaticResource UpdateCard}" Focusable="False"
-                                  KeyboardNavigation.TabNavigation="Continue"/>
+                                  KeyboardNavigation.TabNavigation="Continue">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <c:RowListPanel RowHeight="216"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
                 </StackPanel>
             </ScrollViewer>
 

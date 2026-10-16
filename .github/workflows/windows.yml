@@ -98,6 +98,8 @@ jobs:
           $reset = Ms 'many-5000.png.perf.txt' 'поиск сброшен'
           if ($start -gt 8000) { throw "5000 модов: запуск $start мс (порог 8000)" }
           if ($reset -gt 1500) { throw "5000 модов: сброс поиска $reset мс (порог 1500)" }
+          $upd = Ms 'many-5000.png.perf.txt' 'раздел «Обновления»'
+          if ($upd -gt 1500) { throw "5000 модов: раздел «Обновления» $upd мс (порог 1500)" }
           Get-ChildItem shots
       - name: Отправить снимки
         if: always()
