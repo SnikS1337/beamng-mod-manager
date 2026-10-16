@@ -329,6 +329,45 @@ public static class AppUpdateTests
             Assert.Eq("старая", File.ReadAllText(exe));
         });
 
+        t.Run("подготовка и подмена порознь: до подмены программа не тронута; без подготовки подменять нечего", async () =>
+        {
+            using var r = new Rig();
+            Assert.Eq("обновление не подготовлено", r.U.Commit());
+            r.Publish();
+            await r.U.CheckAsync(false);
+            Assert.Eq("обновление не подготовлено", r.U.Commit());
+            await r.U.InstallAsync();
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.OldSuffix), "текущую ещё не отодвигали");
+            File.Delete(r.Exe + UpdateInstaller.NewSuffix); // пропала (антивирус унёс)
+            Assert.Eq("подготовленное обновление пропало", r.U.Commit());
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+        });
+
+        t.Run("подготовка: нет прав на папку программы — ошибка видна сразу на плашке, а не при выходе", async () =>
+        {
+            using var r = new Rig();
+            r.Publish();
+            Directory.CreateDirectory(r.Exe + UpdateInstaller.NewSuffix); // место для копии занято — как запрет записи
+            await r.U.CheckAsync(false);
+            await r.U.InstallAsync();
+            Assert.Eq(UpdateStage.Available, r.U.State.Stage);
+            Assert.True(r.U.State.Error is not null, "причина видна");
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+        });
+
+        t.Run("подмена не удалась: прежняя версия на месте, «*.new» убран", () =>
+        {
+            using var r = new Rig();
+            var neu = Path.Combine(r.Dir, "n.exe");
+            File.WriteAllText(neu, "новая");
+            Assert.True(UpdateInstaller.Stage(r.Exe, neu) is null, "подготовлено");
+            var err = UpdateInstaller.Commit(r.Exe, (a, b) => { if (a.EndsWith(UpdateInstaller.NewSuffix)) throw new IOException("занято"); File.Move(a, b); });
+            Assert.True(err!.Contains("не встала"), err);
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "убран");
+        });
+
         t.Group("Самообновление: новая версия не запустилась");
 
         t.Run("новая версия падает при запуске и возвращает прежнюю сама: себя в «*.bad», прежнюю на место", () =>
@@ -460,6 +499,7 @@ public static class AppUpdateTests
             Assert.Eq(UpdateStage.Available, u.State.Stage);
             await u.InstallAsync();
             Assert.Eq(UpdateStage.ReadyToRestart, u.State.Stage);
+            Assert.True(u.Commit() is null, "встала");
             Assert.True(File.ReadAllBytes(r.Exe).Take(2).SequenceEqual("MZ"u8.ToArray()), "новая на месте");
             Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "без «*.new»");
             // подменённый архив в папке не проходит проверку суммы так же, как скачанный
@@ -522,8 +562,13 @@ public static class AppUpdateTests
             await Task.WhenAll(tasks);
             Assert.Eq(1, r.Net.Calls.Count(c => c == BlobUrl));
             Assert.Eq(UpdateStage.ReadyToRestart, r.U.State.Stage);
+            // до выхода работающая программа не тронута: новая лежит рядом
+            Assert.Eq("старая версия", File.ReadAllText(r.Exe));
+            Assert.True(File.ReadAllBytes(r.Exe + UpdateInstaller.NewSuffix).Take(2).SequenceEqual("MZ"u8.ToArray()), "новая рядом");
+            Assert.True(r.U.Commit() is null, "подмена на выходе");
             Assert.True(File.ReadAllBytes(r.Exe).Take(2).SequenceEqual("MZ"u8.ToArray()), "новая программа на месте");
             Assert.Eq("старая версия", File.ReadAllText(r.Exe + ".old"));
+            Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "«*.new» стал программой");
             await r.U.InstallAsync();
             Assert.Eq(1, r.Net.Calls.Count(c => c == BlobUrl));
         });

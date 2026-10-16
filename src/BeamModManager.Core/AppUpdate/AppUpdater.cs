@@ -8,7 +8,7 @@ public enum UpdateStage
     UpToDate,
     Available,
     Downloading,
-    /// <summary>Новая версия скачана, проверена и поставлена на место: осталось перезапустить программу.</summary>
+    /// <summary>Новая версия скачана, проверена и лежит рядом с программой: на выходе встанет на место (Commit) и запустится.</summary>
     ReadyToRestart,
     Failed,
 }
@@ -132,12 +132,27 @@ public sealed class AppUpdater
 
             var (exe, xerr) = UpdateInstaller.Extract(zip, Path.Combine(dir, "exe"), m.Version, _versionOf);
             if (exe is null) { Fail(xerr!); return; }
-            var swap = UpdateInstaller.Swap(_currentExe, exe);
-            if (swap is not null) { Fail(swap); return; }
+            // новая версия ложится рядом с программой («*.new»); подменит её Commit, когда окно уже закроется
+            var stage = UpdateInstaller.Stage(_currentExe, exe);
+            if (stage is not null) { Fail(stage); return; }
             lock (_g) Set(new UpdateState(UpdateStage.ReadyToRestart, m, 1, CheckedAt: _state.CheckedAt));
         }
         catch (OperationCanceledException) { Fail("загрузка отменена"); }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException) { Fail(x.Message); }
+    }
+
+    /// <summary>
+    /// Поставить подготовленную версию на место текущей (<see cref="UpdateInstaller.Commit"/>). Зовётся на выходе, когда
+    /// окно закрыто и всё сохранено: после подмены прежний процесс уже не может догружать свои части из exe.
+    /// null — встала; иначе причина (прежняя версия на месте).
+    /// </summary>
+    public string? Commit()
+    {
+        lock (_g)
+        {
+            if (_state.Stage != UpdateStage.ReadyToRestart) return "обновление не подготовлено";
+            return UpdateInstaller.Commit(_currentExe);
+        }
     }
 
     private void Set(UpdateState s)
