@@ -85,6 +85,8 @@ jobs:
           # большая библиотека: замеры в shots/*.perf.txt (запуск, фильтр, поиск, перечитывание, память)
           Shot 'many-1000' @('--many', '1000', '--perf')
           Shot 'many-5000' @('--many', '5000', '--perf')
+          # долгая работа: 300 кругов фильтров, поиска, перечитывания, переключений и разделов; память до и после
+          Shot 'soak' @('--many', '300', '--perf', '--soak')
           Get-ChildItem shots -Filter *.perf.txt | ForEach-Object { Write-Host "── $($_.Name)"; Get-Content $_.FullName }
           Get-ChildItem shots
       - name: Отправить снимки

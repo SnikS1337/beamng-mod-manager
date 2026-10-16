@@ -71,6 +71,9 @@ public interface ILibraryStore
 
 public sealed class InMemoryLibraryStore : ILibraryStore
 {
+    /// <summary>Сколько прежних имён файла помнить у мода.</summary>
+    public const int MaxFileHistory = 20;
+
     // Интерфейс могут читать из окна, пока идёт проверка в фоне: все обращения под одной блокировкой.
     private readonly object _g = new();
     private readonly Dictionary<string, InstalledMod> _mods = new();
@@ -110,6 +113,8 @@ public sealed class InMemoryLibraryStore : ILibraryStore
             if (!_history.TryGetValue(modId, out var l)) _history[modId] = l = new List<string>();
             l.RemoveAll(x => string.Equals(x, fileName, StringComparison.OrdinalIgnoreCase));
             l.Add(fileName); // самое свежее в конце
+            // мод, который обновляют годами, не растит библиотеку без конца: хватает последних имён
+            if (l.Count > MaxFileHistory) l.RemoveRange(0, l.Count - MaxFileHistory);
         }
     }
 
