@@ -181,6 +181,10 @@ jobs:
             if (-not $fv.StartsWith($expectVer)) { throw "${name}: на месте версия $fv, ждали $expectVer" }
             $joined = $log -join "`n"
             foreach ($p in $expectLog) { if ($joined -notmatch $p) { throw "${name}: в журнале нет «$p»" } }
+            # прежняя версия после подмены не должна падать на выходе (настройки сохраняются до подмены)
+            if ((Test-Path "$data/errors.log") -and (Select-String -Path "$data/errors.log" -Pattern 'FileNotFoundException|TypeInitializationException' -Quiet)) {
+              throw "${name}: в errors.log ошибка загрузки сборки"
+            }
             $left = @(Get-ChildItem $app | ForEach-Object Name)
             if ($left.Count -ne 1) { throw "${name}: в папке программы лишнее: $($left -join ', ')" }
             Write-Host "   ок: $fv"
@@ -196,7 +200,8 @@ jobs:
             'install ReadyToRestart', 'start 0\.1\.1 rolled-back .*skip=0\.1\.2', 'check UpToDate')
           Scenario 'нет прав на папку программы: ничего не тронуто' @{} '0.1.1' @(
             'check Available', 'install Available нет прав') {
-            icacls $app /deny "${env:USERNAME}:(OI)(CI)(W,D,DC)" /Q | Out-Null
+            # только сама папка: нельзя добавлять файлы и удалять из неё (запуск exe при этом разрешён)
+            icacls $app /deny "${env:USERNAME}:(WD,AD,DC)" /Q | Out-Null
           }
           Stop-Transcript | Out-Null
       - name: Журнал в ветку ci-selfupdate

@@ -170,6 +170,8 @@ public partial class App : Application
             if (_afterUpdate) host.StartupToast = $"Программа обновлена до {AppVersion.Display(up.Current)}";
             if (_rolledBack is { } bad)
                 host.StartupToast = $"Версия {AppVersion.Display(bad)} не запустилась, вернули {AppVersion.Display(up.Current)}. Подождём следующую";
+            if (Arg("--update-failed") is { Length: > 0 } why)
+                host.StartupToast = $"Обновление не встало: {why}. Осталась версия {AppVersion.Display(up.Current)}";
         }
         host.Banner = new UpdateBanner(host.Updater, a => Dispatcher.BeginInvoke(a), RestartIntoUpdate);
         host.Settings.CanUpdateApp = host.Updater is not null;
@@ -282,6 +284,23 @@ public partial class App : Application
         if (_restartExe is { } exe)
         {
             ReleaseSingle();
+            // подмена — только сейчас: окно закрыто, настройки и библиотека записаны. Собранная в один файл программа
+            // догружает свои части из exe по имени, и после подмены прежний процесс уже не смог бы их прочитать
+            if (_updater?.Commit() is { } failed)
+            {
+                Log("обновление не встало: " + failed);
+                // прежняя версия на месте: запускаем её снова, она скажет, что случилось
+                try
+                {
+                    var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+                    psi.ArgumentList.Add("--update-failed");
+                    psi.ArgumentList.Add(failed);
+                    Process.Start(psi);
+                }
+                catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
+                base.OnExit(e);
+                return;
+            }
             using var started = new EventWaitHandle(false, EventResetMode.ManualReset, StartedEventName(Environment.ProcessId));
             Process? child = null;
             try { child = Process.Start(new ProcessStartInfo(exe, $"--after-update {Environment.ProcessId}") { UseShellExecute = false }); }

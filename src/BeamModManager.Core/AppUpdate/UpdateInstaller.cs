@@ -47,21 +47,23 @@ public static class UpdateInstaller
     }
 
     /// <summary>
-    /// Поставить новый exe на место текущего. Сначала новый копируется рядом с текущим («*.new»): папка обновления
-    /// лежит в профиле, а программа может быть на другом диске, и перенос между дисками — это долгое копирование.
-    /// Пока копия не готова, текущий exe не трогаем. Потом два быстрых переименования на одном диске: текущий → «*.old»,
-    /// «*.new» → на его место. Если второе не удалось, текущий возвращается обратно. Ошибка — понятная причина.
+    /// Поставить новый exe на место текущего: <see cref="Stage"/>, затем <see cref="Commit"/>. Программа делает эти шаги
+    /// в разное время: подготовку — сразу после загрузки, подмену — уже закрыв окно (см. <see cref="Commit"/>).
     /// </summary>
     /// <param name="move">Переименование (для проверок: подставить сбой). По умолчанию File.Move.</param>
-    public static string? Swap(string currentExe, string newExe, Action<string, string>? move = null)
+    public static string? Swap(string currentExe, string newExe, Action<string, string>? move = null) =>
+        Stage(currentExe, newExe) ?? Commit(currentExe, move);
+
+    /// <summary>
+    /// Подготовка: новый exe копируется рядом с текущим («*.new»). Папка обновления лежит в профиле, а программа может
+    /// быть на другом диске, и перенос между дисками — это долгое копирование; здесь оно делается заранее, текущий exe
+    /// не трогается. Здесь же видно, что в папку программы нельзя писать: ошибка — понятная причина.
+    /// </summary>
+    public static string? Stage(string currentExe, string newExe)
     {
-        move ??= (a, b) => File.Move(a, b);
-        var old = currentExe + OldSuffix;
         var staged = currentExe + NewSuffix;
         if (!File.Exists(newExe)) return "подготовленное обновление пропало";
         if (!File.Exists(currentExe)) return "программа не найдена на прежнем месте";
-
-        // 1. копия рядом с программой; текущий exe пока не тронут
         var copied = Retry(() =>
         {
             TryDeleteFile(staged);
@@ -75,11 +77,24 @@ public static class UpdateInstaller
             TryDelete(staged);
             return "новую версию держит другая программа (антивирус?): " + held.Message;
         }
+        return null;
+    }
+
+    /// <summary>
+    /// Подмена: два быстрых переименования на одном диске — текущий → «*.old», «*.new» → на его место; если второе не
+    /// удалось, текущий возвращается. Программа зовёт это, когда окно уже закрыто и всё сохранено: собранная в один файл
+    /// программа догружает свои части из exe по его имени, и после подмены под этим именем уже другая версия.
+    /// </summary>
+    public static string? Commit(string currentExe, Action<string, string>? move = null)
+    {
+        move ??= (a, b) => File.Move(a, b);
+        var old = currentExe + OldSuffix;
+        var staged = currentExe + NewSuffix;
+        if (!File.Exists(staged)) return "подготовленное обновление пропало";
 
         try { if (File.Exists(old)) File.Delete(old); } // остался с прошлого обновления
         catch (Exception x) when (x is IOException or UnauthorizedAccessException) { TryDelete(staged); return "не удалось убрать старую копию: " + x.Message; }
 
-        // 2. два переименования на одном диске
         try { move(currentExe, old); }
         catch (UnauthorizedAccessException) { TryDelete(staged); return NoRights; }
         catch (IOException x) { TryDelete(staged); return "не удалось отодвинуть текущую версию: " + x.Message; }
