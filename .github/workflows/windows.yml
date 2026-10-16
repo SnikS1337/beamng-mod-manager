@@ -87,7 +87,10 @@ jobs:
           Shot 'many-5000' @('--many', '5000', '--perf')
           # долгая работа: 300 кругов фильтров, поиска, перечитывания, переключений и разделов; память до и после
           Shot 'soak' @('--many', '300', '--perf', '--soak')
+          # кадры в секунду в анимациях (выезд панели, капли, наведение, переход в настройки): shots/frames.png.frames.txt
+          Shot 'frames' @('--frames')
           Get-ChildItem shots -Filter *.perf.txt | ForEach-Object { Write-Host "── $($_.Name)"; Get-Content $_.FullName }
+          Get-ChildItem shots -Filter *.frames.txt | ForEach-Object { Write-Host "── $($_.Name)"; Get-Content $_.FullName }
           # пороги с запасом (на этой машине нет видеокарты): регресс сетки или сверки ловится здесь, а не у человека
           function Ms($file, $what) {
             $line = Get-Content "shots/$file" | Where-Object { $_.StartsWith($what) } | Select-Object -First 1
