@@ -736,7 +736,7 @@ public partial class MainWindow : Window
     // ───────────── форма капель: растяжение в пути и сжатие при нажатии (DESIGN_MOTION 3.3) ─────────────
 
     /// <summary>Насколько капля вытягивается по ходу движения: от скорости пружины, не больше 14 %.</summary>
-    private static double Stretch(double velocity) => Math.Min(0.14, Math.Abs(velocity) / 2600);
+    private static double StretchOf(double velocity) => Math.Min(0.14, Math.Abs(velocity) / 2600);
 
     /// <summary>Вытянулась вдоль — сузилась поперёк (объём «сохраняется»), и всё это умножается на сжатие нажатия.</summary>
     private static void Shape(ScaleTransform t, double along, bool vertical, double press, double scale = 1)
@@ -749,19 +749,19 @@ public partial class MainWindow : Window
 
     private void NavDropShape()
     {
-        Shape(NavDropScale, Stretch(_navDrop.Velocity), vertical: true, _navPress.Value);
+        Shape(NavDropScale, StretchOf(_navDrop.Velocity), vertical: true, _navPress.Value);
         NavDrop.Sync();
     }
 
     private void FilterDropShape()
     {
-        Shape(FilterDropScale, Stretch(_filterX.Velocity), vertical: false, _filterPress.Value);
+        Shape(FilterDropScale, StretchOf(_filterX.Velocity), vertical: false, _filterPress.Value);
         FilterDrop.Sync();
     }
 
     private void CapDropShape()
     {
-        Shape(CapDropScale, Stretch(_capX.Velocity), vertical: false, _capPress.Value, _capScale.Value);
+        Shape(CapDropScale, StretchOf(_capX.Velocity), vertical: false, _capPress.Value, _capScale.Value);
         CapDrop.Sync();
     }
 
