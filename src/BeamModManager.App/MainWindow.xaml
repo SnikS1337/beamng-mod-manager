@@ -427,10 +427,16 @@
                  Lens="30" Refraction="105" Brightness="0.78" Ice="0.55" IceReach="34" Sparks="6" Seed="11"
                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0" Width="84" Height="284"
                  WindowChrome.IsHitTestVisibleInChrome="True">
-            <Canvas>
-                <Border x:Name="NavDrop" Style="{StaticResource Drop}" CornerRadius="24" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
-                    <Border.RenderTransform><TranslateTransform x:Name="NavDropMove" Y="14"/></Border.RenderTransform>
-                </Border>
+            <Canvas PreviewMouseLeftButtonDown="Nav_PreviewMouseDown" PreviewMouseLeftButtonUp="Nav_PreviewMouseUp" MouseLeave="Nav_PreviewMouseUp">
+                <!-- капля жидкого стекла (Controls/Droplet.cs): линза, объём, радужная кромка; в пути вытягивается, при нажатии сжимается -->
+                <c:Droplet x:Name="NavDrop" Corner="24" Width="70" Height="58" Canvas.Left="7" Canvas.Top="0">
+                    <c:Droplet.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform x:Name="NavDropScale"/>
+                            <TranslateTransform x:Name="NavDropMove" Y="14"/>
+                        </TransformGroup>
+                    </c:Droplet.RenderTransform>
+                </c:Droplet>
                 <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="14" Content="Моды" Tag="{StaticResource IconMods}"
                              IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
                 <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
@@ -477,13 +483,18 @@
                 </Border>
 
                 <!-- фильтры: активен один, под активным — капля -->
-                <Border x:Name="FilterBox" DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center"
+                <Border x:Name="FilterBox" PreviewMouseLeftButtonDown="Filter_PreviewMouseDown" PreviewMouseLeftButtonUp="Filter_PreviewMouseUp" MouseLeave="Filter_PreviewMouseUp" DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center"
                         WindowChrome.IsHitTestVisibleInChrome="True">
                     <Grid>
                         <Canvas>
-                            <Border x:Name="FilterDrop" Style="{StaticResource Drop}" CornerRadius="17" Height="34" Canvas.Top="-2" Width="60">
-                                <Border.RenderTransform><TranslateTransform x:Name="FilterDropMove" X="-3"/></Border.RenderTransform>
-                            </Border>
+                            <c:Droplet x:Name="FilterDrop" Corner="17" Height="34" Canvas.Top="-2" Width="60" Under="{DynamicResource SegBack}">
+                                <c:Droplet.RenderTransform>
+                                    <TransformGroup>
+                                        <ScaleTransform x:Name="FilterDropScale"/>
+                                        <TranslateTransform x:Name="FilterDropMove" X="-3"/>
+                                    </TransformGroup>
+                                </c:Droplet.RenderTransform>
+                            </c:Droplet>
                         </Canvas>
                         <ItemsControl x:Name="FilterList" ItemsSource="{Binding Filters}" Focusable="False">
                             <ItemsControl.ItemsPanel>
@@ -813,17 +824,18 @@
         <c:Glass x:Name="Caption" Source="{Binding ElementName=Scene}" Corner="18" Blur="4" Tint="#700E182C"
                  Lens="18" Refraction="0" Brightness="0.78" Ice="0"
                  HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0" Width="132" Height="36"
-                 WindowChrome.IsHitTestVisibleInChrome="True" MouseLeave="Caption_MouseLeave">
+                 WindowChrome.IsHitTestVisibleInChrome="True" MouseLeave="Caption_MouseLeave"
+                 PreviewMouseLeftButtonDown="Caption_PreviewMouseDown" PreviewMouseLeftButtonUp="Caption_PreviewMouseUp">
             <Grid>
                 <Canvas>
-                    <Border x:Name="CapDrop" Style="{StaticResource Drop}" CornerRadius="17" Width="46" Height="34" Canvas.Top="1" Opacity="0" RenderTransformOrigin="0.5,0.5">
-                        <Border.RenderTransform>
+                    <c:Droplet x:Name="CapDrop" Corner="17" Width="46" Height="34" Canvas.Top="1" Opacity="0">
+                        <c:Droplet.RenderTransform>
                             <TransformGroup>
                                 <ScaleTransform x:Name="CapDropScale" ScaleX="0.6" ScaleY="0.6"/>
                                 <TranslateTransform x:Name="CapDropMove" X="-1"/>
                             </TransformGroup>
-                        </Border.RenderTransform>
-                    </Border>
+                        </c:Droplet.RenderTransform>
+                    </c:Droplet>
                 </Canvas>
                 <StackPanel Orientation="Horizontal">
                     <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Tag="{StaticResource IconMin}" Click="Min_Click" MouseEnter="CapButton_MouseEnter"

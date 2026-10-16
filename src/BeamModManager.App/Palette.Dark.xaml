@@ -51,21 +51,6 @@
     <SolidColorBrush x:Key="TileRimHover" Color="#73FFFFFF"/>
     <SolidColorBrush x:Key="TileRimOn" Color="#E6FFFFFF"/>
 
-    <!-- капля жидкого стекла: под активным пунктом левой панели и фильтра, на кнопках окна -->
-    <LinearGradientBrush x:Key="DropFill" StartPoint="0.2,0" EndPoint="0.8,1">
-        <GradientStop Color="#3DFFFFFF" Offset="0"/>
-        <GradientStop Color="#0DFFFFFF" Offset="0.52"/>
-        <GradientStop Color="#21FFFFFF" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="DropRim" StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="#D9FFFFFF" Offset="0"/>
-        <GradientStop Color="#8C6EC8FF" Offset="0.18"/>
-        <GradientStop Color="#4DFFFFFF" Offset="0.45"/>
-        <GradientStop Color="#80FF6EC8" Offset="0.75"/>
-        <GradientStop Color="#73FFFFFF" Offset="1"/>
-    </LinearGradientBrush>
-
-    <!-- под верхней панелью карточки уходят в тень, чтобы подписи панели читались -->
     <LinearGradientBrush x:Key="TopFade" StartPoint="0,0" EndPoint="0,1">
         <GradientStop Color="#94080E1C" Offset="0"/>
         <GradientStop Color="#94080E1C" Offset="0.52"/>

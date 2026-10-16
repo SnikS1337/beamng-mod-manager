@@ -98,19 +98,6 @@
         </Setter>
     </Style>
 
-    <!-- Капля жидкого стекла: под активным пунктом левой панели и фильтра, на кнопках окна (цвета в Palette.*.xaml) -->
-    <Style x:Key="Drop" TargetType="Border">
-        <Setter Property="IsHitTestVisible" Value="False"/>
-        <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Background" Value="{DynamicResource DropFill}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource DropRim}"/>
-        <Setter Property="Effect">
-            <Setter.Value>
-                <DropShadowEffect BlurRadius="20" ShadowDepth="8" Direction="270" Color="#040814" Opacity="0.5" RenderingBias="Performance"/>
-            </Setter.Value>
-        </Setter>
-    </Style>
-
     <Style x:Key="FocusVisual">
         <Setter Property="Control.Template">
             <Setter.Value>
