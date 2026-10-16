@@ -87,7 +87,7 @@
                                     </MultiBinding>
                                 </Border.Background>
                             </Border>
-                            <Grid x:Name="Sleep" Opacity="0" IsHitTestVisible="False">
+                            <Grid x:Name="Sleep" Opacity="0" IsHitTestVisible="False" c:SleepFade.Awake="{Binding Enabled}">
                                 <Border CornerRadius="26">
                                     <Border.Background>
                                         <MultiBinding Converter="{StaticResource PreviewBrush}" ConverterParameter="gray">
@@ -167,23 +167,7 @@
                                 <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="Snow" Property="Visibility" Value="Visible"/>
                             </DataTrigger>
-                            <!-- выключили: мод «засыпает» — фото плавно становится серым с холодным налётом; включили — оживает (DESIGN_MOTION 3.1) -->
-                            <DataTrigger Binding="{Binding Enabled}" Value="False">
-                                <DataTrigger.EnterActions>
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.45" EasingFunction="{StaticResource Smooth}"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </DataTrigger.EnterActions>
-                                <DataTrigger.ExitActions>
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetName="Sleep" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" EasingFunction="{StaticResource Smooth}"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </DataTrigger.ExitActions>
-                            </DataTrigger>
+                            <!-- выключили: мод «засыпает» — серый налёт; включили — оживает. Ведёт Controls/SleepFade (DESIGN_MOTION 3.1) -->
                             <DataTrigger Binding="{Binding SubtitleStrong}" Value="True">
                                 <Setter TargetName="Sub" Property="Foreground" Value="White"/>
                                 <Setter TargetName="Sub" Property="FontWeight" Value="SemiBold"/>
