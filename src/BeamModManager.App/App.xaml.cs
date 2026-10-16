@@ -132,13 +132,14 @@ public partial class App : Application
         WindowHost host;
         if (demo is not null)
         {
-            var demoGarage = new DemoBackend(demo);
+            var demoGarage = new DemoBackend(demo, int.TryParse(Arg("--many"), out var many) ? many : 0);
             host = new WindowHost
             {
                 Backend = demoGarage,
                 Updates = new DemoUpdatesBackend(demoGarage),
                 DownloadsAllowed = true, // как на доске «Гараж»
                 ShotPath = shot,
+                ShotPerf = Array.IndexOf(Environment.GetCommandLineArgs(), "--perf") >= 0,
                 ShotSelect = Arg("--select"),
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,

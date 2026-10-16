@@ -85,7 +85,7 @@ public static class AppUpdateTests
     {
         static async Task Until(Func<bool> cond)
         {
-            for (var i = 0; i < 200 && !cond(); i++) await Task.Delay(10);
+            for (var i = 0; i < 500 && !cond(); i++) await Task.Delay(10); // до 5 с: под нагрузкой пул потоков отвечает не сразу
         }
 
         t.Group("Самообновление: описание версии");

@@ -82,6 +82,10 @@ jobs:
           Shot 'light-updates' @('--mode', 'Light', '--page', 'updates')
           Shot 'bind' @('--page', 'bind')
           Shot 'light-bind' @('--mode', 'Light', '--page', 'bind', '--width', '1100', '--height', '760')
+          # большая библиотека: замеры в shots/*.perf.txt (запуск, фильтр, поиск, перечитывание, память)
+          Shot 'many-1000' @('--many', '1000', '--perf')
+          Shot 'many-5000' @('--many', '5000', '--perf')
+          Get-ChildItem shots -Filter *.perf.txt | ForEach-Object { Write-Host "── $($_.Name)"; Get-Content $_.FullName }
           Get-ChildItem shots
       - name: Отправить снимки
         if: always()
