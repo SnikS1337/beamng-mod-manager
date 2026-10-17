@@ -43,6 +43,9 @@ public static class VersionHistory
     /// </summary>
     public static IReadOnlyList<DeletedMod> Deleted(ModInstaller installer, ILibraryStore store)
     {
+        // копий нет — и сверять не с чем: гараж зовёт это при каждом перечитывании, а ключи названий для тысяч модов не даром
+        var raw = installer.DeletedMods();
+        if (raw.Count == 0) return raw;
         var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var keys = new HashSet<string>();
         foreach (var m in store.Mods())
@@ -52,7 +55,7 @@ public static class VersionHistory
             var k = LibrarySync.NameKey(m.FileName);
             if (k.Length > 0) keys.Add(k);
         }
-        return installer.DeletedMods().Where(d => !taken.Contains(d.FileName) && !keys.Contains(LibrarySync.NameKey(d.FileName))).ToList();
+        return raw.Where(d => !taken.Contains(d.FileName) && !keys.Contains(LibrarySync.NameKey(d.FileName))).ToList();
     }
 
     /// <summary>Возвращает выбранную версию: файл ставится на место текущего, запись в библиотеке следует за ним.</summary>
