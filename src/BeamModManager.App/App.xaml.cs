@@ -172,7 +172,7 @@ public partial class App : Application
                     Theme = Enum.TryParse<BackgroundTheme>(Arg("--theme"), true, out var th) && Enum.IsDefined(th) ? th : BackgroundTheme.Night,
                     Mode = Enum.TryParse<UiMode>(Arg("--mode"), true, out var md) && Enum.IsDefined(md) ? md : UiMode.Dark,
                     // --matte: жидкое стекло выключено (снимки матового вида с плашками вместо капель)
-                    LiquidGlass = Array.IndexOf(e.Args, "--matte") < 0,
+                    LiquidGlass = Array.IndexOf(Environment.GetCommandLineArgs(), "--matte") < 0,
                 })
                 {
                     ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")),
