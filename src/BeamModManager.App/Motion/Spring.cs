@@ -68,6 +68,24 @@ public sealed class SpringDriver
     /// <summary>Интерфейс не анимируется: капли, панели и карточки встают на место сразу. Фон этим не управляется.</summary>
     public static bool ReducedMotion => (SystemReduced && !ForceMotion) || AnimationsOff;
 
+    private static int _running;
+
+    /// <summary>Хоть одна группа пружин сейчас движется.</summary>
+    public static bool AnyRunning => _running > 0;
+
+    /// <summary>Первая группа пружин тронулась (true) или последняя успокоилась (false). Окно на это время придерживает фон.</summary>
+    public static event Action<bool>? AnyRunningChanged;
+
+    private void SetOn(bool on)
+    {
+        if (_on == on) return;
+        _on = on;
+        if (on) { _last = TimeSpan.Zero; CompositionTarget.Rendering += OnFrame; }
+        else { CompositionTarget.Rendering -= OnFrame; _pacer.BurstEnded(); }
+        _running += on ? 1 : -1;
+        if (_running == (on ? 1 : 0)) AnyRunningChanged?.Invoke(on);
+    }
+
     public Spring Add(Spring s, Action<double> apply)
     {
         _items.Add((s, apply));
@@ -85,7 +103,7 @@ public sealed class SpringDriver
             return;
         }
         s.Target = target;
-        if (!_on) { _on = true; _last = TimeSpan.Zero; CompositionTarget.Rendering += OnFrame; }
+        SetOn(true);
     }
 
     private void OnFrame(object? sender, EventArgs e)
@@ -107,7 +125,7 @@ public sealed class SpringDriver
             busy |= s.Step(dt);
             apply(s.Value);
         }
-        if (!busy) { _on = false; CompositionTarget.Rendering -= OnFrame; _pacer.BurstEnded(); }
+        if (!busy) SetOn(false);
     }
 }
 

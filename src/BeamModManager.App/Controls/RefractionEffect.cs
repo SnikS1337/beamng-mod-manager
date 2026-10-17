@@ -27,8 +27,13 @@ public sealed class RefractionEffect : ShaderEffect
     public static readonly DependencyProperty RadiusProperty = DependencyProperty.Register(
         nameof(Radius), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(26.0, PixelShaderConstantCallback(1)));
 
+    // шейдер получает 1 / Lens (регистр c2): деление на каждом пикселе стоило бы команду из 64 у PS 2.0
     public static readonly DependencyProperty LensProperty = DependencyProperty.Register(
-        nameof(Lens), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(40.0, PixelShaderConstantCallback(2)));
+        nameof(Lens), typeof(double), typeof(RefractionEffect),
+        new UIPropertyMetadata(40.0, (d, e) => d.SetValue(InvLensProperty, 1.0 / Math.Max(0.001, (double)e.NewValue))));
+
+    private static readonly DependencyProperty InvLensProperty = DependencyProperty.Register(
+        "InvLens", typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(1.0 / 40.0, PixelShaderConstantCallback(2)));
 
     public static readonly DependencyProperty StrengthProperty = DependencyProperty.Register(
         nameof(Strength), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(0.0, PixelShaderConstantCallback(3)));
@@ -92,7 +97,7 @@ public sealed class RefractionEffect : ShaderEffect
         UpdateShaderValue(InputProperty);
         UpdateShaderValue(SizeProperty);
         UpdateShaderValue(RadiusProperty);
-        UpdateShaderValue(LensProperty);
+        UpdateShaderValue(InvLensProperty);
         UpdateShaderValue(StrengthProperty);
         UpdateShaderValue(SaturationProperty);
         UpdateShaderValue(BrightnessProperty);

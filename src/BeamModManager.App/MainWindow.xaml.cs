@@ -93,6 +93,8 @@ public partial class MainWindow : Window
     /// <summary>Нажатие на каплю: она чуть сжимается (0,92) и упруго возвращается (0,4 с, упругость 0,3 — «физическое»).</summary>
     private readonly Spring _navPress, _filterPress, _capPress;
     private readonly BackgroundMotion _motion;
+    /// <summary>Шагов выезда панели мода с её появления (кэш картинкой — не раньше, чем она нарисуется вживую).</summary>
+    private int _inspLiveFrames;
     private readonly DispatcherTimer _gameTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(6) };
     /// <summary>Пока изменение передано помощнику в игре, раз в секунду смотрим, применила ли его игра.</summary>
@@ -152,7 +154,11 @@ public partial class MainWindow : Window
             if (!insp.Resting && Math.Abs(v - insp.Target) < 0.5 && Math.Abs(insp.Velocity) < 30) { insp.Snap(insp.Target); v = insp.Target; }
             InspectorMove.X = v;
             var moving = !insp.Resting;
-            if (moving && Inspector.CacheMode is null) Inspector.CacheMode = new BitmapCache { SnapsToDevicePixels = true };
+            // кэш — только после того, как панель хоть раз нарисовалась вживую: панель, которая только что появилась, в
+            // первом кадре ещё без копии сцены, и кэш запоминал её такой на весь выезд — тёмной, в полосах, а «через
+            // секунду» (кэш снят) белой (0.1.122, светлое оформление). Пружина шагает перед кадром, поэтому два шага с
+            // появления — один кадр уже нарисован
+            if (moving && Inspector.CacheMode is null && ++_inspLiveFrames > 2) Inspector.CacheMode = new BitmapCache { SnapsToDevicePixels = true };
             else if (!moving && Inspector.CacheMode is not null) { Inspector.CacheMode = null; Inspector.InvalidateArrange(); }
             if (v >= 343 && _vm.Selected is null) Inspector.Visibility = Visibility.Collapsed; // уехала: стекло не считаем зря
         });
@@ -182,7 +188,9 @@ public partial class MainWindow : Window
         }
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
-        _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
+        _motion = new BackgroundMotion(this, GradeMove, Lights, Flies, BackgroundPace.Fps(Native.RefreshRate()));
+        SpringDriver.AnyRunningChanged += _motion.Hold;
+        Closed += (_, _) => SpringDriver.AnyRunningChanged -= _motion.Hold;
         _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, SitesPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         // «Обновления»: список из тех же карточек гаража, проверка через один координатор
         _upd = new UpdatesViewModel(vm, host.Updates ?? new NoUpdates(), host.Settings, a => Dispatcher.BeginInvoke(a));
@@ -753,7 +761,7 @@ public partial class MainWindow : Window
         // не перерисовывает; на узком окне панель лежит поверх карточек — видна вся сцена
         Visual source = _narrow ? Scene : Backdrop;
         if (!ReferenceEquals(Inspector.Source, source)) Inspector.Source = source;
-        if (open) Inspector.Visibility = Visibility.Visible;
+        if (open && Inspector.Visibility != Visibility.Visible) { Inspector.Visibility = Visibility.Visible; _inspLiveFrames = 0; }
         _springs.To(_inspX, open ? 0 : 344, instant);
         if (!open && (instant || SpringDriver.ReducedMotion)) Inspector.Visibility = Visibility.Collapsed;
     }
@@ -1641,7 +1649,6 @@ public partial class MainWindow : Window
         AppearanceRightCol.Width = one ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
     }
 
-    private void ResetLook_Click(object sender, RoutedEventArgs e) => _host.Settings.ResetAppearance();
     // новое оформление раскрывается от того места, где нажали (с клавиатуры — из центра окна)
     private void Mode_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _revealFrom = e.GetPosition(Root);
     private void LessWarn_Click(object sender, RoutedEventArgs e) => _host.Settings.LessWarn();
@@ -2130,6 +2137,7 @@ public partial class MainWindow : Window
         var lines = new List<string>
         {
             $"видеокарта WPF: уровень {RenderCapability.Tier >> 16}; эффекты анимации Windows: {(SpringDriver.SystemReduced ? "выключены" : "включены")}",
+            $"экран: {Native.RefreshRate()} Гц; фон: {_motion.Fps} кадр/с",
         };
         _probing = true;
         var reducedBefore = SpringDriver.AnimationsOff;

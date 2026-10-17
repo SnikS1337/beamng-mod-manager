@@ -48,7 +48,7 @@ public static class SettingsScreenTests
             vm.MoreWarn(); Assert.Eq(1, vm.WarnAbove);
         });
 
-        t.Run("набор выбирает стекло и выставляет движение; ручная правка — «своё», «Вернуть как в наборе» и «Сбросить»", () =>
+        t.Run("набор выбирает стекло и выставляет движение; ручная правка — «своё» и «Вернуть как в наборе»", () =>
         {
             var vm = new SettingsViewModel(new AppSettings());
             Assert.True(vm.IsBeautiful && !vm.IsFast, "по умолчанию «Красиво»");
@@ -57,17 +57,18 @@ public static class SettingsScreenTests
             Assert.False(vm.Current.LiquidGlass, "без жидкого стекла");
             Assert.False(vm.Current.AnimatedBackground, "фон стоит");
             Assert.False(vm.Current.Fireflies, "огоньков нет");
-            Assert.True(vm.Current.UiAnimations, "анимации интерфейса остаются");
+            Assert.False(vm.Current.UiAnimations, "анимации интерфейса тоже выключены");
             vm.Fireflies = true;
             Assert.Null<object>(vm.Preset);
             Assert.True(vm.IsFast && !vm.IsBeautiful, "плитка по стеклу: осталось «Быстро»");
             Assert.True(vm.IsCustom && vm.PresetNote.StartsWith("Движение поменяно"), vm.PresetNote);
             vm.ReapplyPreset();
             Assert.True(vm.IsFast && !vm.IsCustom && !vm.Current.Fireflies, "движение как в «Быстро», стекло то же");
-            vm.Fireflies = true;
-            vm.ResetAppearance();
-            Assert.True(vm.IsBeautiful && !vm.IsCustom, "сброс");
             Assert.True(vm.PresetNote.StartsWith("Набор выбирает"), vm.PresetNote);
+            vm.UiAnimations = true;
+            Assert.True(vm.IsFast && vm.IsCustom, "анимации в «Быстро» включаются отдельно — набор становится своим");
+            vm.IsBeautiful = true;
+            Assert.True(vm.IsBeautiful && !vm.IsCustom && vm.Current.UiAnimations, "плитка «Красиво» возвращает всё");
         });
 
         t.Run("плитки наборов: выбор плитки выставляет набор, снятие отметки ничего не делает", () =>
@@ -106,8 +107,8 @@ public static class SettingsScreenTests
             vm.Fireflies = false;
             Assert.False(saved!.Fireflies, "ушло на сохранение");
             Assert.True(vm.Preset is null, "набор стал своим");
-            vm.ResetAppearance();
-            Assert.True(vm.Fireflies && vm.IsBeautiful, "«Сбросить» вернул огоньки");
+            vm.ReapplyPreset();
+            Assert.True(vm.Fireflies && vm.IsBeautiful, "«Вернуть как в наборе» вернул огоньки");
         });
 
         t.Run("стекло меняется только набором: движение отдельно стекло не трогает, наклон фона набор не меняет", () =>

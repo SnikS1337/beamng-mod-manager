@@ -28,14 +28,16 @@ public sealed class BackgroundMotion
         public bool Started, Paused;
     }
 
-    public BackgroundMotion(FrameworkElement owner, TranslateTransform gradeMove, Canvas lights, Canvas flies)
+    /// <param name="fps">Кадров в секунду (BackgroundPace.Fps по частоте экрана): фон медленный, 24–36 кадров глазу хватает,
+    /// а стекло пересчитывает копию сцены реже (DESIGN.md 8); главное — ровно в кадры экрана.</param>
+    public BackgroundMotion(FrameworkElement owner, TranslateTransform gradeMove, Canvas lights, Canvas flies, int fps = 30)
     {
         _owner = owner;
         _bg = new Part();
         _flies = new Part();
-        // фон медленный: 24 кадров в секунду глазу хватает, а стекло пересчитывает копию сцены реже (DESIGN.md 8)
-        Timeline.SetDesiredFrameRate(_bg.Sb, 24);
-        Timeline.SetDesiredFrameRate(_flies.Sb, 24);
+        Fps = fps;
+        Timeline.SetDesiredFrameRate(_bg.Sb, fps);
+        Timeline.SetDesiredFrameRate(_flies.Sb, fps);
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
         var sb = _bg.Sb;
         void Anim(DependencyObject target, DependencyProperty prop, double from, double to, double seconds, bool reverse = true, double delay = 0)
@@ -133,12 +135,37 @@ public sealed class BackgroundMotion
         }
     }
 
+    /// <summary>Кадров в секунду у фона и огоньков.</summary>
+    public int Fps { get; }
+
+    private bool _wantBg, _wantFlies, _held;
+
     /// <summary>Двигаться или стоять, фону и огонькам отдельно. Повторные вызовы с тем же значением ничего не делают.</summary>
     public void SetRunning(bool background, bool flies)
     {
+        _wantBg = background;
+        _wantFlies = flies;
+        Apply();
+    }
+
+    /// <summary>
+    /// Придержать фон, пока идёт анимация ответа (капля, островок, переключатель; 2026-10-17, после боя: «анимации дёрганые»).
+    /// Каждый кадр фона заново считает копию сцены под всеми стёклами; совпав с кадрами капли, он отнимал у неё время, и
+    /// капля шла рывками. Пауза — доли секунды, медленный фон за это время почти не сдвинулся бы; потом он идёт дальше
+    /// с того же места.
+    /// </summary>
+    public void Hold(bool held)
+    {
+        if (_held == held) return;
+        _held = held;
+        Apply();
+    }
+
+    private void Apply()
+    {
         var reduced = Motion.SpringDriver.SystemReduced;
-        Run(_bg, background && !reduced);
-        Run(_flies, flies && !reduced);
+        Run(_bg, _wantBg && !reduced && !_held);
+        Run(_flies, _wantFlies && !reduced && !_held);
     }
 
     private void Run(Part p, bool run)

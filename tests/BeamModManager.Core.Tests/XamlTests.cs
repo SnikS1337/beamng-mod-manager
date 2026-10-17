@@ -12,8 +12,6 @@ namespace BeamModManager.Core.Tests;
 public static class XamlTests
 {
     private static readonly XNamespace X = "http://schemas.microsoft.com/winfx/2006/xaml";
-    /// <summary>Заливка значка в покое (Controls/NavGlyph.cs, Idle).</summary>
-    private const double NavIdle = 0.16;
 
     /// <summary>Папка src/BeamModManager.App рядом с тестами (сборка из репозитория); null — тесты запущены не из него.</summary>
     private static string? AppDir()
@@ -164,7 +162,7 @@ public static class XamlTests
             }
         });
 
-        t.Run("значки левой панели двухцветные: у каждого пункта своя заливка и сила заливки у выбранного", () =>
+        t.Run("значки левой панели — только контур: заливок нет, у выбранного линия толще", () =>
         {
             var xaml = XDocument.Parse(Read("MainWindow.xaml"));
             var theme = Read("Theme.xaml");
@@ -172,15 +170,34 @@ public static class XamlTests
             foreach (var name in new[] { "NavGarage", "NavUpdates", "NavSearch", "NavSettings" })
             {
                 var rb = xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == name);
-                var fill = rb.Attributes().FirstOrDefault(a => a.Name.LocalName == "NavGlyph.Fill")?.Value;
-                var active = rb.Attributes().FirstOrDefault(a => a.Name.LocalName == "NavGlyph.ActiveFill")?.Value;
-                Assert.True(fill is not null && active is not null, $"{name}: заливка и её сила");
-                var key = Regex.Match(fill!, @"StaticResource (\w+)").Groups[1].Value;
-                Assert.True(keys.Contains(key), $"{name}: ключ {key} есть в теме");
-                var v = double.Parse(active!, System.Globalization.CultureInfo.InvariantCulture);
-                Assert.True(v > NavIdle && v <= 1, $"{name}: выбранный заметнее покоя ({v})");
+                Assert.False(rb.Attributes().Any(a => a.Name.LocalName.StartsWith("NavGlyph.", StringComparison.Ordinal)), $"{name}: заливка значка");
+                var key = Regex.Match((string?)rb.Attribute("Tag") ?? "", @"StaticResource (\w+)").Groups[1].Value;
+                Assert.True(keys.Contains(key), $"{name}: контур {key} есть в теме");
             }
+            Assert.False(keys.Any(k => k.StartsWith("Icon", StringComparison.Ordinal) && k.EndsWith("Fill", StringComparison.Ordinal)), "заливки значков в теме");
             Assert.True(theme.Contains("<c:NavGlyph", StringComparison.Ordinal), "пункт рисует NavGlyph");
+            var code = File.ReadAllText(Path.Combine(AppDir()!, "Controls", "NavGlyph.cs"));
+            var m = Regex.Match(code, @"Thin = ([0-9.]+), Bold = ([0-9.]+)");
+            Assert.True(m.Success, "толщины линии");
+            var thin = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var bold = double.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(bold > thin && bold <= 2.6, $"выбранный толще, но не жирно ({thin} → {bold})");
+            Assert.False(code.Contains("DrawGeometry(fill", StringComparison.Ordinal) || Regex.IsMatch(code, @"DrawGeometry\((?!null)"), "значок что-то заливает");
+        });
+
+        t.Run("островок после боя: прозрачнее в тёмном, с фиолетовым кантом в светлом; «Сбросить» в настройках нет", () =>
+        {
+            var xaml = XDocument.Parse(Read("MainWindow.xaml"));
+            foreach (var name in new[] { "TopBar", "TitleCapsule" })
+            {
+                var g = xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == name);
+                Assert.Eq("True", (string?)g.Attribute("Iridescent"), $"{name}: кант");
+                var tint = (string?)g.Attribute("Tint") ?? "";
+                Assert.True(tint.Length == 9 && Convert.ToInt32(tint.Substring(1, 2), 16) <= 0x5A, $"{name}: подложка не плотнее 0,35 ({tint})");
+                var b = double.Parse((string?)g.Attribute("Brightness") ?? "0", System.Globalization.CultureInfo.InvariantCulture);
+                Assert.True(b >= 0.72, $"{name}: яркость под стеклом {b}");
+            }
+            Assert.False(Read("MainWindow.xaml").Contains("Content=\"Сбросить\"", StringComparison.Ordinal), "ссылка «Сбросить»");
         });
 
         t.Run("верх «островки»: заголовок на фоне, капсула заголовка и островок с фильтрами и поиском в одном ряду", () =>

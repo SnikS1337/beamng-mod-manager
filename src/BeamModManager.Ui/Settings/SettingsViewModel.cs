@@ -148,9 +148,6 @@ public sealed class SettingsViewModel : Observable
 
     public void ApplyPreset(AppearancePreset p) => Update(s => AppearancePresets.Apply(s, p));
 
-    /// <summary>«Сбросить»: набор «Красиво», как при первом запуске.</summary>
-    public void ResetAppearance() => ApplyPreset(AppearancePreset.Beautiful);
-
     /// <summary>Оформление: тёмное, светлое, как в Windows.</summary>
     public UiMode Mode { get => _current.Mode; set => Update(s => s with { Mode = value }); }
     public bool ModeDark { get => Mode == UiMode.Dark; set { if (value) Mode = UiMode.Dark; } }

@@ -61,6 +61,9 @@ public class Glass : ContentControl
     public static readonly DependencyProperty SeedProperty = DependencyProperty.Register(
         nameof(Seed), typeof(int), typeof(Glass), new PropertyMetadata(11, (d, _) => ((Glass)d).ShapeChanged()));
 
+    public static readonly DependencyProperty IridescentProperty = DependencyProperty.Register(
+        nameof(Iridescent), typeof(bool), typeof(Glass), new PropertyMetadata(false, (d, _) => ((Glass)d).ApplyMode()));
+
     /// <summary>Что видно сквозь стекло.</summary>
     public Visual? Source { get => (Visual?)GetValue(SourceProperty); set => SetValue(SourceProperty, value); }
     public double Corner { get => (double)GetValue(CornerProperty); set => SetValue(CornerProperty, value); }
@@ -78,6 +81,12 @@ public class Glass : ContentControl
     public int Sparks { get => (int)GetValue(SparksProperty); set => SetValue(SparksProperty, value); }
     /// <summary>Зерно мест искр: у каждой панели своё, расклад не меняется от размера к размеру.</summary>
     public int Seed { get => (int)GetValue(SeedProperty); set => SetValue(SeedProperty, value); }
+    /// <summary>
+    /// Островок (решено 2026-10-17, после боя: «на светлой теме слишком затемнён»): в светлом оформлении вместо тени в толще
+    /// у края и тёмной нижней линии — тёмно-фиолетовый переливающийся кант 1,5 px и еле заметная тень внутрь, чтобы
+    /// островок не терялся на светлом фоне. В тёмном оформлении ничего не меняет.
+    /// </summary>
+    public bool Iridescent { get => (bool)GetValue(IridescentProperty); set => SetValue(IridescentProperty, value); }
 
     public CornerRadius CornerRadius => new(Corner);
 
@@ -101,7 +110,9 @@ public class Glass : ContentControl
     /// <summary>Светлое оформление: насыщенность под стеклом выше (стекло «сочное», как у Apple) и подъём тёмного к белому.</summary>
     public double EffectiveSaturation => _light ? 1.7 : 1.4;
     public double EffectiveLift => _light ? 0.42 : 0;
-    public double EffectiveShade => _light ? 0.14 : 0;
+    /// <summary>Тень в толще у края (светлое): видно, что край выпуклый. У островка почти нет: он узкий (48 px), и линза
+    /// у края занимает его почти целиком — тень 0,14 затемняла весь островок.</summary>
+    public double EffectiveShade => !_light ? 0 : Iridescent ? 0.04 : 0.14;
     /// <summary>Вид стекла изменился (режим, оформление, подложка): капли на панели перерисовываются.</summary>
     public event Action? LookChanged;
 
@@ -241,7 +252,13 @@ public class Glass : ContentControl
         if (_edge is not null) { _edge.Specular = liquid ? 1 : 0; _edge.Lens = Lens; }
         if (_highlight is not null) _highlight.Visibility = liquid ? Visibility.Visible : Visibility.Collapsed;
         // светлое: кромка в два слоя — сверху белый блик, снизу тонкая тёмная линия; так стекло отделяется от светлого фона
-        if (_contour is not null) _contour.BorderBrush = _light ? (liquid ? ContourLightLiquid : ContourLight) : liquid ? ContourLiquid : ContourMatte;
+        if (_contour is not null)
+        {
+            var rim = _light && Iridescent && _mode != GlassMode.Flat;
+            _contour.BorderBrush = rim ? IridescentRim : _light ? (liquid ? ContourLightLiquid : ContourLight) : liquid ? ContourLiquid : ContourMatte;
+            _contour.BorderThickness = new Thickness(rim ? 1.5 : 1);
+            _contour.Background = rim ? IridescentInner : null;
+        }
     }
 
     /// <summary>
@@ -265,6 +282,25 @@ public class Glass : ContentControl
         new(Color.FromArgb(0x8C, 0xFF, 0xFF, 0xFF), 0.35),
         new(Color.FromArgb(0x26, 0x14, 0x1B, 0x2B), 0.75),
         new(Color.FromArgb(0x33, 0x14, 0x1B, 0x2B), 1),
+    }, new Point(0, 0), new Point(0, 1)));
+
+    /// <summary>Кант островка: тёмно-фиолетовый с переливом в индиго и сливовый по длине, ярче к краям.</summary>
+    private static readonly Brush IridescentRim = Frozen(new LinearGradientBrush(new GradientStopCollection
+    {
+        new(Color.FromArgb(0xD9, 0x5B, 0x34, 0xC9), 0),
+        new(Color.FromArgb(0xB3, 0x3B, 0x2A, 0x9C), 0.28),
+        new(Color.FromArgb(0xC7, 0x8B, 0x3A, 0xC4), 0.52),
+        new(Color.FromArgb(0xA6, 0x34, 0x2F, 0x8E), 0.76),
+        new(Color.FromArgb(0xD9, 0x6E, 0x45, 0xE0), 1),
+    }, new Point(0, 0.2), new Point(1, 0.8)));
+
+    /// <summary>Еле заметная фиолетовая тень от канта внутрь (сверху и снизу), середина островка чистая.</summary>
+    private static readonly Brush IridescentInner = Frozen(new LinearGradientBrush(new GradientStopCollection
+    {
+        new(Color.FromArgb(0x1C, 0x3A, 0x22, 0x80), 0),
+        new(Color.FromArgb(0x00, 0x3A, 0x22, 0x80), 0.3),
+        new(Color.FromArgb(0x00, 0x3A, 0x22, 0x80), 0.7),
+        new(Color.FromArgb(0x1C, 0x3A, 0x22, 0x80), 1),
     }, new Point(0, 0), new Point(0, 1)));
 
     private void ApplySparks()

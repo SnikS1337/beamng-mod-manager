@@ -669,12 +669,12 @@ public static class CoreFixesTests
             Assert.True(nice.LiquidGlass && nice.Fireflies && nice.AnimatedBackground && nice.UiAnimations, "«Красиво»: всё включено");
             var fast = AppearancePresets.Apply(new AppSettings { BackgroundTilt = true }, AppearancePreset.Fast);
             Assert.True(!fast.LiquidGlass && !fast.AnimatedBackground && !fast.Fireflies && !fast.BackgroundTilt, "«Быстро»: ничего тяжёлого");
-            Assert.True(fast.UiAnimations, "«Быстро»: анимации интерфейса остаются");
+            Assert.False(fast.UiAnimations, "«Быстро»: анимации интерфейса тоже выключены");
             Assert.True(AppearancePresets.Detect(new AppSettings { Fireflies = false }) is null, "свои");
             Assert.True(AppearancePresets.Detect(new AppSettings { Theme = BackgroundTheme.Dusk }) == AppearancePreset.Beautiful, "тема фона на набор не влияет");
             Assert.True(AppearancePresets.Detect(new AppSettings { Mode = UiMode.Light }) == AppearancePreset.Beautiful, "оформление на набор не влияет");
             Assert.True(AppearancePresets.Detect(new AppSettings()) == AppearancePreset.Beautiful, "по умолчанию — «Красиво»");
-            Assert.True(AppearancePresets.Detect(fast with { UiAnimations = false }) is null, "«Быстро» без анимаций — свой");
+            Assert.True(AppearancePresets.Detect(fast with { UiAnimations = true }) is null, "«Быстро» с анимациями — свой");
         });
 
         t.Run("наборы: каждое сочетание четырёх переключателей распознаётся не больше чем одним набором", () =>
