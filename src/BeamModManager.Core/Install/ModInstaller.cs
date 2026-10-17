@@ -331,6 +331,35 @@ public sealed class ModInstaller
         return new OpResult(false, "Файл не найден.");
     }
 
+    /// <summary>
+    /// «Отменить» после удаления: копия, в которую ушёл файл (<see cref="Remove"/> вернул её путь), встаёт обратно в ту же папку —
+    /// в mods или в папку выключенных. Если файл с таким именем уже появился в любой из папок, ничего не трогаем.
+    /// </summary>
+    public OpResult Unremove(string fileName, string backupId, bool intoDisabled)
+    {
+        var name = SafeFileName(fileName);
+        if (name is null) return new OpResult(false, "Недопустимое имя файла.");
+        lock (Gate)
+        {
+            var src = FindBackup(name, backupId);
+            if (src is null) return new OpResult(false, "Копия удалённого мода пропала.");
+            if (File.Exists(Path.Combine(_layout.ModsDir, name)) || File.Exists(Path.Combine(_layout.DisabledDir, name)))
+                return new OpResult(false, "Файл с таким именем уже есть в папке.");
+            var dir = intoDisabled ? _layout.DisabledDir : _layout.ModsDir;
+            var target = Path.Combine(dir, name);
+            try
+            {
+                Directory.CreateDirectory(dir);
+                File.Move(src, target, overwrite: false);
+                return new OpResult(true, "Восстановлено.", target);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return new OpResult(false, IoMessage(e));
+            }
+        }
+    }
+
     /// <summary>Установленные архивы: имя и включён ли.</summary>
     public IReadOnlyList<(string FileName, bool Enabled)> Scan()
     {

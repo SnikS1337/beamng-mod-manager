@@ -36,6 +36,7 @@
     <Geometry x:Key="IconScript">M8,6 L3,11 L8,16 M14,6 L19,11 L14,16 M12.4,4.5 L9.6,17.5</Geometry>
     <Geometry x:Key="IconBox">M4,7 L11,3.5 L18,7 L18,15 L11,18.5 L4,15 Z M4,7 L11,10.5 L18,7 M11,10.5 L11,18.5</Geometry>
     <Geometry x:Key="IconSnow">M5.5,0.5 L5.5,10.5 M1,3 L10,8 M1,8 L10,3</Geometry>
+    <Geometry x:Key="IconWarn">M11,3.5 L19.5,18 L2.5,18 Z M11,9 L11,12.8 M11,15.4 L11,15.5</Geometry>
     <Geometry x:Key="IconMin">M1,5.5 L10,5.5</Geometry>
     <Geometry x:Key="IconMax">M3,1 L8,1 A2,2 0 0 1 10,3 L10,8 A2,2 0 0 1 8,10 L3,10 A2,2 0 0 1 1,8 L1,3 A2,2 0 0 1 3,1 Z</Geometry>
     <Geometry x:Key="IconRestore">M3,3 L8,3 L8,10 L1,10 L1,3 Z M3,3 L3,1 L10,1 L10,8 L8,8</Geometry>
@@ -286,6 +287,59 @@
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="T" Property="Opacity" Value="0.8"/></Trigger>
                     </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Меню карточки (DESIGN_COMPONENTS 3.9): плашка 220, пункты 36 с радиусом 12, опасный внизу за линией -->
+    <Style x:Key="CardMenu" TargetType="ContextMenu">
+        <Setter Property="OverridesDefaultStyle" Value="True"/>
+        <Setter Property="HasDropShadow" Value="False"/>
+        <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+        <Setter Property="FontFamily" Value="{StaticResource Font}"/>
+        <Setter Property="FontSize" Value="13.5"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <!-- поле 16 под тень: окно меню прозрачное, тень рисуется внутри него -->
+                    <Border Margin="16" Width="220" CornerRadius="16" Background="{DynamicResource MenuBack}" BorderBrush="{DynamicResource MenuRim}"
+                            BorderThickness="1" Padding="6">
+                        <Border.Effect><DropShadowEffect BlurRadius="20" ShadowDepth="6" Direction="270" Color="#080C18" Opacity="0.35" RenderingBias="Performance"/></Border.Effect>
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="CardMenuItem" TargetType="MenuItem">
+        <Setter Property="OverridesDefaultStyle" Value="True"/>
+        <Setter Property="Height" Value="36"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="B" CornerRadius="12" Background="Transparent" Padding="12,0">
+                        <TextBlock Text="{TemplateBinding Header}" VerticalAlignment="Center" FontWeight="Medium"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="B" Property="Background" Value="{DynamicResource MenuHover}"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="CardMenuLine" TargetType="Separator">
+        <Setter Property="OverridesDefaultStyle" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Rectangle Height="1" Fill="{DynamicResource MenuLine}" Margin="8,5"/>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>

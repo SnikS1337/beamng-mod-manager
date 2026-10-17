@@ -32,41 +32,44 @@ public static class PackContentReader
         try { archive = new ZipArchive(zip, ZipArchiveMode.Read, leaveOpen: true); }
         catch (InvalidDataException) { return ArchiveContent.Empty; }
 
-        using (archive)
+        using (archive) return ReadFrom(archive);
+    }
+
+    /// <summary>Состав уже открытого архива (его открыл вызывающий, например «Внутри архива»).</summary>
+    public static ArchiveContent ReadFrom(ZipArchive archive)
+    {
+        // Записи-папки заранее в множество: иначе поиск для каждого файла превращается в квадратичный перебор.
+        var dirEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in archive.Entries)
+            if (e.FullName.EndsWith('/') || e.FullName.EndsWith('\\'))
+                dirEntries.Add(Normalize(e.FullName));
+
+        var paths = archive.Entries
+            .Select(e => Normalize(e.FullName))
+            .Where(p => p.Length > 0)
+            .Select(p => p.Split('/'))
+            .ToList();
+
+        var vehicles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var levels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Корень: либо сам архив, либо единственная папка верхнего уровня, внутри которой лежат vehicles/levels.
+        var offset = 0;
+        if (!paths.Any(p => IsRoot(p[0])) && paths.Select(p => p[0]).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
+            && paths.Any(p => p.Length > 1 && IsRoot(p[1])))
+            offset = 1;
+
+        foreach (var p in paths)
         {
-            // Записи-папки заранее в множество: иначе поиск для каждого файла превращается в квадратичный перебор.
-            var dirEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var e in archive.Entries)
-                if (e.FullName.EndsWith('/') || e.FullName.EndsWith('\\'))
-                    dirEntries.Add(Normalize(e.FullName));
-
-            var paths = archive.Entries
-                .Select(e => Normalize(e.FullName))
-                .Where(p => p.Length > 0)
-                .Select(p => p.Split('/'))
-                .ToList();
-
-            var vehicles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var levels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // Корень: либо сам архив, либо единственная папка верхнего уровня, внутри которой лежат vehicles/levels.
-            var offset = 0;
-            if (!paths.Any(p => IsRoot(p[0])) && paths.Select(p => p[0]).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
-                && paths.Any(p => p.Length > 1 && IsRoot(p[1])))
-                offset = 1;
-
-            foreach (var p in paths)
-            {
-                // Нужен хотя бы один файл или вложенная папка внутри <имя>/, пустая запись папки имя не создаёт.
-                if (p.Length <= offset + 1) continue;
-                var root = p[offset];
-                var name = p[offset + 1];
-                if (p.Length == offset + 2 && !dirEntries.Contains(string.Join('/', p))) continue; // файл прямо в vehicles/
-                if (root.Equals("vehicles", StringComparison.OrdinalIgnoreCase)) vehicles.Add(name.ToLowerInvariant());
-                else if (root.Equals("levels", StringComparison.OrdinalIgnoreCase)) levels.Add(name.ToLowerInvariant());
-            }
-            return new ArchiveContent(vehicles, levels);
+            // Нужен хотя бы один файл или вложенная папка внутри <имя>/, пустая запись папки имя не создаёт.
+            if (p.Length <= offset + 1) continue;
+            var root = p[offset];
+            var name = p[offset + 1];
+            if (p.Length == offset + 2 && !dirEntries.Contains(string.Join('/', p))) continue; // файл прямо в vehicles/
+            if (root.Equals("vehicles", StringComparison.OrdinalIgnoreCase)) vehicles.Add(name.ToLowerInvariant());
+            else if (root.Equals("levels", StringComparison.OrdinalIgnoreCase)) levels.Add(name.ToLowerInvariant());
         }
+        return new ArchiveContent(vehicles, levels);
     }
 
     private static bool IsRoot(string s) =>

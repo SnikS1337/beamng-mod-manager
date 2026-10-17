@@ -53,6 +53,14 @@ public static class Ru
         return (bytes / 1073741824.0).ToString("0.0", C) + " ГБ";
     }
 
+    /// <summary>Название в кавычках для тоста: длинное обрезается многоточием, тост остаётся в одну строку.</summary>
+    public static string Quoted(string name, int max)
+    {
+        var n = (name ?? "").Trim();
+        if (n.Length > max) n = n[..Math.Max(1, max - 1)].TrimEnd() + "…";
+        return "«" + n + "»";
+    }
+
     /// <summary>Для поиска: регистр и «ё» не важны.</summary>
     public static string Fold(string s) => s.ToLowerInvariant().Replace('ё', 'е');
 

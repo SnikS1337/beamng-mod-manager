@@ -1,6 +1,7 @@
 using BeamModManager.Core.Game;
 using BeamModManager.Core.Install;
 using BeamModManager.Core.Library;
+using BeamModManager.Core.Packs;
 using BeamModManager.Core.Previews;
 using BeamModManager.Core.Updates;
 using BeamModManager.Core.Versioning;
@@ -41,6 +42,14 @@ public sealed record GarageSnapshot(IReadOnlyList<GarageMod> Mods, bool FolderAv
     public static readonly GarageSnapshot NoFolder = new(Array.Empty<GarageMod>(), false, null);
 }
 
+/// <summary>
+/// Удалённый мод, пока виден тост «Отменить»: файл уже в копиях, а запись в библиотеке (привязка страницы, история имён)
+/// ещё цела — «Отменить» возвращает всё как было, а не «новый» мод без страницы.
+/// </summary>
+public sealed record DeletedTicket(string ModId, string FileName, string BackupId, bool WasInDisabledFolder);
+
+public sealed record DeleteResult(bool Success, string? Message, DeletedTicket? Ticket);
+
 /// <summary>Чем гараж пользуется снаружи. В тестах подменяется, в приложении — <see cref="LibraryGarageBackend"/>.</summary>
 public interface IGarageBackend
 {
@@ -56,6 +65,24 @@ public interface IGarageBackend
 
     /// <summary>Ответ помощника на последнюю переданную команду; null — ещё не ответил (или помощника нет).</summary>
     BridgeAnswer? LiveAnswer() => null;
+
+    /// <summary>«Удалить»: файл уходит в копии. Пока тост открыт, мод не показывается, но запись в библиотеке держится.</summary>
+    DeleteResult Delete(GarageMod mod) => new(false, "Удалять моды здесь нельзя", null);
+
+    /// <summary>«Отменить» удаление: файл возвращается на место, в ту же папку.</summary>
+    OpResult Undelete(DeletedTicket ticket) => new(false, "Вернуть не получилось");
+
+    /// <summary>Тост погас: удаление окончательное для библиотеки (копия файла остаётся в «Копиях»).</summary>
+    void ForgetDeleted(DeletedTicket ticket) { }
+
+    /// <summary>«Прошлые версии» мода, от новых к старым.</summary>
+    IReadOnlyList<PastVersion> PastVersions(GarageMod mod) => Array.Empty<PastVersion>();
+
+    /// <summary>«Вернуть» прошлую версию: текущий файл уходит в копии, выбранная встаёт на его место.</summary>
+    OpResult RestoreVersion(GarageMod mod, PastVersion version) => new(false, "Вернуть не получилось");
+
+    /// <summary>«Внутри архива»; null — архива нет на месте. Читает файл: звать не из потока окна.</summary>
+    ArchiveOverview? Inside(GarageMod mod) => null;
 }
 
 /// <summary>Гараж поверх настоящих библиотеки, папки модов и db.json игры.</summary>
@@ -102,6 +129,85 @@ public sealed class LibraryGarageBackend : IGarageBackend
 
     public ToggleResult SetEnabled(string fileName, bool enabled) => GameDbSync.SetEnabled(_installer, fileName, enabled, _gameRunning);
 
+    // ───────────── удаление с «Отменить» ─────────────
+
+    /// <summary>Удалённые, пока открыт тост: имя файла → квитанция и как файл выглядел в папке (для сверки).</summary>
+    private readonly Dictionary<string, (DeletedTicket Ticket, DiskMod Disk)> _deleted = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _deletedGate = new();
+
+    public DeleteResult Delete(GarageMod mod)
+    {
+        if (!_installer.ModsFolderAvailable) return new(false, "Папка модов недоступна", null);
+        var disk = _installer.ScanDetailed().FirstOrDefault(d => string.Equals(d.FileName, mod.Mod.FileName, StringComparison.OrdinalIgnoreCase));
+        if (disk is null) return new(false, "Файла этого мода уже нет в папке", null);
+        // моды из репозитория игры скачивает и убирает сама игра: удалённый здесь она скачала бы снова
+        if (disk.FromGameRepo) return new(false, "Этот мод скачан в самой игре. Удалите его там, в «Репозитории»", null);
+        var inDisabled = File.Exists(Path.Combine(_installer.Layout.DisabledDir, disk.FileName));
+        var r = _installer.Remove(disk.FileName);
+        if (!r.Success || r.Path is null) return new(false, r.Message ?? "Удалить не получилось", null);
+        var ticket = new DeletedTicket(mod.Mod.Id, disk.FileName, Path.GetFileName(r.Path), inDisabled);
+        lock (_deletedGate) _deleted[disk.FileName] = (ticket, disk);
+        return new(true, null, ticket);
+    }
+
+    public OpResult Undelete(DeletedTicket ticket)
+    {
+        lock (_deletedGate) _deleted.Remove(ticket.FileName);
+        return _installer.Unremove(ticket.FileName, ticket.BackupId, ticket.WasInDisabledFolder);
+    }
+
+    public void ForgetDeleted(DeletedTicket ticket)
+    {
+        lock (_deletedGate)
+        {
+            if (!_deleted.Remove(ticket.FileName)) return;
+        }
+        // файл с тем же именем могли положить заново, пока висел тост: тогда запись нужна новому файлу
+        if (_installer.ModsFolderAvailable && _installer.ScanDetailed().Any(d => string.Equals(d.FileName, ticket.FileName, StringComparison.OrdinalIgnoreCase))) return;
+        if (_store.GetMod(ticket.ModId) is { } m && string.Equals(m.FileName, ticket.FileName, StringComparison.OrdinalIgnoreCase))
+            _store.RemoveMod(ticket.ModId);
+    }
+
+    // ───────────── прошлые версии и «Внутри архива» ─────────────
+
+    public IReadOnlyList<PastVersion> PastVersions(GarageMod mod)
+    {
+        // мод из репозитория игры лежит в mods/repo: «Вернуть» поставило бы старую версию рядом с ним, вторым файлом
+        if (!_installer.ModsFolderAvailable || IsRepo(mod)) return Array.Empty<PastVersion>();
+        try { return VersionHistory.For(_installer, _store, mod.Mod); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return Array.Empty<PastVersion>(); }
+    }
+
+    public OpResult RestoreVersion(GarageMod mod, PastVersion version)
+    {
+        if (IsRepo(mod)) return new OpResult(false, "Этот мод скачан в самой игре: его версиями управляет она");
+        return VersionHistory.Restore(_installer, _store, mod.Mod, version, DateTimeOffset.UtcNow);
+    }
+
+    private bool IsRepo(GarageMod mod) =>
+        mod.ArchivePath is { } p && Path.GetDirectoryName(p) is { } dir &&
+        string.Equals(Path.GetFullPath(dir).TrimEnd('\\', '/'), Path.GetFullPath(Path.Combine(_installer.Layout.ModsDir, ModInstaller.RepoFolder)).TrimEnd('\\', '/'),
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Разобранные архивы по их отметке (имя, размер, время): заново читаем только изменившийся файл.</summary>
+    private readonly Dictionary<ArchiveStamp, ArchiveOverview> _inside = new();
+
+    public ArchiveOverview? Inside(GarageMod mod)
+    {
+        if (mod.ArchivePath is not { } path) return null;
+        ArchiveStamp stamp;
+        try { stamp = ArchiveStamp.Of(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; } // архив только что убрали
+        lock (_inside) { if (_inside.TryGetValue(stamp, out var known)) return known; }
+        var o = ArchiveOverviewReader.Read(path);
+        lock (_inside)
+        {
+            if (_inside.Count >= 64) _inside.Clear(); // десятки разобранных архивов — память не копим
+            _inside[stamp] = o;
+        }
+        return o;
+    }
+
     private GameBridge Bridge => _bridge ??= new GameBridge(_installer.Layout.ModsDir);
     private GameBridge? _bridge;
 
@@ -135,10 +241,20 @@ public sealed class LibraryGarageBackend : IGarageBackend
         GameDbReadResult db;
         // папку читаем один раз: и для сверки, и для карточек
         var scan = _installer.ScanDetailed();
+        // удалённые, пока открыт тост «Отменить»: для сверки их файл как будто на месте, иначе запись (страница, история имён)
+        // пропала бы и «Отменить» вернуло бы мод без них. Файл с тем же именем снова появился — квитанция больше не нужна.
+        HashSet<string> hidden;
+        var forSync = scan;
+        lock (_deletedGate)
+        {
+            foreach (var d in scan) _deleted.Remove(d.FileName);
+            hidden = new HashSet<string>(_deleted.Keys, StringComparer.OrdinalIgnoreCase);
+            if (_deleted.Count > 0) forSync = scan.Concat(_deleted.Values.Select(v => v.Disk)).ToList();
+        }
         using ((_store as JsonLibraryStore)?.Batch())
         {
             db = GameModDb.ReadStable(GameModDb.PathIn(_installer.Layout.ModsDir));
-            GameDbSync.Reconcile(_store, _installer, db, scan);
+            GameDbSync.Reconcile(_store, _installer, db, forSync);
             GameDbSync.ApplyRepoInfo(_store, db);
         }
 
@@ -151,6 +267,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
         DateTimeOffset? lastAll = null;
         foreach (var m in _store.Mods())
         {
+            if (hidden.Contains(m.FileName)) continue;
             var b = bindings[m.Id].FirstOrDefault();
             var c = b is null ? null : _store.GetCheck(m.Id, b.Source);
             if (c is not null && (lastAll is null || c.LastCheckedUtc > lastAll)) lastAll = c.LastCheckedUtc;
