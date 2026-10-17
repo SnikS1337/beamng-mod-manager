@@ -1828,6 +1828,10 @@ public partial class MainWindow : Window
                 rim?.BeginAnimation(OpacityProperty, null);
                 hover?.BeginAnimation(TranslateTransform.YProperty, null);
             }
+            await Run("поиск раскрывается", () => OpenSearch(focus: true));
+            await Run("поиск сворачивается", () => CloseSearch());
+            await Run("заголовок сжимается", () => Scroller.ScrollToVerticalOffset(300));
+            await Run("заголовок раскрывается", () => Scroller.ScrollToVerticalOffset(0));
             await Run("переход в «Настройки»", () => NavSettings.IsChecked = true);
             await Run("обратно в моды", () => NavGarage.IsChecked = true);
             await Run("живой фон и огоньки", () => _motion.SetRunning(true, true), 1.5);
