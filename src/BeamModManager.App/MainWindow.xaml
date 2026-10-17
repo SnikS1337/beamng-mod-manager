@@ -780,17 +780,23 @@
                                         <Rectangle x:Name="PvBack"/>
                                         <StackPanel x:Name="PvCards" Orientation="Horizontal" Margin="28,58,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
                                     </Grid>
-                                    <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="28" Blur="5" Tint="#BD0C1426"
-                                             Lens="28" Refraction="120" Brightness="1" Sparks="0" Seed="17"
-                                             VerticalAlignment="Top" Margin="22,22,22,0" Height="56" IsHitTestVisible="False">
-                                        <DockPanel Margin="22,0,13,0">
-                                            <Grid DockPanel.Dock="Right" VerticalAlignment="Center">
-                                                <c:Droplet Corner="16" Width="54" Height="32"/>
+                                    <!-- как верх окна («островки»): крупный заголовок на фоне и островок с каплей «Все» и поиском -->
+                                    <StackPanel Margin="24,16,0,0" VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False">
+                                        <TextBlock Text="Моды" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource Ink}"/>
+                                        <TextBlock x:Name="PvCount" Foreground="{DynamicResource Ink2}" FontSize="12"/>
+                                    </StackPanel>
+                                    <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="23" Blur="5" Tint="#BD0C1426"
+                                             Lens="24" Refraction="120" Brightness="1" Sparks="0" Seed="17"
+                                             VerticalAlignment="Top" HorizontalAlignment="Right" Margin="0,18,22,0" Height="46" IsHitTestVisible="False">
+                                        <StackPanel Orientation="Horizontal" Margin="5,0,6,0" VerticalAlignment="Center">
+                                            <Grid VerticalAlignment="Center">
+                                                <c:Droplet Corner="17" Width="56" Height="34"/>
                                                 <TextBlock Text="Все" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Grid>
-                                            <TextBlock Text="Моды" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                            <TextBlock x:Name="PvCount" Foreground="{DynamicResource Ink2}" FontSize="13" Margin="12,1,0,0" VerticalAlignment="Center"/>
-                                        </DockPanel>
+                                            <TextBlock Text="Включённые" FontSize="13" Foreground="{DynamicResource InkSoft}" Margin="12,0,12,0" VerticalAlignment="Center"/>
+                                            <Path Data="{StaticResource IconSearch}" Stroke="{DynamicResource Ink}" StrokeThickness="1.8" Stretch="Uniform"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="15" Height="15" Margin="4,0,8,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
                                     </c:Glass>
                                     <Border CornerRadius="22" BorderBrush="{DynamicResource TileRim}" BorderThickness="1" IsHitTestVisible="False"/>
                                 </Grid>
