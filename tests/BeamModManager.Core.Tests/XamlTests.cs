@@ -201,6 +201,30 @@ public static class XamlTests
                 Assert.True(code.Contains(m, StringComparison.Ordinal), m);
         });
 
+        t.Run("островок посередине окна: ряд от левой панели до кнопок окна, центр по высоте вровень с ними", () =>
+        {
+            var xaml = XDocument.Parse(Read("MainWindow.xaml"));
+            XElement El(string n) => xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == n);
+            double[] Th(XElement e) => ((string)e.Attribute("Margin")!).Split(',').Select(v => double.Parse(v, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+            double D(XElement e, string a) => double.Parse((string)e.Attribute(a)!, System.Globalization.CultureInfo.InvariantCulture);
+            var row = Th(El("TopRow"));
+            var cap = El("Caption");
+            var capM = Th(cap);
+            // правый край ряда — перед кнопками окна, а не перед правой панелью: островок от неё не зависит
+            Assert.Eq(D(cap, "Width") + capM[2] + 16, row[2], "ряд кончается за 16 px до кнопок окна");
+            var bar = El("TopBar");
+            Assert.Eq("Left", (string?)bar.Attribute("HorizontalAlignment"), "место островка ставит код (IslandLayout), не разметка");
+            var barMid = row[1] + Th(bar)[1] + D(bar, "Height") / 2;
+            Assert.Eq(capM[1] + D(cap, "Height") / 2, barMid, "центр островка вровень с кнопками окна");
+            var capsule = El("TitleCapsule");
+            Assert.Eq(barMid, row[1] + Th(capsule)[1] + D(capsule, "Height") / 2, "и капсула заголовка");
+            var inspectorTop = Th(El("Inspector"))[1];
+            Assert.True(row[1] + Th(bar)[1] + D(bar, "Height") <= inspectorTop - 4, "островок не касается правой панели, если над ней");
+            var code = Read("MainWindow.xaml.cs");
+            Assert.True(code.Contains("IslandLayout.Place(Root.ActualWidth", StringComparison.Ordinal), "островок ставится по ширине окна");
+            Assert.False(Regex.IsMatch(code, @"TopRow\.Margin\s*="), "ряд не двигается вслед за правой панелью");
+        });
+
         t.Run("капля кнопок окна целиком внутри капсулы (не режет блик кромки)", () =>
         {
             var xaml = XDocument.Parse(Read("MainWindow.xaml"));
