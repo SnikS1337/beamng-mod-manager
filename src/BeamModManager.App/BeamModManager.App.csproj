@@ -11,12 +11,16 @@
     <RootNamespace>BeamModManager.App</RootNamespace>
     <Product>ModManager BeamNG</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- значок «Мод-куб из балок» (2026-10-17): exe, ярлык, панель задач. Собирает tools/icon/make_icon.py -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Шейдер преломления (DESIGN.md 3.2). Glass.ps собирает цель CompileGlassShader ниже; элемент без звёздочки
          остаётся в списке, даже если файла ещё нет. -->
     <Resource Include="Shaders\Glass.ps"/>
+    <!-- тот же значок у окна (Alt+Tab, панель задач) -->
+    <Resource Include="app.ico"/>
   </ItemGroup>
 
   <ItemGroup>
