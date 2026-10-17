@@ -778,7 +778,7 @@
                                 <Grid x:Name="LookPreview" Height="172" Margin="0,0,0,18" SizeChanged="LookPreview_SizeChanged">
                                     <Grid x:Name="PvScene" IsHitTestVisible="False">
                                         <Rectangle x:Name="PvBack"/>
-                                        <StackPanel x:Name="PvCards" Orientation="Horizontal" Margin="28,58,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
+                                        <StackPanel x:Name="PvCards" Orientation="Horizontal" Margin="28,72,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
                                     </Grid>
                                     <!-- как верх окна («островки»): крупный заголовок на фоне и островок с каплей «Все» и поиском -->
                                     <StackPanel Margin="24,16,0,0" VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False">
