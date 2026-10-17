@@ -76,7 +76,10 @@ public sealed class CardGridPanel : VirtualizingPanel
         catch (InvalidOperationException) { return null; }
     }
 
-    private double ItemHeight => Math.Round(ItemWidth * Ratio);
+    private double ItemHeight => HeightOf(ItemWidth);
+
+    /// <summary>Высота карточки: фото в пропорции <see cref="PhotoRatio"/> и подпись под ним (<see cref="ExtraHeight"/>).</summary>
+    private double HeightOf(double itemW) => Math.Round(itemW * PhotoRatio) + ExtraHeight;
 
     /// <summary>Номера карточек, которые должны быть созданы: видимые ряды и по экрану сверху и снизу.</summary>
     private (int First, int Last) WantedRange(int count)
@@ -130,6 +133,16 @@ public sealed class CardGridPanel : VirtualizingPanel
 
     public const double Gap = 20, MinItem = 280, MaxItem = 340, Ratio = 236.0 / 308.0;
 
+    /// <summary>Пропорция фото: у гаража фото на всю карточку (<see cref="Ratio"/>), у поиска ниже — под ним подпись и кнопки.</summary>
+    public static readonly DependencyProperty PhotoRatioProperty = DependencyProperty.Register(nameof(PhotoRatio), typeof(double), typeof(CardGridPanel),
+        new FrameworkPropertyMetadata(Ratio, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public double PhotoRatio { get => (double)GetValue(PhotoRatioProperty); set => SetValue(PhotoRatioProperty, value); }
+
+    /// <summary>Постоянная часть высоты под фото (подпись и кнопки карточки поиска); у гаража 0.</summary>
+    public static readonly DependencyProperty ExtraHeightProperty = DependencyProperty.Register(nameof(ExtraHeight), typeof(double), typeof(CardGridPanel),
+        new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public double ExtraHeight { get => (double)GetValue(ExtraHeightProperty); set => SetValue(ExtraHeightProperty, value); }
+
     public int Columns { get; private set; } = 3;
     public double ItemWidth { get; private set; } = 308;
 
@@ -140,7 +153,7 @@ public sealed class CardGridPanel : VirtualizingPanel
         var w = double.IsInfinity(available.Width) ? 3 * 308 + 2 * Gap : available.Width;
         var cols = Math.Clamp((int)Math.Floor((w + Gap) / (MinItem + Gap)), 1, 6);
         var itemW = Math.Min(MaxItem, Math.Floor((w - Gap * (cols - 1)) / cols));
-        var itemH = Math.Round(itemW * Ratio);
+        var itemH = HeightOf(itemW);
         if (cols != Columns) { Columns = cols; ColumnsChanged?.Invoke(this, EventArgs.Empty); }
         ItemWidth = itemW;
 
@@ -220,7 +233,7 @@ public sealed class CardGridPanel : VirtualizingPanel
     protected override Size ArrangeOverride(Size final)
     {
         var itemW = ItemWidth;
-        var itemH = Math.Round(itemW * Ratio);
+        var itemH = HeightOf(itemW);
         var n = InternalChildren.Count;
         var moving = Animated && !SpringDriver.ReducedMotion;
         var first = !_filled && n > 0;

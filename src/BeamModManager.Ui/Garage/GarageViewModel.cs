@@ -31,7 +31,7 @@ public sealed class FilterItem : Observable
     public bool IsActive { get => _isActive; internal set => Set(ref _isActive, value); }
 }
 
-public enum EmptyAction { None, OpenSearch, PickFolder, CheckNow, SearchSites, ShowAll }
+public enum EmptyAction { None, OpenSearch, PickFolder, CheckNow, SearchSites, ShowAll, OpenSiteSettings, Retry }
 
 /// <summary>Пустое состояние: приглашение к действию (DESIGN_FLOWS раздел 4).</summary>
 public sealed record EmptyState(string Title, string Text, string? ActionLabel, EmptyAction Action);

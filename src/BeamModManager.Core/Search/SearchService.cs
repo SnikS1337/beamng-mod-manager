@@ -17,7 +17,11 @@ public sealed record ModCard(
     IReadOnlyList<string> PossibleSameAs,
     double Relevance);
 
-public sealed record SourceReport(string SourceId, string DisplayName, SourceStatus Status, int Count, string? Note);
+public sealed record SourceReport(string SourceId, string DisplayName, SourceStatus Status, int Count, string? Note)
+{
+    /// <summary>Сайт ещё не ответил (промежуточный ответ поиска): «ищем…».</summary>
+    public bool Pending { get; init; }
+}
 
 public sealed record SearchResponse(IReadOnlyList<ModCard> Cards, IReadOnlyList<SourceReport> Sources)
 {
@@ -66,18 +70,61 @@ public sealed class SearchService
         return new SearchResponse(Group(listings, (query ?? "").Trim()), previous.Sources) { Listings = listings };
     }
 
-    public async Task<SearchResponse> SearchAsync(string query, CancellationToken ct = default)
+    public Task<SearchResponse> SearchAsync(string query, CancellationToken ct = default) => SearchAsync(query, null, ct);
+
+    /// <summary>Запрос, который реально уйдёт на сайты: без пробелов по краям и не длиннее предела.</summary>
+    public string Normalize(string? query)
     {
-        query = (query ?? "").Trim();
-        if (query.Length > _o.MaxQueryLength) query = query[.._o.MaxQueryLength].TrimEnd(); // слишком длинный запрос ломает адрес (ошибка 414)
+        var q = (query ?? "").Trim();
+        return q.Length > _o.MaxQueryLength ? q[.._o.MaxQueryLength].TrimEnd() : q; // слишком длинный запрос ломает адрес (ошибка 414)
+    }
+
+    /// <summary>Запрос короче этого на сайты не уходит.</summary>
+    public int MinQueryLength => _o.MinQueryLength;
+
+    /// <param name="progress">
+    /// Промежуточные ответы по мере того, как отвечают сайты (DESIGN_FLOWS 3.2: «результаты приходят по мере ответов»):
+    /// карточки из уже ответивших, у остальных сайтов <see cref="SourceReport.Pending"/>. Последний ответ — сам результат.
+    /// Порядок записей — порядок сайтов, а не ответов: карточки собираются так же, как в итоговом ответе.
+    /// </param>
+    public async Task<SearchResponse> SearchAsync(string query, Action<SearchResponse>? progress, CancellationToken ct = default)
+    {
+        query = Normalize(query);
         if (query.Length < _o.MinQueryLength)
             return new SearchResponse(Array.Empty<ModCard>(), Array.Empty<SourceReport>());
 
         var tasks = _sources.Select(s => RunOne(s, query, ct)).ToList();
+        if (progress is not null)
+        {
+            var left = tasks.ToList();
+            while (left.Count > 1)
+            {
+                var finished = await Task.WhenAny(left).ConfigureAwait(false);
+                left.Remove(finished);
+                ct.ThrowIfCancellationRequested();
+                progress(Partial(tasks, query));
+            }
+        }
         var done = await Task.WhenAll(tasks).ConfigureAwait(false);
 
         var reports = done.Select(d => d.Report).ToList();
         var listings = done.SelectMany(d => d.Listings).ToList();
+        return new SearchResponse(Group(listings, query), reports) { Listings = listings };
+    }
+
+    private SearchResponse Partial(IReadOnlyList<Task<(SourceReport Report, IReadOnlyList<Listing> Listings)>> tasks, string query)
+    {
+        var reports = new List<SourceReport>();
+        var listings = new List<Listing>();
+        for (var i = 0; i < tasks.Count; i++)
+        {
+            if (tasks[i].IsCompletedSuccessfully)
+            {
+                reports.Add(tasks[i].Result.Report);
+                listings.AddRange(tasks[i].Result.Listings);
+            }
+            else reports.Add(new SourceReport(_sources[i].Id, _sources[i].DisplayName, SourceStatus.Ok, 0, "ищем…") { Pending = true });
+        }
         return new SearchResponse(Group(listings, query), reports) { Listings = listings };
     }
 

@@ -15,6 +15,7 @@ using BeamModManager.App.Services;
 using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
 using BeamModManager.Ui.Look;
+using BeamModManager.Ui.Search;
 using BeamModManager.Ui.Settings;
 using BeamModManager.Ui.Updates;
 using BeamModManager.Ui.Previews;
@@ -66,6 +67,10 @@ public sealed class WindowHost
     public required SettingsViewModel Settings { get; init; }
     /// <summary>Раздел «Обновления»: проверка, действия, привязка страниц. null — проверять нечем (раздел покажет пустоту).</summary>
     public IUpdatesBackend? Updates { get; init; }
+    /// <summary>Раздел «Поиск» по сайтам. null — искать негде (раздел скажет, что все сайты выключены).</summary>
+    public ISearchBackend? Search { get; init; }
+    /// <summary>Картинка карточки поиска по адресу с сайта: путь к уменьшенной копии на диске или null (заглушка).</summary>
+    public Func<Uri, CancellationToken, Task<string?>>? SearchImages { get; init; }
     /// <summary>Открыть при запуске (снимки сборочной машины): "settings" — настройки.</summary>
     public string? StartPage { get; init; }
     public SettingsSection StartSection { get; init; }
@@ -77,6 +82,7 @@ public partial class MainWindow : Window
 {
     private readonly GarageViewModel _vm;
     private readonly UpdatesViewModel _upd;
+    private readonly SearchViewModel _find;
     /// <summary>Повтор проверки раз в N часов (настройка «Повторять»): раз в минуту смотрим, не пора ли.</summary>
     private readonly DispatcherTimer _autoCheckTimer = new() { Interval = TimeSpan.FromMinutes(1) };
     private readonly WindowHost _host;
@@ -177,10 +183,18 @@ public partial class MainWindow : Window
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
-        _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
+        _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, SitesPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         // «Обновления»: список из тех же карточек гаража, проверка через один координатор
         _upd = new UpdatesViewModel(vm, host.Updates ?? new NoUpdates(), host.Settings, a => Dispatcher.BeginInvoke(a));
         UpdScroller.DataContext = UpdEmptyBox.DataContext = CheckPanel.DataContext = _upd;
+        // «Поиск»: сайты отвечают из фона, их ответы окно применяет у себя
+        _find = new SearchViewModel(host.Search ?? new NoSearch(), () => vm.AllCards, a => Dispatcher.BeginInvoke(a)) { DownloadsAllowed = host.DownloadsAllowed };
+        FindScroller.DataContext = FindEmptyBox.DataContext = SitesPanel.DataContext = _find;
+        FindSkeletons.ItemsSource = Enumerable.Range(0, SearchViewModel.SkeletonSlots).ToArray();
+        _find.PropertyChanged += Find_PropertyChanged;
+        _find.Cards.CollectionChanged += (_, _) => LoadFindImages();
+        foreach (var f in _find.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+        vm.Refreshed += _find.InstalledChanged; // поставили или удалили мод — плашки «Установлен» по новому списку
         _upd.PropertyChanged += Upd_PropertyChanged;
         foreach (var f in _upd.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         SettingsPanel.DataContext = host.Settings;
@@ -234,6 +248,7 @@ public partial class MainWindow : Window
         // заголовок сжимается, когда список прокручен (у гаража и «Обновлений» свои списки)
         Scroller.ScrollChanged += (_, _) => TitleFollowScroll();
         UpdScroller.ScrollChanged += (_, _) => TitleFollowScroll();
+        FindScroller.ScrollChanged += (_, _) => TitleFollowScroll();
         // числа в фильтрах меняют их ширину: пересчитываем панель, когда они меняются
         foreach (var f in vm.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         vm.PropertyChanged += (_, a) => { if (a.PropertyName is nameof(GarageViewModel.CountText) or nameof(GarageViewModel.HeaderNote)) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded); };
@@ -276,6 +291,7 @@ public partial class MainWindow : Window
         }
         if (_host.StartPage == "settings") NavSettings.IsChecked = true;
         if (_host.StartPage is "updates" or "bind") NavUpdates.IsChecked = true;
+        if (_host.StartPage == "search") NavSearch.IsChecked = true;
         if (Enum.TryParse<UpdatesFilter>(_host.StartFilter, true, out var uf) && Enum.IsDefined(uf)) _upd.Filter = uf;
         if (_host.StartPage == "bind" && _vm.AllCards.FirstOrDefault(c => !c.Data.Tracked) is { } untracked) OpenBind(untracked, null);
         if (_host.ShotPath is null)
@@ -291,8 +307,12 @@ public partial class MainWindow : Window
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
         if (_host.StartSearch is { } query)
         {
-            if (UpdatesPage) _upd.SearchText = query; else _vm.SearchText = query;
-            OpenSearch(focus: false, instant: true);
+            if (SearchPage) { QueryText.Text = query; _ = _find.RunAsync(); }
+            else
+            {
+                if (UpdatesPage) _upd.SearchText = query; else _vm.SearchText = query;
+                OpenSearch(focus: false, instant: true);
+            }
         }
         if (_host.StartScroll is { } scroll)
             Dispatcher.BeginInvoke(() => (UpdatesPage ? UpdScroller : Scroller).ScrollToVerticalOffset(scroll), DispatcherPriority.Loaded);
@@ -521,6 +541,7 @@ public partial class MainWindow : Window
         ApplyLook(s, _revealFrom);
         _revealFrom = null;
         _vm.ManyEnabledThreshold = s.ActiveModsWarnAbove;
+        _find.RefreshSites(); // сайты могли включить или выключить
         // папку уже переключила программа (App подписана раньше окна): перечитываем моды
         var key = FolderKey(s);
         if (key != _folderKey) { _folderKey = key; if (IsLoaded) Refresh(); }
@@ -710,15 +731,15 @@ public partial class MainWindow : Window
     private void PlaceInspector(bool instant = false)
     {
         var open = _vm.Selected is not null;
-        // у «Обновлений» справа всегда панель «Проверка»: место под неё держим и на узком окне
-        var beside = (open && !_narrow) || NavUpdates.IsChecked == true; // панель занимает место рядом с сеткой
+        // у «Обновлений» справа всегда панель «Проверка», у «Поиска» — «Сайты»: место под них держим и на узком окне
+        var beside = (open && !_narrow) || NavUpdates.IsChecked == true || NavSearch.IsChecked == true; // панель занимает место рядом с сеткой
         var right = beside ? 360 : 16;
         // прокрутка шире сетки на поля (44 слева, 24 справа — StackPanel внутри): тени карточек у краёв не обрезаются
         var gridMargin = new Thickness(116 - 44, 0, right - 24, 0);
         if (Scroller.Margin != gridMargin)
         {
-            Scroller.Margin = UpdScroller.Margin = gridMargin;
-            EmptyBox.Margin = SoonBox.Margin = UpdEmptyBox.Margin = new Thickness(116, 84, right, 0);
+            Scroller.Margin = UpdScroller.Margin = FindScroller.Margin = gridMargin;
+            EmptyBox.Margin = UpdEmptyBox.Margin = FindEmptyBox.Margin = new Thickness(116, 84, right, 0);
             ToastBox.Margin = new Thickness(116, 0, right, 28);
             TopFade.Margin = new Thickness(104, 0, right - 12, 0);
         }
@@ -754,8 +775,8 @@ public partial class MainWindow : Window
     private double _filtersW = 520, _searchW = 420;
     private TitleFit _titleFit = TitleFit.Full;
 
-    /// <summary>Гараж или «Обновления»: у них есть фильтры и поиск (островок); у остальных разделов только заголовок.</summary>
-    private bool IslandPage => NavGarage.IsChecked == true || UpdatesPage;
+    /// <summary>Гараж, «Обновления» и «Поиск»: у них есть островок с фильтрами; в «Настройках» только заголовок.</summary>
+    private bool IslandPage => NavGarage.IsChecked == true || UpdatesPage || SearchPage;
 
     /// <summary>
     /// Ширина островка: в покое — по фильтрам и кнопке поиска, с раскрытым поиском — капсула 320–440 px по ширине ряда.
@@ -764,6 +785,8 @@ public partial class MainWindow : Window
     private void AdaptTopBar()
     {
         if (!IslandPage) { PlaceIsland(); return; }
+        // поле запроса «Поиска» уже на узком окне: островок с ним и фильтрами помещается между заголовком и кнопками окна
+        if (TopRow.ActualWidth > 0) QueryBox.Width = TopRow.ActualWidth < 760 ? 200 : 250;
         FilterLayer.Measure(new Size(double.PositiveInfinity, 48));
         _filtersW = Math.Ceiling(FilterLayer.DesiredSize.Width) + 12 + 2; // поля островка 6 + 6 и кромка
         var row = TopRow.ActualWidth;
@@ -837,7 +860,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void TitleFollowScroll(bool instant = false)
     {
-        var off = NavGarage.IsChecked == true ? Scroller.VerticalOffset : UpdatesPage ? UpdScroller.VerticalOffset : 0;
+        var off = NavGarage.IsChecked == true ? Scroller.VerticalOffset : UpdatesPage ? UpdScroller.VerticalOffset : SearchPage ? FindScroller.VerticalOffset : 0;
         var t = _titleFit == TitleFit.Compact ? 1 : Math.Clamp(off / 56, 0, 1);
         if (Math.Abs(_titleT.Target - t) < 0.001 && !instant) return;
         _springs.To(_titleT, t, instant || !IsLoaded);
@@ -1069,6 +1092,8 @@ public partial class MainWindow : Window
         _host.SaveWindow?.Invoke(this);
         _host.SavePending?.Invoke(_vm.PendingChanges);
         _vm.CommitPending(); // тост «Отменить» уже не нажмут: удалённое забывается до записи библиотеки
+        _find.Cancel();
+        _findImagesCts?.Cancel();
         _host.Flush?.Invoke();
     }
 
@@ -1083,21 +1108,30 @@ public partial class MainWindow : Window
         var garage = rb == NavGarage;
         var settings = rb == NavSettings;
         var updates = rb == NavUpdates;
+        var search = rb == NavSearch;
         if (!garage) _vm.Selected = null; // правая панель — про мод из гаража, в других разделах ей не место
         SectionTitle.Text = CapsuleTitle.Text = (string)rb.Content;
         Scroller.Visibility = garage ? Visibility.Visible : Visibility.Collapsed;
         EmptyBox.Visibility = garage && _vm.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
         UpdScroller.Visibility = CheckPanel.Visibility = updates ? Visibility.Visible : Visibility.Collapsed;
         UpdEmptyBox.Visibility = updates && _upd.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
-        SoonBox.Visibility = garage || settings || updates ? Visibility.Collapsed : Visibility.Visible;
+        FindScroller.Visibility = SitesPanel.Visibility = search ? Visibility.Visible : Visibility.Collapsed;
+        FindEmptyBox.Visibility = search && _find.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
-        SoonTitle.Text = (string)rb.Content;
-        // фильтры, поиск и число — у гаража и «Обновлений» свои, панель общая; в других разделах им не место
-        var gv = garage || updates ? Visibility.Visible : Visibility.Collapsed;
+        // фильтры, поиск и число — у гаража, «Обновлений» и «Поиска» свои, островок общий; в настройках им не место
+        var gv = garage || updates || search ? Visibility.Visible : Visibility.Collapsed;
         TopBar.Visibility = CountLabel.Visibility = gv;
-        BindTopBar(updates);
-        // поиск раздела: есть запрос — островок сразу раскрыт, нет — сразу фильтры; заголовок — по прокрутке нового списка
+        BindTopBar(garage ? TopSource.Garage : updates ? TopSource.Updates : search ? TopSource.Search : TopSource.None);
+        // поиск раздела: есть запрос — островок сразу раскрыт, нет — сразу фильтры; заголовок — по прокрутке нового списка.
+        // У «Поиска» поле запроса всегда стоит в островке рядом с фильтрами, капсула поиска не раскрывается
         if (garage || updates) { if (SearchBox.Text.Length > 0) OpenSearch(focus: false, instant: true); else CloseSearch(instant: true); }
+        else if (search)
+        {
+            CloseSearch(instant: true);
+            _find.RefreshSites();
+            // пришли в «Поиск» без запроса — сразу в поле (DESIGN_FLOWS 4: «поле ввода в фокусе»)
+            if (IsLoaded && QueryText.Text.Length == 0) Dispatcher.BeginInvoke(() => { if (SearchPage) QueryText.Focus(); }, DispatcherPriority.Input);
+        }
         TitleFollowScroll(instant: true);
         PlaceInspector(instant: !IsLoaded);
         PlaceIsland();
@@ -1113,7 +1147,7 @@ public partial class MainWindow : Window
             if (garage) { Arrive(Scroller); Arrive(EmptyBox); }
             else if (updates) { Arrive(UpdScroller); Arrive(UpdEmptyBox); Arrive(CheckPanel, rise: false); }
             else if (settings) Arrive(SettingsPanel, rise: false); // стекло только проявляется: его фон берётся по месту
-            else Arrive(SoonBox);
+            else if (search) { Arrive(FindScroller); Arrive(FindEmptyBox); Arrive(SitesPanel, rise: false); }
         }
     }
 
@@ -1215,24 +1249,34 @@ public partial class MainWindow : Window
         {
             case FilterItem f: _vm.Filter = f.Filter; break;
             case UpdatesFilterItem u: _upd.Filter = u.Filter; break;
+            case SearchFilterItem f: _find.Filter = f.Filter; break;
         }
     }
 
+    private enum TopSource { None, Garage, Updates, Search }
+
     /// <summary>
-    /// Верхняя панель общая у гаража и «Обновлений»: фильтры, поиск и число модов переключаются на раздел. Капля фильтра
-    /// при этом не уезжает издалека, а сразу встаёт под активный пункт нового раздела.
+    /// Островок общий у гаража, «Обновлений» и «Поиска»: фильтры, поле и число модов переключаются на раздел. Капля фильтра
+    /// при этом не уезжает издалека, а сразу встаёт под активный пункт нового раздела. У «Поиска» вместо круглой кнопки
+    /// поиска — поле запроса по сайтам прямо в островке.
     /// </summary>
-    private void BindTopBar(bool updates)
+    private void BindTopBar(TopSource page)
     {
-        object source = updates ? _upd : _vm;
-        var wanted = updates ? (System.Collections.IEnumerable)_upd.Filters : _vm.Filters;
+        if (page == TopSource.None) return;
+        object source = page switch { TopSource.Updates => _upd, TopSource.Search => _find, _ => _vm };
+        System.Collections.IEnumerable wanted = page switch { TopSource.Updates => _upd.Filters, TopSource.Search => _find.Filters, _ => _vm.Filters };
         if (ReferenceEquals(FilterList.ItemsSource, wanted)) return;
         FilterList.ItemsSource = wanted;
-        SearchBox.SetBinding(TextBox.TextProperty, new System.Windows.Data.Binding("SearchText") { Source = source, UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged });
-        // под заголовком у гаража «15 модов · 3 ждут обновления», у «Обновлений» — «3 доступно»
-        CountLabel.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(updates ? "CountText" : "HeaderNote") { Source = source });
-        CapsuleCount.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("HeaderCount") { Source = source });
+        var search = page == TopSource.Search;
+        QueryBox.Visibility = search ? Visibility.Visible : Visibility.Collapsed;
+        SearchButton.Visibility = search ? Visibility.Collapsed : Visibility.Visible;
+        if (!search)
+            SearchBox.SetBinding(TextBox.TextProperty, new System.Windows.Data.Binding("SearchText") { Source = source, UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged });
+        // под заголовком у гаража «15 модов · 3 ждут обновления», у «Обновлений» — «3 доступно», у «Поиска» — «9 модов»
+        CountLabel.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(page == TopSource.Updates ? "CountText" : "HeaderNote") { Source = source });
+        CapsuleCount.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(search ? "CountText" : "HeaderCount") { Source = source });
         SearchNote.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("SearchNote") { Source = source });
+        var updates = page == TopSource.Updates;
         SearchHint.Text = updates ? "Найти среди обновлений" : "Найти мод";
         SearchButton.ToolTip = updates ? "Найти среди обновлений (Ctrl+F)" : "Найти мод (Ctrl+F)";
         System.Windows.Automation.AutomationProperties.SetName(SearchBox, updates ? "Найти среди найденных обновлений" : "Найти среди установленных модов");
@@ -1240,11 +1284,14 @@ public partial class MainWindow : Window
     }
 
     private bool UpdatesPage => NavUpdates.IsChecked == true;
+    private bool SearchPage => NavSearch.IsChecked == true;
 
     /// <summary>Капля фильтра ложится под активный пункт; пункты меняют ширину (числа), поэтому меряем по факту.</summary>
     private void PlaceFilterDrop(bool instant)
     {
-        object? item = UpdatesPage ? _upd.Filters.FirstOrDefault(f => f.IsActive) : _vm.Filters.FirstOrDefault(f => f.IsActive);
+        object? item = UpdatesPage ? _upd.Filters.FirstOrDefault(f => f.IsActive)
+            : SearchPage ? _find.Filters.FirstOrDefault(f => f.IsActive)
+            : _vm.Filters.FirstOrDefault(f => f.IsActive);
         if (item is null || FilterList.ItemContainerGenerator.ContainerFromItem(item) is not FrameworkElement el || el.ActualWidth <= 0) return;
         var x = el.TransformToAncestor(FilterList).Transform(new Point(0, 0)).X;
         var targetX = x - 3;
@@ -1258,6 +1305,127 @@ public partial class MainWindow : Window
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
         SearchHint.Visibility = SearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    // ───────────── «Поиск» по сайтам (DESIGN_FLOWS 3.2, DESIGN.md 5.0.1) ─────────────
+
+    private void Find_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(SearchViewModel.Filter):
+                PlaceFilterDrop(instant: false);
+                break;
+            case nameof(SearchViewModel.Empty):
+                if (SearchPage) FindEmptyBox.Visibility = _find.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
+                break;
+            case nameof(SearchViewModel.Skeletons):
+                FindSkeletons.Visibility = _find.Skeletons > 0 ? Visibility.Visible : Visibility.Collapsed;
+                break;
+            case nameof(SearchViewModel.HeaderNote) or nameof(SearchViewModel.CountText):
+                if (SearchPage) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+                break;
+        }
+    }
+
+    private void FindPanel_Loaded(object sender, RoutedEventArgs e) =>
+        ((CardGridPanel)sender).Animated = _host.ShotPath is null; // снимку нужно конечное положение сразу
+
+    private CancellationTokenSource? _findImagesCts;
+
+    /// <summary>Картинки карточек поиска качаются в фоне (не больше четырёх разом), пришедшая встаёт на карточку сразу.</summary>
+    private void LoadFindImages()
+    {
+        if (_host.SearchImages is not { } fetch) return;
+        var todo = _find.Cards.Where(c => c.PreviewPath is null && c.PreviewUrl is not null && _findAsked.Add(c.PreviewUrl.AbsoluteUri)).ToList();
+        if (todo.Count == 0) return;
+        _findImagesCts ??= new CancellationTokenSource();
+        var ct = _findImagesCts.Token;
+        foreach (var card in todo)
+        {
+            var url = card.PreviewUrl!;
+            _ = Task.Run(async () =>
+            {
+                var path = await fetch(url, ct).ConfigureAwait(false);
+                if (path is null) return;
+                await Dispatcher.BeginInvoke(() =>
+                {
+                    _findImages[url.AbsoluteUri] = path;
+                    foreach (var c in _find.Cards.Where(c => c.PreviewUrl == url)) c.PreviewPath = path;
+                });
+            }, ct);
+        }
+        // картинка уже скачана для этого адреса (карточка пересобралась после «Это один мод»)
+        foreach (var c in _find.Cards.Where(c => c.PreviewPath is null && c.PreviewUrl is { } u && _findImages.ContainsKey(u.AbsoluteUri)))
+            c.PreviewPath = _findImages[c.PreviewUrl!.AbsoluteUri];
+    }
+
+    private readonly HashSet<string> _findAsked = new();
+    private readonly Dictionary<string, string> _findImages = new();
+
+    private void QueryText_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        var empty = QueryText.Text.Length == 0;
+        QueryHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        QueryClear.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+        _find.Query = QueryText.Text;
+    }
+
+    /// <summary>Enter — на сайты (DESIGN_FLOWS 3.2: «ввод названия, Enter»), а не на каждую букву.</summary>
+    private void QueryText_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        _ = _find.RunAsync();
+        e.Handled = true;
+    }
+
+    private void QueryClear_Click(object sender, RoutedEventArgs e)
+    {
+        QueryText.Clear();
+        QueryText.Focus();
+    }
+
+    private void QueryBox_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        QueryText.Focus();
+        e.Handled = true; // иначе щелчок начал бы перетаскивать окно
+    }
+
+    private static FoundCard? FoundOf(object sender) => (sender as FrameworkElement)?.DataContext as FoundCard;
+
+    /// <summary>
+    /// «Страница» и «Купить у автора» открывают мод на сайте в браузере. Загрузки в этой сборке нет: «Установить» (появится
+    /// с ней) пока ведёт туда же.
+    /// </summary>
+    private void FoundMain_Click(object sender, RoutedEventArgs e) => OpenUrl(FoundOf(sender)?.PageUrl);
+    private void FoundPage_Click(object sender, RoutedEventArgs e) => OpenUrl(FoundOf(sender)?.PageUrl);
+
+    private void FoundSame_Click(object sender, RoutedEventArgs e)
+    {
+        if (FoundOf(sender) is { } c) _find.SameMod(c);
+    }
+
+    private void FoundDifferent_Click(object sender, RoutedEventArgs e)
+    {
+        if (FoundOf(sender) is { } c) _find.DifferentMods(c);
+    }
+
+    private void FindEmpty_Click(object sender, RoutedEventArgs e)
+    {
+        switch (_find.Empty?.Action)
+        {
+            case EmptyAction.OpenSiteSettings: OpenSiteSettings(); break;
+            case EmptyAction.Retry: _ = _find.RunAsync(); break;
+            case EmptyAction.ShowAll: _find.Filter = SearchFilter.All; break;
+        }
+    }
+
+    private void SitesSettings_Click(object sender, RoutedEventArgs e) => OpenSiteSettings();
+
+    private void OpenSiteSettings()
+    {
+        _host.Settings.Section = SettingsSection.Sites;
+        NavSettings.IsChecked = true;
+    }
 
     // ───────────── сетка и правая панель ─────────────
 
@@ -1532,8 +1700,13 @@ public partial class MainWindow : Window
                 PickFolder();
                 break;
             case EmptyAction.ShowAll: _vm.Filter = GarageFilter.All; break;
-            case EmptyAction.OpenSearch:
-            case EmptyAction.SearchSites: NavSearch.IsChecked = true; break;
+            case EmptyAction.OpenSearch: NavSearch.IsChecked = true; break;
+            case EmptyAction.SearchSites:
+                // «Нет такого мода» среди своих → тот же запрос на сайтах
+                var q = _vm.SearchText.Trim();
+                NavSearch.IsChecked = true;
+                if (q.Length > 0) { QueryText.Text = q; _ = _find.RunAsync(); }
+                break;
             case EmptyAction.CheckNow:
                 NavUpdates.IsChecked = true;
                 _ = _upd.CheckNowAsync();
@@ -1562,9 +1735,18 @@ public partial class MainWindow : Window
         }
         if (ctrl && e.Key == Key.F)
         {
-            // в «Обновлениях» ищем среди найденного, из других разделов — среди модов
-            if (!UpdatesPage) NavGarage.IsChecked = true;
-            OpenSearch(focus: true);
+            // Ctrl+Shift+F и Ctrl+F в «Поиске» — поле запроса по сайтам; в «Обновлениях» ищем среди найденного, из других
+            // разделов — среди модов
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 || SearchPage)
+            {
+                NavSearch.IsChecked = true;
+                Dispatcher.BeginInvoke(() => { QueryText.Focus(); QueryText.SelectAll(); }, DispatcherPriority.Input);
+            }
+            else
+            {
+                if (!UpdatesPage) NavGarage.IsChecked = true;
+                OpenSearch(focus: true);
+            }
             e.Handled = true;
             return;
         }
@@ -1577,6 +1759,13 @@ public partial class MainWindow : Window
         {
             NavUpdates.IsChecked = true;
             if (!_upd.Checking) _ = _upd.CheckNowAsync();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && QueryText.IsKeyboardFocused)
+        {
+            // поле «Поиска»: первый Esc стирает запрос, второй уводит из поля (найденное остаётся)
+            if (QueryText.Text.Length > 0) QueryText.Clear(); else Keyboard.ClearFocus();
             e.Handled = true;
             return;
         }

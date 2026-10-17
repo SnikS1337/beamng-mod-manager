@@ -43,6 +43,7 @@ PreviewTests.Register(t);
 PreviewLoaderTests.Register(t);
 GarageTests.Register(t);
 ModActionsTests.Register(t);
+SearchScreenTests.Register(t);
 GarageCardTests.Register(t);
 SwitchingBackendTests.Register(t);
 SettingsScreenTests.Register(t);

@@ -17,6 +17,7 @@ public static class ModlandParser
     private static readonly Regex TitleLink = new(@"post-title[^>]*>\s*<a[^>]*href=""(?<h>[^""]+)""[^>]*>(?<t>.*?)</a>", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex Tags = new("<[^>]+>", RegexOptions.Compiled);
     private static readonly Regex Size = new(@"(?<n>\d+(?:[.,]\d+)?)\s*(?<u>KB|MB|GB)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex PostImage = new(@"<img[^>]*class=""[^""]*\bpost-img\b[^""]*""[^>]*\bsrc=""(?<s>[^""]+)""", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex Anchor = new(@"<a[^>]*href=""(?<h>[^""]+)""[^>]*>(?<t>(?:(?!</a>)[\s\S]){0,2000})</a>", RegexOptions.Singleline | RegexOptions.Compiled);
 
     public static IReadOnlyList<Listing> ParseList(string html)
@@ -46,6 +47,7 @@ public static class ModlandParser
             var parsed = TitleParser.Parse(title);
             result.Add(new Listing(SourceId, url, SlugOf(url), title)
             {
+                PreviewUrl = PreviewOf(body),
                 Author = author,
                 Category = category,
                 SizeBytes = ParseSize(Tags.Replace(body, " ")),
@@ -57,6 +59,11 @@ public static class ModlandParser
         }
         return result;
     }
+
+    /// <summary>Картинка записи в ленте и поиске: только https-адрес самого сайта (картинки лежат на поддоменах modland.net).</summary>
+    private static Uri? PreviewOf(string body) =>
+        PostImage.Match(body) is { Success: true } m && Uri.TryCreate(Base, WebUtility.HtmlDecode(m.Groups["s"].Value), out var u)
+        && u.Scheme == Uri.UriSchemeHttps && (u.Host == "modland.net" || u.Host.EndsWith(".modland.net", StringComparison.OrdinalIgnoreCase)) ? u : null;
 
     private static readonly Regex H1Title = new(@"<h1[^>]*class=""[^""]*post-title[^""]*""[^>]*>(?<b>.*?)</h1>", RegexOptions.Singleline | RegexOptions.Compiled);
 
