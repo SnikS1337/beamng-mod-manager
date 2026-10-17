@@ -145,9 +145,12 @@ public partial class MainWindow : Window
         });
 
         // островок перетекает между фильтрами и поиском пружиной с лёгким перелётом, как капля; по ходу чуть сплющивается
-        _islandW = _springs.Add(new Spring(0.36, 0.16, 520), v => { TopBar.Width = Math.Max(48, v); IslandShape(); PlaceIsland(); });
+        // (обе пружины созданы до Add: Add сразу зовёт «применить», а оно читает обе)
+        _islandW = new Spring(0.36, 0.16, 520);
         // заголовок сжимается в капсулу не рывком за колесом мыши, а мягко догоняет прокрутку
-        _titleT = _springs.Add(new Spring(0.3, 0, 0), _ => { ApplyTitleShrink(); PlaceIsland(); });
+        _titleT = new Spring(0.3, 0, 0);
+        _springs.Add(_islandW, v => { TopBar.Width = Math.Max(48, v); IslandShape(); PlaceIsland(); });
+        _springs.Add(_titleT, _ => { ApplyTitleShrink(); PlaceIsland(); });
 
         // на экране меньше 1440 × 960 окно открывается по размеру экрана минус рамка (DESIGN_FLOWS раздел 2)
         var work = SystemParameters.WorkArea;
