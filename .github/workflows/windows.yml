@@ -5,21 +5,36 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Новый push отменяет ещё идущую проверку прошлого: её результат уже никому не нужен. Выпуск (пометка [release] или
+# «Run workflow») в общую группу не входит и не отменяется никогда.
+concurrency:
+  group: ci-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')) && github.sha || 'push' }}
+  cancel-in-progress: true
+
 jobs:
   # Ядро и логика экранов: те же тесты, что и на Linux, но на настоящей Windows.
   build:
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
+          restore-keys: nuget-${{ runner.os }}-
       - name: Тесты
         run: dotnet run --project tests/BeamModManager.Core.Tests -c Release
 
   # Помощник внутри игры (Lua) на подделке API BeamNG: в игре LuaJIT, совместимый с Lua 5.1.
   lua:
-    runs-on: ubuntu-latest
+    # версия Ubuntu закреплена: ubuntu-latest с 2026-10-19 переезжает на 26, пакет lua5.1 там может пропасть
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get install -y -q lua5.1 && lua5.1 tests/lua/bridge_test.lua src/BeamModManager.Core/Game/Bridge
@@ -27,6 +42,7 @@ jobs:
   # Окно на WPF (.NET 10): сборка и снимки экрана в демо-режиме. Снимки уходят в ветку ci-shots.
   app:
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -34,6 +50,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
+          restore-keys: nuget-${{ runner.os }}-
       - name: Сборка
         shell: pwsh
         run: |
@@ -142,8 +164,12 @@ jobs:
   # Самообновление целиком на настоящей Windows: две сборки как у выпуска (0.1.1 и 0.1.2); выпуск лежит в папке вместо
   # GitHub (BMM_TEST_UPDATE_FEED — подменяется только сеть, проверки те же). Программа — на другом диске, чем профиль
   # (D: и C:), в папке с русскими буквами и пробелами. Программа сама пишет в log.txt папки выпуска, что запустилось.
+  # Долгая (две self-contained сборки), а меняется самообновление редко: идёт только перед выпуском, по «Run workflow»
+  # или по пометке [selfupdate] в описании коммита. Выпуск без неё не делается (needs).
   selfupdate:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]') || contains(github.event.head_commit.message, '[selfupdate]')
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -151,6 +177,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
+          restore-keys: nuget-${{ runner.os }}-
       - name: Две сборки как у выпуска
         shell: pwsh
         run: |
@@ -258,13 +290,14 @@ jobs:
 
   # Готовая программа: один exe без установки .NET (self-contained). Только по команде: пометка [release] в описании
   # коммита или «Run workflow» на странице Actions. Обычные изменения выпусков не создают (решено 2026-10-15).
-  # 1) выпуск «latest» в этом (закрытом) репозитории — как раньше;
+  # 1) выпуск «latest» в этом репозитории — как раньше;
   # 2) выпуск v<версия> в публичном SnikS1337/ModManagerBeamNG c latest.json — оттуда программа обновляется сама.
   #    Нужен секрет RELEASES_TOKEN (токен с правом Contents: write на публичный репозиторий); без него шаг пропускается.
   release:
     needs: [build, app, lua, selfupdate]
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: windows-latest
+    timeout-minutes: 20
     # выпуски по одному: более старая сборка, закончившая позже, не должна стать «последней»
     concurrency:
       group: release
@@ -278,6 +311,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
+          restore-keys: nuget-${{ runner.os }}-
       - name: Сборка exe
         shell: pwsh
         run: |
@@ -302,7 +341,7 @@ jobs:
           $manifest | ConvertTo-Json | Out-File -Encoding utf8NoBOM latest.json
           Get-Content latest.json
           "VER=$ver" | Out-File -Append $env:GITHUB_ENV
-      - name: Выпуск latest (закрытый репозиторий)
+      - name: Выпуск latest (этот репозиторий)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
