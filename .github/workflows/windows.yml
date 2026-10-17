@@ -92,6 +92,8 @@ jobs:
           # верх «островки»: раскрытый поиск, сжатый заголовок при прокрутке, светлое, без жидкого стекла
           Shot 'garage-search' @('--search', 'ford')
           Shot 'garage-scrolled' @('--scroll', '400')
+          # светлое стекло над фото: тёмный текст островка должен читаться (подъём тёмного в шейдере)
+          Shot 'light-garage-scrolled' @('--mode', 'Light', '--scroll', '400')
           Shot 'light-garage-search' @('--mode', 'Light', '--search', 'ford', '--scroll', '400')
           Shot 'matte-garage' @('--matte', '--select', '"Dacia Sandero Stepway"', '--scroll', '300')
           Shot 'updates-search' @('--page', 'updates', '--search', 'dacia', '--width', '1100', '--height', '760')
