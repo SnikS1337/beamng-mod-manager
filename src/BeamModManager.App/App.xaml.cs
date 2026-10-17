@@ -52,7 +52,7 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Откуда брать обновления: публичный репозиторий только с готовыми сборками (код остаётся закрытым).
+    /// Откуда брать обновления: отдельный репозиторий только с готовыми сборками (исходники — в beamng-mod-manager).
     /// latest.json пишет сборочная машина (windows.yml, задание release).
     /// </summary>
     public const string UpdateManifestUrl = "https://github.com/SnikS1337/ModManagerBeamNG/releases/latest/download/latest.json";

@@ -13,7 +13,7 @@
 
 Готовая программа собирается по команде (пометка `[release]` в описании коммита или «Run workflow» на странице Actions)
 и лежит в выпуске
-[latest](https://github.com/SnikS1337/123/releases/tag/latest) (репозиторий приватный: скачивается, когда вошли в GitHub).
+[latest](https://github.com/SnikS1337/beamng-mod-manager/releases/tag/latest).
 
 1. Скачать `ModManagerBeamNG.zip` и распаковать в любую папку. Устанавливать ничего не нужно, .NET тоже.
 2. Запустить `BeamModManager.exe`. Первый запуск дольше обычного: программа распаковывает себя.
