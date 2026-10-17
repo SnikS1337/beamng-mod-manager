@@ -42,6 +42,15 @@ public sealed class RefractionEffect : ShaderEffect
     public static readonly DependencyProperty LiftProperty = DependencyProperty.Register(
         nameof(Lift), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(0.0, PixelShaderConstantCallback(6)));
 
+    public static readonly DependencyProperty ShadeProperty = DependencyProperty.Register(
+        nameof(Shade), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(0.0, PixelShaderConstantCallback(7)));
+
+    /// <summary>
+    /// Светлое оформление: тень в толще стекла у края (0 — нет). Над ровным светлым фоном преломлять почти нечего, и без неё
+    /// стекло читалось плоской белой плашкой; с ней видно, что край выпуклый, как у Apple.
+    /// </summary>
+    public double Shade { get => (double)GetValue(ShadeProperty); set => SetValue(ShadeProperty, value); }
+
     /// <summary>
     /// Светлое оформление: насколько тёмное под стеклом подтягивается к белому (тёмное — сильнее, светлое почти не меняется).
     /// 0 — без изменений. Так светлое стекло прозрачное, а тёмный текст на нём читается и над тёмным фото.
@@ -87,6 +96,7 @@ public sealed class RefractionEffect : ShaderEffect
         UpdateShaderValue(SaturationProperty);
         UpdateShaderValue(BrightnessProperty);
         UpdateShaderValue(LiftProperty);
+        UpdateShaderValue(ShadeProperty);
     }
 
     /// <summary>Один шейдер на все панели; грузится при первом обращении, неудача запоминается.</summary>
