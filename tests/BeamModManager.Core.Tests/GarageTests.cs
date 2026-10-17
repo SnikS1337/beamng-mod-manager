@@ -93,6 +93,39 @@ public static class GarageTests
             Assert.True(vm.Cards.Select(c => c.Name).SequenceEqual(new[] { "A", "C" }), "включённые");
         });
 
+        t.Run("шапка «островков»: строка под заголовком, число для капсулы, подпись поиска", () =>
+        {
+            var (vm, b) = Make(Mod("Audi", latest: "1.5"), Mod("BMW"), Mod("Civic", latest: "2.0"), Mod("Dacia"));
+            Assert.Eq("4 мода · 2 ждут обновления", vm.HeaderNote);
+            Assert.Eq("4", vm.HeaderCount);
+            Assert.Eq("", vm.SearchNote, "без запроса подписи нет");
+            vm.SearchText = "audi";
+            Assert.Eq("найдено 1", vm.SearchNote);
+            vm.SearchText = "zzz";
+            Assert.Eq("ничего не нашли", vm.SearchNote);
+            vm.SearchText = "  ";
+            Assert.Eq("", vm.SearchNote, "пробелы — не запрос");
+            vm.Filter = GarageFilter.Enabled;
+            Assert.Eq("4 мода · 2 ждут обновления", vm.HeaderNote, "фильтр шапку не меняет");
+            b.Mods.RemoveAll(m => m.Mod.Name is "Audi" or "Civic");
+            vm.Refresh();
+            Assert.Eq("2 мода", vm.HeaderNote, "без обновлений — только число");
+            b.Mods.Add(Mod("Echo", latest: "9"));
+            vm.Refresh();
+            Assert.Eq("3 мода · 1 ждёт обновления", vm.HeaderNote, "одно — «ждёт»");
+            b.Mods.Clear();
+            vm.Refresh();
+            Assert.Eq("модов пока нет", vm.HeaderNote);
+            Assert.Eq("", vm.HeaderCount, "пустая капсула без числа");
+        });
+
+        t.Run("подпись поиска: найдено N или ничего", () =>
+        {
+            Assert.Eq("", GarageViewModel.SearchNoteFor(false, 5));
+            Assert.Eq("ничего не нашли", GarageViewModel.SearchNoteFor(true, 0));
+            Assert.Eq("найдено 12", GarageViewModel.SearchNoteFor(true, 12));
+        });
+
         t.Run("смена фильтра не пересоздаёт карточки: те же экземпляры (для плавного перестроения)", () =>
         {
             var (vm, _) = Make(Mod("A"), Mod("B", on: false), Mod("C"));

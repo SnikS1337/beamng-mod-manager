@@ -617,8 +617,10 @@
                     </c:Droplet.RenderTransform>
                 </c:Droplet>
                 <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="14" Content="Моды" Tag="{StaticResource IconMods}"
+                             c:NavGlyph.Fill="{StaticResource IconModsFill}" c:NavGlyph.ActiveFill="1"
                              IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
                 <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
+                             c:NavGlyph.Fill="{StaticResource IconUpdatesFill}" c:NavGlyph.ActiveFill="0.34"
                              Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
                 <!-- бейдж: пока «Обновления» не открывали, раз в 6 с от него расходится мягкое светлое кольцо (DESIGN.md 6 «Единый ритм») -->
                 <Grid x:Name="UpdatesBadge" Canvas.Left="57" Canvas.Top="79" IsHitTestVisible="False"
@@ -631,65 +633,104 @@
                     </Border>
                 </Grid>
                 <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="138" Content="Поиск" Tag="{StaticResource IconSearch}"
+                             c:NavGlyph.Fill="{StaticResource IconSearchFill}" c:NavGlyph.ActiveFill="0.34"
                              Checked="Nav_Checked" ToolTip="Поиск (Ctrl+3)"/>
                 <Rectangle Canvas.Left="22" Canvas.Top="200" Width="40" Height="1" Fill="{DynamicResource Divider}"/>
                 <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="212" Content="Настройки" Tag="{StaticResource IconSettings}"
+                             c:NavGlyph.Fill="{StaticResource IconSettingsFill}" c:NavGlyph.ActiveFill="1"
                              Checked="Nav_Checked" ToolTip="Настройки (Ctrl+,)"/>
             </Canvas>
         </c:Glass>
 
-        <!-- Верхняя панель: x 116, y 16, высота 52, до правой панели -->
-        <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="26" Blur="3" Tint="#700E182C"
-                 Lens="26" Refraction="120" Brightness="0.60" Sparks="8" Seed="13"
-                 VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
-            <DockPanel Margin="22,0,12,0">
-                <TextBlock x:Name="SectionTitle" Text="Моды" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <TextBlock x:Name="CountLabel" Text="{Binding CountText}" Foreground="{DynamicResource Ink3}" FontSize="13" Margin="14,1,0,0" VerticalAlignment="Center"/>
+        <!-- Верх (решено 2026-10-17, «Островки»): над сеткой ряд от левой панели до правой (или до капсулы окна).
+             Слева — крупный заголовок раздела прямо на фоне и строка под ним; стоит прокрутить список — он плавно сжимается
+             в маленькую стеклянную капсулу. По центру ряда — островок: фильтры и круглая кнопка поиска; по нажатию (или Ctrl+F)
+             островок перетекает в одну капсулу поиска. Без жидкого стекла — то же движение, стекло матовое. -->
+        <Grid x:Name="TopRow" VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
+            <StackPanel x:Name="TitleBlock" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6,-3,0,0" IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
+                <StackPanel.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="TitleScale"/>
+                        <TranslateTransform x:Name="TitleMove"/>
+                    </TransformGroup>
+                </StackPanel.RenderTransform>
+                <TextBlock x:Name="SectionTitle" Text="Моды" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource Ink}"/>
+                <TextBlock x:Name="CountLabel" Text="{Binding HeaderNote}" Foreground="{DynamicResource Ink2}" FontSize="13" Margin="1,-2,0,0"/>
+            </StackPanel>
 
-                <Border x:Name="SearchField" DockPanel.Dock="Right" Width="200" Height="34" CornerRadius="17" Background="{DynamicResource SoftFill}" Margin="14,0,0,0"
-                        WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Grid Margin="12,0">
-                        <Path Data="{StaticResource IconSearch}" Stroke="{DynamicResource Ink3}" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                              Width="22" Height="22" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-4,0,0,0" RenderTransformOrigin="0.5,0.5">
-                            <Path.RenderTransform><ScaleTransform ScaleX="0.75" ScaleY="0.75"/></Path.RenderTransform>
+            <c:Glass x:Name="TitleCapsule" Source="{Binding ElementName=Backdrop}" Corner="20" Blur="3" Tint="#700E182C"
+                     Lens="18" Refraction="60" Brightness="0.66"
+                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,6,0,0" Height="40" Opacity="0" Visibility="Collapsed"
+                     IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
+                <c:Glass.RenderTransform><ScaleTransform x:Name="CapsuleScale" ScaleX="0.94" ScaleY="0.94"/></c:Glass.RenderTransform>
+                <StackPanel Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
+                    <TextBlock x:Name="CapsuleTitle" Text="Моды" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="CapsuleCount" Text="{Binding HeaderCount}" FontSize="13" Foreground="{DynamicResource Ink3}" Margin="8,1,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+            </c:Glass>
+
+            <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="24" Blur="3" Tint="#700E182C"
+                     Lens="22" Refraction="110" Brightness="0.60" Sparks="6" Seed="13"
+                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" Height="48" Width="520"
+                     RenderTransformOrigin="0.5,0.5" WindowChrome.IsHitTestVisibleInChrome="True">
+                <c:Glass.RenderTransform><ScaleTransform x:Name="IslandScale"/></c:Glass.RenderTransform>
+                <Grid x:Name="IslandBody" ClipToBounds="True" Margin="6,0">
+                    <!-- фильтры и кнопка поиска -->
+                    <StackPanel x:Name="FilterLayer" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <Border x:Name="FilterBox" PreviewMouseLeftButtonDown="Filter_PreviewMouseDown" PreviewMouseLeftButtonUp="Filter_PreviewMouseUp" MouseLeave="Filter_MouseLeave" CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center"
+                                WindowChrome.IsHitTestVisibleInChrome="True">
+                            <Grid>
+                                <Canvas>
+                                    <c:Droplet x:Name="FilterDrop" Corner="20" Height="40" Canvas.Top="-5" Width="60" Under="{DynamicResource SegBack}">
+                                        <c:Droplet.RenderTransform>
+                                            <TransformGroup>
+                                                <ScaleTransform x:Name="FilterDropScale"/>
+                                                <TranslateTransform x:Name="FilterDropMove" X="-3"/>
+                                            </TransformGroup>
+                                        </c:Droplet.RenderTransform>
+                                    </c:Droplet>
+                                </Canvas>
+                                <ItemsControl x:Name="FilterList" ItemsSource="{Binding Filters}" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type g:FilterItem}">
+                                            <Button Style="{StaticResource FilterItem}" Click="Filter_Click" AutomationProperties.Name="{Binding Label}"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Grid>
+                        </Border>
+                        <Button x:Name="SearchButton" Style="{StaticResource IslandButton}" Tag="{StaticResource IconSearch}" FontSize="17" Margin="6,0,0,0"
+                                Click="SearchButton_Click" ToolTip="Найти мод (Ctrl+F)" AutomationProperties.Name="Найти мод"/>
+                    </StackPanel>
+                    <!-- раскрытый поиск: одна капсула -->
+                    <Grid x:Name="SearchLayer" Visibility="Collapsed" Opacity="0" VerticalAlignment="Center" Margin="10,0,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Path Data="{StaticResource IconSearch}" Stroke="{DynamicResource Ink2}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              Width="22" Height="22" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+                            <Path.RenderTransform><ScaleTransform ScaleX="0.8" ScaleY="0.8"/></Path.RenderTransform>
                         </Path>
-                        <TextBlock x:Name="SearchHint" Text="Найти мод" Foreground="{DynamicResource InkHint}" FontSize="13" Margin="24,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
-                        <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Margin="22,0,0,0"
-                                 Background="Transparent" BorderThickness="0" Foreground="{DynamicResource Ink}" CaretBrush="{DynamicResource Ink}" FontSize="13"
+                        <TextBlock x:Name="SearchHint" Grid.Column="1" Text="Найти мод" Foreground="{DynamicResource InkHint}" FontSize="14" Margin="8,0,0,0"
+                                   VerticalAlignment="Center" IsHitTestVisible="False"/>
+                        <TextBox x:Name="SearchBox" Grid.Column="1" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Margin="6,0,0,0"
+                                 Background="Transparent" BorderThickness="0" Foreground="{DynamicResource Ink}" CaretBrush="{DynamicResource Ink}" FontSize="14"
                                  VerticalAlignment="Center" AutomationProperties.Name="Найти среди установленных модов"
-                                 TextChanged="SearchBox_TextChanged" FocusVisualStyle="{x:Null}"/>
+                                 TextChanged="SearchBox_TextChanged" LostKeyboardFocus="SearchBox_LostKeyboardFocus" FocusVisualStyle="{x:Null}"/>
+                        <TextBlock x:Name="SearchNote" Grid.Column="2" Text="{Binding SearchNote}" Foreground="{DynamicResource Ink3}" FontSize="12.5"
+                                   Margin="10,0,6,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                        <Button x:Name="SearchClose" Grid.Column="3" Style="{StaticResource IslandButton}" Tag="{StaticResource IconClose}" FontSize="11"
+                                Click="SearchClose_Click" ToolTip="Закрыть поиск (Esc)" AutomationProperties.Name="Закрыть поиск"/>
                     </Grid>
-                </Border>
-
-                <!-- фильтры: активен один, под активным — капля -->
-                <Border x:Name="FilterBox" PreviewMouseLeftButtonDown="Filter_PreviewMouseDown" PreviewMouseLeftButtonUp="Filter_PreviewMouseUp" MouseLeave="Filter_MouseLeave" DockPanel.Dock="Right" CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center"
-                        WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Grid>
-                        <Canvas>
-                            <c:Droplet x:Name="FilterDrop" Corner="20" Height="40" Canvas.Top="-5" Width="60" Under="{DynamicResource SegBack}">
-                                <c:Droplet.RenderTransform>
-                                    <TransformGroup>
-                                        <ScaleTransform x:Name="FilterDropScale"/>
-                                        <TranslateTransform x:Name="FilterDropMove" X="-3"/>
-                                    </TransformGroup>
-                                </c:Droplet.RenderTransform>
-                            </c:Droplet>
-                        </Canvas>
-                        <ItemsControl x:Name="FilterList" ItemsSource="{Binding Filters}" Focusable="False">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="{x:Type g:FilterItem}">
-                                    <Button Style="{StaticResource FilterItem}" Click="Filter_Click" AutomationProperties.Name="{Binding Label}"/>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </Grid>
-                </Border>
-                <Border/>
-            </DockPanel>
-        </c:Glass>
+                </Grid>
+            </c:Glass>
+        </Grid>
 
 
         <!-- ═════ Настройки (DESIGN.md 5.1): одна стеклянная панель, слева разделы, справа выбранный; всё применяется сразу ═════ -->

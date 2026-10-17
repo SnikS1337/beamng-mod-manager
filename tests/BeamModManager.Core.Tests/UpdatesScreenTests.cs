@@ -137,7 +137,14 @@ public static class UpdatesScreenTests
             Assert.Eq("Скрытые 1", vm.Filters[1].Label);
             Assert.Eq("Страница пропала 1", vm.Filters[2].Label);
             Assert.Eq("3 доступно", vm.CountText);
+            Assert.Eq("3", vm.HeaderCount, "число для капсулы заголовка");
+            Assert.Eq("", vm.SearchNote);
             Assert.Eq("Aero,Dacia,Rally", string.Join(",", vm.Items.Select(i => i.Card.Name)));
+            vm.SearchText = "dac";
+            Assert.Eq("найдено 1", vm.SearchNote);
+            vm.SearchText = "нет такого";
+            Assert.Eq("ничего не нашли", vm.SearchNote);
+            vm.SearchText = "";
             vm.Filter = UpdatesFilter.Hidden;
             Assert.Eq("Civic", vm.Items.Single().Card.Name);
             vm.Filter = UpdatesFilter.Missing;

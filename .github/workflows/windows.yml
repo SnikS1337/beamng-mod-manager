@@ -80,6 +80,12 @@ jobs:
           Shot 'updates-missing' @('--page', 'updates', '--filter', 'Missing', '--width', '1360')
           Shot 'updates-1000' @('--page', 'updates', '--width', '1000', '--height', '700')
           Shot 'light-updates' @('--mode', 'Light', '--page', 'updates')
+          # верх «островки»: раскрытый поиск, сжатый заголовок при прокрутке, светлое, без жидкого стекла
+          Shot 'garage-search' @('--search', 'ford')
+          Shot 'garage-scrolled' @('--scroll', '400')
+          Shot 'light-garage-search' @('--mode', 'Light', '--search', 'ford', '--scroll', '400')
+          Shot 'matte-garage' @('--matte', '--select', '"Dacia Sandero Stepway"', '--scroll', '300')
+          Shot 'updates-search' @('--page', 'updates', '--search', 'dacia', '--width', '1100', '--height', '760')
           Shot 'bind' @('--page', 'bind')
           Shot 'light-bind' @('--mode', 'Light', '--page', 'bind', '--width', '1100', '--height', '760')
           # большая библиотека: замеры в shots/*.perf.txt (запуск, фильтр, поиск, перечитывание, память)

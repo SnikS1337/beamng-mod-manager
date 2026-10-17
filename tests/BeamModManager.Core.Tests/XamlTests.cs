@@ -12,6 +12,8 @@ namespace BeamModManager.Core.Tests;
 public static class XamlTests
 {
     private static readonly XNamespace X = "http://schemas.microsoft.com/winfx/2006/xaml";
+    /// <summary>Заливка значка в покое (Controls/NavGlyph.cs, Idle).</summary>
+    private const double NavIdle = 0.16;
 
     /// <summary>Папка src/BeamModManager.App рядом с тестами (сборка из репозитория); null — тесты запущены не из него.</summary>
     private static string? AppDir()
@@ -160,6 +162,43 @@ public static class XamlTests
                 var g = xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == name);
                 Assert.Eq("{Binding ElementName=Backdrop}", (string?)g.Attribute("Source"), name);
             }
+        });
+
+        t.Run("значки левой панели двухцветные: у каждого пункта своя заливка и сила заливки у выбранного", () =>
+        {
+            var xaml = XDocument.Parse(Read("MainWindow.xaml"));
+            var theme = Read("Theme.xaml");
+            var keys = Keys(theme);
+            foreach (var name in new[] { "NavGarage", "NavUpdates", "NavSearch", "NavSettings" })
+            {
+                var rb = xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == name);
+                var fill = rb.Attributes().FirstOrDefault(a => a.Name.LocalName == "NavGlyph.Fill")?.Value;
+                var active = rb.Attributes().FirstOrDefault(a => a.Name.LocalName == "NavGlyph.ActiveFill")?.Value;
+                Assert.True(fill is not null && active is not null, $"{name}: заливка и её сила");
+                var key = Regex.Match(fill!, @"StaticResource (\w+)").Groups[1].Value;
+                Assert.True(keys.Contains(key), $"{name}: ключ {key} есть в теме");
+                var v = double.Parse(active!, System.Globalization.CultureInfo.InvariantCulture);
+                Assert.True(v > NavIdle && v <= 1, $"{name}: выбранный заметнее покоя ({v})");
+            }
+            Assert.True(theme.Contains("<c:NavGlyph", StringComparison.Ordinal), "пункт рисует NavGlyph");
+        });
+
+        t.Run("верх «островки»: заголовок на фоне, капсула заголовка и островок с фильтрами и поиском в одном ряду", () =>
+        {
+            var xaml = XDocument.Parse(Read("MainWindow.xaml"));
+            XElement El(string n) => xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == n);
+            var row = El("TopRow");
+            foreach (var n in new[] { "TitleBlock", "TitleCapsule", "TopBar", "FilterLayer", "SearchLayer", "SearchBox", "SearchButton", "SearchClose", "FilterBox", "FilterDrop" })
+                Assert.True(El(n).Ancestors().Contains(row), $"{n} — в верхнем ряду");
+            Assert.Eq("Glass", El("TopBar").Name.LocalName, "островок — стекло");
+            Assert.Eq("Glass", El("TitleCapsule").Name.LocalName, "капсула заголовка — стекло");
+            Assert.Eq("{Binding ElementName=Backdrop}", (string?)El("TitleCapsule").Attribute("Source"), "капсула над фоном, не над сеткой");
+            Assert.Eq("False", (string?)El("TitleBlock").Attribute("IsHitTestVisible"), "за заголовок окно можно тащить");
+            Assert.Eq("Collapsed", (string?)El("SearchLayer").Attribute("Visibility"), "поиск свёрнут при запуске");
+            Assert.Eq("True", (string?)El("TopBar").Attribute("WindowChrome.IsHitTestVisibleInChrome"), "островок нажимается, хоть и в полосе заголовка окна");
+            var code = Read("MainWindow.xaml.cs");
+            foreach (var m in new[] { "void OpenSearch(", "void CloseSearch(", "void PlaceIsland(", "void ApplyTitleShrink(", "void TitleFollowScroll(" })
+                Assert.True(code.Contains(m, StringComparison.Ordinal), m);
         });
 
         t.Run("капля кнопок окна целиком внутри капсулы (не режет блик кромки)", () =>
