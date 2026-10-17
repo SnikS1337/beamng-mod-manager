@@ -17,7 +17,7 @@ float strength : register(c3);    // сила (scale из макета, уже �
 float saturation : register(c4);  // насыщенность, 1 — без изменений
 float brightness : register(c5);  // яркость, 1 — без изменений
 float lift : register(c6);        // подъём тёмного к белому (светлое оформление), 0 — без изменений
-float shade : register(c7);       // тень в толще у края (светлое оформление): на ровном светлом фоне видно, что стекло выпуклое
+float shade : register(c7);       // тень в толще у края (светлое оформление), уже умноженная на яркость: видно, что край выпуклый
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
 
@@ -56,7 +56,7 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     // l не больше a (цвета с умноженной прозрачностью), поэтому 1 - l без saturate; яркость и тень у края — одним множителем:
     // у PS 2.0 всего 64 арифметические команды
     col = lerp(col, float3(a, a, a), lift - lift * l);
-    col *= brightness * (1.0 - shade * tt);
+    col *= brightness - shade * tt;
     col = min(max(col, float3(0.0, 0.0, 0.0)), float3(a, a, a));
 
     // снаружи прозрачно, на самом краю полпикселя сглаживания

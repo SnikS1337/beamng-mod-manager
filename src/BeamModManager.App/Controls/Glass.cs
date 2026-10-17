@@ -225,7 +225,7 @@ public class Glass : ContentControl
             _refraction ??= new RefractionEffect();
             _refraction.Saturation = EffectiveSaturation;
             _refraction.Lift = EffectiveLift;
-            _refraction.Shade = EffectiveShade;
+            _refraction.Shade = EffectiveShade * EffectiveBrightness;
             _refraction.Strength = Refraction;
             _refraction.Lens = Lens;
             _refraction.Radius = Corner;
