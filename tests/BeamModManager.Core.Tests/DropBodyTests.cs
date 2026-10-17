@@ -1,0 +1,76 @@
+using BeamModManager.Ui.Look;
+
+namespace BeamModManager.Core.Tests;
+
+/// <summary>Капля в пути одним телом (DropBody, вариант «В», 2026-10-17): оболочка от хвоста до головы, без разрыва.</summary>
+public static class DropBodyTests
+{
+    public static void Register(TestRunner t)
+    {
+        t.Group("Капля одним телом");
+
+        t.Run("капля стоит: оболочка — сама капля, не линза, не приподнята, не сжата", () =>
+        {
+            var b = DropBody.Of(76, 76, 64, 0);
+            Assert.Eq(76.0, b.Start); Assert.Eq(64.0, b.Length);
+            Assert.Eq(1.0, b.Across); Assert.Eq(0.0, b.Motion); Assert.Eq(1.0, b.Lift);
+        });
+
+        t.Run("в пути вниз и вверх: одна оболочка от хвоста до головы, ни одной щели между ними", () =>
+        {
+            foreach (var (lead, trail) in new[] { (144.0, 30.0), (8.0, 190.0), (212.0, 211.5) })
+            {
+                var b = DropBody.Of(lead, trail, 64, 300);
+                Assert.Eq(Math.Min(lead, trail), b.Start);
+                Assert.True(Math.Abs(b.Start + b.Length - (Math.Max(lead, trail) + 64)) < 1e-9, "конец оболочки — у дальней капли");
+            }
+        });
+
+        t.Run("растянулась — поперёк сжата не больше чем на 16 %, линза и подъём не больше предела", () =>
+        {
+            for (var sep = 0.0; sep <= 400; sep += 7)
+            {
+                var b = DropBody.Of(sep, 0, 64, sep * 10);
+                Assert.True(b.Across <= 1 && b.Across >= 1 - DropBody.MaxSquash - 1e-9, $"{sep}: {b.Across}");
+                Assert.True(b.Motion >= 0 && b.Motion <= 1, $"{sep}: {b.Motion}");
+                Assert.True(b.Lift >= 1 && b.Lift <= 1 + DropBody.MaxLift + 1e-9, $"{sep}: {b.Lift}");
+            }
+        });
+
+        t.Run("линза появляется в пути и гаснет, когда капля доехала (скорость и разрыв ноль)", () =>
+        {
+            Assert.True(DropBody.MotionOf(30, 0) > 0.99, "разрыв 30 — линза");
+            Assert.True(DropBody.MotionOf(0, 900) > 0.99, "быстро едет — линза");
+            Assert.True(DropBody.MotionOf(1, 30) < 0.2, "почти доехала — почти плашка");
+            Assert.Eq(0.0, DropBody.MotionOf(0, 0));
+        });
+
+        t.Run("мусор (NaN, бесконечность, ноль, минус) не ломает каплю", () =>
+        {
+            foreach (var bad in new[] { double.NaN, double.PositiveInfinity, double.NegativeInfinity, 0, -50 })
+            {
+                var b = DropBody.Of(bad, bad, bad, bad);
+                Assert.True(double.IsFinite(b.Start) && b.Length >= 1 && double.IsFinite(b.Across) && double.IsFinite(b.Motion) && double.IsFinite(b.Lift), $"{bad}: {b}");
+                Assert.True(double.IsFinite(DropBody.MotionOf(bad, bad)));
+            }
+        });
+
+        t.Run("пружины головы и хвоста от одного пункта к другому: тело непрерывно на каждом кадре и в конце стоит", () =>
+        {
+            // как в окне: голова 0,30 с с лёгким перелётом, хвост 0,46 с без отскока; шаг 1/144 с
+            double lead = 8, lv = 0, trail = 8, tv = 0;
+            const double target = 212, dt = 1 / 144.0;
+            double K(double resp) => Math.Pow(2 * Math.PI / resp, 2);
+            double C(double resp, double ratio) => 2 * ratio * 2 * Math.PI / resp;
+            for (var i = 0; i < 144 * 2; i++)
+            {
+                lv += (-K(0.30) * (lead - target) - C(0.30, 0.8) * lv) * dt; lead += lv * dt;
+                tv += (-K(0.46) * (trail - target) - C(0.46, 1.0) * tv) * dt; trail += tv * dt;
+                var b = DropBody.Of(lead, trail, 64, lv);
+                Assert.True(b.Start <= Math.Min(lead, trail) + 1e-9 && b.Start + b.Length >= Math.Max(lead, trail) + 64 - 1e-9, $"кадр {i}");
+            }
+            var end = DropBody.Of(lead, trail, 64, lv);
+            Assert.True(Math.Abs(end.Start - target) < 0.5 && end.Motion < 0.05, $"доехала: {end}");
+        });
+    }
+}

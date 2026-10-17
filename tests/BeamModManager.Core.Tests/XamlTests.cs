@@ -201,6 +201,51 @@ public static class XamlTests
                 Assert.True(code.Contains(m, StringComparison.Ordinal), m);
         });
 
+        t.Run("форма капли 4: панель — капсула, капля с одинаковым отступом со всех сторон, пункты ровно под каплей", () =>
+        {
+            var xaml = XDocument.Parse(Read("MainWindow.xaml"));
+            XElement El(string n) => xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == n);
+            double D(XElement e, string a) => double.Parse((string)e.Attribute(a)!, System.Globalization.CultureInfo.InvariantCulture);
+            var nav = El("Nav"); var drop = El("NavDrop");
+            double navW = D(nav, "Width"), navH = D(nav, "Height"), dw = D(drop, "Width"), dh = D(drop, "Height");
+            Assert.Eq(navW / 2, D(nav, "Corner"), "левая панель — целая капсула");
+            Assert.Eq(dh / 2, D(drop, "Corner"), "капля — капсула");
+            var inset = D(drop, "Canvas.Left");
+            Assert.Eq(inset, navW - inset - dw, "отступ слева и справа одинаковый");
+            var items = new[] { "NavGarage", "NavUpdates", "NavSearch", "NavSettings" }.Select(El).ToList();
+            var tops = items.Select(i => D(i, "Canvas.Top")).ToList();
+            Assert.Eq(inset, tops[0], "сверху тот же отступ");
+            var theme = Read("Theme.xaml");
+            var itemH = double.Parse(Regex.Match(theme, @"x:Key=""NavItem""[\s\S]*?Property=""Height"" Value=""([\d.]+)""").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            Assert.Eq(dh, itemH, "пункт той же высоты, что капля: капля ложится ровно под него");
+            Assert.Eq(inset, navH - tops[^1] - itemH, "снизу тот же отступ");
+            for (var i = 1; i < tops.Count; i++) Assert.True(tops[i] - tops[i - 1] >= itemH, $"пункты {i - 1} и {i} не наезжают");
+            var move = xaml.Descendants().Single(e => (string?)e.Attribute(X + "Name") == "NavDropMove");
+            Assert.Eq(tops[0], D(move, "Y"), "капля при запуске — под первым пунктом");
+            var code = Read("MainWindow.xaml.cs");
+            Assert.True(Regex.IsMatch(code, @"NavDropTop\s*=\s*" + tops[0].ToString(System.Globalization.CultureInfo.InvariantCulture) + @"\b"), "пружины капли начинают с первого пункта");
+            Assert.True(Regex.IsMatch(code, @"NavDropH\s*=\s*" + dh.ToString(System.Globalization.CultureInfo.InvariantCulture) + @"\b"), "высота капли в коде — как в разметке");
+        });
+
+        t.Run("капли варианта «В»: одно тело в пути (голова и хвост), плашка в покое, линза в пути, радужная кромка", () =>
+        {
+            var code = Read("MainWindow.xaml.cs");
+            Assert.True(code.Contains("DropBody.Of(_navDrop.Value, _navTrail.Value", StringComparison.Ordinal), "левая панель — оболочка головы и хвоста");
+            Assert.True(code.Contains("DropBody.Of(_filterX.Value, _filterTrail.Value", StringComparison.Ordinal), "фильтры — так же");
+            foreach (var pair in new[] { ("_navDrop", "_navTrail"), ("_filterX", "_filterTrail") })
+            {
+                var leads = Regex.Matches(code, @"_springs\.To\(" + pair.Item1 + @",").Count;
+                var trails = Regex.Matches(code, @"_springs\.To\(" + pair.Item2 + @",").Count;
+                Assert.Eq(leads, trails, $"{pair.Item1}: каждой цели головы — та же цель хвоста (иначе капля застрянет растянутой)");
+            }
+            var drop = Read("Controls/Droplet.cs");
+            Assert.True(drop.Contains("MotionProperty", StringComparison.Ordinal) && drop.Contains("class RestPaint", StringComparison.Ordinal), "плашка в покое и переход к линзе");
+            Assert.True(drop.Contains("_clip.Visibility = _tint.Visibility = lensVis", StringComparison.Ordinal), "пока капля стоит, линзы нет (сцена не копируется)");
+            var sw = Read("Controls/GlassSwitch.cs");
+            Assert.True(sw.Contains("var grow = 1 + 0.6 * lift", StringComparison.Ordinal), "ручка переключателя в пути выше дорожки");
+            Assert.True(sw.Contains("радужная кромка", StringComparison.Ordinal), "у ручки радужная кромка");
+        });
+
         t.Run("окно первым делом включает защиту ядра от зависания разбора страниц (до любого Regex в процессе)", () =>
         {
             var code = Read("App.xaml.cs");

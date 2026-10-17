@@ -57,4 +57,5 @@ FramePacerTests.Register(t);
 IslandLayoutTests.Register(t);
 MvvmTests.Register(t);
 GuardTests.Register(t);
+DropBodyTests.Register(t);
 return t.Summary();

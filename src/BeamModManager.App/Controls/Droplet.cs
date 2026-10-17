@@ -8,14 +8,16 @@ namespace BeamModManager.App.Controls;
 
 /// <summary>
 /// Капля жидкого стекла (как выбор в панелях iOS 26) — под активным разделом левой панели, под выбранным фильтром и на
-/// кнопках окна. Почти прозрачная линза, а не матовая плашка (решено 2026-10-16):
+/// кнопках окна. Вариант «В» (утверждён 2026-10-17, образец «Капли жидкого стекла»): в покое — тихая светлая плашка с
+/// радужной кромкой под значком и подписью; в пути (<see cref="Motion"/> → 1) она перетекает в прозрачную линзу:
 /// <list type="number">
 /// <item>линза: чёткая (без размытия) копия сцены под каплей, чуть увеличенная (×1,1), у краёв преломлённая шейдером
 ///   с тонкой радужной кромкой, ярче и насыщеннее; поверх — подложка своей панели, чтобы капля была тем же стеклом;</item>
 /// <item>едва заметная светлая заливка — только чтобы капля читалась на однотонном фоне;</item>
 /// <item>блик по кромке: яркий сверху слева, слабее снизу справа, светлый серп снизу внутри (свет выходит из капли);</item>
-/// <item>тонкий контур и слабая радужная кромка по кругу.</item>
+/// <item>тонкий контур и радужная кромка по кругу.</item>
 /// </list>
+/// Пока капля стоит, линзы нет совсем (копия сцены не считается) — это и дешевле.
 /// При выключенном жидком стекле (матовое и плоское стекло) капли нет: вместо неё ровная полупрозрачная плашка без линзы,
 /// бликов и тени — двигается и тянется так же. Вариант «опасно» (<see cref="Danger"/>, кнопка «Закрыть») плавно
 /// перекрашивает каплю или плашку в красный. Капля не перехватывает мышь.
@@ -28,13 +30,21 @@ public sealed class Droplet : FrameworkElement
 
     /// <summary>0 — обычная капля, 1 — красная (под «Закрыть»); промежуточные значения — переход.</summary>
     public static readonly DependencyProperty DangerProperty = DependencyProperty.Register(
-        nameof(Danger), typeof(double), typeof(Droplet), new FrameworkPropertyMetadata(0.0, (d, _) => ((Droplet)d)._paint.InvalidateVisual()));
+        nameof(Danger), typeof(double), typeof(Droplet), new FrameworkPropertyMetadata(0.0, (d, _) => ((Droplet)d).Repaint()));
 
     /// <summary>Подложка под каплей внутри панели (у фильтров — тёмная дорожка); null — нет.</summary>
     public static readonly DependencyProperty UnderProperty = DependencyProperty.Register(
         nameof(Under), typeof(Brush), typeof(Droplet), new PropertyMetadata(null, (d, _) => ((Droplet)d).UpdateLens()));
 
+    /// <summary>
+    /// 0 — капля стоит (плашка), 1 — в пути (линза); промежуточные — переход. Задаёт окно по пружинам капли.
+    /// Без жидкого стекла не действует: там всегда плашка.
+    /// </summary>
+    public static readonly DependencyProperty MotionProperty = DependencyProperty.Register(
+        nameof(Motion), typeof(double), typeof(Droplet), new FrameworkPropertyMetadata(0.0, (d, _) => ((Droplet)d).ApplyMotion()));
+
     public double Corner { get => (double)GetValue(CornerProperty); set => SetValue(CornerProperty, value); }
+    public double Motion { get => (double)GetValue(MotionProperty); set => SetValue(MotionProperty, value); }
     public double Danger { get => (double)GetValue(DangerProperty); set => SetValue(DangerProperty, value); }
     public Brush? Under { get => (Brush?)GetValue(UnderProperty); set => SetValue(UnderProperty, value); }
 
@@ -42,6 +52,7 @@ public sealed class Droplet : FrameworkElement
     private readonly Grid _clip, _lens;
     private readonly Rectangle _sample, _tint, _under;
     private readonly Paint _paint;
+    private readonly RestPaint _rest;
     private readonly Shadow _shadow;
     private readonly VisualBrush _brush = new()
     {
@@ -73,7 +84,8 @@ public sealed class Droplet : FrameworkElement
         _paint = new Paint(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
         // тень — нарисованные слои, а не DropShadowEffect: эффект на капле пересчитывался бы каждый кадр вместе с линзой
         _shadow = new Shadow(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
-        _children = new VisualCollection(this) { _shadow, _clip, _tint, _under, _paint };
+        _rest = new RestPaint(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
+        _children = new VisualCollection(this) { _shadow, _rest, _clip, _tint, _under, _paint };
         // свойства самой капли — только после детей: смена IsHitTestVisible уже обходит дочерние элементы
         IsHitTestVisible = false;
         RenderTransformOrigin = new Point(0.5, 0.5);
@@ -125,12 +137,8 @@ public sealed class Droplet : FrameworkElement
     /// </summary>
     private void UpdateLens()
     {
-        var liquid = Liquid;
-        var vis = liquid ? Visibility.Visible : Visibility.Collapsed;
-        _clip.Visibility = vis;
-        _tint.Visibility = vis;
-        _shadow.Visibility = vis;
-        _under.Visibility = liquid && Under is not null ? Visibility.Visible : Visibility.Collapsed;
+        _shadow.Visibility = Liquid ? Visibility.Visible : Visibility.Collapsed;
+        ApplyMotion();
         if (_owner is not null)
         {
             _tint.Fill = _owner.Tint;
@@ -138,9 +146,38 @@ public sealed class Droplet : FrameworkElement
         }
         _under.Fill = Under;
         _lastBox = Rect.Empty;
-        _paint.InvalidateVisual();
-        _shadow.InvalidateVisual();
+        Repaint();
         Sync();
+    }
+
+    private void Repaint()
+    {
+        _paint?.InvalidateVisual();
+        _rest?.InvalidateVisual();
+        _shadow?.InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Плашка ↔ линза. Только прозрачность готовых (кэшированных) слоёв — перерисовки нет. Линза совсем убирается, пока
+    /// капля стоит: тогда и копия сцены под ней не считается. Без жидкого стекла — одна плашка (рисует <see cref="_paint"/>).
+    /// </summary>
+    private void ApplyMotion()
+    {
+        if (_children is null) return; // ещё в конструкторе
+        var liquid = Liquid;
+        var m = liquid ? Math.Clamp(Motion, 0, 1) : 0;
+        var lens = liquid && m > 0.01;
+        var lensVis = lens ? Visibility.Visible : Visibility.Collapsed;
+        var wasOff = _clip.Visibility != Visibility.Visible;
+        _clip.Visibility = _tint.Visibility = lensVis;
+        _under.Visibility = lens && Under is not null ? Visibility.Visible : Visibility.Collapsed;
+        _clip.Opacity = _tint.Opacity = _under.Opacity = m;
+        // без жидкого стекла _paint — сама плашка и видна всегда; с жидким — блики линзы, вместе с ней
+        _paint.Visibility = !liquid || lens ? Visibility.Visible : Visibility.Collapsed;
+        _paint.Opacity = liquid ? m : 1;
+        _rest.Visibility = liquid && m < 0.99 ? Visibility.Visible : Visibility.Collapsed;
+        _rest.Opacity = 1 - m;
+        if (lens && wasOff) { _lastBox = Rect.Empty; Sync(); }
     }
 
     private void ShapeChanged()
@@ -153,8 +190,7 @@ public sealed class Droplet : FrameworkElement
         _tint.RadiusX = _tint.RadiusY = _under.RadiusX = _under.RadiusY = r;
         if (_refraction is not null) { _refraction.Size = new Size(w, h); _refraction.Radius = r; }
         _lastBox = Rect.Empty;
-        _paint.InvalidateVisual();
-        _shadow.InvalidateVisual();
+        Repaint();
         Sync();
     }
 
@@ -208,6 +244,37 @@ public sealed class Droplet : FrameworkElement
                 var rect = new Rect(-g / 2 + 1, 4 - g / 2 + 2, w + g - 2, h + g - 2);
                 dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb((byte)Math.Round(a * 255), 4, 8, 20)), null, rect, r + g / 2, r + g / 2);
             }
+        }
+    }
+
+    /// <summary>
+    /// Капля в покое (жидкое стекло): тихая светлая плашка, блик по верхней кромке, тонкий контур и радужная кромка.
+    /// Значок и подпись пункта лежат поверх и не искажаются.
+    /// </summary>
+    private sealed class RestPaint : FrameworkElement
+    {
+        private readonly Droplet _d;
+        public RestPaint(Droplet d) { _d = d; IsHitTestVisible = false; }
+
+        protected override void OnRender(DrawingContext dc)
+        {
+            var w = ActualWidth; var h = ActualHeight;
+            if (w < 2 || h < 2) return;
+            var r = Math.Min(_d.Corner, Math.Min(w, h) / 2);
+            var danger = Math.Clamp(_d.Danger, 0, 1);
+            var light = _d._owner?.Light == true;
+            var shape = new RectangleGeometry(new Rect(0, 0, w, h), r, r);
+            Color F(double a) => Color.FromArgb(Paint.A(a), 255, 255, 255);
+            var fill = new LinearGradientBrush(
+                Paint.Mix(F(light ? 0.66 : 0.13), Color.FromArgb(Paint.A(0.62), 226, 72, 60), danger),
+                Paint.Mix(F(light ? 0.56 : 0.09), Color.FromArgb(Paint.A(0.58), 214, 58, 46), danger), 90);
+            dc.DrawGeometry(fill, null, shape);
+            dc.PushClip(shape);
+            Paint.Ring(dc, w, h, r, 0.8, 1.0, Paint.Diagonal(Colors.White, light ? 0.9 : 0.5, topLeft: true));
+            dc.Pop();
+            var rim = light && danger < 0.5 ? Color.FromArgb(Paint.A(0.10), 10, 20, 40) : Color.FromArgb(Paint.A(0.18), 255, 255, 255);
+            Paint.Ring(dc, w, h, r, 0.5, 1, new SolidColorBrush(rim));
+            Paint.ConicRim(dc, w, h, r, 0.85 * (1 - danger));
         }
     }
 
@@ -280,8 +347,8 @@ public sealed class Droplet : FrameworkElement
             var rim = light && danger < 0.5 ? Color.FromArgb(A(0.12), 10, 20, 40) : Mix(Color.FromArgb(A(0.22), 255, 255, 255), Color.FromArgb(A(0.40), 255, 190, 180), danger);
             Ring(dc, w, h, r, 0.5, 1, new SolidColorBrush(rim));
 
-            // слабая радужная кромка (дисперсия на краю линзы)
-            ConicRim(dc, w, h, r);
+            // радужная кромка (дисперсия на краю линзы; утверждена 2026-10-17)
+            ConicRim(dc, w, h, r, 1 - danger);
         }
 
         /// <summary>Мягкое пятно света (радиальный градиент) внутри формы капли.</summary>
@@ -295,7 +362,7 @@ public sealed class Droplet : FrameworkElement
         }
 
         /// <summary>Кольцо по скруглённому прямоугольнику, отступив <paramref name="inset"/> внутрь.</summary>
-        private static void Ring(DrawingContext dc, double w, double h, double r, double inset, double thickness, Brush brush)
+        internal static void Ring(DrawingContext dc, double w, double h, double r, double inset, double thickness, Brush brush)
         {
             if (w - 2 * inset <= 0 || h - 2 * inset <= 0) return;
             var ri = Math.Max(0, r - inset);
@@ -303,7 +370,7 @@ public sealed class Droplet : FrameworkElement
         }
 
         /// <summary>Свет по диагонали: от угла к середине, дальше прозрачно (так ложится inset-тень со сдвигом 2 px).</summary>
-        private static Brush Diagonal(Color c, double a, bool topLeft)
+        internal static Brush Diagonal(Color c, double a, bool topLeft)
         {
             var on = Color.FromArgb(A(a), c.R, c.G, c.B);
             var off = Color.FromArgb(0, c.R, c.G, c.B);
@@ -312,13 +379,12 @@ public sealed class Droplet : FrameworkElement
                 : new LinearGradientBrush(new GradientStopCollection { new(off, 0.45), new(on, 0.82), new(on, 1) }, new Point(0, 0), new Point(1, 1));
         }
 
-        // conic-gradient(from 210deg, transparent, rgba(110,200,255,.47) 14%, transparent 30%, transparent 58%,
-        //                rgba(255,110,200,.43) 72%, transparent 90%) — вдвое слабее доски: капля прозрачная, кромка лишь намёк
+        // радужная кромка по кругу (утверждена 2026-10-17, образец «Капли жидкого стекла»): голубой → сиреневый → розовый →
+        // янтарный → салатовый → голубой, как спектр на краю линзы
         private static readonly (double At, Color C)[] Conic =
         {
-            (0.00, Color.FromArgb(0, 255, 255, 255)), (0.14, Color.FromArgb(120, 110, 200, 255)), (0.30, Color.FromArgb(0, 255, 255, 255)),
-            (0.58, Color.FromArgb(0, 255, 255, 255)), (0.72, Color.FromArgb(110, 255, 110, 200)), (0.90, Color.FromArgb(0, 255, 255, 255)),
-            (1.00, Color.FromArgb(0, 255, 255, 255)),
+            (0.00, Color.FromArgb(150, 110, 200, 255)), (0.20, Color.FromArgb(150, 170, 140, 255)), (0.40, Color.FromArgb(150, 255, 110, 200)),
+            (0.60, Color.FromArgb(140, 255, 190, 110)), (0.80, Color.FromArgb(130, 160, 235, 150)), (1.00, Color.FromArgb(150, 110, 200, 255)),
         };
 
         private static readonly Dictionary<uint, Pen> Pens = new();
@@ -327,8 +393,9 @@ public sealed class Droplet : FrameworkElement
         /// Круговой градиент по кромке: WPF его не умеет, поэтому кромка режется на короткие отрезки, и у каждого свой
         /// цвет по углу от центра капли (как у conic-gradient). Перья запоминаются по цвету.
         /// </summary>
-        private static void ConicRim(DrawingContext dc, double w, double h, double r)
+        internal static void ConicRim(DrawingContext dc, double w, double h, double r, double strength = 1)
         {
+            if (strength <= 0.02) return;
             const double inset = 0.75, thick = 1.2;
             var pts = Outline(w, h, Math.Max(0, r - inset), inset);
             double cx = w / 2, cy = h / 2;
@@ -340,6 +407,7 @@ public sealed class Droplet : FrameworkElement
                 // угол как в CSS: 0° — вверх, по часовой; отсчёт от 210°
                 var deg = (Math.Atan2(mx, -my) * 180 / Math.PI + 360) % 360;
                 var c = ConicAt(((deg - 210) % 360 + 360) % 360 / 360);
+                c = Quant(Color.FromArgb((byte)Math.Round(c.A * Math.Clamp(strength, 0, 1)), c.R, c.G, c.B));
                 if (c.A < 8) continue;
                 var key = (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
                 if (!Pens.TryGetValue(key, out var pen))
@@ -398,9 +466,9 @@ public sealed class Droplet : FrameworkElement
             return pts;
         }
 
-        private static byte A(double a) => (byte)Math.Round(Math.Clamp(a, 0, 1) * 255);
+        internal static byte A(double a) => (byte)Math.Round(Math.Clamp(a, 0, 1) * 255);
 
-        private static Color Mix(Color a, Color b, double t) => t <= 0 ? a : t >= 1 ? b : Color.FromArgb(
+        internal static Color Mix(Color a, Color b, double t) => t <= 0 ? a : t >= 1 ? b : Color.FromArgb(
             (byte)(a.A + (b.A - a.A) * t), (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
     }
 }
