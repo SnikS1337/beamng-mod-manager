@@ -57,7 +57,9 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     // у PS 2.0 всего 64 арифметические команды
     col = lerp(col, float3(a, a, a), lift - lift * l);
     col *= brightness - shade * tt;
-    col = min(max(col, float3(0.0, 0.0, 0.0)), float3(a, a, a));
+    // копия сцены под стеклом непрозрачна (фон окна сплошной, a = 1), поэтому «не выйти за альфу» — это просто 0…1:
+    // saturate у PS 2.0 бесплатный (модификатор), а min/max стоили две команды из 64
+    col = saturate(col);
 
     // снаружи прозрачно, на самом краю полпикселя сглаживания
     float cover = saturate(d + 0.5);
