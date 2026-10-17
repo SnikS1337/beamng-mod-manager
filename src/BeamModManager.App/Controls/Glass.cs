@@ -101,6 +101,7 @@ public class Glass : ContentControl
     /// <summary>Светлое оформление: насыщенность под стеклом выше (стекло «сочное», как у Apple) и подъём тёмного к белому.</summary>
     public double EffectiveSaturation => _light ? 1.7 : 1.4;
     public double EffectiveLift => _light ? 0.42 : 0;
+    public double EffectiveShade => _light ? 0.14 : 0;
     /// <summary>Вид стекла изменился (режим, оформление, подложка): капли на панели перерисовываются.</summary>
     public event Action? LookChanged;
 
@@ -224,6 +225,7 @@ public class Glass : ContentControl
             _refraction ??= new RefractionEffect();
             _refraction.Saturation = EffectiveSaturation;
             _refraction.Lift = EffectiveLift;
+            _refraction.Shade = EffectiveShade;
             _refraction.Strength = Refraction;
             _refraction.Lens = Lens;
             _refraction.Radius = Corner;

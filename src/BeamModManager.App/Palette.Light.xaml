@@ -50,7 +50,8 @@
 
     <!-- переключатели, сегменты, полоса прокрутки -->
     <SolidColorBrush x:Key="TrackOff" Color="#290A1428"/>
-    <SolidColorBrush x:Key="SegBack" Color="#59FFFFFF"/>
+    <!-- дорожка фильтров на светлом стекле — лёгкая серая канавка, а не молочно-белая плашка (2026-10-17): стекло под ней видно -->
+    <SolidColorBrush x:Key="SegBack" Color="#120A1428"/>
     <SolidColorBrush x:Key="SegHover" Color="#80FFFFFF"/>
     <SolidColorBrush x:Key="SegOn" Color="White"/>
     <SolidColorBrush x:Key="SegOnRim" Color="#1F0A1428"/>

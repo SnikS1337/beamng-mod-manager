@@ -17,6 +17,7 @@ float strength : register(c3);    // сила (scale из макета, уже �
 float saturation : register(c4);  // насыщенность, 1 — без изменений
 float brightness : register(c5);  // яркость, 1 — без изменений
 float lift : register(c6);        // подъём тёмного к белому (светлое оформление), 0 — без изменений
+float shade : register(c7);       // тень в толще у края (светлое оформление): на ровном светлом фоне видно, что стекло выпуклое
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
 
@@ -52,6 +53,7 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     col = lerp(float3(l, l, l), col, saturation) * brightness;
     float a = c.a;
     col = lerp(col, float3(a, a, a), lift * saturate(1.0 - l));
+    col *= 1.0 - shade * t * t;
     col = min(max(col, float3(0.0, 0.0, 0.0)), float3(a, a, a));
 
     // снаружи прозрачно, на самом краю полпикселя сглаживания
