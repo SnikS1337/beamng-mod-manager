@@ -100,6 +100,19 @@ public static class AppUpdateTests
             Assert.Eq("0.1.30", AppVersion.Display(m.Version));
         });
 
+        t.Run("версии с 0.2: «0.2» и «0.2.0» одна версия, показываются без хвостового нуля, новее любой 0.1.x", () =>
+        {
+            Assert.Eq(AppVersion.Parse("0.2"), AppVersion.Parse("v0.2.0.0"));
+            Assert.Eq("0.2", AppVersion.Display(AppVersion.Parse("0.2")!));
+            Assert.Eq("0.2.1", AppVersion.Display(AppVersion.Parse("0.2.1")!));
+            Assert.Eq("1.0", AppVersion.Display(AppVersion.Parse("1.0.0")!));
+            Assert.Eq("0.2.0.4", AppVersion.Display(AppVersion.Parse("0.2.0.4")!));
+            Assert.True(AppVersion.IsNewer(AppVersion.Parse("0.2")!, AppVersion.Parse("0.1.129")!), "мост: 0.2 новее 0.1.129");
+            Assert.False(AppVersion.IsNewer(AppVersion.Parse("0.2.0")!, AppVersion.Parse("0.2")!), "та же версия");
+            var (m, e) = UpdateManifest.Parse(ManifestJson("0.2", ReleaseZip()));
+            Assert.True(e is null && m!.Version == new Version(0, 2, 0, 0), e ?? "");
+        });
+
         t.Run("настоящий latest.json со сборочной машины (0.1.30) разбирается", () =>
         {
             var dir = AppContext.BaseDirectory;
