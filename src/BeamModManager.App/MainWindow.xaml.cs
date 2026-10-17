@@ -362,7 +362,7 @@ public partial class MainWindow : Window
         _vm.Refresh();
         _lastRefresh = DateTime.UtcNow;
         LoadPreviews();
-        // картинки могли прийти из кэша сразу (без загрузки) или смениться с папкой — превью настроек обновляется
+        // число модов в заголовке превью настроек могло смениться
         if (SettingsPanel.Visibility == Visibility.Visible) FillLookPreview();
     }
 
@@ -384,7 +384,6 @@ public partial class MainWindow : Window
         _ = loader.FillAsync(todo, (id, path) => Dispatcher.BeginInvoke(() =>
         {
             if (byId.TryGetValue(id, out var card)) card.PreviewPath = path;
-            if (SettingsPanel.Visibility == Visibility.Visible && _pvPaths.Count < 3) FillLookPreview();
         }), _previewCts.Token);
     }
 
@@ -676,6 +675,7 @@ public partial class MainWindow : Window
             for (var k = 0; k < Math.Min(stops.Count, fall.Count); k++) To(stops[k], WithAlpha(p.Blobs[i].Color, a * fall[k].Alpha));
         }
         PlaceBlobs(time);
+        LayoutPreviewShapes(time); // фигуры превью настроек — в цветах новой темы, тем же перетеканием
     }
 
     /// <summary>Пятна на места темы под текущий размер окна; при смене темы — переезд за то же время, что и цвет.</summary>
@@ -1156,42 +1156,61 @@ public partial class MainWindow : Window
 
     // ───────────── «Как это выглядит» ─────────────
 
-    /// <summary>Картинки, которые сейчас стоят в превью (до трёх); null — превью ещё не собиралось.</summary>
-    private List<string> _pvPaths = new();
-    private bool _pvBuilt;
-
     /// <summary>
-    /// Картинки превью — первые три мода с картинкой (сначала включённые), как карточки на доске: 250 и 200 px,
-    /// скругление 16, низ уходит за край. Модов с картинками нет — тёмные заглушки, стекло всё равно видно.
+    /// Под стеклом превью — яркие мягкие фигуры в цветах темы фона (решено 2026-10-17 вместо картинок модов): стекло на них
+    /// видно лучше всего, и превью одинаково на любом гараже. Расклад — <see cref="PreviewShapes"/>; сменилась тема —
+    /// цвета перетекают за то же время, что и фон, сменился размер — фигуры встают на новые места.
     /// </summary>
     private void FillLookPreview()
     {
         Dispatcher.BeginInvoke(PlacePreviewBar, DispatcherPriority.Loaded); // число модов в заголовке могло смениться
-        var paths = _vm.AllCards.Where(c => c.PreviewPath is not null)
-                                .OrderByDescending(c => c.Enabled)
-                                .Select(c => c.PreviewPath!).Take(3).ToList();
-        // те же картинки — ничего не трогаем; сменилась папка или пришли новые — собираем заново
-        if (_pvBuilt && paths.SequenceEqual(_pvPaths, StringComparer.OrdinalIgnoreCase)) return;
-        _pvBuilt = true;
-        _pvPaths = paths;
-        PvCards.Children.Clear();
-        double[] widths = { 250, 200, 200 };
-        for (var i = 0; i < widths.Length; i++)
+        LayoutPreviewShapes(TimeSpan.Zero);
+    }
+
+    private void LayoutPreviewShapes(TimeSpan time)
+    {
+        if (_palette is not { } p) return;
+        var shapes = PreviewShapes.For(p, LookPreview.ActualWidth, LookPreview.ActualHeight);
+        if (shapes.Count == 0) return;
+        if (PvShapes.Children.Count != shapes.Count)
         {
-            var img = i < paths.Count ? ImageCache.Load(paths[i]) : null;
-            Brush fill = img is not null
-                ? Frozen(new ImageBrush(img) { Stretch = Stretch.UniformToFill })
-                : PvPlaceholder;
-            PvCards.Children.Add(new Border { Width = widths[i], Height = 140, CornerRadius = new CornerRadius(16), Margin = new Thickness(0, 0, 12, 0), Background = fill });
+            PvShapes.Children.Clear();
+            foreach (var _ in shapes)
+                PvShapes.Children.Add(new Border
+                {
+                    Background = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1), GradientStops = { new GradientStop(), new GradientStop { Offset = 1 } } },
+                    RenderTransform = new RotateTransform(),
+                    RenderTransformOrigin = new Point(0.5, 0.5),
+                });
+            time = TimeSpan.Zero; // только что созданы: сразу в нужных цветах
+        }
+        for (var i = 0; i < shapes.Count; i++)
+        {
+            var sh = shapes[i];
+            var b = (Border)PvShapes.Children[i];
+            b.Width = sh.W;
+            b.Height = sh.H;
+            b.CornerRadius = new CornerRadius(sh.Corner);
+            Canvas.SetLeft(b, sh.X - sh.W / 2);
+            Canvas.SetTop(b, sh.Y - sh.H / 2);
+            ((RotateTransform)b.RenderTransform).Angle = sh.Angle;
+            var stops = ((LinearGradientBrush)b.Background).GradientStops;
+            ShapeColor(stops[0], ThemeSwatchConverter.ToColor(sh.From), time);
+            ShapeColor(stops[1], ThemeSwatchConverter.ToColor(sh.To), time);
         }
     }
 
-    private static readonly Brush PvPlaceholder = Frozen(new LinearGradientBrush(Color.FromRgb(0x2A, 0x34, 0x46), Color.FromRgb(0x1B, 0x22, 0x32), 45));
+    private static void ShapeColor(GradientStop stop, Color c, TimeSpan time)
+    {
+        if (time == TimeSpan.Zero) { stop.BeginAnimation(GradientStop.ColorProperty, null); stop.Color = c; return; }
+        stop.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(c, time) { EasingFunction = ThemeEase }, HandoffBehavior.SnapshotAndReplace);
+    }
 
     private void LookPreview_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         LookPreview.OpacityMask = Glass.RoundMask(e.NewSize.Width, e.NewSize.Height, 22); // маска: края сглажены
         PlacePreviewBar();
+        LayoutPreviewShapes(TimeSpan.Zero);
     }
 
     /// <summary>
@@ -1423,6 +1442,8 @@ public partial class MainWindow : Window
     }
 
     private void SitesSettings_Click(object sender, RoutedEventArgs e) => OpenSiteSettings();
+
+    private void ReapplyPreset_Click(object sender, RoutedEventArgs e) => _host.Settings.ReapplyPreset();
 
     private void OpenSiteSettings()
     {

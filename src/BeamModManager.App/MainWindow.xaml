@@ -1025,13 +1025,14 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <StackPanel x:Name="AppearanceLeft" Grid.Column="0" Margin="0,0,14,0">
-                                <!-- «Как это выглядит» (доска «Настройки»): маленькая сцена — фон окна и картинки модов — под полоской
-                                     жидкого стекла; полоска — настоящее стекло окна и сразу отвечает на переключатели -->
+                                <!-- «Как это выглядит» (доска «Настройки»): маленькая сцена — фон окна и яркие фигуры в цветах темы
+                                     (2026-10-17, вместо картинок модов) — под островком жидкого стекла; островок — настоящее стекло окна
+                                     и сразу отвечает на переключатели -->
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Как это выглядит"/>
                                 <Grid x:Name="LookPreview" Height="172" Margin="0,0,0,18" SizeChanged="LookPreview_SizeChanged">
                                     <Grid x:Name="PvScene" IsHitTestVisible="False">
                                         <Rectangle x:Name="PvBack"/>
-                                        <StackPanel x:Name="PvCards" Orientation="Horizontal" Margin="28,72,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
+                                        <Canvas x:Name="PvShapes"/>
                                     </Grid>
                                     <!-- как верх окна («островки»): крупный заголовок на фоне и островок посередине с каплей «Все» и поиском (место — PlacePreviewBar) -->
                                     <StackPanel x:Name="PvTitle" Margin="24,16,0,0" VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False">
@@ -1059,7 +1060,12 @@
                                     <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Красиво" Tag="жидкое стекло, живой фон, огоньки" IsChecked="{Binding IsBeautiful}"/>
                                     <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Быстро" Tag="матовое стекло, фон стоит" IsChecked="{Binding IsFast}"/>
                                 </UniformGrid>
-                                <TextBlock Style="{StaticResource Note}" Text="{Binding PresetNote}" Margin="4,0,4,18"/>
+                                <!-- наборы — они же выбор стекла (2026-10-17): «Красиво» — жидкое, «Быстро» — матовое; отдельного включателя нет -->
+                                <WrapPanel Margin="4,0,4,18">
+                                    <TextBlock Style="{StaticResource Note}" Text="{Binding PresetNote}" Margin="0,0,8,0"/>
+                                    <Button Style="{StaticResource Link}" Content="Вернуть как в наборе" FontSize="12.5" Padding="0,0"
+                                            Click="ReapplyPreset_Click" Visibility="{Binding IsCustom, Converter={StaticResource BoolToVis}}"/>
+                                </WrapPanel>
 
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Движение"/>
                                 <CheckBox Style="{StaticResource Switch}" Content="Анимации интерфейса" Tag="Капля-выбор, появление и подъём карточек."
@@ -1070,10 +1076,6 @@
                                           IsChecked="{Binding Fireflies}" Margin="0,0,0,18"/>
                             </StackPanel>
                             <StackPanel x:Name="AppearanceRight" Grid.Column="1" Margin="14,0,0,0">
-                                <TextBlock Style="{StaticResource GroupTitle}" Text="Стекло"/>
-                                <CheckBox Style="{StaticResource Switch}" Content="Жидкое стекло" Tag="Края панелей преломляют фон, выбор — прозрачная капля. Выключено: матовое стекло и светлая плашка, движение то же."
-                                          IsChecked="{Binding LiquidGlass}" Margin="0,0,0,18"/>
-
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Оформление"/>
                                 <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Тема" Tag="Светлое стекло с тёмным текстом или тёмное." Margin="0,0,0,18">
                                     <Border Style="{StaticResource SegmentBox}" PreviewMouseLeftButtonDown="Mode_PreviewMouseDown">

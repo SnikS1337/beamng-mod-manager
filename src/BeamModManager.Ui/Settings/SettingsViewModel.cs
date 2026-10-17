@@ -127,26 +127,29 @@ public sealed class SettingsViewModel : Observable
 
     // ───────────── внешний вид ─────────────
 
-    /// <summary>Выставленный набор или null, если переключатели поменяли вручную.</summary>
+    /// <summary>Выставленный набор или null, если переключатели движения поменяли вручную.</summary>
     public AppearancePreset? Preset => AppearancePresets.Detect(_current);
 
-    // плитки наборов в окне — переключатели: выбор плитки выставляет набор, снятие ничего не делает
-    public bool IsBeautiful { get => Preset == AppearancePreset.Beautiful; set { if (value) ApplyPreset(AppearancePreset.Beautiful); } }
-    public bool IsFast { get => Preset == AppearancePreset.Fast; set { if (value) ApplyPreset(AppearancePreset.Fast); } }
+    // Плитки наборов — они же выбор стекла (отдельный включатель «Жидкое стекло» убран 2026-10-17: выключить его и было
+    // «Быстро»). Отмечена та, чьё стекло стоит; выбор плитки выставляет набор целиком, снятие отметки ничего не делает.
+    public bool IsBeautiful { get => _current.LiquidGlass; set { if (value) ApplyPreset(AppearancePreset.Beautiful); } }
+    public bool IsFast { get => !_current.LiquidGlass; set { if (value) ApplyPreset(AppearancePreset.Fast); } }
 
-    /// <summary>Подпись под наборами: какой выбран или что набор свой.</summary>
-    public string PresetNote => Preset is null
-        ? "Свой набор: переключатели поменяны вручную. Выберите готовый, чтобы вернуть его."
-        : "Набор выставляет переключатели. Дальше каждый можно поменять отдельно.";
+    /// <summary>Движение поменяли вручную: под наборами «Вернуть как в наборе».</summary>
+    public bool IsCustom => Preset is null;
+
+    /// <summary>Подпись под наборами.</summary>
+    public string PresetNote => IsCustom
+        ? "Движение поменяно вручную."
+        : "Набор выбирает стекло и выставляет движение. Движение можно поменять отдельно.";
+
+    /// <summary>«Вернуть как в наборе»: движение — как в наборе, чьё стекло сейчас стоит.</summary>
+    public void ReapplyPreset() => ApplyPreset(_current.LiquidGlass ? AppearancePreset.Beautiful : AppearancePreset.Fast);
 
     public void ApplyPreset(AppearancePreset p) => Update(s => AppearancePresets.Apply(s, p));
 
     /// <summary>«Сбросить»: набор «Красиво», как при первом запуске.</summary>
     public void ResetAppearance() => ApplyPreset(AppearancePreset.Beautiful);
-
-    /// <summary>«Жидкое стекло»: панели преломляют фон, выбор — прозрачная капля-линза. Выключено: матовое стекло и
-    /// светлая полупрозрачная плашка вместо капель, движение то же.</summary>
-    public bool LiquidGlass { get => _current.LiquidGlass; set => Update(s => s with { LiquidGlass = value }); }
 
     /// <summary>Оформление: тёмное, светлое, как в Windows.</summary>
     public UiMode Mode { get => _current.Mode; set => Update(s => s with { Mode = value }); }

@@ -10,6 +10,26 @@ public static class BackgroundThemeTests
     {
         t.Group("Темы фона");
 
+        t.Run("превью настроек: фигуры в цветах темы, непрозрачные, круг под островком, ширина не важна", () =>
+        {
+            foreach (var p in BackgroundThemes.All)
+                foreach (var w in new[] { 380.0, 560, 900 })
+                {
+                    var shapes = PreviewShapes.For(p, w, 172);
+                    Assert.Eq(4, shapes.Count);
+                    Assert.True(shapes.All(x => (x.From >> 24) == 0xFF && (x.To >> 24) == 0xFF), "непрозрачные");
+                    // островок превью: посередине сверху (y 18..64); его центр накрыт кругом — стекло что-то преломляет
+                    Assert.True(shapes.Any(x => x.Kind == ShapeKind.Circle && Math.Abs(x.X - w / 2) < x.W / 2 && x.Y - x.H / 2 < 41 && x.Y + x.H / 2 > 41), "круг под островком");
+                    Assert.True(shapes.All(x => x.X + x.W / 2 > 0 && x.X - x.W / 2 < w && x.Y - x.H / 2 < 172), "все в кадре хотя бы частью");
+                    Assert.True(shapes.All(x => x.Corner > 0 && x.Corner <= Math.Min(x.W, x.H) / 2), "скругление в пределах");
+                }
+            Assert.True(PreviewShapes.For(BackgroundThemes.Of(BeamModManager.Core.Settings.BackgroundTheme.Night), 0, 172).Count == 0, "до раскладки пусто");
+            Assert.True(PreviewShapes.For(BackgroundThemes.Of(BeamModManager.Core.Settings.BackgroundTheme.Night), double.NaN, 172).Count == 0, "NaN не роняет");
+            var night = PreviewShapes.For(BackgroundThemes.Of(BeamModManager.Core.Settings.BackgroundTheme.Night), 560, 172);
+            var dusk = PreviewShapes.For(BackgroundThemes.Of(BeamModManager.Core.Settings.BackgroundTheme.Dusk), 560, 172);
+            Assert.True(night.Zip(dusk).All(z => z.First.X == z.Second.X && z.First.From != z.Second.From), "тема меняет цвета, но не расклад");
+        });
+
         t.Run("у каждой темы есть палитра в тёмном и светлом оформлении, наборы цветов полные", () =>
         {
             foreach (var light in new[] { false, true })
