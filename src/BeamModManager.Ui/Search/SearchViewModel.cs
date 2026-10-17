@@ -84,13 +84,16 @@ public sealed class FoundCard : Observable
     public bool Installed { get => _installed; private set => Set(ref _installed, value); }
 
     private string? _maybeText;
-    /// <summary>«Возможно, тот же мод, что «…»» с действиями «Это один мод» / «Это разные» (DESIGN_FLOWS 6.6); null — плашки нет.</summary>
+    /// <summary>
+    /// «Возможно, тот же мод, что на ModsGaming» с действиями «Это один мод» / «Это разные» (DESIGN_FLOWS 6.6); null — плашки нет.
+    /// Сайт, а не название: названия у таких карточек почти одинаковые, по ним не понять, о какой речь.
+    /// </summary>
     public string? MaybeText { get => _maybeText; private set => Set(ref _maybeText, value); }
 
     /// <summary>Карточка, с которой этот мод, возможно, один.</summary>
     public string? MaybeOtherId { get; private set; }
 
-    internal void Apply(Found f, bool downloads, bool installed, string? maybeTitle, string? maybeId)
+    internal void Apply(Found f, bool downloads, bool installed, string? maybeSites, string? maybeId)
     {
         Data = f;
         Title = f.Title;
@@ -115,7 +118,7 @@ public sealed class FoundCard : Observable
             ? PlaceholderKind.Map : PlaceholderKind.Vehicle;
         Installed = installed;
         MaybeOtherId = maybeId;
-        MaybeText = maybeTitle is null ? null : $"Возможно, тот же мод, что {Ru.Quoted(maybeTitle, 30)}";
+        MaybeText = maybeSites is null ? null : $"Возможно, тот же мод, что на {maybeSites}";
     }
 }
 
@@ -177,7 +180,30 @@ public sealed class SearchViewModel : Observable
 
     private string _query = "";
     /// <summary>Текст поля. На сайты уходит по Enter (<see cref="RunAsync"/>), а не на каждую букву.</summary>
-    public string Query { get => _query; set { if (Set(ref _query, value ?? "")) Rebuild(); } }
+    public string Query
+    {
+        get => _query;
+        set
+        {
+            if (!Set(ref _query, value ?? "")) return;
+            // поле стёрли (Esc, крестик) — это новый пустой поиск: найденное и идущий поиск убираются, снова «Что ищем?»
+            if (_query.Trim().Length == 0 && (_response is not null || Searching || _ranQuery.Length > 0)) Clear();
+            else Rebuild();
+        }
+    }
+
+    private void Clear()
+    {
+        _cts?.Cancel();
+        _serial++;
+        Searching = false;
+        _response = null;
+        _ranQuery = "";
+        SitesNote = null;
+        foreach (var r in _siteRows.Values) r.State = "";
+        LoadSites();
+        Rebuild();
+    }
 
     private bool _searching;
     public bool Searching { get => _searching; private set { if (Set(ref _searching, value)) Raise(nameof(Skeletons)); } }
@@ -272,10 +298,13 @@ public sealed class SearchViewModel : Observable
                 _ => ($"нашёл {s.Count}", SiteDot.Ok, null),
             };
         }
-        var failed = r.Sources.Where(s => !s.Pending && s.Status != SourceStatus.Ok).Select(s => SiteNames.Of(s.SourceId)).ToList();
+        var human = r.Sources.Where(s => !s.Pending && s.Status == SourceStatus.NeedsHumanCheck).Select(s => SiteNames.Of(s.SourceId)).ToList();
+        var failed = r.Sources.Where(s => !s.Pending && s.Status is not SourceStatus.Ok and not SourceStatus.NeedsHumanCheck).Select(s => SiteNames.Of(s.SourceId)).ToList();
         var waiting = r.Sources.Any(s => s.Pending);
-        SitesNote = failed.Count == 0 ? null
-            : $"{string.Join(", ", failed)} {(failed.Count == 1 ? "не ответил" : "не ответили")}, поэтому показаны не все результаты" + (waiting ? ". Поиск продолжается" : "");
+        var notes = new List<string>();
+        if (failed.Count > 0) notes.Add($"{string.Join(", ", failed)} {(failed.Count == 1 ? "не ответил" : "не ответили")}, поэтому показаны не все результаты" + (waiting ? ". Поиск продолжается" : ""));
+        if (human.Count > 0) notes.Add($"{string.Join(", ", human)} {(human.Count == 1 ? "просит" : "просят")} подтвердить, что вы человек. Откройте сайт в браузере и повторите поиск");
+        SitesNote = notes.Count == 0 ? null : string.Join(". ", notes);
         Rebuild();
     }
 
@@ -318,7 +347,8 @@ public sealed class SearchViewModel : Observable
             {
                 if (!_cards.TryGetValue(f.Id, out var c)) _cards[f.Id] = c = new FoundCard(f.Id);
                 var other = f.PossibleSameAs.Select(id => byId.GetValueOrDefault(id)).FirstOrDefault(x => x is not null);
-                c.Apply(f, _downloads, IsInstalled(f, installedKeys), other?.Title, other?.Id);
+                var otherSites = other is null ? null : string.Join(", ", other.Listings.Select(l => SiteNames.Of(l.Source)).Distinct());
+                c.Apply(f, _downloads, IsInstalled(f, installedKeys), otherSites, other?.Id);
                 all.Add(c);
             }
         }

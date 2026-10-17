@@ -191,6 +191,53 @@ public static class ModActionsTests
         {
             Assert.Eq("«Audi»", Ru.Quoted(" Audi ", 34));
             Assert.Eq("«abcdefghi…»", Ru.Quoted("abcdefghijklmn", 10));
+            Assert.Eq("1\u00A0240", Ru.Number(1240));
+            Assert.Eq("12\u00A0500\u00A0000", Ru.Number(12_500_000));
+            Assert.Eq("7", Ru.Number(7));
+        });
+
+        t.Run("«Удалённые»: фильтр появляется с первым удалённым, «Вернуть» ставит файл назад, последний — фильтр уходит", () =>
+        {
+            using var f = new Folder(("audi_v1.0.zip", Car("a")), ("bmw.zip", Car("b")));
+            Assert.Eq(4, f.Vm.Filters.Count);
+            // картинка архива была в кэше — у удалённого она остаётся
+            var cache = new PreviewCache(Path.Combine(f.Root, "app", "previews"));
+            var stamp = ArchiveStamp.Of(Path.Combine(f.Mods, "audi_v1.0.zip"));
+            cache.PutImage(stamp, new byte[] { 1 });
+            f.Vm.Delete(f.Card("audi_v1.0.zip"));
+            Assert.Eq(4, f.Vm.Filters.Count, "пока тост открыт, мод ещё не в удалённых");
+            f.Vm.DismissToast(f.Vm.Toast!.Serial);
+            f.Vm.Refresh();
+            Assert.Eq(5, f.Vm.Filters.Count);
+            Assert.Eq("Удалённые 1", f.Vm.Filters[4].Label);
+            Assert.Eq("1 мод", f.Vm.CountText, "удалённые в число модов не входят");
+            f.Vm.Filter = GarageFilter.Deleted;
+            var gone = f.Vm.Cards.Single();
+            Assert.True(gone is { IsDeleted: true, Enabled: false, ChipText: "Удалён", Name: "audi" }, "карточка: " + gone.Name);
+            Assert.True(gone.Subtitle.StartsWith("1.0 · удалён"), gone.Subtitle);
+            Assert.Eq(cache.ImagePath(stamp), gone.PreviewPath);
+            f.Vm.Selected = gone;
+            Assert.True(f.Vm.Details is { Action: MainAction.Restore, ActionLabel: "Вернуть", CanDelete: false, ToggleLabel: null }, "панель");
+            Assert.Eq("Открыть|Вернуть", string.Join("|", f.Vm.MenuFor(gone).Select(m => m.Label)));
+            f.Vm.Toggle(gone);
+            f.Vm.Delete(gone);
+            Assert.False(File.Exists(Path.Combine(f.Mods, "audi_v1.0.zip")), "включить или удалить удалённый нельзя");
+
+            f.Vm.RestoreDeleted(gone);
+            Assert.True(File.Exists(Path.Combine(f.Mods, "audi_v1.0.zip")), "файл на месте");
+            Assert.Eq("Вернули «audi»", f.Vm.Toast!.Text);
+            Assert.Eq(GarageFilter.All, f.Vm.Filter, "удалённых больше нет — назад во «Все»");
+            Assert.Eq(4, f.Vm.Filters.Count);
+            Assert.Eq(2, f.Vm.Cards.Count);
+            new LibraryGarageBackend(f.Store, f.Inst, cache, () => false).Load(); // перечитывание после запуска не трогает картинку
+        });
+
+        t.Run("удалённый после обновления (прежнее имя) — не в «Удалённых», а в прошлых версиях", () =>
+        {
+            using var f = new Folder(("audi_v1.0.zip", Car("a")));
+            f.Inst.Update("audi_v1.0.zip", new MemoryStream(Car("a", "2")), "audi_v2.0.zip");
+            f.Vm.Refresh();
+            Assert.Eq(4, f.Vm.Filters.Count, "прежняя версия — не удалённый мод");
         });
 
         t.Group("Моды: прошлые версии");

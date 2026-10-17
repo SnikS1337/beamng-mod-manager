@@ -50,6 +50,11 @@ public sealed class DemoBackend : IGarageBackend
         Add("Mazda RX-7 FD", "1.0", 83, "нет-картинки");
         Add("Alpine Pass", "2.0", 512, "нет-картинки", type: "terrain", tracked: false);
         Add("Volga 24 Classic", "1.0", 64, "нет-картинки", type: "sound");
+        // фильтр «Удалённые»: два мода, удалённых раньше
+        DeletedGarageMod Gone(string file, string name, string? ver, int mb, string photo, int days) =>
+            new(new DeletedMod(file, 1, now.AddDays(-days), mb * 1024L * 1024), name, ver, P(photo));
+        _gone.Add(Gone("bmw_m3_e30_v1.2.zip", "BMW M3 E30", "1.2", 76, "coupe", 1));
+        _gone.Add(Gone("gaz_volga_24_v2.0.zip", "ГАЗ-24 Волга", "2.0", 58, "station", 9));
         string[] photosCycle = { "dacia", "truck", "lambo", "mustang", "tractor", "coupe", "station", "lebedka", "нет-картинки" };
         for (var i = 0; i < Math.Min(many, 20000); i++)
             Add($"Мод номер {i + 1} ({(i % 7 == 0 ? "карта" : "машина")})", $"1.{i % 10}", 20 + i % 300, photosCycle[i % photosCycle.Length],
@@ -65,7 +70,7 @@ public sealed class DemoBackend : IGarageBackend
 
     internal GarageMod? Find(string id) => _mods.FirstOrDefault(m => m.Mod.Id == id);
 
-    public GarageSnapshot Load() => new(_mods.ToList(), true, DateTimeOffset.UtcNow.AddMinutes(-18));
+    public GarageSnapshot Load() => new(_mods.ToList(), true, DateTimeOffset.UtcNow.AddMinutes(-18)) { Deleted = _gone.ToList() };
     public bool IsGameRunning() => false;
 
     public ToggleResult SetEnabled(string fileName, bool enabled)
@@ -79,6 +84,7 @@ public sealed class DemoBackend : IGarageBackend
     // ───────────── удаление, прошлые версии, «Внутри архива» (выдуманные, для снимков) ─────────────
 
     private readonly Dictionary<string, (int Index, GarageMod Mod)> _deleted = new();
+    private readonly List<DeletedGarageMod> _gone = new();
 
     public DeleteResult Delete(GarageMod mod)
     {
@@ -96,7 +102,21 @@ public sealed class DemoBackend : IGarageBackend
         return new(true);
     }
 
-    public void ForgetDeleted(DeletedTicket ticket) => _deleted.Remove(ticket.ModId);
+    public void ForgetDeleted(DeletedTicket ticket)
+    {
+        if (!_deleted.Remove(ticket.ModId, out var d)) return;
+        var m = d.Mod.Mod;
+        _gone.Insert(0, new DeletedGarageMod(new DeletedMod(m.FileName, 1, DateTimeOffset.UtcNow, m.SizeBytes ?? 0), m.Name, m.Version, d.Mod.PreviewPath));
+    }
+
+    public OpResult RestoreDeleted(DeletedGarageMod mod)
+    {
+        if (_gone.RemoveAll(g => g.Id == mod.Id) == 0) return new(false, "Нечего возвращать");
+        var id = "demo-" + _mods.Count + "-back";
+        _mods.Insert(0, new GarageMod(new InstalledMod(id, mod.Name, mod.Copy.FileName, mod.Version, mod.Copy.LastSizeBytes, DateTimeOffset.UtcNow, true),
+            null, null, null, false, false, null, mod.PreviewPath, "vehicle", null));
+        return new(true);
+    }
 
     public IReadOnlyList<PastVersion> PastVersions(GarageMod mod)
     {

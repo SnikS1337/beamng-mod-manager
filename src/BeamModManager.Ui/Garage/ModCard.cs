@@ -1,16 +1,17 @@
+using BeamModManager.Core.Library;
 using BeamModManager.Core.Versioning;
 using BeamModManager.Ui.Mvvm;
 
 namespace BeamModManager.Ui.Garage;
 
 /// <summary>Что написано под фото. Каждое состояние читается словами, а не только цветом (DESIGN.md раздел 2).</summary>
-public enum CardStatus { Normal, UpdateAvailable, PossiblyUpdated, PageMissing, Disabled }
+public enum CardStatus { Normal, UpdateAvailable, PossiblyUpdated, PageMissing, Disabled, Deleted }
 
 /// <summary>Тип мода для заглушки, когда в архиве нет ни одной картинки.</summary>
 public enum PlaceholderKind { Vehicle, Map, Sound, Script, Other }
 
 /// <summary>Плашка в правом верхнем углу фото: голубая точка у обновления, янтарная у сомнительного, снежинка у выключенного.</summary>
-public enum ChipKind { None, Update, Warning, Disabled }
+public enum ChipKind { None, Update, Warning, Disabled, Deleted }
 
 /// <summary>
 /// Одна карточка гаража. Экземпляр живёт, пока мод в библиотеке, и обновляется на месте: так окно может плавно
@@ -148,6 +149,38 @@ public sealed class ModCard : Observable
             else if (d.Mod.SizeBytes is { } s) parts.Add(Text.Ru.Size(s));
             Subtitle = string.Join(" · ", parts);
         }
+    }
+
+    private DeletedGarageMod? _deleted;
+    /// <summary>Удалённый мод (фильтр «Удалённые»): файла нет, есть копия; null — обычный мод.</summary>
+    public DeletedGarageMod? Deleted { get => _deleted; private set { if (Set(ref _deleted, value)) Raise(nameof(IsDeleted)); } }
+    public bool IsDeleted => _deleted is not null;
+
+    /// <summary>Карточка удалённого: серое фото, «Удалён», «удалён вчера · 88 МБ». Запись о моде забыта — данные из имени файла копии.</summary>
+    internal void ApplyDeleted(DeletedGarageMod d, DateTimeOffset now)
+    {
+        var c = d.Copy;
+        var when = c.LastSavedAtUtc ?? now;
+        Data = new GarageMod(new InstalledMod(Id, d.Name, c.FileName, d.Version, c.LastSizeBytes, when, false),
+            null, null, null, false, false, null, d.PreviewPath, null, null);
+        Deleted = d;
+        Name = d.Name;
+        FileName = c.FileName;
+        PreviewPath = d.PreviewPath;
+        _previewKey = null;
+        Placeholder = PlaceholderKind.Other;
+        Enabled = false;
+        PendingText = null;
+        HasUpdateBadge = false;
+        HasWarningDot = false;
+        Status = CardStatus.Deleted;
+        StatusText = "Удалён";
+        (Chip, ChipText) = (ChipKind.Deleted, "Удалён");
+        SubtitleStrong = false;
+        var parts = new List<string> { "удалён " + Text.Ru.Ago(when, now) };
+        if (d.Version is { Length: > 0 } v) parts.Insert(0, v);
+        parts.Add(Text.Ru.Size(c.LastSizeBytes));
+        Subtitle = string.Join(" · ", parts);
     }
 
     internal static PlaceholderKind PlaceholderOf(GarageMod d) => d.ModType?.ToLowerInvariant() switch
