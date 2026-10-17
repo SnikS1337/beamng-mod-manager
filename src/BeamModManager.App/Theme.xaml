@@ -122,7 +122,7 @@
         <Setter Property="FontSize" Value="10.5"/>
         <Setter Property="FontWeight" Value="Medium"/>
         <Setter Property="Width" Value="70"/>
-        <Setter Property="Height" Value="58"/>
+        <Setter Property="Height" Value="64"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="GroupName" Value="nav"/>
         <Setter Property="FocusVisualStyle" Value="{StaticResource FocusVisual}"/>
@@ -130,7 +130,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
                     <Grid Background="Transparent">
-                        <StackPanel HorizontalAlignment="Center" Margin="0,8,0,0">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                             <c:NavGlyph Data="{TemplateBinding Tag}" Brush="{TemplateBinding Foreground}" HorizontalAlignment="Center"
                                         Active="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}"
                                         c:NavGlyph.Fill="{Binding (c:NavGlyph.Fill), RelativeSource={RelativeSource TemplatedParent}}"

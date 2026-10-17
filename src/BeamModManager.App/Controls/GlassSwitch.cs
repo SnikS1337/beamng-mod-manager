@@ -9,8 +9,9 @@ namespace BeamModManager.App.Controls;
 /// <list type="bullet">
 /// <item>дорожка-капсула; её цвет плавно перетекает от «выключено» к голубому «включено»;</item>
 /// <item>бегунок — белая таблетка шире, чем выше;</item>
-/// <item>при нажатии бегунок «поднимается»: подрастает и становится прозрачной стеклянной линзой (сквозь неё видна дорожка,
-///   кромка-блик, радужный край, блик сверху слева);</item>
+/// <item>при нажатии бегунок «поднимается»: подрастает выше дорожки (в 1,6 раза, утверждено 2026-10-17 по образцу
+///   «Капли жидкого стекла», вариант «В») и становится стеклом: светлый толстый край («губа»), внутри чётко видна дорожка,
+///   кромка-блик, радужная кромка;</item>
 /// <item>при переключении бегунок едет пружиной с лёгким перелётом, по ходу вытягивается, как капля, и, встав на место,
 ///   снова становится белым.</item>
 /// </list>
@@ -126,7 +127,7 @@ public sealed class GlassSwitch : FrameworkElement
 
         // ── бегунок ──
         var stretch = Math.Min(0.24, Math.Abs(_pos.Velocity) * 0.045); // вытягивается по ходу, как капля
-        var grow = 1 + 0.26 * lift;                                     // поднятый — крупнее дорожки
+        var grow = 1 + 0.6 * lift;                                      // поднятый — выше дорожки, как у Apple
         var tw = ThumbW * grow * (1 + stretch);
         var th = ThumbH * grow * (1 - stretch * 0.35);
         var cx = Inset + ThumbW / 2 + p * (TrackW - ThumbW - 2 * Inset);
@@ -144,10 +145,18 @@ public sealed class GlassSwitch : FrameworkElement
                 new Rect(thumb.X - e / 2, thumb.Y - e / 2 + 2, thumb.Width + e, thumb.Height + e), tr + e / 2, tr + e / 2);
         }
 
-        // заливка: белая таблетка → прозрачное стекло, сквозь которое видна (чуть увеличенная, светлее) дорожка
-        var white = 1 - 0.86 * g;
-        var under = Mix(off, on, Math.Clamp((cx - TrackH / 2) / (TrackW - TrackH), 0, 1));
-        dc.DrawGeometry(new SolidColorBrush(Color.FromArgb((byte)(255 * g * 0.55), Lift(under).R, Lift(under).G, Lift(under).B)), null, shape);
+        // заливка: белая таблетка → стекло. У стекла толстый светлый край («губа», 18 % высоты), внутри чётко видна дорожка
+        var white = 1 - g;
+        var under = Lift(Mix(off, on, Math.Clamp((cx - TrackH / 2) / (TrackW - TrackH), 0, 1)));
+        if (g > 0.02)
+        {
+            var lip = th * 0.18;
+            dc.DrawGeometry(new SolidColorBrush(Color.FromArgb((byte)(255 * g * (light ? 0.55 : 0.32)), 255, 255, 255)), null, shape);
+            dc.DrawGeometry(new SolidColorBrush(Color.FromArgb((byte)(255 * g * 0.30), under.R, under.G, under.B)), null, shape);
+            var inner = Deflate(thumb, lip);
+            var ir = Math.Max(0, tr - lip);
+            dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb((byte)(255 * g * 0.92), under.R, under.G, under.B)), null, inner, ir, ir);
+        }
         dc.DrawGeometry(new LinearGradientBrush(Color.FromArgb((byte)(255 * white), 255, 255, 255), Color.FromArgb((byte)(255 * white), 0xEE, 0xF3, 0xFA), 90), null, shape);
 
         // стекло: блик сверху слева, светлый серп снизу, яркая кромка и радужный край
@@ -162,14 +171,17 @@ public sealed class GlassSwitch : FrameworkElement
                 new(Color.FromArgb((byte)(255 * 0.60 * g), 255, 255, 255), 1),
             }, new Point(0, 0), new Point(1, 1));
             dc.DrawRoundedRectangle(null, new Pen(rim, 1.2), Deflate(thumb, 0.6), tr - 0.6, tr - 0.6);
+            // радужная кромка (как у капель, утверждена 2026-10-17)
+            byte ra = (byte)(255 * 0.62 * g);
             var prism = new LinearGradientBrush(new GradientStopCollection
             {
-                new(Color.FromArgb((byte)(255 * 0.40 * g), 110, 200, 255), 0),
-                new(Color.FromArgb(0, 255, 255, 255), 0.35),
-                new(Color.FromArgb(0, 255, 255, 255), 0.65),
-                new(Color.FromArgb((byte)(255 * 0.38 * g), 255, 120, 205), 1),
-            }, new Point(0, 0.5), new Point(1, 0.5));
-            dc.DrawRoundedRectangle(null, new Pen(prism, 1.1), Deflate(thumb, 1.6), tr - 1.6, tr - 1.6);
+                new(Color.FromArgb(ra, 110, 200, 255), 0),
+                new(Color.FromArgb(ra, 170, 140, 255), 0.25),
+                new(Color.FromArgb(ra, 255, 110, 200), 0.5),
+                new(Color.FromArgb(ra, 255, 190, 110), 0.75),
+                new(Color.FromArgb(ra, 160, 235, 150), 1),
+            }, new Point(0, 0), new Point(1, 1));
+            dc.DrawRoundedRectangle(null, new Pen(prism, 1.2), Deflate(thumb, 1.4), tr - 1.4, tr - 1.4);
         }
         // тонкий контур у белого бегунка (на светлой дорожке иначе теряется край)
         dc.DrawRoundedRectangle(null, new Pen(new SolidColorBrush(Color.FromArgb((byte)(255 * 0.10 * (1 - g)), 10, 20, 40)), 0.8),

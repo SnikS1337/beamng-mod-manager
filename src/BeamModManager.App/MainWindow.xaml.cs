@@ -81,7 +81,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _autoCheckTimer = new() { Interval = TimeSpan.FromMinutes(1) };
     private readonly WindowHost _host;
     private readonly SpringDriver _springs = new();
-    private readonly Spring _navDrop, _filterX, _filterW, _capX, _capScale, _inspX;
+    private readonly Spring _navDrop, _navTrail, _filterX, _filterTrail, _filterW, _capX, _capScale, _inspX;
     /// <summary>Ширина островка сверху (фильтры ↔ поиск) и сжатие заголовка при прокрутке (0 — крупный, 1 — капсула).</summary>
     private readonly Spring _islandW, _titleT, _titleVis;
     /// <summary>Нажатие на каплю: она чуть сжимается (0,92) и упруго возвращается (0,4 с, упругость 0,3 — «физическое»).</summary>
@@ -117,16 +117,23 @@ public partial class MainWindow : Window
         _navPress = new Spring(0.22, 0.3, 1);
         _filterPress = new Spring(0.22, 0.3, 1);
         _capPress = new Spring(0.22, 0.3, 1);
-        _navDrop = new Spring(0.34, 0.2, 14);
-        _filterX = new Spring(0.34, 0.2, -3);
+        // капля в пути — одно тело (вариант «В», 2026-10-17): «голова» догоняет пункт быстро и с лёгким перелётом,
+        // «хвост» — медленнее и без отскока; рисуется оболочка от хвоста до головы, без разрыва на две капли
+        _navDrop = new Spring(0.30, 0.2, NavDropTop);
+        _navTrail = new Spring(0.46, 0, NavDropTop);
+        _filterX = new Spring(0.30, 0.2, -3);
+        _filterTrail = new Spring(0.46, 0, -3);
+        _filterW = new Spring(0.30, 0.2, 60);
         _capX = new Spring(0.3, 0.15, 2);
         _capScale = new Spring(0.24, 0.18, 0.6);
         _springs.Add(_navPress, _ => NavDropShape());
         _springs.Add(_filterPress, _ => FilterDropShape());
         _springs.Add(_capPress, _ => CapDropShape());
-        _springs.Add(_navDrop, v => { NavDropMove.Y = v; NavDropShape(); });
-        _springs.Add(_filterX, v => { FilterDropMove.X = v; FilterDropShape(); });
-        _filterW = _springs.Add(new Spring(0.34, 0.2, 60), v => { FilterDrop.Width = Math.Max(20, v); FilterDrop.Sync(); });
+        _springs.Add(_navDrop, _ => NavDropShape());
+        _springs.Add(_navTrail, _ => NavDropShape());
+        _springs.Add(_filterX, _ => FilterDropShape());
+        _springs.Add(_filterTrail, _ => FilterDropShape());
+        _springs.Add(_filterW, _ => FilterDropShape());
         // перелёт пружины у крайних кнопок не выносит каплю за капсулу
         _springs.Add(_capX, v => { CapDropMove.X = Math.Clamp(v, 2, 90); CapDropShape(); });
         _springs.Add(_capScale, _ => CapDropShape());
@@ -972,21 +979,36 @@ public partial class MainWindow : Window
         t.ScaleY = vertical ? a : b;
     }
 
+    /// <summary>Капля левой панели: 68 × 64, отступ 8 от краёв панели (форма 4, утверждена 2026-10-17).</summary>
+    private const double NavDropTop = 8, NavDropH = 64;
+
     private void NavDropShape()
     {
-        Shape(NavDropScale, StretchOf(_navDrop.Velocity), vertical: true, _navPress.Value);
+        var b = DropBody.Of(_navDrop.Value, _navTrail.Value, NavDropH, _navDrop.Velocity);
+        NavDropMove.Y = b.Start;
+        if (Math.Abs(NavDrop.Height - b.Length) > 0.01) NavDrop.Height = b.Length;
+        NavDrop.Motion = b.Motion;
+        NavDropScale.ScaleX = b.Across * _navPress.Value * b.Lift;
+        NavDropScale.ScaleY = _navPress.Value * b.Lift;
         NavDrop.Sync();
     }
 
     private void FilterDropShape()
     {
-        Shape(FilterDropScale, StretchOf(_filterX.Velocity), vertical: false, _filterPress.Value);
+        var w = Math.Max(20, _filterW.Value);
+        var b = DropBody.Of(_filterX.Value, _filterTrail.Value, w, _filterX.Velocity);
+        FilterDropMove.X = b.Start;
+        if (Math.Abs(FilterDrop.Width - b.Length) > 0.01) FilterDrop.Width = b.Length;
+        FilterDrop.Motion = b.Motion;
+        FilterDropScale.ScaleX = _filterPress.Value * b.Lift;
+        FilterDropScale.ScaleY = b.Across * _filterPress.Value * b.Lift;
         FilterDrop.Sync();
     }
 
     private void CapDropShape()
     {
         Shape(CapDropScale, StretchOf(_capX.Velocity), vertical: false, _capPress.Value, _capScale.Value);
+        CapDrop.Motion = DropBody.MotionOf(0, _capX.Velocity);
         CapDrop.Sync();
     }
 
@@ -1052,6 +1074,7 @@ public partial class MainWindow : Window
         if (_navDrop is null) return; // InitializeComponent ещё идёт
         var rb = (RadioButton)sender;
         _springs.To(_navDrop, Canvas.GetTop(rb), instant: !IsLoaded);
+        _springs.To(_navTrail, Canvas.GetTop(rb), instant: !IsLoaded);
         var garage = rb == NavGarage;
         var settings = rb == NavSettings;
         var updates = rb == NavUpdates;
@@ -1223,6 +1246,7 @@ public partial class MainWindow : Window
         var targetW = el.ActualWidth + 6;
         if (Math.Abs(_filterX.Target - targetX) < 0.5 && Math.Abs(_filterW.Target - targetW) < 0.5 && _filterPlaced) return;
         _springs.To(_filterX, targetX, instant);
+        _springs.To(_filterTrail, targetX, instant);
         _springs.To(_filterW, targetW, instant);
         _filterPlaced = true;
     }

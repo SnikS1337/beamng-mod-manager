@@ -601,29 +601,30 @@
 
         <!-- Левая панель: x 16, y 16, 84 × 284. Карточки под неё не заходят, поэтому сквозь неё видно только фон
              (Backdrop, а не вся сцена): наведение и прокрутка карточек не перерисовывают её стекло -->
-        <c:Glass x:Name="Nav" Source="{Binding ElementName=Backdrop}" Corner="36" Blur="2" Tint="#700E182C"
+        <c:Glass x:Name="Nav" Source="{Binding ElementName=Backdrop}" Corner="42" Blur="2" Tint="#700E182C"
                  Lens="30" Refraction="105" Brightness="0.78" Sparks="6" Seed="11"
                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,16,0,0" Width="84" Height="284"
                  WindowChrome.IsHitTestVisibleInChrome="True">
             <Canvas PreviewMouseLeftButtonDown="Nav_PreviewMouseDown" PreviewMouseLeftButtonUp="Nav_PreviewMouseUp" MouseLeave="Nav_MouseLeave">
-                <!-- капля жидкого стекла (Controls/Droplet.cs): линза, объём, радужная кромка; в пути вытягивается, при нажатии сжимается -->
-                <!-- капля шире пункта (76 из 84): подпись «Обновления» помещается внутри скругления, не наезжает на кромку -->
-                <c:Droplet x:Name="NavDrop" Corner="27" Width="76" Height="58" Canvas.Left="4" Canvas.Top="0">
+                <!-- капля (Controls/Droplet.cs, вариант «В»): в покое светлая плашка с радужной кромкой, в пути — линза одним телом.
+                     Форма 4 (2026-10-17): панель — целая капсула (радиус 42), капля 68 × 64 с отступом 8 со всех сторон,
+                     её радиус 32 (капсула): контур повторяет изгиб панели -->
+                <c:Droplet x:Name="NavDrop" Corner="32" Width="68" Height="64" Canvas.Left="8" Canvas.Top="0">
                     <c:Droplet.RenderTransform>
                         <TransformGroup>
                             <ScaleTransform x:Name="NavDropScale"/>
-                            <TranslateTransform x:Name="NavDropMove" Y="14"/>
+                            <TranslateTransform x:Name="NavDropMove" Y="8"/>
                         </TransformGroup>
                     </c:Droplet.RenderTransform>
                 </c:Droplet>
-                <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="14" Content="Моды" Tag="{StaticResource IconMods}"
+                <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="8" Content="Моды" Tag="{StaticResource IconMods}"
                              c:NavGlyph.Fill="{StaticResource IconModsFill}" c:NavGlyph.ActiveFill="1"
                              IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
                 <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
                              c:NavGlyph.Fill="{StaticResource IconUpdatesFill}" c:NavGlyph.ActiveFill="0.34"
                              Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
                 <!-- бейдж: пока «Обновления» не открывали, раз в 6 с от него расходится мягкое светлое кольцо (DESIGN.md 6 «Единый ритм») -->
-                <Grid x:Name="UpdatesBadge" Canvas.Left="57" Canvas.Top="79" IsHitTestVisible="False"
+                <Grid x:Name="UpdatesBadge" Canvas.Left="57" Canvas.Top="83" IsHitTestVisible="False"
                       Visibility="{Binding Filters[2].ShowCount, Converter={StaticResource BoolToVis}}">
                     <Border x:Name="BadgeRing" CornerRadius="9" Background="{DynamicResource BadgeBack}" Opacity="0" RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform><ScaleTransform x:Name="BadgeRingScale"/></Border.RenderTransform>
@@ -632,10 +633,10 @@
                         <TextBlock Text="{Binding Filters[2].Count}" Foreground="{DynamicResource BadgeInk}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                 </Grid>
-                <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="138" Content="Поиск" Tag="{StaticResource IconSearch}"
+                <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="144" Content="Поиск" Tag="{StaticResource IconSearch}"
                              c:NavGlyph.Fill="{StaticResource IconSearchFill}" c:NavGlyph.ActiveFill="0.34"
                              Checked="Nav_Checked" ToolTip="Поиск (Ctrl+3)"/>
-                <Rectangle Canvas.Left="22" Canvas.Top="200" Width="40" Height="1" Fill="{DynamicResource Divider}"/>
+                <Rectangle Canvas.Left="22" Canvas.Top="209.5" Width="40" Height="1" Fill="{DynamicResource Divider}"/>
                 <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="212" Content="Настройки" Tag="{StaticResource IconSettings}"
                              c:NavGlyph.Fill="{StaticResource IconSettingsFill}" c:NavGlyph.ActiveFill="1"
                              Checked="Nav_Checked" ToolTip="Настройки (Ctrl+,)"/>
