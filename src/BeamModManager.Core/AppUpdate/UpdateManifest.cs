@@ -61,6 +61,6 @@ public static class AppVersion
     /// <summary>Строго новее: на ту же или старую версию не «обновляемся».</summary>
     public static bool IsNewer(Version candidate, Version current) => Normalize(candidate) > Normalize(current);
 
-    /// <summary>Как показывать человеку: без хвостовых нулей ревизии («0.1.30»).</summary>
-    public static string Display(Version v) => v.Revision > 0 ? v.ToString(4) : v.ToString(3);
+    /// <summary>Как показывать человеку: без хвостовых нулей («0.1.30», «0.2», «0.2.1»; выпуски с 0.2 — две-три части).</summary>
+    public static string Display(Version v) => v.Revision > 0 ? v.ToString(4) : v.Build > 0 ? v.ToString(3) : v.ToString(2);
 }

@@ -4,17 +4,26 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия выпуска (например 0.3). Пусто — следующая после последней: 0.2 → 0.2.1'
+        required: false
+        default: ''
+
+# Права по умолчанию — только чтение; писать могут лишь задания, которым это нужно (снимки, журнал, выпуск).
+permissions:
+  contents: read
 
 # Новый push отменяет ещё идущую проверку прошлого: её результат уже никому не нужен. Выпуск (пометка [release] или
 # «Run workflow») в общую группу не входит и не отменяется никогда.
 concurrency:
-  group: ci-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')) && github.sha || 'push' }}
+  group: ci-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release')) && github.sha || 'push' }}
   cancel-in-progress: true
 
 jobs:
   # Ядро и логика экранов: те же тесты, что и на Linux, но на настоящей Windows.
   build:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -42,7 +51,7 @@ jobs:
   # Окно на WPF (.NET 10): сборка на каждый push, снимки экрана в демо-режиме — только когда менялся интерфейс.
   # Снимки уходят в ветку ci-shots.
   app:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 30
     permissions:
       contents: write
@@ -61,7 +70,7 @@ jobs:
           MSG: ${{ github.event.head_commit.message }}
         run: |
           $run = $true
-          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:MSG -notmatch '\[(shots|release)\]' -and $env:BEFORE -notmatch '^0+$') {
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:MSG -notmatch '\[(shots|release)' -and $env:BEFORE -notmatch '^0+$') {
             $files = git diff --name-only $env:BEFORE $env:GITHUB_SHA 2>$null
             if ($LASTEXITCODE -eq 0) {
               $ui = @($files | Where-Object { $_ -match '^(src/BeamModManager\.(App|Ui)/|design/demo/|\.github/workflows/)' })
@@ -194,8 +203,8 @@ jobs:
   # Долгая (две self-contained сборки), а меняется самообновление редко: идёт только перед выпуском, по «Run workflow»
   # или по пометке [selfupdate] в описании коммита. Выпуск без неё не делается (needs).
   selfupdate:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]') || contains(github.event.head_commit.message, '[selfupdate]')
-    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release') || contains(github.event.head_commit.message, '[selfupdate]')
+    runs-on: windows-2025
     timeout-minutes: 30
     permissions:
       contents: write
@@ -226,7 +235,7 @@ jobs:
           $zip = Get-Item "$feed/ModManagerBeamNG.zip"
           [ordered]@{
             version   = '0.1.2'
-            url       = 'https://github.com/SnikS1337/ModManagerBeamNG/releases/download/v0.1.2/ModManagerBeamNG.zip'
+            url       = 'https://github.com/SnikS1337/beamng-mod-manager/releases/download/v0.1.2/ModManagerBeamNG.zip'
             size      = $zip.Length
             sha256    = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
             notes     = 'проверка'
@@ -317,13 +326,13 @@ jobs:
 
   # Готовая программа: один exe без установки .NET (self-contained). Только по команде: пометка [release] в описании
   # коммита или «Run workflow» на странице Actions. Обычные изменения выпусков не создают (решено 2026-10-15).
-  # 1) выпуск «latest» в этом репозитории — как раньше;
-  # 2) выпуск v<версия> в публичном SnikS1337/ModManagerBeamNG c latest.json — оттуда программа обновляется сама.
-  #    Нужен секрет RELEASES_TOKEN (токен с правом Contents: write на публичный репозиторий); без него шаг пропускается.
+  # Выпуски — в этом репозитории (с 2026-10-17, он открыт): v<версия> с ModManagerBeamNG.zip и latest.json, оттуда
+  # программа обновляется сама. Версия (решено 2026-10-17, с 0.2): [release 0.3] — такая; просто [release] — следующая
+  # после последней (0.2 → 0.2.1). Старее или равной последней не выйдет.
   release:
     needs: [build, app, lua, selfupdate]
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
-    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release')
+    runs-on: windows-2025
     timeout-minutes: 20
     # выпуски по одному: более старая сборка, закончившая позже, не должна стать «последней»
     concurrency:
@@ -332,71 +341,96 @@ jobs:
     permissions:
       contents: write
     env:
-      PUBLIC_REPO: SnikS1337/ModManagerBeamNG
+      GH_TOKEN: ${{ github.token }}
+      # до 0.2 выпуски для самообновления лежали в SnikS1337/ModManagerBeamNG: туда уходит один «мост» (см. ниже)
+      OLD_REPO: SnikS1337/ModManagerBeamNG
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
-      # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
       - uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
           restore-keys: nuget-${{ runner.os }}-
+      - name: Версия
+        shell: pwsh
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          ASKED: ${{ github.event.inputs.version }}
+        run: |
+          function Norm([version]$v) { [version]::new($v.Major, [math]::Max(0, $v.Minor), [math]::Max(0, $v.Build)) }
+          # «0.2.0» показываем как «0.2»: без хвостового нуля
+          function Show([version]$v) { if ($v.Build -gt 0) { "$($v.Major).$($v.Minor).$($v.Build)" } else { "$($v.Major).$($v.Minor)" } }
+          $asked = $env:ASKED
+          if (-not $asked) {
+            $m = [regex]::Match("$env:MSG", '\[release(?:\s+v?(\d+\.\d+(?:\.\d+)?))?\]')
+            if ($m.Groups[1].Success) { $asked = $m.Groups[1].Value }
+          }
+          if ($asked -and $asked -notmatch '^v?\d+\.\d+(\.\d+)?$') { throw "версия «$asked»: нужно вида 0.3 или 0.3.1" }
+          # последняя опубликованная (без «пре-выпусков»)
+          $cur = gh release view --repo $env:GITHUB_REPOSITORY --json tagName --jq .tagName 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            if ("$cur" -notmatch 'release not found') { throw "не удалось прочитать выпуски: $cur" }
+            $cur = $null
+          }
+          $global:LASTEXITCODE = 0
+          $curV = if ($cur) { Norm ([version]($cur.TrimStart('v'))) } else { $null }
+          if ($asked) { $v = Norm ([version]($asked.TrimStart('v'))) }
+          elseif ($curV) { $v = [version]::new($curV.Major, $curV.Minor, $curV.Build + 1) }
+          else { throw "выпусков ещё нет: укажите версию — [release 0.2] в описании коммита или поле версии в «Run workflow»" }
+          if ($curV -and $v -le $curV) { throw "версия $(Show $v) не новее последней ($(Show $curV))" }
+          $show = Show $v
+          Write-Host "последняя: $(if ($curV) { Show $curV } else { 'нет' }); выпускаем: $show"
+          "VER=$($v.ToString(3))" | Out-File -Append $env:GITHUB_ENV
+          "SHOW=$show" | Out-File -Append $env:GITHUB_ENV
       - name: Сборка exe
         shell: pwsh
         run: |
-          $ver = "0.1.$env:GITHUB_RUN_NUMBER"
           dotnet publish src/BeamModManager.App -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
-            -p:DebugType=none -p:Version=$ver -nologo -o publish
+            -p:DebugType=none -p:Version=$env:VER -nologo -o publish
           if ($LASTEXITCODE -ne 0) { throw "publish не прошёл" }
           $fv = (Get-Item publish/BeamModManager.exe).VersionInfo.FileVersion
-          if (-not $fv.StartsWith($ver)) { throw "версия exe ($fv) не совпала с ${ver}, самообновление её бы отвергло" }
+          if ([version]$fv -ne [version]"$env:VER.0") { throw "версия exe ($fv) не совпала с $env:VER, самообновление её бы отвергло" }
           Copy-Item tools/release/README.txt "publish/Как запустить.txt"
           Compress-Archive -Path publish/* -DestinationPath "ModManagerBeamNG.zip"
           $zip = Get-Item ModManagerBeamNG.zip
-          $manifest = [ordered]@{
-            version   = $ver
-            url       = "https://github.com/$env:PUBLIC_REPO/releases/download/v$ver/ModManagerBeamNG.zip"
+          [ordered]@{
+            version   = $env:SHOW
+            url       = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$env:SHOW/ModManagerBeamNG.zip"
             size      = $zip.Length
             sha256    = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
             notes     = (git log -1 --pretty=%s)
             published = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          }
-          $manifest | ConvertTo-Json | Out-File -Encoding utf8NoBOM latest.json
+          } | ConvertTo-Json | Out-File -Encoding utf8NoBOM latest.json
           Get-Content latest.json
-          "VER=$ver" | Out-File -Append $env:GITHUB_ENV
-      - name: Выпуск latest (этот репозиторий)
+      - name: Выпуск
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $msg = (git log -1 --pretty=%s)
-          $notes = "Сборка $env:VER от $(Get-Date -Format 'yyyy-MM-dd HH:mm') UTC, коммит $($env:GITHUB_SHA.Substring(0,7)).`n`nПоследнее изменение: $msg`n`nСкачать ModManagerBeamNG.zip, распаковать в любую папку, запустить BeamModManager.exe. Подробности в «Как запустить.txt» внутри архива."
+          $notes = "$msg`n`nСкачать ModManagerBeamNG.zip, распаковать в любую папку, запустить BeamModManager.exe. Подробности — в «Как запустить.txt» внутри архива. Уже установленная программа обновится сама."
+          gh release create "v$env:SHOW" ModManagerBeamNG.zip latest.json --title "ModManager BeamNG $env:SHOW" --notes $notes --target $env:GITHUB_SHA --latest
+          if ($LASTEXITCODE -ne 0) { throw "выпуск не создан" }
+          # плавающий «latest» (свежая сборка до 0.2) больше не ведём: выпуски теперь с версиями
           gh release delete latest --yes --cleanup-tag 2>$null
           $global:LASTEXITCODE = 0
-          gh release create latest ModManagerBeamNG.zip latest.json --title "ModManager BeamNG $env:VER (свежая сборка)" --notes $notes --target $env:GITHUB_SHA --prerelease
-          if ($LASTEXITCODE -ne 0) { throw "выпуск не создан" }
-      - name: Выпуск для самообновления (публичный репозиторий)
+      # «Мост» для программ до 0.2: они спрашивают обновления в SnikS1337/ModManagerBeamNG. Туда один раз уходит этот же
+      # выпуск; в нём новая программа, которая дальше обновляется уже отсюда. Как только там есть 0.2 или новее, шаг
+      # ничего не делает. Нужен секрет RELEASES_TOKEN (запись в тот репозиторий).
+      - name: Мост для программ до 0.2
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
-          if (-not $env:GH_TOKEN) { Write-Host "::warning::RELEASES_TOKEN не задан: самообновление не получит эту сборку"; exit 0 }
-          # не выкладываем версию старше уже опубликованной
-          $cur = gh release view --repo $env:PUBLIC_REPO --json tagName --jq .tagName 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            if ("$cur" -notmatch 'release not found') { Write-Host "::error::не удалось прочитать выпуски $env:PUBLIC_REPO: $cur"; exit 1 }
-            $cur = $null
-          }
+          if (-not $env:GH_TOKEN) { Write-Host "::warning::RELEASES_TOKEN не задан: программы до 0.2 не узнают о новой версии"; exit 0 }
+          $cur = gh release view --repo $env:OLD_REPO --json tagName --jq .tagName 2>&1
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::не удалось прочитать выпуски $env:OLD_REPO: $cur"; exit 1 }
           $global:LASTEXITCODE = 0
-          if ($cur) {
-            $curV = [version]($cur.TrimStart('v'))
-            if ([version]$env:VER -le $curV) { Write-Host "::warning::уже опубликована $cur, $env:VER не новее"; exit 0 }
-          }
+          if ([version]($cur.TrimStart('v')) -ge [version]'0.2') { Write-Host "мост уже стоит ($cur), старый репозиторий не трогаем"; exit 0 }
           $msg = (git log -1 --pretty=%s)
-          $out = gh release create "v$env:VER" ModManagerBeamNG.zip latest.json --repo $env:PUBLIC_REPO --title "ModManager BeamNG $env:VER" --notes "$msg" --latest 2>&1
-          if ($LASTEXITCODE -ne 0) { Write-Host "::error::публичный выпуск не создан: $out"; exit 1 }
-          Write-Host "::notice::опубликовано: $out"
+          $out = gh release create "v$env:SHOW" ModManagerBeamNG.zip latest.json --repo $env:OLD_REPO --title "ModManager BeamNG $env:SHOW" `
+            --notes "$msg`n`nПоследний выпуск здесь: дальше программа обновляется из SnikS1337/beamng-mod-manager." --latest 2>&1
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::мост не создан: $out"; exit 1 }
+          Write-Host "::notice::мост: $out"

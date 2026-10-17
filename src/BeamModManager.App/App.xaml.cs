@@ -52,10 +52,10 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Откуда брать обновления: отдельный репозиторий только с готовыми сборками (исходники — в beamng-mod-manager).
-    /// latest.json пишет сборочная машина (windows.yml, задание release).
+    /// Откуда брать обновления: выпуски этого же (открытого с 2026-10-17) репозитория. latest.json пишет сборочная машина
+    /// (windows.yml, задание release). Программы до 0.2 спрашивают SnikS1337/ModManagerBeamNG — туда ушёл один «мост».
     /// </summary>
-    public const string UpdateManifestUrl = "https://github.com/SnikS1337/ModManagerBeamNG/releases/latest/download/latest.json";
+    public const string UpdateManifestUrl = "https://github.com/SnikS1337/beamng-mod-manager/releases/latest/download/latest.json";
 
     /// <summary>Код выхода новой версии, которая не запустилась и сама вернула прежнюю (прежнему процессу делать нечего).</summary>
     private const int RolledBackExitCode = 3;
