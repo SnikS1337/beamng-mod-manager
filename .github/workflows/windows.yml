@@ -17,12 +17,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
       # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get install -y -q lua5.1 && lua5.1 tests/lua/bridge_test.lua src/BeamModManager.Core/Game/Bridge
 
   # Окно на WPF (.NET 10): сборка на каждый push, снимки экрана в демо-режиме — только когда менялся интерфейс.
@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # нужна история, чтобы сравнить с прошлым push
       # Снимки (≈4 мин) — только когда менялось то, что видно: окно (App), логика экранов (Ui), демо-данные, сама сборка;
@@ -72,11 +72,11 @@ jobs:
           $global:LASTEXITCODE = 0
           Write-Host "снимки: $run"
           "run=$($run.ToString().ToLowerInvariant())" | Out-File -Append $env:GITHUB_OUTPUT
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
       # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
@@ -200,12 +200,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
       # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
@@ -334,12 +334,12 @@ jobs:
     env:
       PUBLIC_REPO: SnikS1337/ModManagerBeamNG
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
       # пакеты NuGet и пакеты среды для self-contained сборки не качаются заново на каждой проверке
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
