@@ -46,8 +46,9 @@ public sealed class RefractionEffect : ShaderEffect
         nameof(Shade), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(0.0, PixelShaderConstantCallback(7)));
 
     /// <summary>
-    /// Светлое оформление: тень в толще стекла у края (0 — нет). Над ровным светлым фоном преломлять почти нечего, и без неё
-    /// стекло читалось плоской белой плашкой; с ней видно, что край выпуклый, как у Apple.
+    /// Светлое оформление: тень в толще стекла у края (0 — нет), в долях яркости: шейдер умножает цвет на Brightness − Shade·t²
+    /// (так короче на команду — у PS 2.0 их всего 64). Над ровным светлым фоном преломлять почти нечего, и без тени стекло
+    /// читалось плоской белой плашкой; с ней видно, что край выпуклый, как у Apple.
     /// </summary>
     public double Shade { get => (double)GetValue(ShadeProperty); set => SetValue(ShadeProperty, value); }
 
