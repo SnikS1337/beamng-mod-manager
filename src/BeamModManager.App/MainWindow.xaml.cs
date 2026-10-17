@@ -371,7 +371,9 @@ public partial class MainWindow : Window
         {
             case nameof(GarageViewModel.Toast):
                 _toastTimer.Stop();
-                if (_vm.Toast is not null) _toastTimer.Start();
+                // обратимое (удаление, выключение) живёт 8 с, остальное 6 с (DESIGN_COMPONENTS 3.7); под мышью или в фокусе не гаснет
+                _toastTimer.Interval = TimeSpan.FromSeconds(_vm.Toast is { CanUndo: true } ? 8 : 6);
+                if (_vm.Toast is not null && !ToastHeld) _toastTimer.Start();
                 if (_vm.LiveWaiting && !_liveTimer.IsEnabled) _liveTimer.Start();
                 break;
             case nameof(GarageViewModel.Filter):
@@ -1066,6 +1068,7 @@ public partial class MainWindow : Window
         _previewCts?.Cancel();
         _host.SaveWindow?.Invoke(this);
         _host.SavePending?.Invoke(_vm.PendingChanges);
+        _vm.CommitPending(); // тост «Отменить» уже не нажмут: удалённое забывается до записи библиотеки
         _host.Flush?.Invoke();
     }
 
@@ -1337,24 +1340,92 @@ public partial class MainWindow : Window
     private void FocusSelected()
     {
         if (_vm.Selected is not { } c) return;
-        if (Cards.ItemContainerGenerator.ContainerFromItem(c) is DependencyObject cp && VisualTreeHelper.GetChildrenCount(cp) > 0 &&
-            VisualTreeHelper.GetChild(cp, 0) is UIElement btn)
-            btn.Focus();
+        if (CardElement(c) is { } btn) btn.Focus();
         else if (_panel is { } panel && _vm.Cards.IndexOf(c) is var i and >= 0)
         {
             // карточки ещё нет: прокручиваем к ней, сетка её создаст, после раскладки ставим фокус
             panel.BringIndexIntoView(i, 84);
             Dispatcher.BeginInvoke(() =>
             {
-                if (ReferenceEquals(_vm.Selected, c) && Cards.ItemContainerGenerator.ContainerFromItem(c) is DependencyObject p2 &&
-                    VisualTreeHelper.GetChildrenCount(p2) > 0 && VisualTreeHelper.GetChild(p2, 0) is UIElement b2)
-                    b2.Focus();
+                if (ReferenceEquals(_vm.Selected, c) && CardElement(c) is { } b2) b2.Focus();
             }, DispatcherPriority.Loaded);
         }
     }
 
     private void Toggle_Click(object sender, RoutedEventArgs e) => _vm.ToggleSelected();
     private void Undo_Click(object sender, RoutedEventArgs e) => _vm.Undo();
+    private void Delete_Click(object sender, RoutedEventArgs e) => _vm.DeleteSelected();
+
+    private void RestoreVersion_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is VersionRow row) _vm.RestoreVersion(row);
+    }
+
+    // ───────────── тост: под мышью и в фокусе не гаснет ─────────────
+
+    private bool ToastHeld => ToastBox.IsMouseOver || ToastBox.IsKeyboardFocusWithin;
+
+    private void Toast_Hold(object sender, MouseEventArgs e) => _toastTimer.Stop();
+
+    private void Toast_Release(object sender, MouseEventArgs e)
+    {
+        if (_vm.Toast is not null && !ToastHeld) { _toastTimer.Stop(); _toastTimer.Start(); } // после ухода — полный срок заново
+    }
+
+    private void Toast_FocusChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (ToastHeld) _toastTimer.Stop();
+        else if (_vm.Toast is not null) { _toastTimer.Stop(); _toastTimer.Start(); }
+    }
+
+    // ───────────── меню карточки (DESIGN_COMPONENTS 3.9) ─────────────
+
+    private void Card_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement el || el.DataContext is not ModCard c) return;
+        ShowCardMenu(c, el, atMouse: true);
+        e.Handled = true;
+    }
+
+    /// <summary>Правая кнопка — меню у курсора; клавиша «Меню» или Shift+F10 — у выбранной карточки.</summary>
+    private void ShowCardMenu(ModCard c, FrameworkElement target, bool atMouse)
+    {
+        var menu = new ContextMenu { Style = (Style)FindResource("CardMenu"), PlacementTarget = target };
+        if (atMouse) menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        else
+        {
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.RelativePoint;
+            menu.HorizontalOffset = 24;
+            menu.VerticalOffset = 24;
+        }
+        foreach (var entry in _vm.MenuFor(c))
+        {
+            if (entry.Danger) menu.Items.Add(new Separator { Style = (Style)FindResource("CardMenuLine") });
+            var item = new MenuItem { Header = entry.Label, Style = (Style)FindResource("CardMenuItem") };
+            if (entry.Danger) item.SetResourceReference(ForegroundProperty, "Danger");
+            var action = entry.Action;
+            item.Click += (_, _) => RunMenu(c, action);
+            menu.Items.Add(item);
+        }
+        menu.Closed += (_, _) => { if (target.IsVisible && !atMouse) target.Focus(); };
+        menu.IsOpen = true;
+    }
+
+    private void RunMenu(ModCard c, MenuAction action)
+    {
+        switch (action)
+        {
+            case MenuAction.Open: ChangeSelection(() => _vm.Selected = c); break;
+            case MenuAction.Toggle: _vm.Toggle(c); break;
+            // загрузки в этой сборке нет: «Обновить» ведёт на страницу с новой версией, как главная кнопка панели
+            case MenuAction.OpenPage or MenuAction.Update: OpenUrl(GarageViewModel.PageOf(c)); break;
+            case MenuAction.Delete: _vm.Delete(c); break;
+        }
+    }
+
+    private FrameworkElement? CardElement(ModCard c) =>
+        Cards.ItemContainerGenerator.ContainerFromItem(c) is DependencyObject cp && VisualTreeHelper.GetChildrenCount(cp) > 0
+            ? VisualTreeHelper.GetChild(cp, 0) as FrameworkElement : null;
     private void DismissBanner_Click(object sender, RoutedEventArgs e) => _vm.DismissBanner();
     private void UpdateAct_Click(object sender, RoutedEventArgs e) => _host.Banner?.Act(_closing.Token);
     private void UpdateLater_Click(object sender, RoutedEventArgs e) => _host.Banner?.Dismiss();
@@ -1434,12 +1505,7 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException) { }
     }
 
-    private void OpenPage_Click(object sender, RoutedEventArgs e)
-    {
-        if (_vm.Details?.PageUrl is not { } url || url.Scheme is not ("https" or "http")) return;
-        try { Process.Start(new ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true }); }
-        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException) { }
-    }
+    private void OpenPage_Click(object sender, RoutedEventArgs e) => OpenUrl(_vm.Details?.PageUrl);
 
     private void MainAction_Click(object sender, RoutedEventArgs e)
     {
@@ -1525,6 +1591,20 @@ public partial class MainWindow : Window
             return;
         }
         if (typing || NavGarage.IsChecked != true) return;
+        // Delete — удалить выбранный (тост «Отменить»); клавиша «Меню» и Shift+F10 — меню выбранной карточки
+        if (e.Key == Key.Delete && _vm.Selected is not null)
+        {
+            _vm.DeleteSelected(); // карточки с фокусом больше нет: стрелки дальше выберут первую
+            e.Handled = true;
+            return;
+        }
+        var shiftF10 = e.Key == Key.System && e.SystemKey == Key.F10 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+        if ((e.Key == Key.Apps || shiftF10) && _vm.Selected is { } menuCard && CardElement(menuCard) is { } menuEl)
+        {
+            ShowCardMenu(menuCard, menuEl, atMouse: false);
+            e.Handled = true;
+            return;
+        }
         // стрелки и пробел — для карточек; у кнопок фильтров, панели и окна они делают своё обычное дело
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase btn && btn.DataContext is not ModCard) return;
         var cols = _panel?.Columns ?? 3;

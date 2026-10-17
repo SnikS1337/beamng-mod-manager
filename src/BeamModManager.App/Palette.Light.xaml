@@ -9,6 +9,8 @@
     <SolidColorBrush x:Key="Ink3" Color="#99141B2B"/>
     <SolidColorBrush x:Key="InkHint" Color="#8C141B2B"/>
     <SolidColorBrush x:Key="Danger" Color="#B4332A"/>
+    <!-- янтарный только у предупреждений (треугольник с «!», DESIGN_COMPONENTS 4) -->
+    <SolidColorBrush x:Key="Warn" Color="#8A5200"/>
     <SolidColorBrush x:Key="FocusRing" Color="#141B2B"/>
     <SolidColorBrush x:Key="WindowBack" Color="#E4E9F2"/>
 
@@ -29,6 +31,12 @@
     <SolidColorBrush x:Key="Divider" Color="#290A1428"/>
     <SolidColorBrush x:Key="NavHover" Color="#66FFFFFF"/>
     <SolidColorBrush x:Key="NavOn" Color="#CCFFFFFF"/>
+
+    <!-- меню карточки (DESIGN_COMPONENTS 3.9): плашка, не стекло -->
+    <SolidColorBrush x:Key="MenuBack" Color="#F7FBFCFF"/>
+    <SolidColorBrush x:Key="MenuRim" Color="#1F0A1428"/>
+    <SolidColorBrush x:Key="MenuHover" Color="#140A1428"/>
+    <SolidColorBrush x:Key="MenuLine" Color="#1A0A1428"/>
 
     <!-- кнопки: главная тёмная, вторичные белые -->
     <SolidColorBrush x:Key="PrimaryBack" Color="#1B2540"/>

@@ -223,6 +223,21 @@
             <Setter Property="Foreground" Value="{DynamicResource Ink3}"/>
         </Style>
 
+        <!-- строка блока данных правой панели: подпись слева, значение справа; у первой линии сверху нет -->
+        <DataTemplate x:Key="FactRow" DataType="{x:Type g:Fact}">
+            <Border x:Name="Row" BorderBrush="{DynamicResource DataLine}" BorderThickness="0,1,0,0" Padding="14,10">
+                <DockPanel>
+                    <TextBlock Style="{StaticResource FactLabel}" Text="{Binding Label}"/>
+                    <TextBlock Text="{Binding Value}" FontWeight="Medium" Margin="12,0,0,0" TextWrapping="Wrap"/>
+                </DockPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ContentPresenter}}" Value="0">
+                    <Setter TargetName="Row" Property="BorderThickness" Value="0"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
         <!-- ═════ «Обновления» (доска «Обновления») ═════ -->
 
         <!-- Белая кнопка на фото-карточке: карточка — фото с затемнением в обоих оформлениях, кнопка всегда белая -->
@@ -535,7 +550,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type g:ModCard}">
-                                <Button Style="{StaticResource Card}" Click="Card_Click" AutomationProperties.Name="{Binding Name}"
+                                <Button Style="{StaticResource Card}" Click="Card_Click" MouseRightButtonUp="Card_RightClick" AutomationProperties.Name="{Binding Name}"
                                         AutomationProperties.HelpText="{Binding Subtitle}" ToolTipService.IsEnabled="False"/>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -985,6 +1000,12 @@
                                 <Button Style="{StaticResource Secondary}" Content="{Binding Details.ToggleLabel}" Margin="5,0,0,0" Click="Toggle_Click"
                                         ToolTip="Пробел" Visibility="{Binding Details.ToggleLabel, Converter={StaticResource NullToCollapsed}}"/>
                             </UniformGrid>
+                            <!-- «Удалить» всегда со словами «Можно вернуть позже» (DESIGN.md 2): файл уходит в копии, тост даёт «Отменить» -->
+                            <DockPanel Margin="2,10,2,0">
+                                <Button x:Name="DeleteMod" Style="{StaticResource Link}" Foreground="{DynamicResource Danger}" Content="Удалить" Click="Delete_Click"
+                                        ToolTip="Delete" AutomationProperties.HelpText="Можно вернуть позже"/>
+                                <TextBlock Style="{StaticResource Note}" Text="Можно вернуть позже" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                            </DockPanel>
                         </StackPanel>
 
                         <!-- прокрутка шире содержимого на поля панели: свечение главной кнопки не обрезается по бокам краем прокрутки -->
@@ -1036,24 +1057,61 @@
                                 </StackPanel>
 
                                 <Border CornerRadius="16" Background="{DynamicResource DataBlock}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Margin="0,18,0,0">
-                                    <ItemsControl ItemsSource="{Binding Details.Facts}" Focusable="False" AlternationCount="1000">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate DataType="{x:Type g:Fact}">
-                                                <Border x:Name="Row" BorderBrush="{DynamicResource DataLine}" BorderThickness="0,1,0,0" Padding="14,10">
-                                                    <DockPanel>
-                                                        <TextBlock Style="{StaticResource FactLabel}" Text="{Binding Label}"/>
-                                                        <TextBlock Text="{Binding Value}" FontWeight="Medium" Margin="12,0,0,0" TextWrapping="Wrap"/>
-                                                    </DockPanel>
-                                                </Border>
-                                                <DataTemplate.Triggers>
-                                                    <DataTrigger Binding="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ContentPresenter}}" Value="0">
-                                                        <Setter TargetName="Row" Property="BorderThickness" Value="0"/>
-                                                    </DataTrigger>
-                                                </DataTemplate.Triggers>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                    <ItemsControl ItemsSource="{Binding Details.Facts}" ItemTemplate="{StaticResource FactRow}" Focusable="False" AlternationCount="1000"/>
                                 </Border>
+
+                                <!-- «Внутри архива»: что мод кладёт в игру; что насторожило проверку — янтарным, словами -->
+                                <StackPanel x:Name="InsideBlock" Margin="0,18,0,0" Visibility="{Binding Inside, Converter={StaticResource NullToCollapsed}}">
+                                    <TextBlock Style="{StaticResource GroupTitle}" Text="Внутри архива" Foreground="{DynamicResource Ink2}"/>
+                                    <Border CornerRadius="16" Background="{DynamicResource DataBlock}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1">
+                                        <StackPanel>
+                                            <ItemsControl ItemsSource="{Binding Inside.Facts}" ItemTemplate="{StaticResource FactRow}" Focusable="False" AlternationCount="1000"/>
+                                            <ItemsControl ItemsSource="{Binding Inside.Warnings}" Focusable="False">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="{DynamicResource DataLine}" BorderThickness="0,1,0,0" Padding="14,10">
+                                                            <DockPanel>
+                                                                <Viewbox DockPanel.Dock="Left" Width="16" Height="16" Margin="0,1,10,0" VerticalAlignment="Top">
+                                                                    <Path Style="{StaticResource Icon}" Data="{StaticResource IconWarn}" Stroke="{DynamicResource Warn}"/>
+                                                                </Viewbox>
+                                                                <TextBlock Text="{Binding}" FontSize="12.5" TextWrapping="Wrap" LineHeight="17"/>
+                                                            </DockPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- «Прошлые версии» с «Вернуть»: копии, которые менеджер сохранил при обновлении и удалении -->
+                                <StackPanel x:Name="VersionsBlock" Margin="0,18,0,0" Visibility="{Binding HasVersions, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Style="{StaticResource GroupTitle}" Text="Прошлые версии" Foreground="{DynamicResource Ink2}"/>
+                                    <Border CornerRadius="16" Background="{DynamicResource DataBlock}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1">
+                                        <ItemsControl ItemsSource="{Binding Versions}" Focusable="False" AlternationCount="1000">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type g:VersionRow}">
+                                                    <Border x:Name="Row" BorderBrush="{DynamicResource DataLine}" BorderThickness="0,1,0,0" Padding="14,8,8,8">
+                                                        <DockPanel>
+                                                            <Button DockPanel.Dock="Right" Style="{StaticResource Secondary}" Height="32" Padding="12,0" Margin="10,0,0,0"
+                                                                    VerticalAlignment="Center" Content="Вернуть" Click="RestoreVersion_Click"
+                                                                    AutomationProperties.Name="{Binding Title, StringFormat=Вернуть: {0}}"/>
+                                                            <StackPanel VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Title}" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
+                                                                <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{DynamicResource Ink2}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                                                            </StackPanel>
+                                                        </DockPanel>
+                                                    </Border>
+                                                    <DataTemplate.Triggers>
+                                                        <DataTrigger Binding="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ContentPresenter}}" Value="0">
+                                                            <Setter TargetName="Row" Property="BorderThickness" Value="0"/>
+                                                        </DataTrigger>
+                                                    </DataTemplate.Triggers>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Border>
+                                </StackPanel>
                             </StackPanel>
                         </ScrollViewer>
                     </DockPanel>
@@ -1186,7 +1244,8 @@
         <c:Glass x:Name="ToastBox" Source="{Binding ElementName=Scene}" Corner="24" Blur="6" Tint="#B30E182C"
                  Lens="24" Refraction="60" Brightness="0.70"
                  VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="116,0,360,28" Height="48" Padding="20,0,12,0"
-                 Visibility="{Binding Toast, Converter={StaticResource NullToCollapsed}}">
+                 Visibility="{Binding Toast, Converter={StaticResource NullToCollapsed}}" MouseEnter="Toast_Hold" MouseLeave="Toast_Release"
+                 IsKeyboardFocusWithinChanged="Toast_FocusChanged">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="{Binding Toast.Text}" FontSize="13.5" VerticalAlignment="Center"/>
                 <Button Style="{StaticResource Link}" Content="Отменить" Margin="14,0,0,0" Click="Undo_Click"
@@ -1194,7 +1253,6 @@
             </StackPanel>
         </c:Glass>
 
-        <!-- смена оформления: кадр прежнего вида поверх всего, он раскрывается кругом от места нажатия (MainWindow.Reveal) -->
         <!-- смена оформления: вуаль цвета нового фона расходится кругом от места нажатия (без снимка окна — он долгий) -->
         <Rectangle x:Name="ModeVeil" IsHitTestVisible="False" Visibility="Collapsed"/>
     </Grid>

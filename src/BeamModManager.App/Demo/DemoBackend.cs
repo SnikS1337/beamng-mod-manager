@@ -1,5 +1,8 @@
 using System.IO;
+using BeamModManager.Core.Install;
 using BeamModManager.Core.Library;
+using BeamModManager.Core.Packs;
+using BeamModManager.Core.Safety;
 using BeamModManager.Core.Versioning;
 using BeamModManager.Ui.Garage;
 
@@ -72,4 +75,58 @@ public sealed class DemoBackend : IGarageBackend
         _mods[i] = _mods[i] with { Mod = _mods[i].Mod with { Enabled = enabled } };
         return new(true, ToggleWay.GameDb, enabled ? "Включён." : "Выключен.");
     }
+
+    // ───────────── удаление, прошлые версии, «Внутри архива» (выдуманные, для снимков) ─────────────
+
+    private readonly Dictionary<string, (int Index, GarageMod Mod)> _deleted = new();
+
+    public DeleteResult Delete(GarageMod mod)
+    {
+        var i = _mods.FindIndex(m => m.Mod.Id == mod.Mod.Id);
+        if (i < 0) return new(false, "Нет такого мода", null);
+        _deleted[mod.Mod.Id] = (i, _mods[i]);
+        _mods.RemoveAt(i);
+        return new(true, null, new DeletedTicket(mod.Mod.Id, mod.Mod.FileName, "demo", false));
+    }
+
+    public OpResult Undelete(DeletedTicket ticket)
+    {
+        if (!_deleted.Remove(ticket.ModId, out var d)) return new(false, "Нечего возвращать");
+        _mods.Insert(Math.Min(d.Index, _mods.Count), d.Mod);
+        return new(true);
+    }
+
+    public void ForgetDeleted(DeletedTicket ticket) => _deleted.Remove(ticket.ModId);
+
+    public IReadOnlyList<PastVersion> PastVersions(GarageMod mod)
+    {
+        // у обновлявшихся модов две прошлые версии, у остальных — ни одной
+        if (mod.Mod.Version is not { } v || mod.Mod.SizeBytes is not { } size || !mod.Tracked || mod.Mod.Name.StartsWith("Мод номер")) return Array.Empty<PastVersion>();
+        var now = DateTimeOffset.UtcNow;
+        return new[] { (Older(v, 1), 9), (Older(v, 2), 40) }
+            .Where(x => x.Item1 is not null)
+            .Select((x, i) => new PastVersion(new BackupEntry($"demo-{i}", mod.Mod.FileName, 2 - i, now.AddDays(-x.Item2), size - (i + 1) * 3L * 1024 * 1024), x.Item1!))
+            .ToList();
+    }
+
+    private static string? Older(string v, int back)
+    {
+        var dot = v.LastIndexOf('.');
+        return dot > 0 && int.TryParse(v[(dot + 1)..], out var n) && n - back >= 0 ? v[..(dot + 1)] + (n - back) : null;
+    }
+
+    public OpResult RestoreVersion(GarageMod mod, PastVersion version)
+    {
+        Edit(mod.Mod.Id, m => m with { Mod = m.Mod with { Version = version.Version } });
+        return new(true);
+    }
+
+    public ArchiveOverview? Inside(GarageMod mod) => mod.ModType switch
+    {
+        "terrain" => new(Array.Empty<string>(), new[] { mod.Mod.Name }, 0, 412, (mod.Mod.SizeBytes ?? 0) * 2, Array.Empty<Finding>()),
+        "unknown" => new(Array.Empty<string>(), Array.Empty<string>(), 37, 58, 3L * 1024 * 1024,
+            new[] { new Finding(Severity.Warning, "unusual-structure", "В корне архива нет привычных папок мода (vehicles, levels, art, lua, ui и т. п.).") }),
+        "sound" => new(Array.Empty<string>(), Array.Empty<string>(), 0, 24, (mod.Mod.SizeBytes ?? 0) * 3 / 2, Array.Empty<Finding>()),
+        _ => new(new[] { mod.Mod.Name }, Array.Empty<string>(), mod.Mod.Name.Contains("Kenworth") ? 6 : 0, 1240, (mod.Mod.SizeBytes ?? 0) * 3, Array.Empty<Finding>()),
+    };
 }

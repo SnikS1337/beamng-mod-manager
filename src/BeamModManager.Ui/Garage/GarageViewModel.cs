@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using BeamModManager.Core.Game;
+using BeamModManager.Core.Install;
 using BeamModManager.Core.Library;
+using BeamModManager.Core.Packs;
 using BeamModManager.Core.Versioning;
 using BeamModManager.Ui.Mvvm;
 using BeamModManager.Ui.Text;
@@ -42,6 +44,17 @@ public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPag
 
 /// <summary>Строка блока данных в правой панели: «Размер — 312 МБ».</summary>
 public sealed record Fact(string Label, string Value);
+
+/// <summary>Строка «Прошлых версий»: «Версия 1.0» и «12 октября 2026 · 88 МБ», справа «Вернуть».</summary>
+public sealed record VersionRow(string Title, string Detail, PastVersion Version);
+
+/// <summary>«Внутри архива»: что мод кладёт в игру и что насторожило проверку (словами, янтарным).</summary>
+public sealed record InsideInfo(IReadOnlyList<Fact> Facts, IReadOnlyList<string> Warnings);
+
+/// <summary>Пункт меню карточки (DESIGN_COMPONENTS 3.9): тот же набор, что в правой панели.</summary>
+public enum MenuAction { Open, Toggle, OpenPage, Update, Delete }
+
+public sealed record MenuEntry(string Label, MenuAction Action, bool Danger = false);
 
 /// <summary>Правая панель выбранного мода.</summary>
 public sealed record ModDetails(
@@ -102,6 +115,8 @@ public sealed class GarageViewModel : Observable
         SelectFilterCommand = new RelayCommand(p => { if (p is GarageFilter f) Filter = f; else if (p is FilterItem i) Filter = i.Filter; });
         ToggleSelectedCommand = new RelayCommand(ToggleSelected, () => Selected is not null);
         UndoCommand = new RelayCommand(Undo, () => _undo is not null);
+        DeleteSelectedCommand = new RelayCommand(DeleteSelected, () => Selected is not null);
+        RestoreVersionCommand = new RelayCommand(p => { if (p is VersionRow r) RestoreVersion(r); });
     }
 
     public ObservableCollection<ModCard> Cards { get; } = new();
@@ -112,6 +127,8 @@ public sealed class GarageViewModel : Observable
     public RelayCommand SelectFilterCommand { get; }
     public RelayCommand ToggleSelectedCommand { get; }
     public RelayCommand UndoCommand { get; }
+    public RelayCommand DeleteSelectedCommand { get; }
+    public RelayCommand RestoreVersionCommand { get; }
 
     private GarageFilter _filter;
     public GarageFilter Filter
@@ -141,6 +158,8 @@ public sealed class GarageViewModel : Observable
             Raise();
             RaiseDetails();
             ToggleSelectedCommand.Refresh();
+            DeleteSelectedCommand.Refresh();
+            ReloadExtras();
         }
     }
 
@@ -252,7 +271,11 @@ public sealed class GarageViewModel : Observable
             ? $"Включено {Ru.Mods(enabled)}. Игра может грузиться дольше" : null;
 
         if (Selected is not null && !visible.Contains(Selected)) Selected = null;
-        else RaiseDetails();
+        else
+        {
+            RaiseDetails();
+            if (Selected is not null && ExtrasKey(Selected) != _extrasKey) ReloadExtras(); // файл сменился: вернули версию, обновили
+        }
     }
 
     /// <summary>Подпись в раскрытом поиске (общая для гаража и «Обновлений»).</summary>
@@ -438,6 +461,142 @@ public sealed class GarageViewModel : Observable
         return failed.Count;
     }
 
+    // ───────────── удалить ─────────────
+
+    public void DeleteSelected()
+    {
+        if (Selected is { } c) Delete(c);
+    }
+
+    /// <summary>
+    /// «Удалить» без вопроса «Вы уверены?»: файл уходит в копии, на 8 с тост «Отменить» (DESIGN_COMPONENTS 3.7). Пока тост
+    /// открыт, запись о моде держится (страница, история имён); погас — мод забыт, копия остаётся в «Копиях».
+    /// </summary>
+    public void Delete(ModCard card)
+    {
+        var r = _backend.Delete(card.Data);
+        if (!r.Success || r.Ticket is not { } t)
+        {
+            ShowToast(r.Message ?? "Удалить не получилось", null);
+            return;
+        }
+        // переключение, ждущее закрытия игры, удалённому файлу не нужно
+        if (_pending.Remove(card.FileName)) Raise(nameof(HasPending));
+        // выбор не переходит к соседу: второй Delete подряд удалил бы другой мод
+        if (ReferenceEquals(Selected, card)) Selected = null;
+        Refresh();
+        ShowToast($"Удалён {Ru.Quoted(card.Name, 34)}", () =>
+        {
+            var u = _backend.Undelete(t);
+            Refresh();
+            if (!u.Success) { ShowToast(u.Message ?? "Вернуть не получилось", null); return; }
+            if (_cards.TryGetValue(t.ModId, out var back) && Cards.Contains(back)) Selected = back;
+        }, () => _backend.ForgetDeleted(t));
+    }
+
+    // ───────────── прошлые версии и «Внутри архива» ─────────────
+
+    private IReadOnlyList<VersionRow> _versions = Array.Empty<VersionRow>();
+    /// <summary>«Прошлые версии» выбранного мода, от новых к старым; пусто — блока нет.</summary>
+    public IReadOnlyList<VersionRow> Versions { get => _versions; private set { if (Set(ref _versions, value)) Raise(nameof(HasVersions)); } }
+
+    public bool HasVersions => _versions.Count > 0;
+
+    private InsideInfo? _inside;
+    /// <summary>«Внутри архива» выбранного мода; null — ещё читаем или архива нет на месте.</summary>
+    public InsideInfo? Inside { get => _inside; private set => Set(ref _inside, value); }
+
+    /// <summary>Последнее чтение версий и архива (тесты ждут его; окно — нет).</summary>
+    public Task ExtrasTask { get; private set; } = Task.CompletedTask;
+
+    private string? _extrasKey;
+    private long _extrasSerial;
+
+    private static string ExtrasKey(ModCard c) => $"{c.Id}|{c.Data.Mod.FileName}|{c.Data.Mod.SizeBytes}|{c.Data.ArchivePath}";
+
+    /// <summary>Архив и папка копий читаются в фоне: выбор карточки не ждёт диска. Устаревший ответ (выбрали другую) не показывается.</summary>
+    private void ReloadExtras()
+    {
+        var serial = ++_extrasSerial;
+        Versions = Array.Empty<VersionRow>();
+        Inside = null;
+        if (Selected is not { } c) { _extrasKey = null; ExtrasTask = Task.CompletedTask; return; }
+        _extrasKey = ExtrasKey(c);
+        var data = c.Data;
+        ExtrasTask = LoadExtrasAsync(data, serial);
+    }
+
+    private async Task LoadExtrasAsync(GarageMod data, long serial)
+    {
+        IReadOnlyList<PastVersion> past;
+        ArchiveOverview? inside;
+        try
+        {
+            (past, inside) = await Task.Run(() => (_backend.PastVersions(data), _backend.Inside(data))).ConfigureAwait(true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) { return; }
+        if (serial != _extrasSerial) return;
+        Versions = past.Select(p => new VersionRow(
+            p.Version.Length > 0 ? "Версия " + p.Version : "Прошлая копия",
+            (p.Backup.SavedAtUtc is { } at ? Ru.When(at, _now()) + " · " : "") + Ru.Size(p.Backup.SizeBytes),
+            p)).ToList();
+        Inside = inside is null ? null : Describe(inside);
+    }
+
+    /// <summary>Словами, без технических слов: «Машина — ETK 800», «Скрипты — есть, 12 файлов Lua».</summary>
+    public static InsideInfo Describe(ArchiveOverview o)
+    {
+        if (o.Broken) return new InsideInfo(Array.Empty<Fact>(), new[] { "Архив не читается: возможно, он повреждён" });
+        var facts = new List<Fact>();
+        if (o.Vehicles.Count > 0) facts.Add(new Fact(o.Vehicles.Count == 1 ? "Машина" : "Машины", Names(o.Vehicles)));
+        if (o.Levels.Count > 0) facts.Add(new Fact(o.Levels.Count == 1 ? "Карта" : "Карты", Names(o.Levels)));
+        facts.Add(new Fact("Скрипты", o.LuaFiles == 0 ? "нет" : $"есть, {o.LuaFiles} {Ru.Plural(o.LuaFiles, "файл", "файла", "файлов")} Lua"));
+        facts.Add(new Fact("Файлов", o.UnpackedBytes > 0 ? $"{o.Files}, распакованным {Ru.Size(o.UnpackedBytes)}" : o.Files.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return new InsideInfo(facts, o.Findings.Select(f => f.Message).Distinct().Take(3).ToList());
+    }
+
+    /// <summary>До трёх имён, остальное числом: «Audi A4, Audi A6, BMW M3 и ещё 9».</summary>
+    private static string Names(IReadOnlyList<string> names) =>
+        names.Count <= 3 ? string.Join(", ", names) : string.Join(", ", names.Take(3)) + $" и ещё {names.Count - 3}";
+
+    /// <summary>«Вернуть»: тост «Вернули 1.0» с «Отменить» (текущая версия ушла в копии, её можно вернуть обратно).</summary>
+    public void RestoreVersion(VersionRow row)
+    {
+        if (Selected is not { } c) return;
+        var before = c.Data;
+        var r = _backend.RestoreVersion(before, row.Version);
+        if (!r.Success) { ShowToast(r.Message ?? "Вернуть не получилось", null); return; }
+        Refresh();
+        var what = row.Version.Version.Length > 0 ? row.Version.Version : "прошлую копию";
+        ShowToast($"Вернули {what}", () => UndoRestore(c.Id, before.Mod.FileName));
+    }
+
+    private void UndoRestore(string id, string fileName)
+    {
+        if (!_cards.TryGetValue(id, out var card)) { Refresh(); return; }
+        // текущая версия перед «Вернуть» — самая свежая копия под прежним именем файла
+        var back = _backend.PastVersions(card.Data).FirstOrDefault(p => string.Equals(p.Backup.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        var r = back is null ? new OpResult(false, "Копия той версии пропала") : _backend.RestoreVersion(card.Data, back);
+        Refresh();
+        if (!r.Success) ShowToast(r.Message ?? "Вернуть не получилось", null);
+    }
+
+    // ───────────── меню карточки ─────────────
+
+    /// <summary>Правая кнопка или клавиша «Меню»: «Открыть», «Включить»/«Выключить», «Открыть страницу», «Обновить до …», «Удалить».</summary>
+    public IReadOnlyList<MenuEntry> MenuFor(ModCard c)
+    {
+        var list = new List<MenuEntry> { new("Открыть", MenuAction.Open), new(c.Enabled ? "Выключить" : "Включить", MenuAction.Toggle) };
+        if (PageOf(c) is not null) list.Add(new("Открыть страницу", MenuAction.OpenPage));
+        if (DownloadsAllowed && c.Data.NeedsUpdate && c.Data.Update is { } u)
+            list.Add(new(u.LatestVersion is null ? "Обновить" : $"Обновить до {u.LatestVersion}", MenuAction.Update));
+        list.Add(new("Удалить", MenuAction.Delete, Danger: true));
+        return list;
+    }
+
+    /// <summary>Куда ведёт «Открыть страницу»: страница с новой версией, иначе та, где следим.</summary>
+    public static Uri? PageOf(ModCard c) => c.Data.NeedsUpdate && c.Data.Update is { } u ? u.Url : c.Data.Binding?.Url;
+
     // ───────────── тост ─────────────
 
     /// <summary>Сообщение без «Отменить» (например, «Программа обновлена до 0.1.30»).</summary>
@@ -446,17 +605,34 @@ public sealed class GarageViewModel : Observable
     /// <summary>Тост от другого раздела («Версия 1.5 скрыта» в «Обновлениях»), с «Отменить», если передано действие.</summary>
     public void Notify(string text, Action? undo) => ShowToast(text, undo);
 
-    private void ShowToast(string text, Action? undo)
+    /// <param name="commit">Что сделать, когда «Отменить» больше не нажать (тост погас или его сменил другой): удаление
+    /// становится окончательным для библиотеки.</param>
+    private void ShowToast(string text, Action? undo, Action? commit = null)
     {
+        CommitToast();
         _undo = undo;
+        _commit = commit;
         Toast = new Toast(text, undo is not null, ++_toastSerial);
         UndoCommand.Refresh();
     }
+
+    private Action? _commit;
+
+    private void CommitToast()
+    {
+        var c = _commit;
+        _commit = null;
+        c?.Invoke();
+    }
+
+    /// <summary>Окно закрывается: отменить уже не успеют, отложенное по тосту применяем.</summary>
+    public void CommitPending() => CommitToast();
 
     public void Undo()
     {
         var u = _undo;
         _undo = null;
+        _commit = null; // отменили: доводить нечего
         Toast = null;
         UndoCommand.Refresh();
         u?.Invoke();
@@ -468,6 +644,7 @@ public sealed class GarageViewModel : Observable
         if (Toast?.Serial != serial) return;
         Toast = null;
         _undo = null;
+        CommitToast();
         UndoCommand.Refresh();
     }
 
