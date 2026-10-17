@@ -1037,7 +1037,7 @@
                                         <TextBlock Text="Моды" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource Ink}"/>
                                         <TextBlock x:Name="PvCount" Foreground="{DynamicResource Ink2}" FontSize="12"/>
                                     </StackPanel>
-                                    <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="23" Blur="5" Tint="#BD0C1426"
+                                    <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="23" Blur="5" Tint="#BD0C1426" Iridescent="True"
                                              Lens="24" Refraction="120" Brightness="1" Sparks="0" Seed="17"
                                              VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,18,0,0" Height="46" IsHitTestVisible="False">
                                         <StackPanel Orientation="Horizontal" Margin="5,0,6,0" VerticalAlignment="Center">
