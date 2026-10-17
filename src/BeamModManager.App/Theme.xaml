@@ -119,7 +119,8 @@
     <!-- Пункт левой панели: иконка и подпись под ней (подпись видна всегда, DESIGN.md раздел 2) -->
     <Style x:Key="NavItem" TargetType="RadioButton">
         <Setter Property="Foreground" Value="{DynamicResource InkSoft}"/>
-        <Setter Property="FontSize" Value="10.5"/>
+        <!-- 10 и отступ 2: самая длинная подпись «Обновления» помещается в круглую каплю 68 × 64 (форма 4), не заходя на кромку -->
+        <Setter Property="FontSize" Value="10"/>
         <Setter Property="FontWeight" Value="Medium"/>
         <Setter Property="Width" Value="70"/>
         <Setter Property="Height" Value="64"/>
@@ -135,7 +136,7 @@
                                         Active="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}"
                                         c:NavGlyph.Fill="{Binding (c:NavGlyph.Fill), RelativeSource={RelativeSource TemplatedParent}}"
                                         c:NavGlyph.ActiveFill="{Binding (c:NavGlyph.ActiveFill), RelativeSource={RelativeSource TemplatedParent}}"/>
-                            <TextBlock Text="{TemplateBinding Content}" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                            <TextBlock Text="{TemplateBinding Content}" Margin="0,2,0,0" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Grid>
                     <ControlTemplate.Triggers>
