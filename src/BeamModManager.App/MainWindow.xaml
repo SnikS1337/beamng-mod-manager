@@ -846,10 +846,8 @@
                     </c:Droplet.RenderTransform>
                 </c:Droplet>
                 <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="8" Content="Моды" Tag="{StaticResource IconMods}"
-                             c:NavGlyph.Fill="{StaticResource IconModsFill}" c:NavGlyph.ActiveFill="1"
                              IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
                 <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
-                             c:NavGlyph.Fill="{StaticResource IconUpdatesFill}" c:NavGlyph.ActiveFill="0.34"
                              Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
                 <!-- бейдж: пока «Обновления» не открывали, раз в 6 с от него расходится мягкое светлое кольцо (DESIGN.md 6 «Единый ритм») -->
                 <Grid x:Name="UpdatesBadge" Canvas.Left="57" Canvas.Top="83" IsHitTestVisible="False"
@@ -862,11 +860,9 @@
                     </Border>
                 </Grid>
                 <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="144" Content="Поиск" Tag="{StaticResource IconSearch}"
-                             c:NavGlyph.Fill="{StaticResource IconSearchFill}" c:NavGlyph.ActiveFill="0.34"
                              Checked="Nav_Checked" ToolTip="Поиск (Ctrl+3)"/>
                 <Rectangle Canvas.Left="22" Canvas.Top="209.5" Width="40" Height="1" Fill="{DynamicResource Divider}"/>
                 <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="212" Content="Настройки" Tag="{StaticResource IconSettings}"
-                             c:NavGlyph.Fill="{StaticResource IconSettingsFill}" c:NavGlyph.ActiveFill="1"
                              Checked="Nav_Checked" ToolTip="Настройки (Ctrl+,)"/>
             </Canvas>
         </c:Glass>
@@ -889,8 +885,10 @@
                 <TextBlock x:Name="CountLabel" Text="{Binding HeaderNote}" Foreground="{DynamicResource Ink2}" FontSize="13" Margin="1,-2,0,0"/>
             </StackPanel>
 
-            <c:Glass x:Name="TitleCapsule" Source="{Binding ElementName=Backdrop}" Corner="20" Blur="3" Tint="#700E182C"
-                     Lens="18" Refraction="60" Brightness="0.66"
+            <!-- островок и капсула (2026-10-17, после боя): в тёмном прозрачнее и «водянистее» (подложка 0,44 → 0,35, яркость
+                 0,60 → 0,74, преломление сильнее), в светлом — без затемнения, с фиолетовым кантом (Glass.Iridescent) -->
+            <c:Glass x:Name="TitleCapsule" Source="{Binding ElementName=Backdrop}" Corner="20" Blur="3" Tint="#5A0E182C" Iridescent="True"
+                     Lens="18" Refraction="72" Brightness="0.78"
                      HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,4,0,0" Height="40" Opacity="0" Visibility="Collapsed"
                      IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
                 <c:Glass.RenderTransform><ScaleTransform x:Name="CapsuleScale" ScaleX="0.94" ScaleY="0.94"/></c:Glass.RenderTransform>
@@ -900,8 +898,8 @@
                 </StackPanel>
             </c:Glass>
 
-            <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="24" Blur="3" Tint="#700E182C"
-                     Lens="22" Refraction="110" Brightness="0.60" Sparks="6" Seed="13"
+            <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="24" Blur="3" Tint="#5A0E182C" Iridescent="True"
+                     Lens="22" Refraction="130" Brightness="0.74" Sparks="6" Seed="13"
                      HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,0,0,0" Height="48" Width="520"
                      RenderTransformOrigin="0.5,0.5" WindowChrome.IsHitTestVisibleInChrome="True">
                 <c:Glass.RenderTransform><ScaleTransform x:Name="IslandScale"/></c:Glass.RenderTransform>
@@ -1058,7 +1056,7 @@
                                 <TextBlock Style="{StaticResource GroupTitle}" Text="Готовые наборы"/>
                                 <UniformGrid Columns="2" Margin="0,0,-8,0">
                                     <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Красиво" Tag="жидкое стекло, живой фон, огоньки" IsChecked="{Binding IsBeautiful}"/>
-                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Быстро" Tag="матовое стекло, фон стоит" IsChecked="{Binding IsFast}"/>
+                                    <RadioButton Style="{StaticResource PresetTile}" GroupName="preset" Content="Быстро" Tag="матовое стекло, без анимаций" IsChecked="{Binding IsFast}"/>
                                 </UniformGrid>
                                 <!-- наборы — они же выбор стекла (2026-10-17): «Красиво» — жидкое, «Быстро» — матовое; отдельного включателя нет -->
                                 <WrapPanel Margin="4,0,4,18">
@@ -1101,8 +1099,6 @@
                                 </ItemsControl>
                             </StackPanel>
                             <DockPanel x:Name="AppearanceFoot" Grid.Row="1" Grid.ColumnSpan="2" Margin="4,0,0,0">
-                                <Button DockPanel.Dock="Right" Style="{StaticResource Link}" Content="Сбросить" Click="ResetLook_Click" VerticalAlignment="Top"
-                                        ToolTip="Вернуть набор «Красиво»"/>
                                 <TextBlock Style="{StaticResource Note}" MaxWidth="520" HorizontalAlignment="Left"
                                            Text="Если в Windows выключены эффекты анимации или прозрачности, программа учтёт это сама, даже когда здесь всё включено."/>
                             </DockPanel>

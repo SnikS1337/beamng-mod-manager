@@ -61,6 +61,24 @@ internal static class Native
     /// Компьютер работает от батареи или в Windows включена экономия энергии: анимации не быстрее 60 кадров
     /// (FramePolicy). Настольный компьютер без батареи и неизвестное состояние — нет.
     /// </summary>
+    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+    [DllImport("gdi32.dll")] private static extern int GetDeviceCaps(IntPtr hdc, int index);
+
+    /// <summary>Частота основного экрана, Гц; 0 — не узнать (тогда фон идёт на 30 кадрах, BackgroundPace).</summary>
+    public static int RefreshRate()
+    {
+        const int VREFRESH = 116;
+        try
+        {
+            var dc = GetDC(IntPtr.Zero);
+            if (dc == IntPtr.Zero) return 0;
+            try { var hz = GetDeviceCaps(dc, VREFRESH); return hz > 1 ? hz : 0; } // 0 и 1 — «по умолчанию у устройства»
+            finally { ReleaseDC(IntPtr.Zero, dc); }
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { return 0; }
+    }
+
     public static bool PowerSaving()
     {
         try { return GetSystemPowerStatus(out var s) && (s.ACLineStatus == 0 || s.SystemStatusFlag == 1); }

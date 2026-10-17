@@ -15,11 +15,11 @@ public static class AppearancePresets
         {
             LiquidGlass = true, UiAnimations = true, AnimatedBackground = true, Fireflies = true,
         },
-        // «Быстро»: матовое стекло без капель-линз, фон стоит, огоньков нет. Анимации интерфейса остаются:
-        // они почти ничего не стоят и без них окно кажется «деревянным».
+        // «Быстро»: матовое стекло без капель-линз, фон стоит, огоньков нет, и анимации интерфейса тоже выключены
+        // (2026-10-17, после боя: «Быстро» должно быть быстрым целиком, а не «всё стоит, кроме анимаций»). Включаются отдельно.
         AppearancePreset.Fast => s with
         {
-            LiquidGlass = false, UiAnimations = true, AnimatedBackground = false, Fireflies = false, BackgroundTilt = false,
+            LiquidGlass = false, UiAnimations = false, AnimatedBackground = false, Fireflies = false, BackgroundTilt = false,
         },
         _ => s,
     }).Normalize();

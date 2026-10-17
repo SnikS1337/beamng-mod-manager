@@ -1,6 +1,6 @@
 // Преломление «жидкого стекла» (DESIGN.md 3.2). Тот же расчёт, что в макете:
 // карта смещения из design/mockup/tools/gen.py (make) и feDisplacementMap из build_ui.py (lens).
-// Смещение в пикселях = strength * 0.5 * нормаль внутрь * t^2, t = clamp(1 - d / lens, 0, 1),
+// Смещение в пикселях = strength * 0.5 * нормаль внутрь * t^2, t = clamp(1 - d / lens, 0, 1) (1 / lens считает RefractionEffect),
 // d — расстояние от края скруглённого прямоугольника внутрь. Каналы R, G, B сдвигаются с множителями
 // 1.0 / 1.12 / 1.26: на краю тонкая радужная кромка. Затем насыщенность и яркость, как saturate() и brightness() в CSS,
 // и «подъём» для светлого оформления: тёмное под стеклом высветляется сильнее светлого (2026-10-17). Так светлое стекло
@@ -12,7 +12,7 @@ sampler2D input : register(s0);
 
 float2 size : register(c0);       // размер панели
 float radius : register(c1);      // радиус скругления
-float lens : register(c2);        // ширина линзы у края
+float invLens : register(c2);     // 1 / ширина линзы у края (делит RefractionEffect: деление здесь стоило бы команду из 64)
 float strength : register(c3);    // сила (scale из макета, уже с множителем)
 float saturation : register(c4);  // насыщенность, 1 — без изменений
 float brightness : register(c5);  // яркость, 1 — без изменений
@@ -26,7 +26,6 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float2 sz = max(size, float2(1.0, 1.0));
     float2 hs = sz * 0.5;
     float r = clamp(radius, 0.0, min(hs.x, hs.y));
-    float bw = max(lens, 0.001);
 
     // расстояние до скруглённого прямоугольника: внутри d >= 0
     float2 p = uv * sz - hs;
@@ -39,7 +38,7 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float2 nSide = (q.x > q.y) ? float2(-sg.x, 0.0) : float2(0.0, -sg.y);
     float2 n = (min(q.x, q.y) > 0.0) ? nCorner : nSide;
 
-    float t = saturate(1.0 - d / bw);
+    float t = saturate(1.0 - d * invLens);
     float tt = t * t;
     float2 off = n * (strength * 0.5 * tt) / sz;   // в долях текстуры
 
@@ -57,9 +56,9 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     // у PS 2.0 всего 64 арифметические команды
     col = lerp(col, float3(a, a, a), lift - lift * l);
     col *= brightness - shade * tt;
-    // копия сцены под стеклом непрозрачна (фон окна сплошной, a = 1), поэтому «не выйти за альфу» — это просто 0…1:
-    // saturate у PS 2.0 бесплатный (модификатор), а min/max стоили две команды из 64
-    col = saturate(col);
+    // не выйти за альфу обязательно: у капли и у края копии сцены бывают полупрозрачные точки, и цвет больше альфы давал
+    // светлые полосы (0.1.122, «полосы в каплях»)
+    col = min(max(col, float3(0.0, 0.0, 0.0)), float3(a, a, a));
 
     // снаружи прозрачно, на самом краю полпикселя сглаживания
     float cover = saturate(d + 0.5);

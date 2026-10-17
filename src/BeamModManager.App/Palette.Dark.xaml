@@ -52,7 +52,8 @@
 
     <!-- переключатели, сегменты, полоса прокрутки -->
     <SolidColorBrush x:Key="TrackOff" Color="#38FFFFFF"/>
-    <SolidColorBrush x:Key="SegBack" Color="#57080E1C"/>
+    <!-- дорожка фильтров в островке: легче, чем была (0,34 → 0,24, 2026-10-17): островок прозрачнее и «водянистее» -->
+    <SolidColorBrush x:Key="SegBack" Color="#3D080E1C"/>
     <SolidColorBrush x:Key="SegHover" Color="#1AFFFFFF"/>
     <SolidColorBrush x:Key="SegOn" Color="#29FFFFFF"/>
     <SolidColorBrush x:Key="SegOnRim" Color="#59FFFFFF"/>

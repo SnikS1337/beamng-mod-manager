@@ -138,5 +138,19 @@ public static class FramePacerTests
             policy.PowerSaving = false;
             Assert.Eq(FramePolicy.MaxHz, policy.TargetHz, "включили в сеть — сразу частота экрана");
         });
+    
+        t.Run("фон ложится ровно в кадры экрана: целая доля частоты, ближайшая к 30", () =>
+        {
+            foreach (var (hz, fps) in new[] { (60, 30), (144, 24), (120, 30), (165, 33), (75, 25), (100, 25), (90, 30), (240, 30), (50, 25), (30, 30) })
+                Assert.Eq(fps, BackgroundPace.Fps(hz), $"{hz} Гц");
+            foreach (var hz in new[] { 0, 1, -5, 59, 61, 5000 })
+                Assert.Eq(BackgroundPace.Preferred, BackgroundPace.Fps(hz), $"{hz} Гц: по умолчанию");
+            for (var hz = 20; hz <= 400; hz++)
+            {
+                var f = BackgroundPace.Fps(hz);
+                Assert.True(f >= BackgroundPace.Min && f <= BackgroundPace.Max, $"{hz} Гц → {f}");
+                Assert.True(f == BackgroundPace.Preferred || hz % f == 0, $"{hz} Гц → {f}: не целая доля");
+            }
+        });
     }
 }

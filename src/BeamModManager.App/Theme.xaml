@@ -21,15 +21,11 @@
     <!-- Контурные иконки 22 px, линия 1.7 (DESIGN.md 3.6) -->
     <!-- «Моды»: сетка карточек (раздел про все моды, не только машины) -->
     <!-- значки левой панели (решено 2026-10-17): «Моды» — мягкие плитки, «Обновления» и «Поиск» — как были, «Настройки» —
-         ползунки стоймя. Двухцветные: контур и заливка ...Fill (NavGlyph: 16 %, у выбранного — своя сила) -->
+         ползунки стоймя. Только контур; у выбранного линия толще (NavGlyph; заливки убраны после боя 2026-10-17) -->
     <Geometry x:Key="IconMods">M6,4.5 L8.5,4.5 A1.5,1.5 0 0 1 10,6 L10,8.5 A1.5,1.5 0 0 1 8.5,10 L6,10 A1.5,1.5 0 0 1 4.5,8.5 L4.5,6 A1.5,1.5 0 0 1 6,4.5 Z M13.5,4.5 L16,4.5 A1.5,1.5 0 0 1 17.5,6 L17.5,8.5 A1.5,1.5 0 0 1 16,10 L13.5,10 A1.5,1.5 0 0 1 12,8.5 L12,6 A1.5,1.5 0 0 1 13.5,4.5 Z M6,12 L8.5,12 A1.5,1.5 0 0 1 10,13.5 L10,16 A1.5,1.5 0 0 1 8.5,17.5 L6,17.5 A1.5,1.5 0 0 1 4.5,16 L4.5,13.5 A1.5,1.5 0 0 1 6,12 Z M13.5,12 L16,12 A1.5,1.5 0 0 1 17.5,13.5 L17.5,16 A1.5,1.5 0 0 1 16,17.5 L13.5,17.5 A1.5,1.5 0 0 1 12,16 L12,13.5 A1.5,1.5 0 0 1 13.5,12 Z</Geometry>
-    <Geometry x:Key="IconModsFill">M6,4.5 L8.5,4.5 A1.5,1.5 0 0 1 10,6 L10,8.5 A1.5,1.5 0 0 1 8.5,10 L6,10 A1.5,1.5 0 0 1 4.5,8.5 L4.5,6 A1.5,1.5 0 0 1 6,4.5 Z M13.5,4.5 L16,4.5 A1.5,1.5 0 0 1 17.5,6 L17.5,8.5 A1.5,1.5 0 0 1 16,10 L13.5,10 A1.5,1.5 0 0 1 12,8.5 L12,6 A1.5,1.5 0 0 1 13.5,4.5 Z M6,12 L8.5,12 A1.5,1.5 0 0 1 10,13.5 L10,16 A1.5,1.5 0 0 1 8.5,17.5 L6,17.5 A1.5,1.5 0 0 1 4.5,16 L4.5,13.5 A1.5,1.5 0 0 1 6,12 Z M13.5,12 L16,12 A1.5,1.5 0 0 1 17.5,13.5 L17.5,16 A1.5,1.5 0 0 1 16,17.5 L13.5,17.5 A1.5,1.5 0 0 1 12,16 L12,13.5 A1.5,1.5 0 0 1 13.5,12 Z</Geometry>
     <Geometry x:Key="IconUpdates">M18,11 A7,7 0 1 1 15.4,5.6 M18,3.6 L18,7.6 L14,7.6</Geometry>
-    <Geometry x:Key="IconUpdatesFill">M18,11 A7,7 0 1 1 4,11 A7,7 0 1 1 18,11 Z</Geometry>
     <Geometry x:Key="IconSearch">M15,10 A5,5 0 1 1 5,10 A5,5 0 1 1 15,10 Z M13.8,13.8 L18.5,18.5</Geometry>
-    <Geometry x:Key="IconSearchFill">M15,10 A5,5 0 1 1 5,10 A5,5 0 1 1 15,10 Z</Geometry>
     <Geometry x:Key="IconSettings">M6,4 L6,6 M6,10 L6,18 M11,4 L11,12 M11,16 L11,18 M16,4 L16,8 M16,12 L16,18 M8,8 A2,2 0 1 1 4,8 A2,2 0 1 1 8,8 Z M13,14 A2,2 0 1 1 9,14 A2,2 0 1 1 13,14 Z M18,10 A2,2 0 1 1 14,10 A2,2 0 1 1 18,10 Z</Geometry>
-    <Geometry x:Key="IconSettingsFill">M8,8 A2,2 0 1 1 4,8 A2,2 0 1 1 8,8 Z M13,14 A2,2 0 1 1 9,14 A2,2 0 1 1 13,14 Z M18,10 A2,2 0 1 1 14,10 A2,2 0 1 1 18,10 Z</Geometry>
     <Geometry x:Key="IconCar">M3,14 L5.2,9 L16.8,9 L19,14 L19,17 L3,17 Z M3,14 L19,14 M6,17 L6,18.6 M16,17 L16,18.6 M6.5,9 L7.6,6.5 L14.4,6.5 L15.5,9</Geometry>
     <Geometry x:Key="IconMap">M3,6 L8,4 L14,6 L19,4 L19,16 L14,18 L8,16 L3,18 Z M8,4 L8,16 M14,6 L14,18</Geometry>
     <Geometry x:Key="IconSound">M4,9 L7,9 L11,5 L11,17 L7,13 L4,13 Z M14,8 A4,4 0 0 1 14,14 M16.5,5.5 A7.5,7.5 0 0 1 16.5,16.5</Geometry>
@@ -65,7 +61,9 @@
                     <Grid>
                         <!-- тень неподвижна: кэш, иначе размытие 56 px считалось бы заново на каждом кадре движущегося фона;
                              у светлого оформления своя, короткая и светлая (Palette.*.xaml, GlassShadow) -->
-                        <Border x:Name="ShadowHost" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" Background="#0B1222"
+                        <!-- подложка тени — цвета окна текущего оформления: пока копия сцены ещё не готова (панель только выехала),
+                             сквозь прозрачное светлое стекло виден не тёмный прямоугольник, а светлый (0.1.122: «панель тёмная, потом белая») -->
+                        <Border x:Name="ShadowHost" CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}}" Background="{DynamicResource WindowBack}"
                                 Effect="{DynamicResource GlassShadow}">
                             <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
                         </Border>
@@ -134,9 +132,7 @@
                     <Grid Background="Transparent">
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                             <c:NavGlyph Data="{TemplateBinding Tag}" Brush="{TemplateBinding Foreground}" HorizontalAlignment="Center"
-                                        Active="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}"
-                                        c:NavGlyph.Fill="{Binding (c:NavGlyph.Fill), RelativeSource={RelativeSource TemplatedParent}}"
-                                        c:NavGlyph.ActiveFill="{Binding (c:NavGlyph.ActiveFill), RelativeSource={RelativeSource TemplatedParent}}"/>
+                                        Active="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}}"/>
                             <TextBlock Text="{TemplateBinding Content}" Margin="0,2,0,0" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Grid>
