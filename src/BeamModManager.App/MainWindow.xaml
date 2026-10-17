@@ -646,8 +646,10 @@
              Слева — крупный заголовок раздела прямо на фоне и строка под ним; стоит прокрутить список — он плавно сжимается
              в маленькую стеклянную капсулу. По центру ряда — островок: фильтры и круглая кнопка поиска; по нажатию (или Ctrl+F)
              островок перетекает в одну капсулу поиска. Без жидкого стекла — то же движение, стекло матовое. -->
-        <Grid x:Name="TopRow" VerticalAlignment="Top" Margin="116,16,360,0" Height="52">
-            <StackPanel x:Name="TitleBlock" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6,-3,0,0" IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
+        <!-- верх (DESIGN.md 4): островок точно посередине окна, центр по высоте — вровень с кнопками окна (34); ряд от левой
+             панели до кнопок окна и не зависит от правой панели. Где стоит островок и как показан заголовок — IslandLayout -->
+        <Grid x:Name="TopRow" VerticalAlignment="Top" Margin="116,10,164,0" Height="52">
+            <StackPanel x:Name="TitleBlock" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6,3,0,0" IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
                 <StackPanel.RenderTransform>
                     <TransformGroup>
                         <ScaleTransform x:Name="TitleScale"/>
@@ -660,7 +662,7 @@
 
             <c:Glass x:Name="TitleCapsule" Source="{Binding ElementName=Backdrop}" Corner="20" Blur="3" Tint="#700E182C"
                      Lens="18" Refraction="60" Brightness="0.66"
-                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,6,0,0" Height="40" Opacity="0" Visibility="Collapsed"
+                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,4,0,0" Height="40" Opacity="0" Visibility="Collapsed"
                      IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
                 <c:Glass.RenderTransform><ScaleTransform x:Name="CapsuleScale" ScaleX="0.94" ScaleY="0.94"/></c:Glass.RenderTransform>
                 <StackPanel Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
@@ -671,7 +673,7 @@
 
             <c:Glass x:Name="TopBar" Source="{Binding ElementName=Scene}" Corner="24" Blur="3" Tint="#700E182C"
                      Lens="22" Refraction="110" Brightness="0.60" Sparks="6" Seed="13"
-                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0" Height="48" Width="520"
+                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,0,0,0" Height="48" Width="520"
                      RenderTransformOrigin="0.5,0.5" WindowChrome.IsHitTestVisibleInChrome="True">
                 <c:Glass.RenderTransform><ScaleTransform x:Name="IslandScale"/></c:Glass.RenderTransform>
                 <Grid x:Name="IslandBody" ClipToBounds="True" Margin="6,0">
@@ -780,14 +782,14 @@
                                         <Rectangle x:Name="PvBack"/>
                                         <StackPanel x:Name="PvCards" Orientation="Horizontal" Margin="28,72,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
                                     </Grid>
-                                    <!-- как верх окна («островки»): крупный заголовок на фоне и островок с каплей «Все» и поиском -->
-                                    <StackPanel Margin="24,16,0,0" VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False">
+                                    <!-- как верх окна («островки»): крупный заголовок на фоне и островок посередине с каплей «Все» и поиском (место — PlacePreviewBar) -->
+                                    <StackPanel x:Name="PvTitle" Margin="24,16,0,0" VerticalAlignment="Top" HorizontalAlignment="Left" IsHitTestVisible="False">
                                         <TextBlock Text="Моды" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource Ink}"/>
                                         <TextBlock x:Name="PvCount" Foreground="{DynamicResource Ink2}" FontSize="12"/>
                                     </StackPanel>
                                     <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="23" Blur="5" Tint="#BD0C1426"
                                              Lens="24" Refraction="120" Brightness="1" Sparks="0" Seed="17"
-                                             VerticalAlignment="Top" HorizontalAlignment="Right" Margin="0,18,22,0" Height="46" IsHitTestVisible="False">
+                                             VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,18,0,0" Height="46" IsHitTestVisible="False">
                                         <StackPanel Orientation="Horizontal" Margin="5,0,6,0" VerticalAlignment="Center">
                                             <Grid VerticalAlignment="Center">
                                                 <c:Droplet Corner="17" Width="56" Height="34"/>

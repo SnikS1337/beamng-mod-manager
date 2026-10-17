@@ -83,7 +83,7 @@ public partial class MainWindow : Window
     private readonly SpringDriver _springs = new();
     private readonly Spring _navDrop, _filterX, _filterW, _capX, _capScale, _inspX;
     /// <summary>Ширина островка сверху (фильтры ↔ поиск) и сжатие заголовка при прокрутке (0 — крупный, 1 — капсула).</summary>
-    private readonly Spring _islandW, _titleT;
+    private readonly Spring _islandW, _titleT, _titleVis;
     /// <summary>Нажатие на каплю: она чуть сжимается (0,92) и упруго возвращается (0,4 с, упругость 0,3 — «физическое»).</summary>
     private readonly Spring _navPress, _filterPress, _capPress;
     private readonly BackgroundMotion _motion;
@@ -149,8 +149,11 @@ public partial class MainWindow : Window
         _islandW = new Spring(0.36, 0.16, 520);
         // заголовок сжимается в капсулу не рывком за колесом мыши, а мягко догоняет прокрутку
         _titleT = new Spring(0.3, 0, 0);
-        _springs.Add(_islandW, v => { TopBar.Width = Math.Max(48, v); IslandShape(); PlaceIsland(); });
-        _springs.Add(_titleT, _ => { ApplyTitleShrink(); PlaceIsland(); });
+        // заголовок прячется и возвращается на узком окне мягко, без рывка
+        _titleVis = new Spring(0.25, 0, 1);
+        _springs.Add(_islandW, v => { TopBar.Width = Math.Max(48, Math.Min(v, Math.Max(48, TopRow.ActualWidth))); IslandShape(); PlaceIsland(); });
+        _springs.Add(_titleT, _ => ApplyTitleShrink());
+        _springs.Add(_titleVis, _ => ApplyTitleShrink());
 
         // на экране меньше 1440 × 960 окно открывается по размеру экрана минус рамка (DESIGN_FLOWS раздел 2)
         var work = SystemParameters.WorkArea;
@@ -707,7 +710,6 @@ public partial class MainWindow : Window
             EmptyBox.Margin = SoonBox.Margin = UpdEmptyBox.Margin = new Thickness(116, 84, right, 0);
             ToastBox.Margin = new Thickness(116, 0, right, 28);
             TopFade.Margin = new Thickness(104, 0, right - 12, 0);
-            TopRow.Margin = new Thickness(116, 16, beside ? 360 : 132 + 16 + 16, 0);
         }
         Dim.Visibility = open && _narrow ? Visibility.Visible : Visibility.Collapsed;
         // рядом с сеткой карточки под панель не заходят: сквозь неё виден только фон, и наведение на карточки её стекло
@@ -737,8 +739,9 @@ public partial class MainWindow : Window
 
     // ───────────── верх: заголовок и островок (решено 2026-10-17, «Островки») ─────────────
 
-    private bool _searchOpen, _islandPlaced, _titleRoom = true;
+    private bool _searchOpen, _islandPlaced;
     private double _filtersW = 520, _searchW = 420;
+    private TitleFit _titleFit = TitleFit.Full;
 
     /// <summary>Гараж или «Обновления»: у них есть фильтры и поиск (островок); у остальных разделов только заголовок.</summary>
     private bool IslandPage => NavGarage.IsChecked == true || UpdatesPage;
@@ -753,7 +756,7 @@ public partial class MainWindow : Window
         FilterLayer.Measure(new Size(double.PositiveInfinity, 48));
         _filtersW = Math.Ceiling(FilterLayer.DesiredSize.Width) + 12 + 2; // поля островка 6 + 6 и кромка
         var row = TopRow.ActualWidth;
-        if (row > 0) _searchW = Math.Min(row, Math.Clamp(row * 0.5, 320, 440));
+        if (row > 0) _searchW = IslandLayout.SearchWidth(row);
         var target = _searchOpen ? _searchW : _filtersW;
         if (Math.Abs(_islandW.Target - target) > 0.5 || !_islandPlaced)
             _springs.To(_islandW, target, instant: !IsLoaded || !_islandPlaced);
@@ -762,8 +765,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Островок — по центру ряда. Не помещается рядом с заголовком — сдвигается вправо; и так не помещается — заголовок
-    /// прячется (раздел и так виден по капле слева), островок встаёт по центру.
+    /// Островок — точно посередине окна (IslandLayout), где бы ни была правая панель. На узком окне уступает заголовок:
+    /// крупный → капсула → нет заголовка (раздел и так виден по капле слева).
     /// </summary>
     private void PlaceIsland()
     {
@@ -771,26 +774,40 @@ public partial class MainWindow : Window
         if (row <= 0) return;
         var w = double.IsNaN(TopBar.Width) ? _filtersW : TopBar.Width;
         var x = (row - w) / 2;
+        var fit = TitleFit.Full;
         if (IslandPage)
         {
-            var minX = TitleWidth() + 16;
-            var fits = Math.Max(x, minX) + w <= row;
-            if (fits) x = Math.Max(x, minX);
-            if (fits != _titleRoom) { _titleRoom = fits; ApplyTitleShrink(); }
+            var left = TopRow.Margin.Left;
+            var p = IslandLayout.Place(Root.ActualWidth, left, left + row, w, _islandW.Target, BigTitleWidth(), CapsuleTitleWidth());
+            x = p.X - left;
+            fit = p.Title;
         }
-        else if (!_titleRoom) { _titleRoom = true; ApplyTitleShrink(); }
+        SetTitleFit(fit);
         x = Math.Max(0, Math.Round(x));
-        if (TopBar.Margin.Left != x) TopBar.Margin = new Thickness(x, 2, 0, 0);
+        if (TopBar.Margin.Left != x) TopBar.Margin = new Thickness(x, 0, 0, 0);
     }
 
-    /// <summary>Сколько сейчас занимает заголовок слева: от крупного к капсуле по ходу сжатия.</summary>
-    private double TitleWidth()
+    private void SetTitleFit(TitleFit fit)
     {
-        var big = Math.Max(TextWidth(SectionTitle), TextWidth(CountLabel)) + 8;
-        var cap = TextWidth(CapsuleTitle) + (CapsuleCount.Text.Length > 0 ? TextWidth(CapsuleCount) : 0) + 32;
-        var t = Math.Clamp(_titleT.Value, 0, 1);
-        return big + (cap - big) * t;
+        if (fit == _titleFit) return;
+        _titleFit = fit;
+        _springs.To(_titleVis, fit == TitleFit.Hidden ? 0 : 1, instant: !IsLoaded);
+        TitleFollowScroll(); // капсулой (Compact) — независимо от прокрутки
     }
+
+    /// <summary>Раздел сменился: заголовок сразу в своём виде, без перетекания поверх смены раздела.</summary>
+    private void SnapTitle()
+    {
+        _springs.To(_titleVis, _titleVis.Target, instant: true);
+        _springs.To(_titleT, _titleT.Target, instant: true);
+    }
+
+    /// <summary>Крупный заголовок со строкой под ним (ширина не зависит от сжатия: решение о месте не мигает).</summary>
+    private double BigTitleWidth() =>
+        Math.Max(TextWidth(SectionTitle), CountLabel.Visibility == Visibility.Visible ? TextWidth(CountLabel) : 0) + TitleBlock.Margin.Left + 2;
+
+    private double CapsuleTitleWidth() =>
+        TextWidth(CapsuleTitle) + (CapsuleCount.Text.Length > 0 ? TextWidth(CapsuleCount) : 0) + 32;
 
     /// <summary>Островок чуть сплющивается, пока перетекает (как капля в пути), и выпрямляется, встав на место.</summary>
     private void IslandShape()
@@ -800,11 +817,14 @@ public partial class MainWindow : Window
         IslandScale.ScaleX = 1 + k * 0.3;
     }
 
-    /// <summary>Заголовок следует за прокруткой своего списка: первые 56 px — от крупного к капсуле.</summary>
+    /// <summary>
+    /// Заголовок следует за прокруткой своего списка: первые 56 px — от крупного к капсуле. Крупному нет места слева от
+    /// островка (Compact) — капсула при любой прокрутке.
+    /// </summary>
     private void TitleFollowScroll(bool instant = false)
     {
         var off = NavGarage.IsChecked == true ? Scroller.VerticalOffset : UpdatesPage ? UpdScroller.VerticalOffset : 0;
-        var t = Math.Clamp(off / 56, 0, 1);
+        var t = _titleFit == TitleFit.Compact ? 1 : Math.Clamp(off / 56, 0, 1);
         if (Math.Abs(_titleT.Target - t) < 0.001 && !instant) return;
         _springs.To(_titleT, t, instant || !IsLoaded);
     }
@@ -816,8 +836,9 @@ public partial class MainWindow : Window
     private void ApplyTitleShrink()
     {
         var t = Math.Clamp(_titleT.Value, 0, 1);
-        var big = _titleRoom ? Math.Clamp(1 - t * 1.6, 0, 1) : 0;
-        var cap = _titleRoom ? Math.Clamp((t - 0.35) / 0.65, 0, 1) : 0;
+        var vis = Math.Clamp(_titleVis.Value, 0, 1);
+        var big = Math.Clamp(1 - t * 1.6, 0, 1) * vis;
+        var cap = Math.Clamp((t - 0.35) / 0.65, 0, 1) * vis;
         TitleBlock.Visibility = big > 0.001 ? Visibility.Visible : Visibility.Collapsed;
         TitleBlock.Opacity = big;
         TitleScale.ScaleX = TitleScale.ScaleY = 1 - 0.12 * t;
@@ -1048,7 +1069,9 @@ public partial class MainWindow : Window
         if (garage || updates) { if (SearchBox.Text.Length > 0) OpenSearch(focus: false, instant: true); else CloseSearch(instant: true); }
         TitleFollowScroll(instant: true);
         PlaceInspector(instant: !IsLoaded);
-        Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+        PlaceIsland();
+        SnapTitle();
+        Dispatcher.BeginInvoke(() => { AdaptTopBar(); SnapTitle(); }, DispatcherPriority.Loaded);
         if (garage) EmptyBox.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(GarageViewModel.Empty)) { Converter = (System.Windows.Data.IValueConverter)FindResource("NullToCollapsed") });
         // раздел «Обновления» открыли: найденное просмотрено, бейдж больше не пульсирует до конца сеанса
         if (rb == NavUpdates && !_updatesSeen) { _updatesSeen = true; UpdateBadgePulse(); }
@@ -1075,6 +1098,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void FillLookPreview()
     {
+        Dispatcher.BeginInvoke(PlacePreviewBar, DispatcherPriority.Loaded); // число модов в заголовке могло смениться
         var paths = _vm.AllCards.Where(c => c.PreviewPath is not null)
                                 .OrderByDescending(c => c.Enabled)
                                 .Select(c => c.PreviewPath!).Take(3).ToList();
@@ -1099,6 +1123,26 @@ public partial class MainWindow : Window
     private void LookPreview_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         LookPreview.OpacityMask = Glass.RoundMask(e.NewSize.Width, e.NewSize.Height, 22); // маска: края сглажены
+        PlacePreviewBar();
+    }
+
+    /// <summary>
+    /// Островок превью — посередине, как в окне. Узкое превью, и он задел бы заголовок — встаёт к правому краю
+    /// (в превью заголовок не сжимается).
+    /// </summary>
+    private void PlacePreviewBar()
+    {
+        var w = LookPreview.ActualWidth;
+        if (w <= 0) return;
+        PreviewBar.Measure(new Size(double.PositiveInfinity, 46));
+        PvTitle.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var bar = PreviewBar.DesiredSize.Width;
+        var title = PvTitle.DesiredSize.Width;
+        const double left = 24, edge = 22;
+        var p = IslandLayout.Place(w, left, w - edge, bar, bar, title, title);
+        var x = p.Title == TitleFit.Full ? p.X : Math.Max(left, w - edge - bar);
+        var m = new Thickness(Math.Round(x), 18, 0, 0);
+        if (PreviewBar.Margin != m) PreviewBar.Margin = m;
     }
 
     private readonly Dictionary<UIElement, int> _arriving = new();
