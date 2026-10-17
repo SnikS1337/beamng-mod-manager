@@ -246,6 +246,29 @@ public static class XamlTests
             Assert.True(sw.Contains("радужная кромка", StringComparison.Ordinal), "у ручки радужная кромка");
         });
 
+        t.Run("значок программы: в exe и у окна, в ICO все размеры от 16 до 256 (мелкие нарисованы отдельно)", () =>
+        {
+            var proj = Read("BeamModManager.App.csproj");
+            Assert.True(proj.Contains("<ApplicationIcon>app.ico</ApplicationIcon>", StringComparison.Ordinal), "значок у exe");
+            Assert.True(proj.Contains("<Resource Include=\"app.ico\"/>", StringComparison.Ordinal), "значок вложен в программу для окна");
+            Assert.True(Read("MainWindow.xaml").Contains("Icon=\"/app.ico\"", StringComparison.Ordinal), "значок у окна");
+            var ico = File.ReadAllBytes(Path.Combine(AppDir()!, "app.ico"));
+            Assert.True(ico.Length > 6 && ico[0] == 0 && ico[1] == 0 && ico[2] == 1 && ico[3] == 0, "заголовок ICO");
+            var count = ico[4] | ico[5] << 8;
+            var sizes = new HashSet<int>();
+            for (var i = 0; i < count; i++)
+            {
+                var e = 6 + i * 16;
+                var w = ico[e] == 0 ? 256 : ico[e];
+                var h = ico[e + 1] == 0 ? 256 : ico[e + 1];
+                Assert.Eq(w, h, "квадратные");
+                var len = BitConverter.ToInt32(ico, e + 8); var off = BitConverter.ToInt32(ico, e + 12);
+                Assert.True(len > 0 && off >= 6 + count * 16 && off + len <= ico.Length, $"картинка {w} лежит в файле");
+                sizes.Add(w);
+            }
+            foreach (var need in new[] { 16, 20, 24, 32, 40, 48, 64, 256 }) Assert.True(sizes.Contains(need), $"есть {need} × {need}");
+        });
+
         t.Run("окно первым делом включает защиту ядра от зависания разбора страниц (до любого Regex в процессе)", () =>
         {
             var code = Read("App.xaml.cs");

@@ -4,7 +4,7 @@
         xmlns:c="clr-namespace:BeamModManager.App.Controls"
         xmlns:g="clr-namespace:BeamModManager.Ui.Garage;assembly=BeamModManager.Ui"
         xmlns:u="clr-namespace:BeamModManager.Ui.Updates;assembly=BeamModManager.Ui"
-        Title="ModManager BeamNG" Width="1440" Height="960" MinWidth="1000" MinHeight="680"
+        Title="ModManager BeamNG" Icon="/app.ico" Width="1440" Height="960" MinWidth="1000" MinHeight="680"
         WindowStyle="None" ResizeMode="CanResize" Background="{DynamicResource WindowBack}"
         FontFamily="{StaticResource Font}" Foreground="{DynamicResource Ink}" FontSize="14"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal" WindowStartupLocation="CenterScreen">

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="12" y="12" width="232" height="232" rx="56" fill="#1B2547"/>
+  <polygon points="128,52 194,90 128,128 62,90" fill="#3E5294"/>
+  <polygon points="62,90 128,128 128,204 62,166" fill="#212B4E"/>
+  <polygon points="194,90 128,128 128,204 194,166" fill="#2E3D72"/>
+  <g stroke="#F3F5FA" stroke-opacity="0.45" stroke-width="6" stroke-linecap="round"><line x1="128" y1="52" x2="128" y2="128"/><line x1="62" y1="90" x2="128" y2="204"/><line x1="194" y1="90" x2="128" y2="204"/></g>
+  <g fill="none" stroke="#F3F5FA" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"><polygon points="128,52 194,90 194,166 128,204 62,166 62,90"/><polyline points="62,90 128,128 194,90"/><line x1="128" y1="128" x2="128" y2="204"/></g>
+  <circle cx="128" cy="52" r="12" fill="#FF8A2B" stroke="#1B2547" stroke-width="5"/>
+  <circle cx="62" cy="90" r="12" fill="#FF8A2B" stroke="#1B2547" stroke-width="5"/>
+  <circle cx="194" cy="90" r="12" fill="#FF8A2B" stroke="#1B2547" stroke-width="5"/>
+  <circle cx="128" cy="128" r="12" fill="#FF8A2B" stroke="#1B2547" stroke-width="5"/>
+  <circle cx="62" cy="166" r="12" fill="#FF8A2B" stroke="#1B2547" stroke-width="5"/>
+  <circle cx="194" cy="166" r="12" fill="#FF8A2B" stroke="#1B2547" stroke-width="5"/>
+  <circle cx="128" cy="204" r="12" fill="#FF8A2B" stroke="#1B2547" stroke-width="5"/>
+</svg>
