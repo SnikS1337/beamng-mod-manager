@@ -10,7 +10,7 @@ using BeamModManager.Ui.Text;
 namespace BeamModManager.Ui.Garage;
 
 /// <summary>Фильтры верхней панели: активен один, они заменяют профили (DESIGN.md раздел 4).</summary>
-public enum GarageFilter { All, Enabled, NeedsUpdate, NotTracked }
+public enum GarageFilter { All, Enabled, NeedsUpdate, NotTracked, Deleted }
 
 public sealed class FilterItem : Observable
 {
@@ -23,7 +23,7 @@ public sealed class FilterItem : Observable
     public int Count { get => _count; internal set { if (Set(ref _count, value)) { Raise(nameof(Label)); Raise(nameof(ShowCount)); } } }
 
     /// <summary>У «Все» и «Включённые» число не пишется: его показывает заголовок.</summary>
-    public bool ShowCount => Filter is GarageFilter.NeedsUpdate or GarageFilter.NotTracked && Count > 0;
+    public bool ShowCount => Filter is GarageFilter.NeedsUpdate or GarageFilter.NotTracked or GarageFilter.Deleted && Count > 0;
 
     public string Label => ShowCount ? $"{Title} {Count}" : Title;
 
@@ -40,7 +40,7 @@ public sealed record EmptyState(string Title, string Text, string? ActionLabel, 
 public sealed record Toast(string Text, bool CanUndo, long Serial);
 
 /// <summary>Главная кнопка правой панели меняется по состоянию мода (DESIGN.md раздел 4).</summary>
-public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPage }
+public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPage, Restore }
 
 /// <summary>Строка блока данных в правой панели: «Размер — 312 МБ».</summary>
 public sealed record Fact(string Label, string Value);
@@ -52,7 +52,7 @@ public sealed record VersionRow(string Title, string Detail, PastVersion Version
 public sealed record InsideInfo(IReadOnlyList<Fact> Facts, IReadOnlyList<string> Warnings);
 
 /// <summary>Пункт меню карточки (DESIGN_COMPONENTS 3.9): тот же набор, что в правой панели.</summary>
-public enum MenuAction { Open, Toggle, OpenPage, Update, Delete }
+public enum MenuAction { Open, Toggle, OpenPage, Update, Delete, Restore }
 
 public sealed record MenuEntry(string Label, MenuAction Action, bool Danger = false);
 
@@ -69,7 +69,11 @@ public sealed record ModDetails(
     bool OpenPageLink,
     /// <summary>«Выключить» / «Включить» внизу панели; null, когда «Включить» уже главная кнопка (не дублируем).</summary>
     string? ToggleLabel,
-    string? PendingText);
+    string? PendingText)
+{
+    /// <summary>Внизу «Удалить» с «Можно вернуть позже»; у удалённого — нет.</summary>
+    public bool CanDelete { get; init; } = true;
+}
 
 /// <summary>
 /// Экран «Гараж» без окна: карточки, фильтры с числами, поиск по своим модам, выбор, правая панель,
@@ -105,7 +109,7 @@ public sealed class GarageViewModel : Observable
     {
         _backend = backend;
         _now = now ?? (() => DateTimeOffset.UtcNow);
-        Filters = new[]
+        Filters = new ObservableCollection<FilterItem>
         {
             new FilterItem(GarageFilter.All, "Все") { IsActive = true },
             new FilterItem(GarageFilter.Enabled, "Включённые"),
@@ -123,7 +127,13 @@ public sealed class GarageViewModel : Observable
 
     /// <summary>Все карточки без фильтра и поиска (для фоновой загрузки картинок).</summary>
     public IReadOnlyList<ModCard> AllCards => _snap.Mods.Select(m => _cards[m.Mod.Id]).ToList();
-    public IReadOnlyList<FilterItem> Filters { get; }
+    /// <summary>Фильтры островка; «Удалённые» появляется пятым, только когда есть что вернуть (решено 2026-10-17).</summary>
+    public ObservableCollection<FilterItem> Filters { get; }
+    private readonly FilterItem _deletedFilter = new(GarageFilter.Deleted, "Удалённые");
+
+    /// <summary>Пункт «Удалённые» (он то в списке, то нет): окно следит за его числом, чтобы перемерить островок.</summary>
+    public FilterItem DeletedFilter => _deletedFilter;
+    private readonly Dictionary<string, ModCard> _deletedCards = new();
     public RelayCommand SelectFilterCommand { get; }
     public RelayCommand ToggleSelectedCommand { get; }
     public RelayCommand UndoCommand { get; }
@@ -231,6 +241,14 @@ public sealed class GarageViewModel : Observable
             c.Apply(m, _pending.TryGetValue(m.Mod.FileName, out var p) ? p : null, LiveWaiting);
         }
         foreach (var gone in _cards.Keys.Where(k => !alive.Contains(k)).ToList()) _cards.Remove(gone);
+        var aliveDeleted = new HashSet<string>();
+        foreach (var d in _snap.Deleted)
+        {
+            aliveDeleted.Add(d.Id);
+            if (!_deletedCards.TryGetValue(d.Id, out var c)) _deletedCards[d.Id] = c = new ModCard(d.Id);
+            c.ApplyDeleted(d, _now());
+        }
+        foreach (var gone in _deletedCards.Keys.Where(k => !aliveDeleted.Contains(k)).ToList()) _deletedCards.Remove(gone);
         var files = new HashSet<string>(_snap.Mods.Select(m => m.Mod.FileName), StringComparer.OrdinalIgnoreCase);
         foreach (var f in _pending.Keys.Where(f => !files.Contains(f)).ToList()) _pending.Remove(f);
         Raise(nameof(HasPending));
@@ -250,8 +268,15 @@ public sealed class GarageViewModel : Observable
         Filters[2].Count = all.Count(c => c.Data.NeedsUpdate);
         Filters[3].Count = all.Count(c => !c.Data.Tracked);
 
+        var deleted = _snap.Deleted.Select(d => _deletedCards[d.Id]).ToList();
+        _deletedFilter.Count = deleted.Count;
+        // «Удалённые» видно, только пока есть что вернуть; вернули последний — назад во «Все»
+        if (deleted.Count == 0 && _filter == GarageFilter.Deleted) { _filter = GarageFilter.All; foreach (var f in Filters) f.IsActive = f.Filter == _filter; Raise(nameof(Filter)); }
+        if (deleted.Count > 0 && !Filters.Contains(_deletedFilter)) Filters.Add(_deletedFilter);
+        else if (deleted.Count == 0 && Filters.Contains(_deletedFilter)) Filters.Remove(_deletedFilter);
+
         var tokens = Ru.Words(_search);
-        var visible = all.Where(c => Pass(c, _filter) && Matches(c, tokens)).ToList();
+        var visible = (_filter == GarageFilter.Deleted ? deleted : all).Where(c => Pass(c, _filter) && Matches(c, tokens)).ToList();
         Cards.SyncTo(visible);
 
         CountText = Ru.Mods(all.Count);
@@ -264,7 +289,7 @@ public sealed class GarageViewModel : Observable
             : $"{Ru.Mods(all.Count)} · {upd} {Ru.Plural(upd, "ждёт", "ждут", "ждут")} обновления";
         HeaderCount = all.Count == 0 ? "" : all.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
         SearchNote = SearchNoteFor(tokens.Count > 0, visible.Count);
-        Empty = EmptyFor(all.Count, visible.Count, tokens.Count > 0);
+        Empty = _filter == GarageFilter.Deleted && visible.Count > 0 ? null : EmptyFor(all.Count, visible.Count, tokens.Count > 0);
 
         var enabled = Filters[1].Count;
         ManyEnabledBanner = !_bannerDismissed && ManyEnabledThreshold > 0 && enabled > ManyEnabledThreshold
@@ -341,7 +366,11 @@ public sealed class GarageViewModel : Observable
         if (Selected is { } c) Toggle(c);
     }
 
-    public void Toggle(ModCard card) => SetEnabled(card, !card.Enabled, withUndo: true);
+    public void Toggle(ModCard card)
+    {
+        if (card.IsDeleted) return; // удалённый не включают: его возвращают
+        SetEnabled(card, !card.Enabled, withUndo: true);
+    }
 
     private void SetEnabled(ModCard card, bool want, bool withUndo)
     {
@@ -474,6 +503,7 @@ public sealed class GarageViewModel : Observable
     /// </summary>
     public void Delete(ModCard card)
     {
+        if (card.IsDeleted) return;
         var r = _backend.Delete(card.Data);
         if (!r.Success || r.Ticket is not { } t)
         {
@@ -492,6 +522,17 @@ public sealed class GarageViewModel : Observable
             if (!u.Success) { ShowToast(u.Message ?? "Вернуть не получилось", null); return; }
             if (_cards.TryGetValue(t.ModId, out var back) && Cards.Contains(back)) Selected = back;
         }, () => _backend.ForgetDeleted(t));
+    }
+
+    /// <summary>«Вернуть» удалённый: копия встаёт в папку модов, мод снова в «Все». Тост «Вернули «…»».</summary>
+    public void RestoreDeleted(ModCard card)
+    {
+        if (card.Deleted is not { } d) return;
+        var r = _backend.RestoreDeleted(d);
+        if (!r.Success) { ShowToast(r.Message ?? "Вернуть не получилось", null); return; }
+        if (ReferenceEquals(Selected, card)) Selected = null;
+        Refresh();
+        ShowToast($"Вернули {Ru.Quoted(d.Name, 34)}", null);
     }
 
     // ───────────── прошлые версии и «Внутри архива» ─────────────
@@ -520,7 +561,7 @@ public sealed class GarageViewModel : Observable
         var serial = ++_extrasSerial;
         Versions = Array.Empty<VersionRow>();
         Inside = null;
-        if (Selected is not { } c) { _extrasKey = null; ExtrasTask = Task.CompletedTask; return; }
+        if (Selected is not { } c || c.IsDeleted) { _extrasKey = Selected is null ? null : ExtrasKey(Selected); ExtrasTask = Task.CompletedTask; return; }
         _extrasKey = ExtrasKey(c);
         var data = c.Data;
         ExtrasTask = LoadExtrasAsync(data, serial);
@@ -551,7 +592,8 @@ public sealed class GarageViewModel : Observable
         if (o.Vehicles.Count > 0) facts.Add(new Fact(o.Vehicles.Count == 1 ? "Машина" : "Машины", Names(o.Vehicles)));
         if (o.Levels.Count > 0) facts.Add(new Fact(o.Levels.Count == 1 ? "Карта" : "Карты", Names(o.Levels)));
         facts.Add(new Fact("Скрипты", o.LuaFiles == 0 ? "нет" : $"есть, {o.LuaFiles} {Ru.Plural(o.LuaFiles, "файл", "файла", "файлов")} Lua"));
-        facts.Add(new Fact("Файлов", o.UnpackedBytes > 0 ? $"{o.Files}, распакованным {Ru.Size(o.UnpackedBytes)}" : o.Files.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        var files = Ru.Number(o.Files);
+        facts.Add(new Fact("Файлов", o.UnpackedBytes > 0 ? $"{files}, распакованным {Ru.Size(o.UnpackedBytes)}" : files));
         return new InsideInfo(facts, o.Findings.Select(f => f.Message).Distinct().Take(3).ToList());
     }
 
@@ -586,6 +628,7 @@ public sealed class GarageViewModel : Observable
     /// <summary>Правая кнопка или клавиша «Меню»: «Открыть», «Включить»/«Выключить», «Открыть страницу», «Обновить до …», «Удалить».</summary>
     public IReadOnlyList<MenuEntry> MenuFor(ModCard c)
     {
+        if (c.IsDeleted) return new[] { new MenuEntry("Открыть", MenuAction.Open), new MenuEntry("Вернуть", MenuAction.Restore) };
         var list = new List<MenuEntry> { new("Открыть", MenuAction.Open), new(c.Enabled ? "Выключить" : "Включить", MenuAction.Toggle) };
         if (PageOf(c) is not null) list.Add(new("Открыть страницу", MenuAction.OpenPage));
         if (DownloadsAllowed && c.Data.NeedsUpdate && c.Data.Update is { } u)
@@ -656,6 +699,15 @@ public sealed class GarageViewModel : Observable
 
     private ModDetails BuildDetails(ModCard c)
     {
+        if (c.Deleted is { } del)
+        {
+            var dfacts = new List<Fact> { new("Размер", Ru.Size(del.Copy.LastSizeBytes)) };
+            if (del.Copy.LastSavedAtUtc is { } at) dfacts.Add(new Fact("Удалён", Ru.When(at, _now())));
+            if (del.Version is { } dv) dfacts.Add(new Fact("Версия", dv));
+            if (del.Copy.BackupCount > 1) dfacts.Add(new Fact("Копий", del.Copy.BackupCount.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            return new ModDetails(del.Name, null, MainAction.Restore, "Вернуть", "Мод снова появится в папке, игра включит его сама",
+                dfacts, null, false, null, null) { CanDelete = false };
+        }
         var d = c.Data;
         var m = d.Mod;
         MainAction act;

@@ -120,6 +120,9 @@ public static class SearchScreenTests
             Assert.True(r.Vm.SitesNote!.StartsWith("STMods не ответил"), "предупреждение: " + r.Vm.SitesNote);
             Assert.Eq("найдено 2", r.Vm.SearchNote);
             Assert.Eq("2 мода", r.Vm.HeaderNote);
+            r.Vm.Query = "";
+            Assert.True(r.Vm.Cards.Count == 0 && r.Vm.Empty!.Title == "Что ищем?", "стёрли запрос — снова «Что ищем?»");
+            Assert.True(r.Vm.Sites.All(x => x.State == "готов") && r.Vm.SitesNote is null, "сайты снова готовы");
         });
 
         t.Run("новый запрос отменяет прежний: его поздний ответ не показывается", async () =>
@@ -231,7 +234,7 @@ public static class SearchScreenTests
             await run;
             Assert.Eq(2, r.Vm.Cards.Count);
             var maybe = r.Vm.Cards.First(c => c.MaybeText is not null);
-            Assert.True(maybe.MaybeText!.StartsWith("Возможно, тот же мод, что «"), maybe.MaybeText);
+            Assert.True(maybe.MaybeText is "Возможно, тот же мод, что на ModsGaming" or "Возможно, тот же мод, что на Modland", maybe.MaybeText);
             r.Vm.SameMod(maybe);
             Assert.Eq(1, r.Vm.Cards.Count);
             Assert.Eq("Modland · ModsGaming", r.Vm.Cards[0].SitesText);

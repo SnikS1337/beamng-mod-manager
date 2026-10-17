@@ -38,6 +38,7 @@ public sealed class SwitchingBackend : IGarageBackend
     public IReadOnlyList<PastVersion> PastVersions(GarageMod mod) => Inner.PastVersions(mod);
     public OpResult RestoreVersion(GarageMod mod, PastVersion version) => Inner.RestoreVersion(mod, version);
     public ArchiveOverview? Inside(GarageMod mod) => Inner.Inside(mod);
+    public OpResult RestoreDeleted(DeletedGarageMod mod) => Inner.RestoreDeleted(mod);
 
     private IGarageBackend OwnerOf(DeletedTicket t) => _owners.TryGetValue(t, out var b) ? b : Inner;
 }

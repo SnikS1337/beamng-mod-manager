@@ -31,8 +31,21 @@ public sealed record GarageMod(
     public DateTimeOffset? SiteChangedUtc { get; init; }
 }
 
+/// <summary>
+/// Удалённый мод (фильтр «Удалённые», решено 2026-10-17): файла в папке нет, копия лежит в резервных. Название и версия —
+/// из имени файла (запись в библиотеке уже забыта); картинка — из кэша, если архив был показан до удаления.
+/// </summary>
+public sealed record DeletedGarageMod(DeletedMod Copy, string Name, string? Version, string? PreviewPath)
+{
+    /// <summary>Ключ карточки: не пересекается с ключами модов в библиотеке.</summary>
+    public string Id => "deleted:" + Copy.FileName.ToLowerInvariant();
+}
+
 public sealed record GarageSnapshot(IReadOnlyList<GarageMod> Mods, bool FolderAvailable, DateTimeOffset? LastCheckedUtc)
 {
+    /// <summary>Удалённые моды, которые можно вернуть (фильтр «Удалённые»).</summary>
+    public IReadOnlyList<DeletedGarageMod> Deleted { get; init; } = Array.Empty<DeletedGarageMod>();
+
     /// <summary>Библиотека не пишется на диск: что случилось (из <see cref="JsonLibraryStore.SaveError"/>).</summary>
     public string? StorageWarning { get; init; }
 
@@ -83,6 +96,9 @@ public interface IGarageBackend
 
     /// <summary>«Внутри архива»; null — архива нет на месте. Читает файл: звать не из потока окна.</summary>
     ArchiveOverview? Inside(GarageMod mod) => null;
+
+    /// <summary>«Вернуть» удалённый мод: последняя копия встаёт в папку модов (игра включит его сама).</summary>
+    OpResult RestoreDeleted(DeletedGarageMod mod) => new(false, "Вернуть не получилось");
 }
 
 /// <summary>Гараж поверх настоящих библиотеки, папки модов и db.json игры.</summary>
@@ -166,6 +182,38 @@ public sealed class LibraryGarageBackend : IGarageBackend
         if (_installer.ModsFolderAvailable && _installer.ScanDetailed().Any(d => string.Equals(d.FileName, ticket.FileName, StringComparison.OrdinalIgnoreCase))) return;
         if (_store.GetMod(ticket.ModId) is { } m && string.Equals(m.FileName, ticket.FileName, StringComparison.OrdinalIgnoreCase))
             _store.RemoveMod(ticket.ModId);
+    }
+
+    public OpResult RestoreDeleted(DeletedGarageMod mod)
+    {
+        if (!_installer.ModsFolderAvailable) return new OpResult(false, "Папка модов недоступна");
+        return VersionHistory.RestoreDeleted(_installer, _store, mod.Copy, DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Удалённые для фильтра: копия последней версии, её картинка из кэша (по имени, размеру и времени файла).</summary>
+    private IReadOnlyList<DeletedGarageMod> DeletedList(Func<ArchiveStamp, CacheState> cached, List<ArchiveStamp> stamps)
+    {
+        var result = new List<DeletedGarageMod>();
+        foreach (var d in VersionHistory.Deleted(_installer, _store))
+        {
+            string? preview = null;
+            if (_installer.ListBackups(d.FileName).FirstOrDefault() is { } last)
+            {
+                try
+                {
+                    var fi = new FileInfo(Path.Combine(_installer.Layout.BackupDir, d.FileName, last.Id));
+                    // копия — тот же файл, перенесённый целиком: время и размер те же, имя — прежнее имя мода
+                    var stamp = new ArchiveStamp(d.FileName, fi.Length, fi.LastWriteTimeUtc);
+                    stamps.Add(stamp); // картинка удалённого не убирается из кэша, пока копия жива
+                    if (cached(stamp) == CacheState.Image) preview = _previews.ImagePath(stamp);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            }
+            var g = BindingSuggester.FromFileName(d.FileName);
+            var name = string.IsNullOrWhiteSpace(g.Name) ? Path.GetFileNameWithoutExtension(d.FileName) : g.Name;
+            result.Add(new DeletedGarageMod(d, name, g.Version, preview));
+        }
+        return result;
     }
 
     // ───────────── прошлые версии и «Внутри архива» ─────────────
@@ -297,6 +345,9 @@ public sealed class LibraryGarageBackend : IGarageBackend
                 SiteChangedUtc = uc?.LastChangedUtc,
             });
         }
+        IReadOnlyList<DeletedGarageMod> deleted;
+        try { deleted = DeletedList(cached, stamps); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { deleted = Array.Empty<DeletedGarageMod>(); } // папку копий не прочитать
         // картинки удалённых и изменившихся архивов из кэша убираем раз за запуск
         if (!_pruned) { _pruned = true; _previews.Prune(stamps); }
         var warn = (_store as JsonLibraryStore)?.SaveError;
@@ -304,6 +355,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
         _notice = null;
         return new GarageSnapshot(result, true, lastAll)
         {
+            Deleted = deleted,
             StorageWarning = warn is null ? null : "Библиотека не сохраняется на диск: " + warn,
             Notice = notice,
         };

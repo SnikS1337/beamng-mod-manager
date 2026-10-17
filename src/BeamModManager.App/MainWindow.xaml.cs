@@ -250,7 +250,9 @@ public partial class MainWindow : Window
         UpdScroller.ScrollChanged += (_, _) => TitleFollowScroll();
         FindScroller.ScrollChanged += (_, _) => TitleFollowScroll();
         // числа в фильтрах меняют их ширину: пересчитываем панель, когда они меняются
-        foreach (var f in vm.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+        foreach (var f in vm.Filters.Append(vm.DeletedFilter)) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+        // «Удалённые» появляется и пропадает: островок перемеряется
+        vm.Filters.CollectionChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         vm.PropertyChanged += (_, a) => { if (a.PropertyName is nameof(GarageViewModel.CountText) or nameof(GarageViewModel.HeaderNote)) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded); };
         Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, AdaptTopBar);
         Loaded += OnLoaded;
@@ -293,6 +295,7 @@ public partial class MainWindow : Window
         if (_host.StartPage is "updates" or "bind") NavUpdates.IsChecked = true;
         if (_host.StartPage == "search") NavSearch.IsChecked = true;
         if (Enum.TryParse<UpdatesFilter>(_host.StartFilter, true, out var uf) && Enum.IsDefined(uf)) _upd.Filter = uf;
+        else if (_host.StartPage is null && Enum.TryParse<GarageFilter>(_host.StartFilter, true, out var gf) && Enum.IsDefined(gf)) _vm.Filter = gf;
         if (_host.StartPage == "bind" && _vm.AllCards.FirstOrDefault(c => !c.Data.Tracked) is { } untracked) OpenBind(untracked, null);
         if (_host.ShotPath is null)
         {
@@ -1588,6 +1591,7 @@ public partial class MainWindow : Window
             // загрузки в этой сборке нет: «Обновить» ведёт на страницу с новой версией, как главная кнопка панели
             case MenuAction.OpenPage or MenuAction.Update: OpenUrl(GarageViewModel.PageOf(c)); break;
             case MenuAction.Delete: _vm.Delete(c); break;
+            case MenuAction.Restore: _vm.RestoreDeleted(c); break;
         }
     }
 
@@ -1688,6 +1692,9 @@ public partial class MainWindow : Window
                 break;
             case MainAction.SetPage:
                 if (_vm.Selected is { } sel) OpenBind(sel, null);
+                break;
+            case MainAction.Restore:
+                if (_vm.Selected is { } gone) _vm.RestoreDeleted(gone);
                 break;
         }
     }

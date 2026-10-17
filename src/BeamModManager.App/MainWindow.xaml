@@ -168,6 +168,10 @@
                                 <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="Snow" Property="Visibility" Value="Visible"/>
                             </DataTrigger>
+                            <!-- удалённый (фильтр «Удалённые»): плашка без значка, фото серое -->
+                            <DataTrigger Binding="{Binding Chip}" Value="{x:Static g:ChipKind.Deleted}">
+                                <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
                             <!-- выключили: мод «засыпает» — серый налёт; включили — оживает. Ведёт Controls/SleepFade (DESIGN_MOTION 3.1) -->
                             <DataTrigger Binding="{Binding SubtitleStrong}" Value="True">
                                 <Setter TargetName="Sub" Property="Foreground" Value="White"/>
@@ -1232,7 +1236,7 @@
                                         ToolTip="Пробел" Visibility="{Binding Details.ToggleLabel, Converter={StaticResource NullToCollapsed}}"/>
                             </UniformGrid>
                             <!-- «Удалить» всегда со словами «Можно вернуть позже» (DESIGN.md 2): файл уходит в копии, тост даёт «Отменить» -->
-                            <DockPanel Margin="2,10,2,0">
+                            <DockPanel Margin="2,10,2,0" Visibility="{Binding Details.CanDelete, Converter={StaticResource BoolToVis}}">
                                 <Button x:Name="DeleteMod" Style="{StaticResource Link}" Foreground="{DynamicResource Danger}" Content="Удалить" Click="Delete_Click"
                                         ToolTip="Delete" AutomationProperties.HelpText="Можно вернуть позже"/>
                                 <TextBlock Style="{StaticResource Note}" Text="Можно вернуть позже" VerticalAlignment="Center" Margin="8,0,0,0"/>

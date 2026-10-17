@@ -53,6 +53,9 @@ public static class Ru
         return (bytes / 1073741824.0).ToString("0.0", C) + " ГБ";
     }
 
+    /// <summary>Число с неразрывным пробелом между разрядами: «1 240», «12 500».</summary>
+    public static string Number(long n) => n.ToString("#,0", C).Replace(' ', '\u00A0').Replace('\u202F', '\u00A0');
+
     /// <summary>Название в кавычках для тоста: длинное обрезается многоточием, тост остаётся в одну строку.</summary>
     public static string Quoted(string name, int max)
     {
