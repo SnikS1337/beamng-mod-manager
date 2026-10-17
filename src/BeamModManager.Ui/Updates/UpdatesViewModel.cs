@@ -171,6 +171,14 @@ public sealed class UpdatesViewModel : Observable
     /// <summary>Рядом с заголовком: «3 доступно».</summary>
     public string CountText { get => _countText; private set => Set(ref _countText, value); }
 
+    private string _headerCount = "";
+    /// <summary>Число в маленькой капсуле заголовка, когда список прокручен: сколько доступно; нет новых — пусто.</summary>
+    public string HeaderCount { get => _headerCount; private set => Set(ref _headerCount, value); }
+
+    private string _searchNote = "";
+    /// <summary>В раскрытом поиске: «найдено 2» или «ничего не нашли»; без запроса — пусто.</summary>
+    public string SearchNote { get => _searchNote; private set => Set(ref _searchNote, value); }
+
     private EmptyState? _empty;
     public EmptyState? Empty { get => _empty; private set => Set(ref _empty, value); }
 
@@ -216,6 +224,7 @@ public sealed class UpdatesViewModel : Observable
         Filters[1].Count = hidden.Count;
         Filters[2].Count = missing.Count;
         CountText = available.Count == 0 ? "нет новых" : $"{available.Count} доступно";
+        HeaderCount = available.Count == 0 ? "" : available.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         var byName = StringComparer.CurrentCultureIgnoreCase;
         var source = _filter switch
@@ -242,6 +251,7 @@ public sealed class UpdatesViewModel : Observable
         }
         foreach (var k in _items.Keys.Where(k => !alive.Contains(k)).ToList()) _items.Remove(k);
         Items.SyncTo(visible);
+        SearchNote = GarageViewModel.SearchNoteFor(tokens.Count > 0, visible.Count);
         Empty = EmptyFor(source.Count, visible.Count, tokens.Count > 0);
         RebuildPanel();
     }

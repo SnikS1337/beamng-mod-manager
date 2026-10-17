@@ -150,6 +150,18 @@ public sealed class GarageViewModel : Observable
     /// <summary>Рядом с названием «Гараж»: «24 мода».</summary>
     public string CountText { get => _countText; private set => Set(ref _countText, value); }
 
+    private string _headerNote = "";
+    /// <summary>Под крупным заголовком сверху (DESIGN.md 4, «Островки»): «15 модов · 3 ждут обновления».</summary>
+    public string HeaderNote { get => _headerNote; private set => Set(ref _headerNote, value); }
+
+    private string _headerCount = "";
+    /// <summary>Число в маленькой капсуле заголовка, когда список прокручен: «15»; модов нет — пусто.</summary>
+    public string HeaderCount { get => _headerCount; private set => Set(ref _headerCount, value); }
+
+    private string _searchNote = "";
+    /// <summary>В раскрытом поиске справа от поля: «найдено 2» или «ничего не нашли»; без запроса — пусто.</summary>
+    public string SearchNote { get => _searchNote; private set => Set(ref _searchNote, value); }
+
     private string _summary = "";
     /// <summary>Правая панель, когда мод не выбран: «24 мода, 3 ждут обновления».</summary>
     public string Summary { get => _summary; private set => Set(ref _summary, value); }
@@ -228,6 +240,11 @@ public sealed class GarageViewModel : Observable
         Summary = all.Count == 0 ? "Модов пока нет"
             : upd == 0 ? Ru.Mods(all.Count)
             : $"{Ru.Mods(all.Count)}, {upd} {Ru.Plural(upd, "ждёт", "ждут", "ждут")} обновления";
+        HeaderNote = all.Count == 0 ? "модов пока нет"
+            : upd == 0 ? Ru.Mods(all.Count)
+            : $"{Ru.Mods(all.Count)} · {upd} {Ru.Plural(upd, "ждёт", "ждут", "ждут")} обновления";
+        HeaderCount = all.Count == 0 ? "" : all.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        SearchNote = SearchNoteFor(tokens.Count > 0, visible.Count);
         Empty = EmptyFor(all.Count, visible.Count, tokens.Count > 0);
 
         var enabled = Filters[1].Count;
@@ -237,6 +254,10 @@ public sealed class GarageViewModel : Observable
         if (Selected is not null && !visible.Contains(Selected)) Selected = null;
         else RaiseDetails();
     }
+
+    /// <summary>Подпись в раскрытом поиске (общая для гаража и «Обновлений»).</summary>
+    public static string SearchNoteFor(bool searching, int found) =>
+        !searching ? "" : found == 0 ? "ничего не нашли" : $"найдено {found}";
 
     private static bool Pass(ModCard c, GarageFilter f) => f switch
     {

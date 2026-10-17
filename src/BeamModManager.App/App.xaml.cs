@@ -161,6 +161,8 @@ public partial class App : Application
                 ShotPath = shot,
                 ShotPerf = Array.IndexOf(Environment.GetCommandLineArgs(), "--perf") >= 0,
                 ShotFrames = Array.IndexOf(Environment.GetCommandLineArgs(), "--frames") >= 0,
+                StartSearch = Arg("--search"),
+                StartScroll = double.TryParse(Arg("--scroll"), System.Globalization.CultureInfo.InvariantCulture, out var scr) ? scr : null,
                 ShotSelect = Arg("--select"),
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
@@ -169,6 +171,8 @@ public partial class App : Application
                 {
                     Theme = Enum.TryParse<BackgroundTheme>(Arg("--theme"), true, out var th) && Enum.IsDefined(th) ? th : BackgroundTheme.Night,
                     Mode = Enum.TryParse<UiMode>(Arg("--mode"), true, out var md) && Enum.IsDefined(md) ? md : UiMode.Dark,
+                    // --matte: жидкое стекло выключено (снимки матового вида с плашками вместо капель)
+                    LiquidGlass = Array.IndexOf(e.Args, "--matte") < 0,
                 })
                 {
                     ModsFolderPath = Path.GetFullPath(Path.Combine(demo, "mods")),

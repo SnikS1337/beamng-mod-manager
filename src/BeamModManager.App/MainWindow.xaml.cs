@@ -39,6 +39,10 @@ public sealed class WindowHost
     public bool ShotPerf { get; init; }
     /// <summary>Вместе со снимком прогнать анимации и записать кадры в секунду в &lt;снимок&gt;.frames.txt (--frames).</summary>
     public bool ShotFrames { get; init; }
+    /// <summary>Демо: открыть с раскрытым поиском и этим запросом (снимки островка).</summary>
+    public string? StartSearch { get; init; }
+    /// <summary>Демо: прокрутить список на столько точек (снимки сжатого заголовка).</summary>
+    public double? StartScroll { get; init; }
     /// <summary>Размер с прошлого запуска (только если он не меньше 1000 × 680, AppSettings).</summary>
     public int StartWidth { get; init; }
     public int StartHeight { get; init; }
@@ -78,6 +82,8 @@ public partial class MainWindow : Window
     private readonly WindowHost _host;
     private readonly SpringDriver _springs = new();
     private readonly Spring _navDrop, _filterX, _filterW, _capX, _capScale, _inspX;
+    /// <summary>Ширина островка сверху (фильтры ↔ поиск) и сжатие заголовка при прокрутке (0 — крупный, 1 — капсула).</summary>
+    private readonly Spring _islandW, _titleT;
     /// <summary>Нажатие на каплю: она чуть сжимается (0,92) и упруго возвращается (0,4 с, упругость 0,3 — «физическое»).</summary>
     private readonly Spring _navPress, _filterPress, _capPress;
     private readonly BackgroundMotion _motion;
@@ -138,6 +144,11 @@ public partial class MainWindow : Window
             if (v >= 343 && _vm.Selected is null) Inspector.Visibility = Visibility.Collapsed; // уехала: стекло не считаем зря
         });
 
+        // островок перетекает между фильтрами и поиском пружиной с лёгким перелётом, как капля; по ходу чуть сплющивается
+        _islandW = _springs.Add(new Spring(0.36, 0.16, 520), v => { TopBar.Width = Math.Max(48, v); IslandShape(); PlaceIsland(); });
+        // заголовок сжимается в капсулу не рывком за колесом мыши, а мягко догоняет прокрутку
+        _titleT = _springs.Add(new Spring(0.3, 0, 0), _ => { ApplyTitleShrink(); PlaceIsland(); });
+
         // на экране меньше 1440 × 960 окно открывается по размеру экрана минус рамка (DESIGN_FLOWS раздел 2)
         var work = SystemParameters.WorkArea;
         if (Width > work.Width - 16) Width = Math.Max(MinWidth, work.Width - 16);
@@ -151,7 +162,7 @@ public partial class MainWindow : Window
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies);
-        _glass = new[] { Nav, TopBar, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
+        _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         // «Обновления»: список из тех же карточек гаража, проверка через один координатор
         _upd = new UpdatesViewModel(vm, host.Updates ?? new NoUpdates(), host.Settings, a => Dispatcher.BeginInvoke(a));
         UpdScroller.DataContext = UpdEmptyBox.DataContext = CheckPanel.DataContext = _upd;
@@ -178,8 +189,8 @@ public partial class MainWindow : Window
         _entrance = host.ShotPath is null && !SpringDriver.ReducedMotion;
         if (_entrance)
         {
-            TopBar.Opacity = 0;
-            Anim.Mover(TopBar).Y = EnterTop;
+            TopRow.Opacity = 0;
+            Anim.Mover(TopRow).Y = EnterTop;
             Nav.Opacity = 0;
             Anim.Mover(Nav).X = EnterLeft;
             CardGridPanel.SetRise(Cards, 24);
@@ -204,10 +215,13 @@ public partial class MainWindow : Window
             if (HwndSource.FromHwnd(new WindowInteropHelper(this).Handle) is { } src) src.AddHook(SizeMoveHook);
         };
         Root.SizeChanged += (_, _) => { ApplyWidthClass(); PlaceBlobs(TimeSpan.Zero); };
-        TopBar.SizeChanged += (_, _) => AdaptTopBar();
+        TopRow.SizeChanged += (_, _) => AdaptTopBar();
+        // заголовок сжимается, когда список прокручен (у гаража и «Обновлений» свои списки)
+        Scroller.ScrollChanged += (_, _) => TitleFollowScroll();
+        UpdScroller.ScrollChanged += (_, _) => TitleFollowScroll();
         // числа в фильтрах меняют их ширину: пересчитываем панель, когда они меняются
         foreach (var f in vm.Filters) f.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
-        vm.PropertyChanged += (_, a) => { if (a.PropertyName == nameof(GarageViewModel.CountText)) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded); };
+        vm.PropertyChanged += (_, a) => { if (a.PropertyName is nameof(GarageViewModel.CountText) or nameof(GarageViewModel.HeaderNote)) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded); };
         Loaded += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, AdaptTopBar);
         Loaded += OnLoaded;
         Loaded += (_, _) => FitMaximized();
@@ -260,6 +274,13 @@ public partial class MainWindow : Window
             _autoCheckTimer.Start();
         }
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
+        if (_host.StartSearch is { } query)
+        {
+            if (UpdatesPage) _upd.SearchText = query; else _vm.SearchText = query;
+            OpenSearch(focus: false, instant: true);
+        }
+        if (_host.StartScroll is { } scroll)
+            Dispatcher.BeginInvoke(() => (UpdatesPage ? UpdScroller : Scroller).ScrollToVerticalOffset(scroll), DispatcherPriority.Loaded);
         if (_host.ShotPath is not null) Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, TakeShot);
     }
 
@@ -274,7 +295,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void PlayEntrance()
     {
-        Enter(TopBar, TranslateTransform.YProperty, EnterTop, 0.15);
+        Enter(TopRow, TranslateTransform.YProperty, EnterTop, 0.15);
         Enter(Nav, TranslateTransform.XProperty, EnterLeft, 0.05);
     }
 
@@ -283,7 +304,7 @@ public partial class MainWindow : Window
     /// Обычное значение сразу ставится конечным: если анимацию когда-нибудь снимут, панель останется на месте и видна.
     /// Стекло берёт фон под собой по своему месту только после раскладки, поэтому на каждом кадре сдвига просим её.
     /// </summary>
-    private static void Enter(Glass g, DependencyProperty axis, double from, double delay)
+    private static void Enter(FrameworkElement g, DependencyProperty axis, double from, double delay)
     {
         var start = TimeSpan.FromSeconds(delay);
         var time = TimeSpan.FromSeconds(0.6);
@@ -683,7 +704,7 @@ public partial class MainWindow : Window
             EmptyBox.Margin = SoonBox.Margin = UpdEmptyBox.Margin = new Thickness(116, 84, right, 0);
             ToastBox.Margin = new Thickness(116, 0, right, 28);
             TopFade.Margin = new Thickness(104, 0, right - 12, 0);
-            TopBar.Margin = new Thickness(116, 16, beside ? 360 : 132 + 16 + 16, 0);
+            TopRow.Margin = new Thickness(116, 16, beside ? 360 : 132 + 16 + 16, 0);
         }
         Dim.Visibility = open && _narrow ? Visibility.Visible : Visibility.Collapsed;
         // рядом с сеткой карточки под панель не заходят: сквозь неё виден только фон, и наведение на карточки её стекло
@@ -711,36 +732,166 @@ public partial class MainWindow : Window
         try { DragMove(); } catch (InvalidOperationException) { } // кнопку уже отпустили
     }
 
+    // ───────────── верх: заголовок и островок (решено 2026-10-17, «Островки») ─────────────
+
+    private bool _searchOpen, _islandPlaced, _titleRoom = true;
+    private double _filtersW = 520, _searchW = 420;
+
+    /// <summary>Гараж или «Обновления»: у них есть фильтры и поиск (островок); у остальных разделов только заголовок.</summary>
+    private bool IslandPage => NavGarage.IsChecked == true || UpdatesPage;
+
     /// <summary>
-    /// Верхняя панель сжимается по шагам, когда не хватает места: убирается число модов (оно есть в правой панели),
-    /// поиск сужается, затем убирается заголовок (активный пункт левой панели и так говорит, где мы).
+    /// Ширина островка: в покое — по фильтрам и кнопке поиска, с раскрытым поиском — капсула 320–440 px по ширине ряда.
+    /// Сменилась ширина (числа в фильтрах, раздел, окно) — островок перетекает к новой.
     /// </summary>
     private void AdaptTopBar()
     {
-        var avail = TopBar.ActualWidth - 34;
-        if (avail <= 0) return;
-        if (NavGarage.IsChecked != true && !UpdatesPage) { SectionTitle.Visibility = Visibility.Visible; return; } // кроме заголовка там ничего нет
-        // ширины меряем по тексту, а не по раскладке: у скрытого элемента она нулевая, и панель прыгала бы
-        // между «влезает» и «не влезает» (заголовок то показывается, то прячется)
-        FilterBox.Measure(new Size(double.PositiveInfinity, 52));
-        var filters = FilterBox.DesiredSize.Width;
-        var title = TextWidth(SectionTitle);
-        var count = TextWidth(CountLabel) + 14;
-        bool Fits(double search, bool withTitle, bool withCount) =>
-            filters + 14 + search + (withTitle ? title + 14 : 0) + (withCount ? count : 0) <= avail;
+        if (!IslandPage) { PlaceIsland(); return; }
+        FilterLayer.Measure(new Size(double.PositiveInfinity, 48));
+        _filtersW = Math.Ceiling(FilterLayer.DesiredSize.Width) + 12 + 2; // поля островка 6 + 6 и кромка
+        var row = TopRow.ActualWidth;
+        if (row > 0) _searchW = Math.Min(row, Math.Clamp(row * 0.5, 320, 440));
+        var target = _searchOpen ? _searchW : _filtersW;
+        if (Math.Abs(_islandW.Target - target) > 0.5 || !_islandPlaced)
+            _springs.To(_islandW, target, instant: !IsLoaded || !_islandPlaced);
+        _islandPlaced = IsLoaded;
+        PlaceIsland();
+    }
 
-        (double s, bool ti, bool co) = Fits(200, true, true) ? (200, true, true)
-            : Fits(200, true, false) ? (200, true, false)
-            : Fits(150, true, false) ? (150, true, false)
-            : Fits(150, false, false) ? (150, false, false)
-            : (Math.Max(110, avail - filters - 14), false, false);
-        if (SearchField.Width != s) SearchField.Width = s;
-        var tv = ti ? Visibility.Visible : Visibility.Collapsed;
-        if (SectionTitle.Visibility != tv) SectionTitle.Visibility = tv;
-        var cv = co ? Visibility.Visible : Visibility.Collapsed;
-        if (CountLabel.Visibility != cv) CountLabel.Visibility = cv;
-        var hint = UpdatesPage || s < 150 ? "Найти" : "Найти мод";
-        if (SearchHint.Text != hint) SearchHint.Text = hint;
+    /// <summary>
+    /// Островок — по центру ряда. Не помещается рядом с заголовком — сдвигается вправо; и так не помещается — заголовок
+    /// прячется (раздел и так виден по капле слева), островок встаёт по центру.
+    /// </summary>
+    private void PlaceIsland()
+    {
+        var row = TopRow.ActualWidth;
+        if (row <= 0) return;
+        var w = double.IsNaN(TopBar.Width) ? _filtersW : TopBar.Width;
+        var x = (row - w) / 2;
+        if (IslandPage)
+        {
+            var minX = TitleWidth() + 16;
+            var fits = Math.Max(x, minX) + w <= row;
+            if (fits) x = Math.Max(x, minX);
+            if (fits != _titleRoom) { _titleRoom = fits; ApplyTitleShrink(); }
+        }
+        else if (!_titleRoom) { _titleRoom = true; ApplyTitleShrink(); }
+        x = Math.Max(0, Math.Round(x));
+        if (TopBar.Margin.Left != x) TopBar.Margin = new Thickness(x, 2, 0, 0);
+    }
+
+    /// <summary>Сколько сейчас занимает заголовок слева: от крупного к капсуле по ходу сжатия.</summary>
+    private double TitleWidth()
+    {
+        var big = Math.Max(TextWidth(SectionTitle), TextWidth(CountLabel)) + 8;
+        var cap = TextWidth(CapsuleTitle) + (CapsuleCount.Text.Length > 0 ? TextWidth(CapsuleCount) : 0) + 32;
+        var t = Math.Clamp(_titleT.Value, 0, 1);
+        return big + (cap - big) * t;
+    }
+
+    /// <summary>Островок чуть сплющивается, пока перетекает (как капля в пути), и выпрямляется, встав на место.</summary>
+    private void IslandShape()
+    {
+        var k = Math.Min(0.05, Math.Abs(_islandW.Velocity) / 18000);
+        IslandScale.ScaleY = 1 - k;
+        IslandScale.ScaleX = 1 + k * 0.3;
+    }
+
+    /// <summary>Заголовок следует за прокруткой своего списка: первые 56 px — от крупного к капсуле.</summary>
+    private void TitleFollowScroll(bool instant = false)
+    {
+        var off = NavGarage.IsChecked == true ? Scroller.VerticalOffset : UpdatesPage ? UpdScroller.VerticalOffset : 0;
+        var t = Math.Clamp(off / 56, 0, 1);
+        if (Math.Abs(_titleT.Target - t) < 0.001 && !instant) return;
+        _springs.To(_titleT, t, instant || !IsLoaded);
+    }
+
+    /// <summary>
+    /// Крупный заголовок гаснет, чуть уменьшаясь и поднимаясь; капсула проявляется, подрастая с 94 %. Пока какой-то из
+    /// них не виден совсем, он убран из раскладки (стекло капсулы не считается зря).
+    /// </summary>
+    private void ApplyTitleShrink()
+    {
+        var t = Math.Clamp(_titleT.Value, 0, 1);
+        var big = _titleRoom ? Math.Clamp(1 - t * 1.6, 0, 1) : 0;
+        var cap = _titleRoom ? Math.Clamp((t - 0.35) / 0.65, 0, 1) : 0;
+        TitleBlock.Visibility = big > 0.001 ? Visibility.Visible : Visibility.Collapsed;
+        TitleBlock.Opacity = big;
+        TitleScale.ScaleX = TitleScale.ScaleY = 1 - 0.12 * t;
+        TitleMove.Y = -6 * t;
+        TitleCapsule.Visibility = cap > 0.001 ? Visibility.Visible : Visibility.Collapsed;
+        TitleCapsule.Opacity = cap;
+        CapsuleScale.ScaleX = CapsuleScale.ScaleY = 0.94 + 0.06 * cap;
+    }
+
+    // поиск: островок перетекает в одну капсулу и обратно
+
+    private int _searchGen;
+
+    private void SearchButton_Click(object sender, RoutedEventArgs e) => OpenSearch(focus: true);
+
+    private void SearchClose_Click(object sender, RoutedEventArgs e)
+    {
+        SearchBox.Clear();
+        CloseSearch();
+    }
+
+    /// <summary>Поле потеряло фокус пустым — островок сам сворачивается в фильтры; с запросом остаётся раскрытым.</summary>
+    private void SearchBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (SearchBox.Text.Length == 0 && _searchOpen && !SearchLayer.IsKeyboardFocusWithin) CloseSearch();
+    }
+
+    /// <summary>
+    /// Раскрыть поиск: фильтры быстро гаснут, островок пружиной перетекает в капсулу поиска, поле проявляется чуть позже.
+    /// Без анимаций — сразу. Стекло при этом то же (жидкое или матовое): меняется только форма.
+    /// </summary>
+    private void OpenSearch(bool focus, bool instant = false)
+    {
+        if (!_searchOpen)
+        {
+            _searchOpen = true;
+            var gen = ++_searchGen;
+            instant |= SpringDriver.ReducedMotion || !IsLoaded;
+            FilterLayer.IsHitTestVisible = false;
+            SearchLayer.Visibility = Visibility.Visible;
+            Crossfade(FilterLayer, 0, instant ? 0 : 0.12, 0, () => { if (gen == _searchGen) FilterLayer.Visibility = Visibility.Hidden; });
+            Crossfade(SearchLayer, 1, instant ? 0 : 0.22, instant ? 0 : 0.07, null);
+            AdaptTopBar();
+            if (instant) _springs.To(_islandW, _searchW, instant: true);
+        }
+        // фокус — после раскладки: поле только что стало видимым
+        if (focus) Dispatcher.BeginInvoke(() => { if (_searchOpen) { SearchBox.Focus(); SearchBox.SelectAll(); } }, DispatcherPriority.Input);
+    }
+
+    /// <summary>Свернуть поиск обратно в фильтры (запрос остаётся у раздела; закрывают его пустым или крестиком).</summary>
+    private void CloseSearch(bool instant = false)
+    {
+        if (!_searchOpen) return;
+        _searchOpen = false;
+        var gen = ++_searchGen;
+        instant |= SpringDriver.ReducedMotion || !IsLoaded;
+        if (SearchBox.IsKeyboardFocusWithin) Keyboard.ClearFocus();
+        FilterLayer.Visibility = Visibility.Visible;
+        FilterLayer.IsHitTestVisible = true;
+        Crossfade(SearchLayer, 0, instant ? 0 : 0.1, 0, () => { if (gen == _searchGen) SearchLayer.Visibility = Visibility.Collapsed; });
+        Crossfade(FilterLayer, 1, instant ? 0 : 0.22, instant ? 0 : 0.08, null);
+        AdaptTopBar();
+        if (instant) _springs.To(_islandW, _filtersW, instant: true);
+    }
+
+    private static void Crossfade(UIElement el, double to, double seconds, double delay, Action? done)
+    {
+        if (seconds <= 0)
+        {
+            el.BeginAnimation(OpacityProperty, null);
+            el.Opacity = to;
+            done?.Invoke();
+            return;
+        }
+        var a = new DoubleAnimation(to, TimeSpan.FromSeconds(seconds)) { BeginTime = TimeSpan.FromSeconds(delay), EasingFunction = Anim.Smooth };
+        if (done is not null) a.Completed += (_, _) => done();
+        el.BeginAnimation(OpacityProperty, a);
     }
 
     private double TextWidth(TextBlock tb)
@@ -878,8 +1029,7 @@ public partial class MainWindow : Window
         var settings = rb == NavSettings;
         var updates = rb == NavUpdates;
         if (!garage) _vm.Selected = null; // правая панель — про мод из гаража, в других разделах ей не место
-        SectionTitle.Text = (string)rb.Content;
-        if (!garage) SectionTitle.Visibility = Visibility.Visible; // на узком окне гараж мог спрятать заголовок
+        SectionTitle.Text = CapsuleTitle.Text = (string)rb.Content;
         Scroller.Visibility = garage ? Visibility.Visible : Visibility.Collapsed;
         EmptyBox.Visibility = garage && _vm.Empty is not null ? Visibility.Visible : Visibility.Collapsed;
         UpdScroller.Visibility = CheckPanel.Visibility = updates ? Visibility.Visible : Visibility.Collapsed;
@@ -889,10 +1039,13 @@ public partial class MainWindow : Window
         SoonTitle.Text = (string)rb.Content;
         // фильтры, поиск и число — у гаража и «Обновлений» свои, панель общая; в других разделах им не место
         var gv = garage || updates ? Visibility.Visible : Visibility.Collapsed;
-        FilterBox.Visibility = SearchField.Visibility = CountLabel.Visibility = gv;
+        TopBar.Visibility = CountLabel.Visibility = gv;
         BindTopBar(updates);
+        // поиск раздела: есть запрос — островок сразу раскрыт, нет — сразу фильтры; заголовок — по прокрутке нового списка
+        if (garage || updates) { if (SearchBox.Text.Length > 0) OpenSearch(focus: false, instant: true); else CloseSearch(instant: true); }
+        TitleFollowScroll(instant: true);
         PlaceInspector(instant: !IsLoaded);
-        if (garage || updates) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
         if (garage) EmptyBox.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(GarageViewModel.Empty)) { Converter = (System.Windows.Data.IValueConverter)FindResource("NullToCollapsed") });
         // раздел «Обновления» открыли: найденное просмотрено, бейдж больше не пульсирует до конца сеанса
         if (rb == NavUpdates && !_updatesSeen) { _updatesSeen = true; UpdateBadgePulse(); }
@@ -998,7 +1151,12 @@ public partial class MainWindow : Window
         if (ReferenceEquals(FilterList.ItemsSource, wanted)) return;
         FilterList.ItemsSource = wanted;
         SearchBox.SetBinding(TextBox.TextProperty, new System.Windows.Data.Binding("SearchText") { Source = source, UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged });
-        CountLabel.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("CountText") { Source = source });
+        // под заголовком у гаража «15 модов · 3 ждут обновления», у «Обновлений» — «3 доступно»
+        CountLabel.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(updates ? "CountText" : "HeaderNote") { Source = source });
+        CapsuleCount.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("HeaderCount") { Source = source });
+        SearchNote.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("SearchNote") { Source = source });
+        SearchHint.Text = updates ? "Найти среди обновлений" : "Найти мод";
+        SearchButton.ToolTip = updates ? "Найти среди обновлений (Ctrl+F)" : "Найти мод (Ctrl+F)";
         System.Windows.Automation.AutomationProperties.SetName(SearchBox, updates ? "Найти среди найденных обновлений" : "Найти среди установленных модов");
         _filterPlaced = false; // следующая раскладка ставит каплю сразу
     }
@@ -1260,7 +1418,14 @@ public partial class MainWindow : Window
             else if (e.Key == Key.Enter && _bind is { CanApply: true }) { BindApply_Click(this, new RoutedEventArgs()); e.Handled = true; }
             return; // окно поверх: остальные клавиши (и переходы по разделам) — его полям и кнопкам
         }
-        if (ctrl && e.Key == Key.F) { NavGarage.IsChecked = true; SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.F)
+        {
+            // в «Обновлениях» ищем среди найденного, из других разделов — среди модов
+            if (!UpdatesPage) NavGarage.IsChecked = true;
+            OpenSearch(focus: true);
+            e.Handled = true;
+            return;
+        }
         if (ctrl && e.Key == Key.D1) { NavGarage.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D2) { NavUpdates.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D3) { NavSearch.IsChecked = true; e.Handled = true; return; }
@@ -1275,7 +1440,9 @@ public partial class MainWindow : Window
         }
         if (e.Key == Key.Escape)
         {
-            if (typing && SearchBox.Text.Length > 0) SearchBox.Clear();
+            // в поиске: первый Esc стирает запрос, второй сворачивает островок обратно в фильтры
+            if (SearchBox.IsKeyboardFocused && SearchBox.Text.Length > 0) SearchBox.Clear();
+            else if (SearchBox.IsKeyboardFocused) CloseSearch();
             else if (typing) Keyboard.ClearFocus();
             else _vm.Selected = null;
             e.Handled = true;
