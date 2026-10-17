@@ -4,6 +4,7 @@
         xmlns:c="clr-namespace:BeamModManager.App.Controls"
         xmlns:g="clr-namespace:BeamModManager.Ui.Garage;assembly=BeamModManager.Ui"
         xmlns:u="clr-namespace:BeamModManager.Ui.Updates;assembly=BeamModManager.Ui"
+        xmlns:f="clr-namespace:BeamModManager.Ui.Search;assembly=BeamModManager.Ui"
         Title="ModManager BeamNG" Icon="/app.ico" Width="1440" Height="960" MinWidth="1000" MinHeight="680"
         WindowStyle="None" ResizeMode="CanResize" Background="{DynamicResource WindowBack}"
         FontFamily="{StaticResource Font}" Foreground="{DynamicResource Ink}" FontSize="14"
@@ -447,6 +448,193 @@
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
+
+        <!-- ═════ «Поиск» (DESIGN.md 5.0.1) ═════ -->
+
+        <!-- Кнопка с янтарным контуром на фото-карточке: «Купить у автора» (платный мод не скачивается) -->
+        <Style x:Key="CardBuy" TargetType="Button" BasedOn="{StaticResource CardPrimary}">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" CornerRadius="17" Background="#1AFFB340" BorderBrush="#FFB340" BorderThickness="1.5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#33FFB340"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.97" ScaleY="0.97"/></Setter.Value></Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Вторая кнопка на фото-карточке («Страница» рядом с «Установить»): светлый контур -->
+        <Style x:Key="CardGhost" TargetType="Button" BasedOn="{StaticResource CardPrimary}">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" CornerRadius="17" Background="#1FFFFFFF" BorderBrush="#4DFFFFFF" BorderThickness="1" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#33FFFFFF"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.97" ScaleY="0.97"/></Setter.Value></Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Карточка поиска: фото сверху (картинка с сайта или значок), под ним название, «версия · автор · сайты» и кнопки.
+             Как карточки гаража — фото-карточка, белые подписи в обоих оформлениях -->
+        <DataTemplate x:Key="FoundCardTemplate" DataType="{x:Type f:FoundCard}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition/>
+                    <RowDefinition Height="104"/>
+                </Grid.RowDefinitions>
+                <Border Grid.RowSpan="2" CornerRadius="26" Background="#1D2533">
+                    <Border.CacheMode><BitmapCache SnapsToDevicePixels="True"/></Border.CacheMode>
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="32" ShadowDepth="14" Direction="270" Color="#040814" Opacity="0.5" RenderingBias="Performance"/>
+                    </Border.Effect>
+                </Border>
+
+                <!-- фото -->
+                <Grid>
+                    <Border CornerRadius="26,26,0,0">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#2A3446" Offset="0"/>
+                                <GradientStop Color="#1B2232" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Viewbox Width="48" Height="48" Opacity="0.42">
+                            <Path Data="{Binding Placeholder, Converter={StaticResource PlaceholderIcon}}" Stroke="White" StrokeThickness="1.4"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="22" Height="22"/>
+                        </Viewbox>
+                    </Border>
+                    <Border CornerRadius="26,26,0,0">
+                        <Border.Background>
+                            <MultiBinding Converter="{StaticResource PreviewBrush}">
+                                <Binding Path="PreviewPath"/>
+                                <Binding Path="(c:CardGridPanel.InView)" RelativeSource="{RelativeSource Self}"/>
+                            </MultiBinding>
+                        </Border.Background>
+                    </Border>
+                    <Border CornerRadius="26,26,0,0">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#2E080E1C" Offset="0"/>
+                                <GradientStop Color="#00080E1C" Offset="0.3"/>
+                                <GradientStop Color="#00080E1C" Offset="0.7"/>
+                                <GradientStop Color="#661D2533" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <!-- цена: белая «Бесплатно», «Платный» с янтарной точкой, контурная «Цена не указана» -->
+                    <Border x:Name="Price" Style="{StaticResource Chip}">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse x:Name="PriceDot" Width="7" Height="7" Margin="0,0,7,0" Fill="#FFB340" Visibility="Collapsed"/>
+                            <TextBlock x:Name="PriceText" Text="{Binding PriceText}" FontSize="12" FontWeight="SemiBold" Foreground="White"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="12,12,0,0"
+                            Visibility="{Binding Installed, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="Установлен" FontSize="12" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center"/>
+                    </Border>
+
+                    <!-- «Возможно, тот же мод» (DESIGN_FLOWS 6.6): решение навсегда, до него карточки не объединены -->
+                    <Border VerticalAlignment="Bottom" Margin="10" CornerRadius="16" Background="#E6101826" BorderBrush="#33FFFFFF" BorderThickness="1"
+                            Padding="12,8,12,4" Visibility="{Binding MaybeText, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding MaybeText}" FontSize="12.5" Foreground="White" TextTrimming="CharacterEllipsis"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Style="{StaticResource CardLink}" Content="Это один мод" FontSize="12.5" Padding="0,5" Click="FoundSame_Click"/>
+                                <Button Style="{StaticResource CardLink}" Content="Это разные" FontSize="12.5" Padding="0,5" Margin="16,0,0,0" Click="FoundDifferent_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- подпись и кнопки -->
+                <StackPanel Grid.Row="1" Margin="18,10,18,0">
+                    <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"/>
+                    <TextBlock FontSize="12.5" Foreground="#C2FFFFFF" Margin="0,1,0,0" TextTrimming="CharacterEllipsis">
+                        <Run Text="{Binding Subtitle, Mode=OneWay}"/><Run x:Name="Sep" Text=" · "/><Run Text="{Binding SitesText, Mode=OneWay}"/>
+                    </TextBlock>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button x:Name="Main" Style="{StaticResource CardPrimary}" Height="34" Padding="20,0" FontSize="13.5"
+                                Content="{Binding PrimaryLabel}" Click="FoundMain_Click" AutomationProperties.HelpText="{Binding Title}"/>
+                        <Button Style="{StaticResource CardGhost}" Height="34" Padding="18,0" FontSize="13.5" Margin="10,0,0,0" Content="Страница"
+                                Click="FoundPage_Click" Visibility="{Binding ShowPage, Converter={StaticResource BoolToVis}}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <Border Grid.RowSpan="2" CornerRadius="26" BorderThickness="1" IsHitTestVisible="False">
+                    <Border.BorderBrush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#8CFFFFFF" Offset="0"/>
+                            <GradientStop Color="#38FFFFFF" Offset="0.12"/>
+                            <GradientStop Color="#1FFFFFFF" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.BorderBrush>
+                </Border>
+            </Grid>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Price}" Value="{x:Static f:PriceKind.Free}">
+                    <Setter TargetName="Price" Property="Background" Value="White"/>
+                    <Setter TargetName="Price" Property="BorderBrush" Value="White"/>
+                    <Setter TargetName="PriceText" Property="Foreground" Value="#111111"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Price}" Value="{x:Static f:PriceKind.Paid}">
+                    <Setter TargetName="PriceDot" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Price}" Value="{x:Static f:PriceKind.Unknown}">
+                    <Setter TargetName="Price" Property="Background" Value="#660A101E"/>
+                    <Setter TargetName="Price" Property="BorderBrush" Value="#99FFFFFF"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Primary}" Value="{x:Static f:FoundAction.Buy}">
+                    <Setter TargetName="Main" Property="Style" Value="{StaticResource CardBuy}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Subtitle}" Value="">
+                    <Setter TargetName="Sep" Property="Text" Value=""/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <!-- Скелет карточки поиска (DESIGN_COMPONENTS 3.10): подложка того же размера, по ней раз в 6 с идёт светлая полоса -->
+        <DataTemplate x:Key="SkeletonTemplate">
+            <Border CornerRadius="26" Background="#14FFFFFF" BorderBrush="#1FFFFFFF" BorderThickness="1" ClipToBounds="True">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition/>
+                        <RowDefinition Height="104"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="1" Margin="18,12,18,0">
+                        <Border Height="12" Width="170" HorizontalAlignment="Left" CornerRadius="6" Background="#1FFFFFFF"/>
+                        <Border Height="10" Width="110" HorizontalAlignment="Left" CornerRadius="5" Background="#17FFFFFF" Margin="0,8,0,0"/>
+                        <Border Height="34" Width="120" HorizontalAlignment="Left" CornerRadius="17" Background="#17FFFFFF" Margin="0,14,0,0"/>
+                    </StackPanel>
+                    <Rectangle Grid.RowSpan="2" Width="140" HorizontalAlignment="Left" IsHitTestVisible="False" c:Shimmer.Run="True">
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#00FFFFFF" Offset="0"/>
+                                <GradientStop Color="#14FFFFFF" Offset="0.5"/>
+                                <GradientStop Color="#00FFFFFF" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                </Grid>
+            </Border>
+        </DataTemplate>
     </Window.Resources>
 
     <Grid x:Name="Root" ClipToBounds="True" MouseLeftButtonDown="Root_MouseLeftButtonDown">
@@ -574,6 +762,24 @@
                 </StackPanel>
             </ScrollViewer>
 
+            <!-- «Поиск»: сетка карточек (одна на мод, с какого бы сайта он ни был), пока сайты молчат — скелеты -->
+            <ScrollViewer x:Name="FindScroller" Margin="72,0,336,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Focusable="False" PanningMode="VerticalOnly" Template="{StaticResource OverlayScroll}" Visibility="Collapsed">
+                <Grid Margin="44,84,24,28">
+                    <ItemsControl x:Name="FindSkeletons" ItemTemplate="{StaticResource SkeletonTemplate}" Focusable="False" IsHitTestVisible="False" Visibility="Collapsed">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><c:CardGridPanel PhotoRatio="0.56" ExtraHeight="104" Animated="False"/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                    <ItemsControl x:Name="FindList" ItemsSource="{Binding Cards}" ItemTemplate="{StaticResource FoundCardTemplate}" Focusable="False"
+                                  KeyboardNavigation.TabNavigation="Continue">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><c:CardGridPanel PhotoRatio="0.56" ExtraHeight="104" Loaded="FindPanel_Loaded"/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Grid>
+            </ScrollViewer>
+
             <!-- под верхней панелью карточки уходят в тень, чтобы подписи панели читались -->
             <Border x:Name="TopFade" Background="{DynamicResource TopFade}" IsHitTestVisible="False" VerticalAlignment="Top" Height="98" Margin="104,0,348,0">
                 <Border.OpacityMask>
@@ -606,10 +812,13 @@
                     Visibility="{Binding Empty.ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
         </StackPanel>
 
-        <!-- раздел ещё не сделан в этой сборке -->
-        <StackPanel x:Name="SoonBox" Margin="116,84,360,0" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Collapsed">
-            <TextBlock x:Name="SoonTitle" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-            <TextBlock Text="Этот раздел появится в следующей сборке" Foreground="{DynamicResource Ink2}" Margin="0,6,0,0" HorizontalAlignment="Center"/>
+        <!-- пустое состояние «Поиска»: «Что ищем?», «Ничего не нашли», «Все сайты выключены» (DESIGN_FLOWS раздел 4) -->
+        <StackPanel x:Name="FindEmptyBox" Margin="116,84,360,0" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420" Visibility="Collapsed">
+            <TextBlock Text="{Binding Empty.Title}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+            <TextBlock Text="{Binding Empty.Text}" Foreground="{DynamicResource Ink2}" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+            <Button Style="{StaticResource Secondary}" Margin="0,16,0,0" HorizontalAlignment="Center" MinWidth="170" Padding="18,0"
+                    Content="{Binding Empty.ActionLabel}" Click="FindEmpty_Click"
+                    Visibility="{Binding Empty.ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
         </StackPanel>
 
         <!-- ═════ Стекло ═════ -->
@@ -695,6 +904,28 @@
                 <Grid x:Name="IslandBody" ClipToBounds="True" Margin="6,0">
                     <!-- фильтры и кнопка поиска -->
                     <StackPanel x:Name="FilterLayer" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <!-- «Поиск»: поле запроса стоит в островке рядом с фильтрами (решено 2026-10-17, «широкий островок») -->
+                        <Border x:Name="QueryBox" CornerRadius="21" Height="42" Width="250" Margin="0,0,6,0" Background="{DynamicResource SegBack}"
+                                Visibility="Collapsed" Cursor="IBeam" MouseLeftButtonDown="QueryBox_MouseDown">
+                            <Grid Margin="10,0,4,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Data="{StaticResource IconSearch}" Stroke="{DynamicResource Ink2}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      Width="22" Height="22" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+                                    <Path.RenderTransform><ScaleTransform ScaleX="0.8" ScaleY="0.8"/></Path.RenderTransform>
+                                </Path>
+                                <TextBlock x:Name="QueryHint" Grid.Column="1" Text="Что ищем?" Foreground="{DynamicResource InkHint}" FontSize="14" Margin="6,0,0,0"
+                                           VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                <TextBox x:Name="QueryText" Grid.Column="1" Margin="4,0,0,0" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource Ink}"
+                                         CaretBrush="{DynamicResource Ink}" FontSize="14" VerticalAlignment="Center" FocusVisualStyle="{x:Null}" MaxLength="100"
+                                         AutomationProperties.Name="Что ищем на сайтах" TextChanged="QueryText_TextChanged" PreviewKeyDown="QueryText_PreviewKeyDown"/>
+                                <Button x:Name="QueryClear" Grid.Column="2" Style="{StaticResource IslandButton}" Tag="{StaticResource IconClose}" FontSize="11"
+                                        Click="QueryClear_Click" ToolTip="Стереть запрос (Esc)" AutomationProperties.Name="Стереть запрос" Visibility="Collapsed"/>
+                            </Grid>
+                        </Border>
                         <Border x:Name="FilterBox" PreviewMouseLeftButtonDown="Filter_PreviewMouseDown" PreviewMouseLeftButtonUp="Filter_PreviewMouseUp" MouseLeave="Filter_MouseLeave" CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center"
                                 WindowChrome.IsHitTestVisibleInChrome="True">
                             <Grid>
@@ -1139,6 +1370,27 @@
                 </Border>
                 <CheckBox Style="{StaticResource MiniSwitch}" Content="Проверять при запуске" IsChecked="{Binding AutoCheckOnStart}" Margin="4,16,2,0"/>
                 <TextBlock Style="{StaticResource Note}" Text="{Binding AutoNote}" Margin="4,12,4,0"/>
+            </StackPanel>
+        </c:Glass>
+
+        <!-- Панель «Сайты» (DESIGN.md 5.0.1): кто ответил и сколько нашёл, кто не ответил, напоминание про платные -->
+        <c:Glass x:Name="SitesPanel" Source="{Binding ElementName=Backdrop}" Corner="32" Blur="5" Tint="#800E182C"
+                 Lens="56" Refraction="144" Brightness="0.70" Sparks="10" Seed="19"
+                 HorizontalAlignment="Right" VerticalAlignment="Top" Width="328" Margin="0,64,16,16" Visibility="Collapsed">
+            <StackPanel x:Name="SitesBody" Margin="22,24,22,22">
+                <TextBlock Text="Сайты" FontSize="20" FontWeight="Bold"/>
+                <TextBlock Text="Один мод с разных сайтов собран в одну карточку" FontSize="13" Foreground="{DynamicResource Ink2}" Margin="0,3,0,0"
+                           TextWrapping="Wrap" LineHeight="18"/>
+                <Border CornerRadius="16" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Margin="0,16,0,0">
+                    <ItemsControl ItemsSource="{Binding Sites}" ItemTemplate="{StaticResource SiteRowTemplate}" Focusable="False" AlternationCount="1000"/>
+                </Border>
+                <DockPanel Margin="4,14,4,0" Visibility="{Binding SitesNote, Converter={StaticResource NullToCollapsed}}">
+                    <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Fill="#FFB340" Margin="0,5,9,0" VerticalAlignment="Top"/>
+                    <TextBlock Style="{StaticResource Note}" Text="{Binding SitesNote}" Foreground="{DynamicResource Ink}"/>
+                </DockPanel>
+                <TextBlock Style="{StaticResource Note}" Text="{Binding PaidNote}" Margin="4,16,4,0"/>
+                <Button Style="{StaticResource Link}" Content="Включить или выключить сайты" FontSize="12.5" Margin="0,10,0,0" HorizontalAlignment="Left"
+                        Click="SitesSettings_Click"/>
             </StackPanel>
         </c:Glass>
 

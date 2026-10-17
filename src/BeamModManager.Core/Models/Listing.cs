@@ -18,6 +18,9 @@ public sealed record Listing(string Source, Uri Url, string SourceId, string Tit
     public string? Category { get; init; }
     public long? SizeBytes { get; init; }
 
+    /// <summary>Картинка мода из выдачи сайта (для карточки поиска), если сайт её показывает.</summary>
+    public Uri? PreviewUrl { get; init; }
+
     /// <summary>64-битный перцептивный хеш превью (если посчитан).</summary>
     public ulong? PreviewHash { get; init; }
 

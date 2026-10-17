@@ -91,6 +91,11 @@ jobs:
           Shot 'light-garage-search' @('--mode', 'Light', '--search', 'ford', '--scroll', '400')
           Shot 'matte-garage' @('--matte', '--select', '"Dacia Sandero Stepway"', '--scroll', '300')
           Shot 'updates-search' @('--page', 'updates', '--search', 'dacia', '--width', '1100', '--height', '760')
+          # «Поиск»: до запроса, с результатами (одна карточка на мод, «возможно, тот же мод», платный), узкое окно, светлое
+          Shot 'search-empty' @('--page', 'search')
+          Shot 'search' @('--page', 'search', '--search', 'lamborghini')
+          Shot 'search-1000' @('--page', 'search', '--search', 'lamborghini', '--width', '1000', '--height', '700')
+          Shot 'light-search' @('--mode', 'Light', '--page', 'search', '--search', 'lamborghini')
           Shot 'bind' @('--page', 'bind')
           Shot 'light-bind' @('--mode', 'Light', '--page', 'bind', '--width', '1100', '--height', '760')
           # большая библиотека: замеры в shots/*.perf.txt (запуск, фильтр, поиск, перечитывание, память)

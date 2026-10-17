@@ -8,11 +8,13 @@ using BeamModManager.App.Services;
 using BeamModManager.Core.Game;
 using BeamModManager.Core.Install;
 using BeamModManager.Core.Library;
+using BeamModManager.Core.Matching;
 using BeamModManager.Core.Previews;
 using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
 using BeamModManager.Ui.AppUpdate;
 using BeamModManager.Ui.Previews;
+using BeamModManager.Ui.Search;
 using BeamModManager.Ui.Settings;
 using BeamModManager.Ui.Updates;
 using BeamModManager.Core.Net;
@@ -160,6 +162,8 @@ public partial class App : Application
             {
                 Backend = demoGarage,
                 Updates = new DemoUpdatesBackend(demoGarage),
+                Search = new DemoSearchBackend(demo),
+                SearchImages = (u, _) => Task.FromResult(u.IsFile && File.Exists(u.LocalPath) ? u.LocalPath : null),
                 DownloadsAllowed = true, // как на доске «Гараж»
                 ShotPath = shot,
                 ShotPerf = Array.IndexOf(Environment.GetCommandLineArgs(), "--perf") >= 0,
@@ -487,12 +491,18 @@ public partial class App : Application
         var fetcher = new PoliteFetcher(new HttpPageFetcher());
         IModSource[] sources = { new ModlandSource(fetcher), new ModsGamingSource(fetcher), new StModsSource(fetcher), new BeamNgRepoSource(fetcher) };
         var updates = new LibraryUpdatesBackend(store, sources, () => svm.Current, null, fetcher.ClearCache, fetcher.ResetHost, fetcher.StatusOf);
+        // «Поиск»: те же сайты и загрузчик; решения «Это один мод» / «Это разные» хранятся навсегда
+        var search = new LibrarySearchBackend(sources, () => svm.Current, new MatchDecisionStore(Path.Combine(appDir, "matches.json")), fetcher.StatusOf);
+        var remote = new RemotePreviews(Path.Combine(appDir, "search-previews"));
+        _ = Task.Run(() => remote.Prune(TimeSpan.FromDays(30)));
 
         var pendingPath = Path.Combine(appDir, "pending.json");
         return new WindowHost
         {
             Backend = switching,
             Updates = updates,
+            Search = search,
+            SearchImages = remote.FetchAsync,
             Settings = svm,
             Updater = updater,
             CheckUpdatesOnStart = settings.CheckAppUpdates,
