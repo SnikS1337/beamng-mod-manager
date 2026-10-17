@@ -164,6 +164,8 @@ public partial class MainWindow : Window
 
         // на экране меньше 1440 × 960 окно открывается по размеру экрана минус рамка (DESIGN_FLOWS раздел 2)
         var work = SystemParameters.WorkArea;
+        // маленький экран (ноутбук с масштабом 125–150 %): минимум окна не больше экрана, иначе низ уходит за край
+        (MinWidth, MinHeight) = WindowFit.Minimum(work.Width, work.Height);
         if (Width > work.Width - 16) Width = Math.Max(MinWidth, work.Width - 16);
         if (Height > work.Height - 16) Height = Math.Max(MinHeight, work.Height - 16);
 
