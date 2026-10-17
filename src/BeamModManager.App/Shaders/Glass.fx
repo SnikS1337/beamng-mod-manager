@@ -40,7 +40,8 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float2 n = (min(q.x, q.y) > 0.0) ? nCorner : nSide;
 
     float t = saturate(1.0 - d / bw);
-    float2 off = n * (strength * 0.5 * t * t) / sz;   // в долях текстуры
+    float tt = t * t;
+    float2 off = n * (strength * 0.5 * tt) / sz;   // в долях текстуры
 
     float4 c = tex2D(input, uv);
     float cr = tex2D(input, saturate(uv + off)).r;
@@ -50,10 +51,12 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     // цвета с умноженной прозрачностью: обе операции линейные, остаётся только не выйти за альфу
     float3 col = float3(cr, cg, cb);
     float l = dot(col, Luma);
-    col = lerp(float3(l, l, l), col, saturation) * brightness;
+    col = lerp(float3(l, l, l), col, saturation);
     float a = c.a;
-    col = lerp(col, float3(a, a, a), lift * saturate(1.0 - l));
-    col *= 1.0 - shade * t * t;
+    // l не больше a (цвета с умноженной прозрачностью), поэтому 1 - l без saturate; яркость и тень у края — одним множителем:
+    // у PS 2.0 всего 64 арифметические команды
+    col = lerp(col, float3(a, a, a), lift - lift * l);
+    col *= brightness * (1.0 - shade * tt);
     col = min(max(col, float3(0.0, 0.0, 0.0)), float3(a, a, a));
 
     // снаружи прозрачно, на самом краю полпикселя сглаживания
