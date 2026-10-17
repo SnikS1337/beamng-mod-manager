@@ -766,7 +766,8 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Островок — точно посередине окна (IslandLayout), где бы ни была правая панель. На узком окне уступает заголовок:
-    /// крупный → капсула → нет заголовка (раздел и так виден по капле слева).
+    /// крупный → капсула → нет заголовка (раздел и так виден по капле слева). Вид заголовка зависит от окна и раздела,
+    /// но не от того, открыт ли поиск.
     /// </summary>
     private void PlaceIsland()
     {
@@ -778,7 +779,9 @@ public partial class MainWindow : Window
         if (IslandPage)
         {
             var left = TopRow.Margin.Left;
-            var p = IslandLayout.Place(Root.ActualWidth, left, left + row, w, _islandW.Target, BigTitleWidth(), CapsuleTitleWidth());
+            // заголовку оставляем место под самую широкую форму островка: открыли или закрыли поиск — заголовок тот же
+            var room = Math.Max(_filtersW, IslandLayout.SearchWidth(row));
+            var p = IslandLayout.Place(Root.ActualWidth, left, left + row, w, room, BigTitleWidth(), CapsuleTitleWidth());
             x = p.X - left;
             fit = p.Title;
         }

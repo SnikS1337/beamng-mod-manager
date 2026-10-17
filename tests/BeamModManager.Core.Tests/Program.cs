@@ -17,12 +17,12 @@ NetTests.Register(t);
 InstallTests.Register(t);
 SearchTests.Register(t);
 AdapterTests.Register(t);
-        PackTests.Register(t);
-        UpdateRunnerTests.Register(t);
-        UpdateCoordinatorTests.Register(t);
-        SettingsTests.Register(t);
-        BugHuntTests.Register(t);
-        if (Environment.GetEnvironmentVariable("BMM_SKIP_FUZZ") != "1") FuzzTests.Register(t); // долгий набор: BMM_SKIP_FUZZ=1 пропускает
+PackTests.Register(t);
+UpdateRunnerTests.Register(t);
+UpdateCoordinatorTests.Register(t);
+SettingsTests.Register(t);
+BugHuntTests.Register(t);
+if (Environment.GetEnvironmentVariable("BMM_SKIP_FUZZ") != "1") FuzzTests.Register(t); // долгий набор: BMM_SKIP_FUZZ=1 пропускает
 Revision2Tests.Register(t);
 RepairTests.Register(t);
 TimeTests.Register(t);
@@ -51,10 +51,10 @@ PathsTests.Register(t);
 BigLibraryTests.Register(t);
 LongRunTests.Register(t);
 BackgroundThemeTests.Register(t);
-
-
 GlassTextureTests.Register(t);
 XamlTests.Register(t);
 FramePacerTests.Register(t);
 IslandLayoutTests.Register(t);
+MvvmTests.Register(t);
+GuardTests.Register(t);
 return t.Summary();

@@ -201,6 +201,15 @@ public static class XamlTests
                 Assert.True(code.Contains(m, StringComparison.Ordinal), m);
         });
 
+        t.Run("окно первым делом включает защиту ядра от зависания разбора страниц (до любого Regex в процессе)", () =>
+        {
+            var code = Read("App.xaml.cs");
+            var body = Regex.Match(code, @"static App\(\)\s*\{(?<b>.*?)\n    \}", RegexOptions.Singleline);
+            Assert.True(body.Success, "статический конструктор App найден");
+            var first = body.Groups["b"].Value.Split('\n').Select(l => l.Trim()).First(l => l.Length > 0 && !l.StartsWith("//", StringComparison.Ordinal));
+            Assert.True(first.StartsWith("System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(typeof(BeamModManager.Core.", StringComparison.Ordinal), first);
+        });
+
         t.Run("островок посередине окна: ряд от левой панели до кнопок окна, центр по высоте вровень с ними", () =>
         {
             var xaml = XDocument.Parse(Read("MainWindow.xaml"));

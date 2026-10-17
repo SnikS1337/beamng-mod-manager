@@ -36,6 +36,9 @@ public partial class App : Application
     /// </summary>
     static App()
     {
+        // Первым делом — защита ядра от зависания разбора чужих страниц (Core/Safety/RegexGuard): общий предел времени
+        // регулярных выражений действует, только если задан до самого первого Regex в процессе, а его может создать и WPF.
+        System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(typeof(BeamModManager.Core.Settings.AppSettings).Module.ModuleHandle);
         var saving = BeamModManager.App.Services.Native.PowerSaving();
         BeamModManager.Ui.Look.FramePolicy.Shared.PowerSaving = saving;
         try
