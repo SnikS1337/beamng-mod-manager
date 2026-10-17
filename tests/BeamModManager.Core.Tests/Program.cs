@@ -58,4 +58,5 @@ IslandLayoutTests.Register(t);
 MvvmTests.Register(t);
 GuardTests.Register(t);
 DropBodyTests.Register(t);
+WindowFitTests.Register(t);
 return t.Summary();
