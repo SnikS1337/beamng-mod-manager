@@ -668,6 +668,7 @@
                         <Border CornerRadius="16" Background="{Binding Palette, Converter={StaticResource ThemeSwatch}, ConverterParameter=blob0}"/>
                         <Border CornerRadius="16" Background="{Binding Palette, Converter={StaticResource ThemeSwatch}, ConverterParameter=blob1}"/>
                         <Border CornerRadius="16" Background="{Binding Palette, Converter={StaticResource ThemeSwatch}, ConverterParameter=blob2}"/>
+                        <Border CornerRadius="16" Background="{Binding Palette, Converter={StaticResource ThemeSwatch}, ConverterParameter=blob3}"/>
                         <Border CornerRadius="16">
                             <Border.Background>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">

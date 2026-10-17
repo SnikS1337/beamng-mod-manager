@@ -92,8 +92,15 @@ public class Glass : ContentControl
     public GlassMode Mode => _mode;
     /// <summary>Светлое оформление.</summary>
     public bool Light => _light;
-    /// <summary>Яркость копии сцены с учётом оформления (её же берёт капля, добавляя свои 12 %).</summary>
-    public double EffectiveBrightness => _light ? Math.Min(1.06, Brightness + 0.42) : Brightness;
+    /// <summary>
+    /// Яркость копии сцены с учётом оформления (её же берёт капля, добавляя свои 12 %). В светлом — как есть: раньше
+    /// копия высветлялась до 1,06, и вместе с плотной белой подложкой стекло выглядело матовым (2026-10-17).
+    /// </summary>
+    public double EffectiveBrightness => _light ? 1.0 : Brightness;
+
+    /// <summary>Светлое оформление: насыщенность под стеклом выше (стекло «сочное», как у Apple) и подъём тёмного к белому.</summary>
+    public double EffectiveSaturation => _light ? 1.7 : 1.4;
+    public double EffectiveLift => _light ? 0.42 : 0;
     /// <summary>Вид стекла изменился (режим, оформление, подложка): капли на панели перерисовываются.</summary>
     public event Action? LookChanged;
 
@@ -214,7 +221,9 @@ public class Glass : ContentControl
         var liquid = _mode == GlassMode.Liquid;
         if (liquid && RefractionEffect.IsAvailable)
         {
-            _refraction ??= new RefractionEffect { Saturation = 1.4 };
+            _refraction ??= new RefractionEffect();
+            _refraction.Saturation = EffectiveSaturation;
+            _refraction.Lift = EffectiveLift;
             _refraction.Strength = Refraction;
             _refraction.Lens = Lens;
             _refraction.Radius = Corner;
@@ -229,7 +238,8 @@ public class Glass : ContentControl
         // у матового стекла ровная кромка 1 px и нет блика; у жидкого — яркая кромка по карте и блик сверху слева
         if (_edge is not null) { _edge.Specular = liquid ? 1 : 0; _edge.Lens = Lens; }
         if (_highlight is not null) _highlight.Visibility = liquid ? Visibility.Visible : Visibility.Collapsed;
-        if (_contour is not null) _contour.BorderBrush = _light ? ContourLight : liquid ? ContourLiquid : ContourMatte;
+        // светлое: кромка в два слоя — сверху белый блик, снизу тонкая тёмная линия; так стекло отделяется от светлого фона
+        if (_contour is not null) _contour.BorderBrush = _light ? (liquid ? ContourLightLiquid : ContourLight) : liquid ? ContourLiquid : ContourMatte;
     }
 
     /// <summary>
@@ -247,6 +257,13 @@ public class Glass : ContentControl
     private static readonly Brush ContourLiquid = Frozen(new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
     private static readonly Brush ContourMatte = Frozen(new SolidColorBrush(Color.FromArgb(0x42, 0xFF, 0xFF, 0xFF)));
     private static readonly Brush ContourLight = Frozen(new SolidColorBrush(Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF)));
+    private static readonly Brush ContourLightLiquid = Frozen(new LinearGradientBrush(new GradientStopCollection
+    {
+        new(Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF), 0),
+        new(Color.FromArgb(0x8C, 0xFF, 0xFF, 0xFF), 0.35),
+        new(Color.FromArgb(0x26, 0x14, 0x1B, 0x2B), 0.75),
+        new(Color.FromArgb(0x33, 0x14, 0x1B, 0x2B), 1),
+    }, new Point(0, 0), new Point(0, 1)));
 
     private void ApplySparks()
     {

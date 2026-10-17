@@ -514,14 +514,16 @@ public partial class MainWindow : Window
     private readonly Dictionary<Glass, Brush> _lightTints = new();
 
     /// <summary>
-    /// Подложка жидкого стекла в светлом оформлении: та же панель, но белая и чуть плотнее тёмной (на светлом фоне без
-    /// этого тёмный текст терял бы контраст): 0,44 → 0,56, 0,50 → 0,62, у тоста 0,70 → 0,82.
+    /// Подложка жидкого стекла в светлом оформлении (2026-10-17: «светлое выглядит матовым»): белая и лёгкая — половина
+    /// тёмной (0,44 → 0,22, 0,50 → 0,25), стекло прозрачное. Читаемость тёмного текста держит шейдер: тёмное под стеклом
+    /// он подтягивает к белому (Glass.EffectiveLift). Тост и окно привязки — плашки поверх всего, у них плотнее: 0,70 → 0,82.
     /// </summary>
     private Brush LightTint(Glass g, Brush dark)
     {
         if (_lightTints.TryGetValue(g, out var b)) return b;
         var a = dark is SolidColorBrush sc ? sc.Color.A / 255.0 : 0.44;
-        b = Frozen(new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Min(0.9, a + 0.12) * 255), 0xF5, 0xF8, 0xFC)));
+        var light = g == ToastBox || g == BindPanel ? Math.Min(0.9, a + 0.12) : a * 0.5;
+        b = Frozen(new SolidColorBrush(Color.FromArgb((byte)Math.Round(light * 255), 0xF5, 0xF8, 0xFC)));
         _lightTints[g] = b;
         return b;
     }

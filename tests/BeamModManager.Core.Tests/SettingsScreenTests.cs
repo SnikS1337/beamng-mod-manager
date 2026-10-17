@@ -177,7 +177,7 @@ public static class SettingsScreenTests
         t.Run("темы фона: три плитки, отмечена одна, набор тему не меняет, тема переживает файл", () =>
         {
             var vm = new SettingsViewModel(new AppSettings());
-            Assert.Eq(3, vm.Themes.Count);
+            Assert.Eq(5, vm.Themes.Count);
             Assert.True(vm.Themes.Count(t => t.IsSelected) == 1 && vm.Themes[0].IsSelected, "по умолчанию «Ночь»");
             vm.Themes[1].IsSelected = true;
             Assert.True(vm.Themes.Count(t => t.IsSelected) == 1 && vm.Themes[1].IsSelected, "одна отмечена");

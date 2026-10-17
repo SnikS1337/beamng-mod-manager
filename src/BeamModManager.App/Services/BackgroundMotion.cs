@@ -7,7 +7,8 @@ using System.Windows.Shapes;
 namespace BeamModManager.App.Services;
 
 /// <summary>
-/// Само движется только фон (DESIGN_MOTION раздел 2): плывущая цветная полоса (36 с), пятна света (28 с) и огоньки.
+/// Само движется только фон (DESIGN_MOTION раздел 2): плывущая цветная полоса (36 с), пятна света (плывут по петлям 21–37 с
+/// и дышат 6–9 с) и огоньки.
 /// Останавливается, когда окно не видно, не в фокусе или запущена игра; при «Уменьшить анимацию» в Windows не запускается.
 /// Фон и огоньки — две отдельные истории: в настройках они включаются по отдельности («Анимированный фон», «Огоньки»).
 /// </summary>
@@ -17,7 +18,7 @@ public sealed class BackgroundMotion
     private readonly FrameworkElement _owner;
     private readonly List<(Ellipse Shape, RadialGradientBrush Brush)> _blobs = new();
 
-    /// <summary>Три пятна: фигура (место и размер ставит окно по теме) и её кисть (не заморожена: цвет меняется с темой).</summary>
+    /// <summary>Четыре пятна: фигура (место и размер ставит окно по теме) и её кисть (не заморожена: цвет меняется с темой).</summary>
     public IReadOnlyList<(Ellipse Shape, RadialGradientBrush Brush)> Blobs => _blobs;
 
     /// <summary>Одна история со своим состоянием: ещё не начата, идёт, на паузе.</summary>
@@ -53,13 +54,13 @@ public sealed class BackgroundMotion
 
         Anim(gradeMove, TranslateTransform.XProperty, 0, 1, 36, reverse: false);
 
-        // три размытых пятна света: места и цвета задаёт тема (окно, PlaceBlobs); здесь — их движение.
-        // Дрейф по 28 с со сдвигом фазы 0 / 9 / 18 с и «дыхание» (масштаб 1 → 1,24) с разными периодами,
-        // поэтому пятна никогда не двигаются в такт и узор не повторяется заметно. Раньше (48 с и 140 px) движение
-        // было около 3 px в секунду — его не замечали; теперь оно видно, но остаётся спокойным.
-        (double Dx, double Dy, double Delay, double Breath)[] paths =
+        // четыре размытых пятна света (2026-10-17: «фон должен дышать»): места и цвета задаёт тема (окно, PlaceBlobs),
+        // здесь — движение. Каждое пятно плывёт по своей петле (X и Y с разными периодами, поэтому путь — кривая, а не
+        // отрезок туда-обратно), дышит (масштаб 0,8 ↔ 1,22 за 6–9 с в одну сторону, как вдох) и чуть разгорается и гаснет.
+        // Периоды у всех разные: пятна никогда не двигаются в такт. Раньше было 1 ↔ 1,24 за 19–27 с — движение не замечали.
+        (double Dx, double Dy, double Px, double Py, double Breath, double Glow, double Delay)[] paths =
         {
-            (280, -170, 0, 19), (-300, 210, 9, 23), (320, -230, 18, 27),
+            (260, -170, 26, 34, 8.0, 11, 0), (-300, 210, 31, 23, 9.0, 13, 7), (300, -220, 29, 37, 7.0, 10, 15), (-180, 150, 21, 27, 6.0, 9, 4),
         };
         foreach (var d in paths)
         {
@@ -72,7 +73,7 @@ public sealed class BackgroundMotion
                 IsHitTestVisible = false,
                 RenderTransformOrigin = new Point(0.5, 0.5),
                 // размытие поверх мягкого края: пятно — это свет, а не круг. Кэш хранит уже размытую картинку,
-                // и сдвиг с масштабом её не перерисовывают
+                // и сдвиг, масштаб и прозрачность её не перерисовывают
                 Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 48, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance },
                 CacheMode = new BitmapCache(0.5),
             };
@@ -81,10 +82,11 @@ public sealed class BackgroundMotion
             e.RenderTransform = new TransformGroup { Children = { scale, move } };
             lights.Children.Add(e);
             _blobs.Add((e, brush));
-            Anim(move, TranslateTransform.XProperty, 0, d.Dx, 28, delay: d.Delay);
-            Anim(move, TranslateTransform.YProperty, 0, d.Dy, 28, delay: d.Delay);
-            Anim(scale, ScaleTransform.ScaleXProperty, 1, 1.24, d.Breath, delay: d.Delay);
-            Anim(scale, ScaleTransform.ScaleYProperty, 1, 1.24, d.Breath, delay: d.Delay);
+            Anim(move, TranslateTransform.XProperty, -d.Dx / 2, d.Dx / 2, d.Px, delay: d.Delay);
+            Anim(move, TranslateTransform.YProperty, -d.Dy / 2, d.Dy / 2, d.Py, delay: d.Delay + d.Py / 3);
+            Anim(scale, ScaleTransform.ScaleXProperty, 0.8, 1.22, d.Breath, delay: d.Delay);
+            Anim(scale, ScaleTransform.ScaleYProperty, 0.8, 1.22, d.Breath, delay: d.Delay);
+            Anim(e, UIElement.OpacityProperty, 0.72, 1, d.Glow, delay: d.Delay * 0.6);
         }
 
         // светлячки: 18 мягких огоньков 3–8 px, дрейф 14–30 с, мерцание 2,5–6,5 с; одно зерно — один и тот же рисунок
