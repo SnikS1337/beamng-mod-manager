@@ -72,6 +72,8 @@ jobs:
           # фильтр «Удалённые»: серые карточки, справа «Вернуть»
           Shot 'garage-deleted' @('--filter', 'Deleted', '--select', '"BMW M3 E30"')
           Shot 'garage-deep' @('--theme', 'Deep', '--select', '"Dacia Sandero Stepway"')
+          Shot 'garage-forest' @('--theme', 'Forest')
+          Shot 'light-garage-graphite' @('--mode', 'Light', '--theme', 'Graphite')
           Shot 'garage-dusk' @('--theme', 'Dusk')
           Shot 'settings' @('--page', 'settings')
           Shot 'light-garage' @('--mode', 'Light', '--select', '"Dacia Sandero Stepway"')

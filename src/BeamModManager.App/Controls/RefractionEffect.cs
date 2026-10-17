@@ -39,6 +39,15 @@ public sealed class RefractionEffect : ShaderEffect
     public static readonly DependencyProperty BrightnessProperty = DependencyProperty.Register(
         nameof(Brightness), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(1.0, PixelShaderConstantCallback(5)));
 
+    public static readonly DependencyProperty LiftProperty = DependencyProperty.Register(
+        nameof(Lift), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(0.0, PixelShaderConstantCallback(6)));
+
+    /// <summary>
+    /// Светлое оформление: насколько тёмное под стеклом подтягивается к белому (тёмное — сильнее, светлое почти не меняется).
+    /// 0 — без изменений. Так светлое стекло прозрачное, а тёмный текст на нём читается и над тёмным фото.
+    /// </summary>
+    public double Lift { get => (double)GetValue(LiftProperty); set => SetValue(LiftProperty, value); }
+
     /// <summary>Что преломляется. Обычно не задаётся: WPF подставляет сам элемент с эффектом.</summary>
     public Brush Input { get => (Brush)GetValue(InputProperty); set => SetValue(InputProperty, value); }
 
@@ -77,6 +86,7 @@ public sealed class RefractionEffect : ShaderEffect
         UpdateShaderValue(StrengthProperty);
         UpdateShaderValue(SaturationProperty);
         UpdateShaderValue(BrightnessProperty);
+        UpdateShaderValue(LiftProperty);
     }
 
     /// <summary>Один шейдер на все панели; грузится при первом обращении, неудача запоминается.</summary>

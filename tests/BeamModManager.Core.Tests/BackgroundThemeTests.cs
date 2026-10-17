@@ -39,13 +39,13 @@ public static class BackgroundThemeTests
                     Assert.True(p.Theme == theme && p.Light == light, $"{theme}/{light}: своя палитра");
                     Assert.Eq(3, p.Base.Count);
                     Assert.Eq(5, p.Grade.Count);
-                    Assert.Eq(3, p.Blobs.Count);
+                    Assert.Eq(4, p.Blobs.Count);
                     Assert.True(p.Base.All(c => c >> 24 == 0xFF), $"{theme}: основа непрозрачная");
                     Assert.True(p.Grade[0] == p.Grade[4], $"{theme}: полоса закольцована, шов не виден");
                     Assert.True(p.Name.Length > 0 && p.Note.Length > 0, $"{theme}: подписи");
                 }
-            Assert.Eq(6, BackgroundThemes.All.Count);
-            Assert.Eq(3, BackgroundThemes.Dark.Select(p => p.Name).Distinct().Count());
+            Assert.Eq(10, BackgroundThemes.All.Count);
+            Assert.Eq(5, BackgroundThemes.Dark.Select(p => p.Name).Distinct().Count());
         });
 
         t.Run("текст читается в худшем месте любой палитры (не ниже 6:1)", () =>
@@ -81,7 +81,7 @@ public static class BackgroundThemeTests
                     Assert.True(b.X is >= 0 and <= 1 && b.Y is >= 0 and <= 1 && b.R is > 0.1 and < 0.5, $"{p.Name}: расклад {b}");
                 }
             var layouts = BackgroundThemes.Dark.Select(p => string.Join(";", p.Blobs.Select(b => $"{b.X},{b.Y}"))).ToList();
-            Assert.Eq(3, layouts.Distinct().Count());
+            Assert.Eq(5, layouts.Distinct().Count());
             // смена оформления пятна не двигает: только цвет
             foreach (var theme in Enum.GetValues<BackgroundTheme>())
             {

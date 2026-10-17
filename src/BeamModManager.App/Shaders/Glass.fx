@@ -2,7 +2,9 @@
 // карта смещения из design/mockup/tools/gen.py (make) и feDisplacementMap из build_ui.py (lens).
 // Смещение в пикселях = strength * 0.5 * нормаль внутрь * t^2, t = clamp(1 - d / lens, 0, 1),
 // d — расстояние от края скруглённого прямоугольника внутрь. Каналы R, G, B сдвигаются с множителями
-// 1.0 / 1.12 / 1.26: на краю тонкая радужная кромка. Затем насыщенность и яркость, как saturate() и brightness() в CSS.
+// 1.0 / 1.12 / 1.26: на краю тонкая радужная кромка. Затем насыщенность и яркость, как saturate() и brightness() в CSS,
+// и «подъём» для светлого оформления: тёмное под стеклом высветляется сильнее светлого (2026-10-17). Так светлое стекло
+// остаётся прозрачным над светлым фоном, а тёмный текст читается и над тёмным фото.
 // Все длины в одних единицах (точки WPF): от единиц зависит только их отношение.
 // Сборка: fxc /T ps_2_0 /E main (PS 2.0 WPF умеет рисовать и без видеокарты, программно) (цель CompileGlassShader в BeamModManager.App.csproj).
 
@@ -14,6 +16,7 @@ float lens : register(c2);        // ширина линзы у края
 float strength : register(c3);    // сила (scale из макета, уже с множителем)
 float saturation : register(c4);  // насыщенность, 1 — без изменений
 float brightness : register(c5);  // яркость, 1 — без изменений
+float lift : register(c6);        // подъём тёмного к белому (светлое оформление), 0 — без изменений
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
 
@@ -48,6 +51,7 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float l = dot(col, Luma);
     col = lerp(float3(l, l, l), col, saturation) * brightness;
     float a = c.a;
+    col = lerp(col, float3(a, a, a), lift * saturate(1.0 - l));
     col = min(max(col, float3(0.0, 0.0, 0.0)), float3(a, a, a));
 
     // снаружи прозрачно, на самом краю полпикселя сглаживания

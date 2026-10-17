@@ -142,7 +142,11 @@ public sealed class Droplet : FrameworkElement
         if (_owner is not null)
         {
             _tint.Fill = _owner.Tint;
-            if (_refraction is not null) _refraction.Brightness = Math.Min(1.15, _owner.EffectiveBrightness * 1.12);
+            if (_refraction is not null)
+            {
+                _refraction.Brightness = Math.Min(1.15, _owner.EffectiveBrightness * 1.12);
+                _refraction.Lift = _owner.EffectiveLift * 0.6; // капля светлее стекла и так: подъём мягче
+            }
         }
         _under.Fill = Under;
         _lastBox = Rect.Empty;

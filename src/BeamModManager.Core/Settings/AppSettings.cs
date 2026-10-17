@@ -3,10 +3,10 @@ using BeamModManager.Core.Updates;
 namespace BeamModManager.Core.Settings;
 
 /// <summary>
-/// Фон за панелями: один из трёх тёмных градиентов (решено 2026-10-15 вместо фотографии). Цвета — в
+/// Фон за панелями: одна из пяти тем (решено 2026-10-15 вместо фотографии; «Лес» и «Графит» — 2026-10-17). Цвета — в
 /// BeamModManager.Ui.Look.BackgroundThemes; номера сохраняются в файле, их не меняем.
 /// </summary>
-public enum BackgroundTheme { Night = 0, Deep = 1, Dusk = 2 }
+public enum BackgroundTheme { Night = 0, Deep = 1, Dusk = 2, Forest = 3, Graphite = 4 }
 
 /// <summary>Оформление: тёмное (как на доске), светлое или как в Windows («Режим приложения» в параметрах цвета).</summary>
 public enum UiMode { Dark = 0, Light = 1, System = 2 }

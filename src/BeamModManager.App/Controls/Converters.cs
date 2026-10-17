@@ -198,6 +198,7 @@ public sealed class ThemeSwatchConverter : IValueConverter
             case "blob0":
             case "blob1":
             case "blob2":
+            case "blob3":
                 // пятно на своём месте темы: плитка — уменьшенная копия фона
                 var blob = p.Blobs[part[^1] - '0'];
                 var c = ToColor(blob.Color);
