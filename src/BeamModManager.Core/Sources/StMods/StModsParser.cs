@@ -18,6 +18,8 @@ public static class StModsParser
 
     private static readonly Regex Card = new(@"<div class=""row index-card""[^>]*>(?<b>.*?)(?=<div class=""row index-card""|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex CardHref = new(@"<a[^>]*class=""[^""]*index-card-img[^""]*""[^>]*href=""(?<h>[^""]+)""", RegexOptions.Singleline | RegexOptions.Compiled);
+    // картинка карточки — фон ссылки: style="background-image: url('/beamng_drive/mods/…/…_img1pre.jpg?')"
+    private static readonly Regex CardImage = new(@"<a[^>]*class=""[^""]*index-card-img[^""]*""[^>]*background-image:\s*url\(\s*['""]?(?<u>[^'""\)]+)", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex CardTitle = new(@"<h3 class=""text-left"">\s*<b>(?<n>.*?)</b>\s*(?:<small>(?<s>.*?)</small>)?", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex AuthorLink = new(@"Автор:\s*<a[^>]*>(?<a>.*?)</a>", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex DownloadBtn = new(@"<a[^>]*href=""(?<h>/download_file\.php\?[^""]+)""[^>]*>\s*Скачать\s+мод\s*(?:\((?<sz>[^)]*)\))?\s*(?:<br>\s*<small>\s*с\s+(?<host>[^<]+?)\s*</small>)?", RegexOptions.Singleline | RegexOptions.Compiled);
@@ -42,6 +44,10 @@ public static class StModsParser
             var full = tail.Length > 0 ? $"{name} {tail}" : name;
             var parsed = TitleParser.Parse(full);
             var author = AuthorLink.Match(b);
+            var image = CardImage.Match(b);
+            Uri? preview = null;
+            if (image.Success && Uri.TryCreate(Base, WebUtility.HtmlDecode(image.Groups["u"].Value.Trim()), out var p) && p.Scheme == Uri.UriSchemeHttps)
+                preview = p;
 
             result.Add(new Listing(SourceId, url, SlugOf(url), full)
             {
@@ -49,6 +55,7 @@ public static class StModsParser
                 GameVersion = parsed.GameVersion,
                 Author = author.Success ? Clean(author.Groups["a"].Value) : null,
                 Price = parsed.HasPaidMarker ? PriceStatus.Paid : PriceStatus.Unknown,
+                PreviewUrl = preview,
             });
         }
         return result;

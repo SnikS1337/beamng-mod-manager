@@ -15,6 +15,12 @@ public sealed record RawResponse(int Status, string Body, TimeSpan? RetryAfter =
 public interface IPageFetcher
 {
     Task<RawResponse> GetAsync(Uri url, CancellationToken ct);
+
+    /// <summary>
+    /// Отправка формы (application/x-www-form-urlencoded). Нужна поиску STMods: сортировку и число результатов он берёт
+    /// только из формы, а не из адреса.
+    /// </summary>
+    Task<RawResponse> PostFormAsync(Uri url, string form, CancellationToken ct) => throw new NotSupportedException("форма не поддерживается");
 }
 
 public sealed class HttpPageFetcher : IPageFetcher
@@ -43,6 +49,14 @@ public sealed class HttpPageFetcher : IPageFetcher
     public async Task<RawResponse> GetAsync(Uri url, CancellationToken ct)
     {
         using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        return new RawResponse((int)resp.StatusCode, body, ParseRetryAfter(resp.Headers.RetryAfter));
+    }
+
+    public async Task<RawResponse> PostFormAsync(Uri url, string form, CancellationToken ct)
+    {
+        using var content = new StringContent(form, Encoding.ASCII, "application/x-www-form-urlencoded");
+        using var resp = await _http.PostAsync(url, content, ct).ConfigureAwait(false);
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         return new RawResponse((int)resp.StatusCode, body, ParseRetryAfter(resp.Headers.RetryAfter));
     }
@@ -98,7 +112,8 @@ public sealed class PoliteFetcher
     private readonly Random _rng;
     private readonly object _lock = new();
     private readonly Dictionary<string, HostState> _hosts = new();
-    private readonly Dictionary<Uri, (DateTimeOffset At, FetchResult Result)> _cache = new();
+    /// <summary>Ключ — адрес, а для формы ещё и её содержимое (тот же адрес с другой формой — другая страница).</summary>
+    private readonly Dictionary<string, (DateTimeOffset At, FetchResult Result)> _cache = new();
 
     public PoliteFetcher(IPageFetcher inner, PoliteFetchOptions? options = null,
         Func<DateTimeOffset>? now = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Random? rng = null)
@@ -139,12 +154,18 @@ public sealed class PoliteFetcher
         return SourceStatus.Ok;
     }
 
-    public async Task<FetchResult> GetAsync(Uri url, CancellationToken ct = default)
+    public Task<FetchResult> GetAsync(Uri url, CancellationToken ct = default) => SendAsync(url, null, ct);
+
+    /// <summary>Отправить форму с теми же правилами, что и у GET: очередь на сайт, пауза, повторы, кэш, проверка «вы человек?».</summary>
+    public Task<FetchResult> PostFormAsync(Uri url, string form, CancellationToken ct = default) => SendAsync(url, form, ct);
+
+    private async Task<FetchResult> SendAsync(Uri url, string? form, CancellationToken ct)
     {
+        var key = form is null ? url.AbsoluteUri : url.AbsoluteUri + "\n" + form;
         lock (_lock)
         {
             // Отрицательный возраст — часы перевели назад: сколько страница лежит, неизвестно, считаем устаревшей.
-            if (_cache.TryGetValue(url, out var c) && _now() - c.At is { } age && age >= TimeSpan.Zero && age < _o.CacheTtl)
+            if (_cache.TryGetValue(key, out var c) && _now() - c.At is { } age && age >= TimeSpan.Zero && age < _o.CacheTtl)
                 return c.Result with { FromCache = true };
         }
 
@@ -165,7 +186,8 @@ public sealed class PoliteFetcher
                 RawResponse raw;
                 try
                 {
-                    raw = await _inner.GetAsync(url, ct).ConfigureAwait(false);
+                    raw = form is null ? await _inner.GetAsync(url, ct).ConfigureAwait(false)
+                        : await _inner.PostFormAsync(url, form, ct).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is HttpRequestException or IOException
                                            || (ex is OperationCanceledException && !ct.IsCancellationRequested)) // таймаут HttpClient, а не отмена пользователя
@@ -198,7 +220,7 @@ public sealed class PoliteFetcher
 
                 st.Failures = 0;
                 var ok = new FetchResult(raw.Status, raw.Body, SourceStatus.Ok);
-                lock (_lock) Remember(url, ok);
+                lock (_lock) Remember(key, ok);
                 return ok;
             }
         }
@@ -209,10 +231,10 @@ public sealed class PoliteFetcher
     }
 
     /// <summary>Кэш ограничен: просроченное убирается, при переполнении уходят самые старые (страницы по сотни килобайт).</summary>
-    private void Remember(Uri url, FetchResult result)
+    private void Remember(string key, FetchResult result)
     {
         var now = _now();
-        _cache[url] = (now, result);
+        _cache[key] = (now, result);
         if (_cache.Count <= _o.MaxCacheEntries) return;
         foreach (var k in _cache.Where(kv => now - kv.Value.At >= _o.CacheTtl).Select(kv => kv.Key).ToList()) _cache.Remove(k);
         while (_cache.Count > _o.MaxCacheEntries)

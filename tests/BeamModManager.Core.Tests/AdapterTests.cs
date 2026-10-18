@@ -20,10 +20,16 @@ public static class AdapterTests
         public readonly List<Uri> Requested = new();
         private readonly Dictionary<string, (int Status, string Body)> _map;
         public Pages(Dictionary<string, (int, string)> map) { _map = map; }
+        public readonly List<string> Forms = new();
         public Task<RawResponse> GetAsync(Uri url, CancellationToken ct)
         {
             Requested.Add(url);
             return Task.FromResult(_map.TryGetValue(url.AbsoluteUri, out var r) ? new RawResponse(r.Status, r.Body) : new RawResponse(404, ""));
+        }
+        public Task<RawResponse> PostFormAsync(Uri url, string form, CancellationToken ct)
+        {
+            Forms.Add(form);
+            return GetAsync(url, ct);
         }
     }
 
@@ -38,7 +44,7 @@ public static class AdapterTests
 
         t.Run("STMods: поиск строит адрес с экранированием и разбирает страницу результатов", async () =>
         {
-            var pages = new Pages(new() { ["https://stmods.org/search.php?search_request=toyota%20sienna"] = (200, Fx("stmods/search-real.html")) });
+            var pages = new Pages(new() { ["https://stmods.org/search.php?search_request=toyota%20sienna&partition=beamng"] = (200, Fx("stmods/search-real.html")) });
             var src = new StModsSource(Polite(pages));
             var r = await src.SearchAsync("toyota sienna");
             Assert.Eq(3, r.Count);
@@ -65,7 +71,7 @@ public static class AdapterTests
             var pages = new Pages(new()
             {
                 ["https://modsgaming.ru/load/beamng_drive/mashiny/38-2"] = (200, Fx("modsgaming/list-real.html")),
-                ["https://modsgaming.ru/search/?q=sienna&t=0"] = (200, Fx("modsgaming/search-real.html")),
+                ["https://modsgaming.ru/search/?q=sienna%20beamng.drive&t=0"] = (200, Fx("modsgaming/search-real.html")),
             });
             var src = new ModsGamingSource(Polite(pages));
             Assert.True(src.SupportsSearch, "поиск включён");

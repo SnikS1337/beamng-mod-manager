@@ -245,7 +245,7 @@ public sealed class LibraryUpdatesBackend : IUpdatesBackend
         }
         catch (SourceException e) when (e.Status == SourceStatus.NeedsHumanCheck)
         {
-            return new PageCheck(null, $"{SiteNames.Of(src.Id)} просит подтвердить, что вы человек. Откройте сайт в браузере и попробуйте ещё раз");
+            return new PageCheck(null, $"{SiteNames.Of(src.Id)} не пускает программу: просит подтвердить, что вы человек. Следить на нём сейчас не получится");
         }
         catch (SourceException)
         {

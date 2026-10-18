@@ -2498,13 +2498,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SiteOpen_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { DataContext: SiteRow row }) return;
-        OpenUrl(row.Home);
-        _upd.SiteOpened(row);
-    }
-
     private void SiteDone_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: SiteRow row }) _upd.SiteConfirmed(row);
