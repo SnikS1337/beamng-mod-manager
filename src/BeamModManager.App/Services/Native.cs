@@ -23,6 +23,19 @@ internal static class Native
         SetDarkFrame(w, true);
     }
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
+    private const int GWL_EXSTYLE = -20;
+    private const long WS_EX_TOOLWINDOW = 0x80, WS_EX_APPWINDOW = 0x40000;
+
+    /// <summary>Служебное окно: нет на панели задач и в Alt+Tab (скрытое окно встроенного браузера для Modland).</summary>
+    public static void MakeToolWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return;
+        var ex = (long)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)((ex | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW));
+    }
+
     /// <summary>Тёмная или светлая системная рамка окна (тонкая кромка и тень Windows 11) — под оформление программы.</summary>
     public static void SetDarkFrame(Window w, bool dark)
     {

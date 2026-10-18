@@ -512,7 +512,11 @@ public partial class App : Application
         };
 
         // проверка обновлений и привязка страниц: один вежливый загрузчик на все сайты (паузы, кэш, «вы человек?»)
-        var fetcher = new PoliteFetcher(new HttpPageFetcher());
+        // Modland — встроенным браузером Edge (его защита Cloudflare простой запрос не пускает), остальные — как раньше.
+        // Нет браузера Edge (WebView2) — всё обычными запросами, Modland тогда «не пускает программу»
+        var browser = BrowserPages.RuntimeAvailable() ? new BrowserPages(Current.Dispatcher, Path.Combine(appDir, "WebView2")) : null;
+        IPageFetcher pages = browser is null ? new HttpPageFetcher() : new RoutingPageFetcher(new HttpPageFetcher(), browser, ModlandSource.Hosts);
+        var fetcher = new PoliteFetcher(pages);
         IModSource[] sources = { new ModlandSource(fetcher), new ModsGamingSource(fetcher), new StModsSource(fetcher), new BeamNgRepoSource(fetcher) };
         var updates = new LibraryUpdatesBackend(store, sources, () => svm.Current, null, fetcher.ClearCache, fetcher.ResetHost, fetcher.StatusOf);
         // «Поиск»: те же сайты и загрузчик; решения «Это один мод» / «Это разные» хранятся навсегда
@@ -527,6 +531,13 @@ public partial class App : Application
             Updates = updates,
             Search = search,
             SearchImages = remote.FetchAsync,
+            CanPassHumanCheck = browser is null ? null : id => id == Core.Sources.Modland.ModlandParser.SourceId,
+            PassHumanCheck = browser is null ? null : async (owner, id, dark) =>
+            {
+                if (id != Core.Sources.Modland.ModlandParser.SourceId || !await browser.PassCheckAsync(owner, ModlandSource.CheckPage, dark)) return false;
+                foreach (var h in ModlandSource.Hosts) fetcher.ResetHost(h);
+                return true;
+            },
             Settings = svm,
             Updater = updater,
             CheckUpdatesOnStart = settings.CheckAppUpdates,

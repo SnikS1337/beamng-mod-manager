@@ -91,6 +91,13 @@ public sealed class WindowHost
     public ISearchBackend? Search { get; init; }
     /// <summary>Картинка карточки поиска по адресу с сайта: путь к уменьшенной копии на диске или null (заглушка).</summary>
     public Func<Uri, CancellationToken, Task<string?>>? SearchImages { get; init; }
+    /// <summary>
+    /// Сайт, проверку «вы человек?» которого можно пройти во встроенном окне (Modland, 2026-10-18). null — нельзя (нет
+    /// браузера Edge, демо): в строке сайта тогда «Проверить снова», как раньше.
+    /// </summary>
+    public Func<string, bool>? CanPassHumanCheck { get; init; }
+    /// <summary>Окно проверки: (владелец, сайт, тёмное оформление) → прошли ли. Пройдено — сайт снова опрашивается.</summary>
+    public Func<Window, string, bool, Task<bool>>? PassHumanCheck { get; init; }
     /// <summary>Открыть при запуске (снимки сборочной машины): "settings" — настройки.</summary>
     public string? StartPage { get; init; }
     public SettingsSection StartSection { get; init; }
@@ -234,6 +241,7 @@ public partial class MainWindow : Window
         UpdScroller.DataContext = UpdEmptyBox.DataContext = CheckPanel.DataContext = _upd;
         // «Поиск»: сайты отвечают из фона, их ответы окно применяет у себя
         _find = new SearchViewModel(host.Search ?? new NoSearch(), () => vm.AllCards, a => Dispatcher.BeginInvoke(a)) { DownloadsAllowed = host.DownloadsAllowed };
+        if (host.CanPassHumanCheck is { } canPass) { _upd.CanPassCheck = canPass; _find.CanPassCheck = canPass; }
         // установка из скачанного и перетащенного архива (2026-10-18)
         _in = new IncomingViewModel(host.Backend, vm, a => Dispatcher.BeginInvoke(a));
         IncomingLayer.DataContext = _in;
@@ -2587,6 +2595,26 @@ public partial class MainWindow : Window
     private void SiteDone_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: SiteRow row }) _upd.SiteConfirmed(row);
+    }
+
+    private bool _passing;
+
+    /// <summary>
+    /// «Пройти проверку» (Modland): окно с сайтом; прошли — сайт снова в деле: в «Обновлениях» проверка запускается сразу,
+    /// в «Поиске» — тот же запрос заново. Окно одно, сколько ни нажимай.
+    /// </summary>
+    private async void SitePass_Click(object sender, RoutedEventArgs e)
+    {
+        if (_passing || sender is not FrameworkElement { DataContext: SiteRow row } || _host.PassHumanCheck is not { } pass) return;
+        _passing = true;
+        try
+        {
+            if (!await pass(this, row.Id, _light != true)) return;
+            _vm.Notify($"{row.Name} пускает программу");
+            if (_upd.Sites.Contains(row)) await _upd.SitePassedAsync(row);
+            else if (_find.Sites.Contains(row)) await _find.RunAsync();
+        }
+        finally { _passing = false; }
     }
 
     private void OpenUrl(Uri? url)

@@ -161,6 +161,13 @@ public abstract class SiteAdapter : IModSource
 public sealed class ModlandSource : SiteAdapter
 {
     private static readonly Uri Root = new("https://www.modland.net/");
+
+    /// <summary>Адреса сайта: страницы с них программа берёт встроенным браузером (защита Cloudflare, 2026-10-18).</summary>
+    public static readonly IReadOnlyList<string> Hosts = new[] { "www.modland.net", "modland.net" };
+
+    /// <summary>С чего начинается проверка «вы человек?» во встроенном окне.</summary>
+    public static Uri CheckPage => Root;
+
     public ModlandSource(PoliteFetcher f) : base(f) { }
     public override string Id => ModlandParser.SourceId;
     public override string DisplayName => "Modland";
