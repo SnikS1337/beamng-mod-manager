@@ -325,6 +325,14 @@ public static class XamlTests
                 && ci.Contains("Get-Content notes.md", StringComparison.Ordinal), "выпуск пишет в описание раздел своей версии");
         });
 
+        t.Run("аудит 2026-10-18: картинки поиска с User-Agent, ошибки фоновых задач в журнал, Lua в CI с обновлением пакетов", () =>
+        {
+            Assert.True(Read("Services/RemotePreviews.cs").Contains("UserAgent.ParseAdd(BeamModManager.Core.Net.HttpPageFetcher.UserAgent)", StringComparison.Ordinal), "User-Agent у картинок");
+            Assert.True(Read("App.xaml.cs").Contains("TaskScheduler.UnobservedTaskException += (_, a) => { Log(a.Exception); a.SetObserved(); };", StringComparison.Ordinal), "фоновые ошибки в журнал");
+            var root = Path.GetFullPath(Path.Combine(AppDir()!, "..", ".."));
+            Assert.True(File.ReadAllText(Path.Combine(root, ".github", "workflows", "windows.yml")).Contains("sudo apt-get update -q && sudo apt-get install", StringComparison.Ordinal), "apt-get update");
+        });
+
         t.Run("значок программы: в exe и у окна, в ICO все размеры от 16 до 256 (мелкие нарисованы отдельно)", () =>
         {
             var proj = Read("BeamModManager.App.csproj");

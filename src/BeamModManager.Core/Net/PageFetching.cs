@@ -25,6 +25,9 @@ public interface IPageFetcher
 
 public sealed class HttpPageFetcher : IPageFetcher
 {
+    /// <summary>Как программа представляется сайтам: страницам и картинкам поиска одинаково.</summary>
+    public const string UserAgent = "BeamModManager/0.1 (personal use; update checks)";
+
     private readonly HttpClient _http;
 
     static HttpPageFetcher()
@@ -43,7 +46,7 @@ public sealed class HttpPageFetcher : IPageFetcher
             ConnectTimeout = TimeSpan.FromSeconds(15),
         }) { Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = 16 * 1024 * 1024 };
         if (_http.DefaultRequestHeaders.UserAgent.Count == 0)
-            _http.DefaultRequestHeaders.UserAgent.ParseAdd("BeamModManager/0.1 (personal use; update checks)");
+            _http.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
     }
 
     public async Task<RawResponse> GetAsync(Uri url, CancellationToken ct)
@@ -159,21 +162,33 @@ public sealed class PoliteFetcher
     /// <summary>Отправить форму с теми же правилами, что и у GET: очередь на сайт, пауза, повторы, кэш, проверка «вы человек?».</summary>
     public Task<FetchResult> PostFormAsync(Uri url, string form, CancellationToken ct = default) => SendAsync(url, form, ct);
 
-    private async Task<FetchResult> SendAsync(Uri url, string? form, CancellationToken ct)
+    private bool FromCache(string key, out FetchResult result)
     {
-        var key = form is null ? url.AbsoluteUri : url.AbsoluteUri + "\n" + form;
         lock (_lock)
         {
             // Отрицательный возраст — часы перевели назад: сколько страница лежит, неизвестно, считаем устаревшей.
             if (_cache.TryGetValue(key, out var c) && _now() - c.At is { } age && age >= TimeSpan.Zero && age < _o.CacheTtl)
-                return c.Result with { FromCache = true };
+            {
+                result = c.Result with { FromCache = true };
+                return true;
+            }
         }
+        result = null!;
+        return false;
+    }
+
+    private async Task<FetchResult> SendAsync(Uri url, string? form, CancellationToken ct)
+    {
+        var key = form is null ? url.AbsoluteUri : url.AbsoluteUri + "\n" + form;
+        if (FromCache(key, out var cached)) return cached;
 
         var host = url.Host.ToLowerInvariant();
         var st = State(host);
         await st.Gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // пока ждали очереди, ту же страницу мог скачать соседний запрос (2026-10-18: раньше качали второй раз)
+            if (FromCache(key, out cached)) return cached;
             if (st.NeedsHumanCheck)
                 return new FetchResult(null, null, SourceStatus.NeedsHumanCheck, Note: "сайт ждёт, пока пользователь пройдёт проверку");
             if (InCooldown(st))
@@ -194,7 +209,7 @@ public sealed class PoliteFetcher
                 {
                     st.LastRequest = _now();
                     if (attempt < _o.MaxRetries) { await _delay(Backoff(attempt, null), ct).ConfigureAwait(false); continue; }
-                    return Failure(st, null, ex is OperationCanceledException ? "сайт не ответил вовремя" : ex.Message);
+                    return Failure(st, null, NetErrors.Describe(ex));
                 }
                 st.LastRequest = _now();
 
@@ -208,6 +223,14 @@ public sealed class PoliteFetcher
                 {
                     if (attempt < _o.MaxRetries) { await _delay(Backoff(attempt, raw.RetryAfter), ct).ConfigureAwait(false); continue; }
                     return Failure(st, raw.Status, "слишком много запросов или сайт перегружен");
+                }
+
+                // сбой по дороге к сайту (шлюз, Cloudflare 520–524) обычно мимолётный: один повтор после паузы (2026-10-18).
+                // 500 не повторяем: это чаще постоянная ошибка самого сайта
+                if (IsGatewayError(raw.Status))
+                {
+                    if (attempt < Math.Min(1, _o.MaxRetries)) { await _delay(Backoff(attempt, raw.RetryAfter), ct).ConfigureAwait(false); continue; }
+                    return Failure(st, raw.Status, $"сайт временно не отвечает (код {raw.Status})");
                 }
 
                 if (raw.Status is 404 or 410)
@@ -259,6 +282,9 @@ public sealed class PoliteFetcher
         return new FetchResult(status, null, SourceStatus.Unavailable, Note: note);
     }
 
+    /// <summary>502, 504 и коды Cloudflare 520–524: сайт за посредником не ответил.</summary>
+    public static bool IsGatewayError(int status) => status is 502 or 504 or (>= 520 and <= 524);
+
     private TimeSpan Backoff(int attempt, TimeSpan? retryAfter)
     {
         var wait = retryAfter ?? TimeSpan.FromTicks(_o.DefaultBackoff.Ticks * (1L << attempt));
@@ -268,7 +294,11 @@ public sealed class PoliteFetcher
     private async Task WaitTurnAsync(HostState st, CancellationToken ct)
     {
         if (st.LastRequest is not { } last) return;
-        var gap = _o.MinDelay + TimeSpan.FromTicks((long)(_o.Jitter.Ticks * _rng.NextDouble()));
+        // Random не для нескольких потоков: очереди разных сайтов идут параллельно, и без замка он мог сломаться
+        // (отдаёт одни нули — паузы без разброса), 2026-10-18
+        double r;
+        lock (_rng) r = _rng.NextDouble();
+        var gap = _o.MinDelay + TimeSpan.FromTicks((long)(_o.Jitter.Ticks * r));
         var elapsed = _now() - last;
         if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero; // часы перевели назад: ждём обычную паузу, а не часы
         var wait = gap - elapsed;

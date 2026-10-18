@@ -154,7 +154,7 @@ public sealed class JsonLibraryStore : ILibraryStore
         try
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(_path))!);
-            File.WriteAllText(tmp, JsonSerializer.Serialize(model, Json));
+            Safety.DurableFile.WriteAllText(tmp, JsonSerializer.Serialize(model, Json)); // на диск до замены
             File.Move(tmp, _path, overwrite: true);
             _dirty = false;
             _saveError = null;

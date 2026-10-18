@@ -101,7 +101,7 @@ public sealed class SettingsStore
             var tmp = _path + ".tmp";
             try
             {
-                File.WriteAllText(tmp, json);
+                Safety.DurableFile.WriteAllText(tmp, json); // на диск до замены: без питания не останется пустой файл
                 File.Move(tmp, _path, overwrite: true);
             }
             catch
