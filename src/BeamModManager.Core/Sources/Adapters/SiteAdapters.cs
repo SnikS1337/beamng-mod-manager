@@ -121,7 +121,9 @@ public abstract class SiteAdapter : IModSource
             if (added.Count == 0) break;
             found.AddRange(added);
         }
-        return found;
+        // сайты для нескольких игр (Modland, ModsGaming) ищут по всем: оставляем только страницы модов BeamNG — по адресу,
+        // как у ленты (2026-10-18: в поиске были скины Euro Truck Simulator 2 и прицепы Farming Simulator с Modland)
+        return found.Where(l => IsModPage(l.Url)).ToList();
     }
 
     /// <summary>Что из найденного сайтом относится к запросу человека. По умолчанию — всё, как ответил сайт.</summary>
