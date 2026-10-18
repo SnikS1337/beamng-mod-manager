@@ -36,8 +36,18 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', 'global.json', 'NuGet.config') }}
           restore-keys: nuget-${{ runner.os }}-
+      # упавшие проверки — пометками (их видно через API и на странице сборки, без скачивания журнала)
       - name: Тесты
-        run: dotnet run --project tests/BeamModManager.Core.Tests -c Release
+        shell: pwsh
+        run: |
+          dotnet run --project tests/BeamModManager.Core.Tests -c Release 2>&1 | Tee-Object tests.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path tests.log -Pattern '^\s*FAIL\s' -Context 0,2 | Select-Object -First 20 | ForEach-Object {
+              "::error::$($_.Line.Trim()) | $(($_.Context.PostContext | ForEach-Object { $_.Trim() }) -join ' | ')"
+            }
+            Select-String -Path tests.log -Pattern ' error ' | Select-Object -First 10 | ForEach-Object { "::error::$($_.Line.Trim())" }
+            exit 1
+          }
 
   # Помощник внутри игры (Lua) на подделке API BeamNG: в игре LuaJIT, совместимый с Lua 5.1.
   lua:
