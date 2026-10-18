@@ -84,8 +84,9 @@ public sealed class Droplet : FrameworkElement
         ViewboxUnits = BrushMappingMode.Absolute, Stretch = Stretch.Fill,
         AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top, TileMode = TileMode.None,
     };
-    // _tone — цвет сцены (насыщенность, яркость, подъём, без сдвига); _refraction — сдвиг у кромки и радуга для всего, что
-    // в линзе: сцены, подложки и подписей. Раньше одним эффектом преломлялась только сцена
+    // _tone — сама линза сцены, как была (сильный сдвиг у кромки, цвет); _refraction — мягкий сдвиг у самой кромки и радуга
+    // для всего, что в линзе, прежде всего подписей. Сила линзы сцены для текста не годится: капля 40 высотой вся «у кромки»,
+    // и подписи перемешивались до нечитаемого (снимок 2026-10-18); у Apple текст гнётся только у края, середина читается
     private readonly RefractionEffect? _tone, _refraction;
     private Panel? _frontHost;
     private Glass? _owner;
@@ -104,11 +105,12 @@ public sealed class Droplet : FrameworkElement
         _clip = new Grid { ClipToBounds = true, Children = { _lens } };
         if (RefractionEffect.IsAvailable)
         {
-            // линза капли заметно сильнее, чем у панели (2026-10-16: «как капля»): широкая и сильная, насыщенный цвет.
-            // Цвет — только сцене (подписи и подложка своего цвета не меняют), сдвиг и радуга — всему, что в линзе
-            _tone = new RefractionEffect { Strength = 0, Lens = 26, Saturation = 1.65 };
+            // линза капли заметно сильнее, чем у панели (2026-10-16: «как капля»): широкая и сильная, насыщенный цвет —
+            // только сцене. Подписи и подложка своего цвета не меняют и гнутся мягко: сдвиг до 9 у самого края, к 6 от
+            // края — вчетверо меньше
+            _tone = new RefractionEffect { Strength = 100, Lens = 26, Saturation = 1.65 };
             _lens.Effect = _tone;
-            _refraction = new RefractionEffect { Strength = 100, Lens = 26 };
+            _refraction = new RefractionEffect { Strength = 18, Lens = 12 };
             _glass = new Grid { Children = { new Grid { ClipToBounds = true, Children = { _clip, _tint, _under, _labels } } }, Effect = _refraction };
         }
         else

@@ -257,7 +257,20 @@ public static class XamlTests
             }
             var drop = Read("Controls/Droplet.cs");
             Assert.True(drop.Contains("MotionProperty", StringComparison.Ordinal) && drop.Contains("class RestPaint", StringComparison.Ordinal), "плашка в покое и переход к линзе");
-            Assert.True(drop.Contains("_clip.Visibility = _tint.Visibility = lensVis", StringComparison.Ordinal), "пока капля стоит, линзы нет (сцена не копируется)");
+            Assert.True(drop.Contains("_glass.Visibility = lensVis", StringComparison.Ordinal), "пока капля стоит, линзы нет (сцена не копируется)");
+            Assert.True(drop.Contains("Children = { _clip, _tint, _under, _labels }", StringComparison.Ordinal) && drop.Contains("Effect = _refraction", StringComparison.Ordinal),
+                "в линзе преломляется и копия подписей (2026-10-18)");
+            var xaml = Read("MainWindow.xaml");
+            foreach (var (name, labels, front) in new[] { ("FilterDrop", "FilterList", "FilterFront"), ("NavDrop", "NavItems", "NavFront"), ("CapDrop", "CapButtons", "CapFront") })
+            {
+                var at = xaml.IndexOf($"x:Name=\"{name}\"", StringComparison.Ordinal);
+                var tag = xaml[at..xaml.IndexOf('>', at)];
+                Assert.True(tag.Contains($"Labels=\"{{Binding ElementName={labels}}}\"", StringComparison.Ordinal) && tag.Contains($"Front=\"{{Binding ElementName={front}}}\"", StringComparison.Ordinal),
+                    $"{name}: подписи {labels} преломляются, линза поверх них в {front}");
+                Assert.True(xaml.IndexOf($"x:Name=\"{front}\"", StringComparison.Ordinal) > xaml.IndexOf($"x:Name=\"{labels}\"", StringComparison.Ordinal), $"{front} — над {labels}");
+            }
+            Assert.True(code.Contains("b.Within(-3, FilterList.ActualWidth + 3", StringComparison.Ordinal) && code.Contains("b.Within(NavDropTop", StringComparison.Ordinal),
+                "капли не уходят за крайний пункт");
             var sw = Read("Controls/GlassSwitch.cs");
             Assert.True(sw.Contains("var grow = 1 + 0.6 * lift", StringComparison.Ordinal), "ручка переключателя в пути выше дорожки");
             Assert.True(sw.Contains("радужная кромка", StringComparison.Ordinal), "у ручки радужная кромка");
