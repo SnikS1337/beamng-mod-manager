@@ -321,7 +321,10 @@ public static class IncomingAnalyzer
     /// <summary>Имя файла для папки модов: без «(1)», который дописывает браузер к повторной загрузке, и всегда .zip.</summary>
     public static string CleanName(string name)
     {
-        var stem = System.IO.Path.GetFileNameWithoutExtension(name);
+        // без Path.GetFileName: на Windows «a:b.zip» он прочёл бы как диск «a:» и файл «b.zip»
+        var file = name[(name.LastIndexOfAny(new[] { '/', '\\' }) + 1)..];
+        var dot = file.LastIndexOf('.');
+        var stem = dot > 0 ? file[..dot] : dot == 0 ? "" : file;
         stem = Regex.Replace(stem, @"\s*\(\d{1,3}\)$", "").Trim().TrimEnd('.');
         stem = new string(stem.Select(c => WindowsInvalid.Contains(c) || c < 32 ? '_' : c).ToArray());
         if (stem.Length == 0 || stem.StartsWith('.')) stem = "mod" + stem;
