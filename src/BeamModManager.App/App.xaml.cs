@@ -183,6 +183,10 @@ public partial class App : Application
                 {
                     Theme = Enum.TryParse<BackgroundTheme>(Arg("--theme"), true, out var th) && Enum.IsDefined(th) ? th : BackgroundTheme.Night,
                     Mode = Enum.TryParse<UiMode>(Arg("--mode"), true, out var md) && Enum.IsDefined(md) ? md : UiMode.Dark,
+                    // снимок «Загрузки модов»: включено и одна своя папка (--allow-downloads)
+                    AllowDownloads = Array.IndexOf(Environment.GetCommandLineArgs(), "--allow-downloads") >= 0,
+                    WatchFolders = Array.IndexOf(Environment.GetCommandLineArgs(), "--allow-downloads") >= 0
+                        ? new[] { @"D:\Telegram Desktop" } : Array.Empty<string>(),
                     // --matte: жидкое стекло выключено (снимки матового вида с плашками вместо капель)
                     LiquidGlass = Array.IndexOf(Environment.GetCommandLineArgs(), "--matte") < 0,
                 })

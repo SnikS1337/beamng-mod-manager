@@ -223,6 +223,7 @@ public partial class MainWindow : Window
         IncomingLayer.DataContext = _in;
         OfferBox.DataContext = _in;
         _in.PropertyChanged += Incoming_PropertyChanged;
+        host.Settings.DownloadsFolder = DownloadsWatcher.DownloadsPath();
         _downloads = new DownloadsWatcher(p => Dispatcher.BeginInvoke(() => { if (IsLoaded) _ = _in.OfferAsync(p, IncomingOrigin.Downloaded, _closing.Token); }));
         Closed += (_, _) => _downloads.Dispose();
         // «Интерфейс работает медленно»: итоги анимаций приходят от пружин (поток окна)
@@ -1759,8 +1760,28 @@ public partial class MainWindow : Window
     private readonly DownloadsWatcher _downloads;
     private IInputElement? _focusBeforeIncoming;
 
-    /// <summary>«Загрузки» смотрим, только пока включено «Разрешить загрузку модов» (на снимках — никогда).</summary>
-    private void UpdateDownloadsWatch(AppSettings s) => _downloads.SetEnabled(s.AllowDownloads && _host.ShotPath is null && IsLoaded);
+    /// <summary>«Загрузки» и добавленные папки смотрим, только пока включено «Разрешить загрузку модов» (на снимках — никогда).</summary>
+    private void UpdateDownloadsWatch(AppSettings s)
+    {
+        var on = s.AllowDownloads && _host.ShotPath is null && IsLoaded;
+        var folders = new List<string>();
+        if (on && _host.Settings.DownloadsFolder is { } d) folders.Add(d);
+        if (on) folders.AddRange(s.WatchFolders);
+        _downloads.SetFolders(folders);
+    }
+
+    /// <summary>«Добавить папку» в «Загрузке модов»: обычный выбор папки Windows; уже смотримая или «Загрузки» — объясняем.</summary>
+    private void AddWatchFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Папка, куда вы скачиваете моды" };
+        if (dlg.ShowDialog(this) != true) return;
+        if (_host.Settings.AddWatchFolder(dlg.FolderName) is { } why) _vm.Notify(why);
+    }
+
+    private void RemoveWatchFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: string folder }) _host.Settings.RemoveWatchFolder(folder);
+    }
 
     private void Incoming_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

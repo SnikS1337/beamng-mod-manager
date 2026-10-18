@@ -102,8 +102,10 @@ public sealed class SettingsViewModel : Observable
     }
 
     private static bool SameAs(AppSettings a, AppSettings b) =>
-        a with { DisabledSources = Array.Empty<string>() } == b with { DisabledSources = Array.Empty<string>() } &&
-        a.DisabledSources.SequenceEqual(b.DisabledSources);
+        a with { DisabledSources = Array.Empty<string>(), WatchFolders = Array.Empty<string>() } ==
+        b with { DisabledSources = Array.Empty<string>(), WatchFolders = Array.Empty<string>() } &&
+        a.DisabledSources.SequenceEqual(b.DisabledSources) &&
+        a.WatchFolders.SequenceEqual(b.WatchFolders, StringComparer.OrdinalIgnoreCase);
 
     // ───────────── разделы ─────────────
 
@@ -145,6 +147,32 @@ public sealed class SettingsViewModel : Observable
 
     /// <summary>«Вернуть как в наборе»: движение — как в наборе, чьё стекло сейчас стоит.</summary>
     public void ReapplyPreset() => ApplyPreset(_current.LiquidGlass ? AppearancePreset.Beautiful : AppearancePreset.Fast);
+
+    // ───────────── где искать скачанные моды (2026-10-18) ─────────────
+
+    /// <summary>Папка «Загрузки» этого компьютера (её задаёт окно); смотрится всегда, убрать её нельзя.</summary>
+    public string? DownloadsFolder { get; set; }
+
+    /// <summary>Добавленные папки, в порядке добавления.</summary>
+    public IReadOnlyList<string> WatchFolders => _current.WatchFolders;
+
+    public bool CanAddWatchFolder => _current.WatchFolders.Count < AppSettings.MaxWatchFolders;
+
+    /// <summary>«Добавить папку». null — добавлена; иначе почему нет («уже смотрим», «это и есть «Загрузки»»).</summary>
+    public string? AddWatchFolder(string path)
+    {
+        var p = AppSettings.CleanFolder(path);
+        if (p is null) return "Папка не выбрана";
+        if (DownloadsFolder is { } d && string.Equals(AppSettings.CleanFolder(d), p, StringComparison.OrdinalIgnoreCase))
+            return "«Загрузки» программа смотрит и так";
+        if (_current.WatchFolders.Contains(p, StringComparer.OrdinalIgnoreCase)) return "Эту папку программа уже смотрит";
+        if (!CanAddWatchFolder) return $"Больше {AppSettings.MaxWatchFolders} папок не добавить";
+        Update(s => s with { WatchFolders = s.WatchFolders.Append(p).ToList() });
+        return null;
+    }
+
+    public void RemoveWatchFolder(string path) =>
+        Update(s => s with { WatchFolders = s.WatchFolders.Where(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase)).ToList() });
 
     /// <summary>«Оставить» на «Интерфейс работает медленно…»: больше не спрашиваем (запоминается).</summary>
     public void DeclineSlowOffer() => Update(s => s with { SlowOfferDeclined = true });

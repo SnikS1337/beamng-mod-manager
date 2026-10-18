@@ -578,12 +578,14 @@ public static class CoreFixesTests
                 LiquidGlass = false, Theme = BackgroundTheme.Dusk,
                 UiAnimations = false, AnimatedBackground = false, Fireflies = false, BackgroundTilt = true, ActiveModsWarnAbove = 55, FirstRunDone = true,
                 WindowWidth = 1600, WindowHeight = 900, WindowMaximized = true,
+                SlowOfferDeclined = true, WatchFolders = new[] { @"D:\Telegram Desktop", @"E:\Моды" },
             };
             var st = new SettingsStore(p);
             st.Save(want);
             var r = st.Load();
             Assert.False(r.HadProblems, "без предупреждений: " + string.Join("; ", r.Warnings));
-            Assert.Eq(want with { DisabledSources = r.Settings.DisabledSources }, r.Settings);
+            Assert.Eq(string.Join("|", want.WatchFolders), string.Join("|", r.Settings.WatchFolders));
+            Assert.Eq(want with { DisabledSources = r.Settings.DisabledSources, WatchFolders = r.Settings.WatchFolders }, r.Settings);
         });
 
         t.Run("каждая настройка переживает перезапуск: любое поле, изменённое по отдельности, читается обратно", () =>

@@ -224,5 +224,23 @@ public static class SettingsScreenTests
             Assert.Eq("Сайты", vm.SectionTitle);
             Assert.Eq(5, vm.Sections.Count);
         });
+    
+        t.Run("где искать скачанные моды: добавить, без повторов и «Загрузок», убрать; сохраняется", () =>
+        {
+            var vm = new SettingsViewModel(new AppSettings()) { DownloadsFolder = @"C:\Users\me\Downloads" };
+            AppSettings? saved = null;
+            vm.Changed += s => saved = s;
+            Assert.Eq(null, vm.AddWatchFolder(@"D:\Telegram Desktop\"));
+            Assert.Eq(@"D:\Telegram Desktop", saved!.WatchFolders.Single());
+            Assert.Eq("Эту папку программа уже смотрит", vm.AddWatchFolder(@"d:\telegram desktop"));
+            Assert.Eq("«Загрузки» программа смотрит и так", vm.AddWatchFolder(@"C:\Users\me\Downloads\"));
+            Assert.Eq("Папка не выбрана", vm.AddWatchFolder("  "));
+            for (var i = 0; i < 20; i++) vm.AddWatchFolder($@"E:\m{i}");
+            Assert.Eq(AppSettings.MaxWatchFolders, vm.WatchFolders.Count);
+            Assert.False(vm.CanAddWatchFolder, "предел");
+            vm.RemoveWatchFolder(@"D:\Telegram Desktop");
+            Assert.False(vm.WatchFolders.Contains(@"D:\Telegram Desktop"), "убрана");
+            Assert.True(vm.CanAddWatchFolder, "снова можно");
+        });
     }
 }

@@ -5,8 +5,8 @@ using BeamModManager.Core.Install;
 namespace BeamModManager.App.Services;
 
 /// <summary>
-/// Следит за папкой «Загрузки», пока программа открыта и включено «Разрешить загрузку модов» (решено 2026-10-18: в фоне,
-/// при закрытой программе, ничего не висит). Новый zip, rar или 7z отдаётся, когда браузер его докачал: имя уже без
+/// Следит за папкой «Загрузки» и добавленными в настройках папками (без подпапок), пока программа открыта и включено
+/// «Разрешить загрузку модов» (решено 2026-10-18: в фоне, при закрытой программе, ничего не висит). Новый zip, rar или 7z отдаётся, когда браузер его докачал: имя уже без
 /// «.crdownload» и «.part», размер 1,5 с не меняется и файл открывается на чтение. Что лежало до включения, не трогаем.
 /// </summary>
 public sealed class DownloadsWatcher : IDisposable
@@ -14,7 +14,7 @@ public sealed class DownloadsWatcher : IDisposable
     private readonly Action<string> _ready;
     private readonly Dictionary<string, (long Size, DateTime Since)> _pending = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Threading.Timer _timer;
-    private FileSystemWatcher? _fsw;
+    private readonly Dictionary<string, FileSystemWatcher> _watch = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="ready">Архив докачан (вызывается не в потоке окна).</param>
     public DownloadsWatcher(Action<string> ready)
@@ -23,30 +23,39 @@ public sealed class DownloadsWatcher : IDisposable
         _timer = new System.Threading.Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
-    public string? Folder => _fsw?.Path;
-
-    /// <summary>Включить или выключить слежение. Папки нет — ничего не делает.</summary>
-    public void SetEnabled(bool on)
+    /// <summary>
+    /// Какие папки смотреть; пусто — слежение выключено. Уже смотримые не пересоздаются; папки, которой нет (флешку
+    /// вынули), просто не смотрим.
+    /// </summary>
+    public void SetFolders(IEnumerable<string> folders)
     {
-        if (on == (_fsw is not null)) return;
-        if (!on)
+        var want = folders.Where(Directory.Exists).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var gone in _watch.Keys.Where(k => !want.Contains(k)).ToList())
         {
-            _fsw!.Dispose();
-            _fsw = null;
+            _watch[gone].Dispose();
+            _watch.Remove(gone);
+        }
+        foreach (var dir in want.Where(d => !_watch.ContainsKey(d)))
+        {
+            try
+            {
+                var w = new FileSystemWatcher(dir) { IncludeSubdirectories = false, NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite };
+                foreach (var ext in IncomingAnalyzer.Extensions) w.Filters.Add("*" + ext);
+                w.Created += (_, e) => Seen(e.FullPath);
+                w.Changed += (_, e) => Seen(e.FullPath);
+                w.Renamed += (_, e) => Seen(e.FullPath); // браузер качает в «.crdownload» и переименовывает в конце
+                w.Error += (_, _) => { }; // переполнение буфера: пропущенные события не страшны, их добьёт следующее изменение
+                w.EnableRaisingEvents = true;
+                _watch[dir] = w;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { } // сетевой диск и т. п.
+        }
+        if (_watch.Count == 0)
+        {
             _timer.Change(Timeout.Infinite, Timeout.Infinite);
             lock (_pending) _pending.Clear();
-            return;
         }
-        if (DownloadsPath() is not { } dir || !Directory.Exists(dir)) return;
-        var w = new FileSystemWatcher(dir) { IncludeSubdirectories = false, NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite };
-        foreach (var ext in IncomingAnalyzer.Extensions) w.Filters.Add("*" + ext);
-        w.Created += (_, e) => Seen(e.FullPath);
-        w.Changed += (_, e) => Seen(e.FullPath);
-        w.Renamed += (_, e) => Seen(e.FullPath); // браузер качает в «.crdownload» и переименовывает в конце
-        w.Error += (_, _) => { }; // переполнение буфера: пропущенные события не страшны, их добьёт следующее изменение
-        w.EnableRaisingEvents = true;
-        _fsw = w;
-        _timer.Change(500, 500);
+        else _timer.Change(500, 500);
     }
 
     private void Seen(string path)
@@ -103,7 +112,8 @@ public sealed class DownloadsWatcher : IDisposable
 
     public void Dispose()
     {
-        _fsw?.Dispose();
+        foreach (var w in _watch.Values) w.Dispose();
+        _watch.Clear();
         _timer.Dispose();
     }
 }
