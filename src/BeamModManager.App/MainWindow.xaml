@@ -649,42 +649,45 @@
         <!-- ═════ Сцена: всё, что видно сквозь стекло ═════ -->
         <Grid x:Name="Scene">
             <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True">
-                <!-- основа: тёмный градиент темы (DESIGN.md 3.1, темы — Ui/Look/BackgroundThemes); цвета ставит и плавно меняет окно -->
-                <Border>
-                    <Border.Background>
-                        <LinearGradientBrush x:Name="BaseBrush" StartPoint="0,0" EndPoint="0.4,1">
-                            <GradientStop Color="#101B33" Offset="0"/>
-                            <GradientStop Color="#1B2236" Offset="0.55"/>
-                            <GradientStop Color="#251C34" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Border.Background>
-                </Border>
-                <!-- плывущая цветная полоса: подкрашивает основу (вместо «мягкого света» — прозрачность) -->
-                <Border x:Name="GradeLayer" Opacity="0.30">
-                    <Border.Background>
-                        <LinearGradientBrush x:Name="Grade" StartPoint="0,0" EndPoint="1,0.36" SpreadMethod="Repeat">
-                            <LinearGradientBrush.RelativeTransform>
-                                <TranslateTransform x:Name="GradeMove"/>
-                            </LinearGradientBrush.RelativeTransform>
-                            <GradientStop Color="#9E2F86E0" Offset="0"/>
-                            <GradientStop Color="#85845BC8" Offset="0.25"/>
-                            <GradientStop Color="#80F08A4A" Offset="0.5"/>
-                            <GradientStop Color="#852BB8D6" Offset="0.75"/>
-                            <GradientStop Color="#9E2F86E0" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Border.Background>
-                </Border>
-                <!-- вуаль сверху вниз: в тёмном оформлении затемняет (текст читается в любом месте), в светлом высветляет верх -->
-                <Border>
-                    <Border.Background>
-                        <LinearGradientBrush x:Name="VeilBrush" StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#420C1220" Offset="0"/>
-                            <GradientStop Color="#750C1220" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Border.Background>
-                </Border>
-                <Canvas x:Name="Lights"/>
-                <!-- зерно: пятна света и переходы фона без него ложатся кольцами-ступеньками (Controls/Grain.cs) -->
+                <!-- всё, кроме огоньков: зерно прибавкой к цвету (DitherEffect) ставит окно, если видеокарта тянет -->
+                <Grid x:Name="BackdropPaint">
+                    <!-- основа: тёмный градиент темы (DESIGN.md 3.1, темы — Ui/Look/BackgroundThemes); цвета ставит и плавно меняет окно -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush x:Name="BaseBrush" StartPoint="0,0" EndPoint="0.4,1">
+                                <GradientStop Color="#101B33" Offset="0"/>
+                                <GradientStop Color="#1B2236" Offset="0.55"/>
+                                <GradientStop Color="#251C34" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <!-- плывущая цветная полоса: подкрашивает основу (вместо «мягкого света» — прозрачность) -->
+                    <Border x:Name="GradeLayer" Opacity="0.30">
+                        <Border.Background>
+                            <LinearGradientBrush x:Name="Grade" StartPoint="0,0" EndPoint="1,0.36" SpreadMethod="Repeat">
+                                <LinearGradientBrush.RelativeTransform>
+                                    <TranslateTransform x:Name="GradeMove"/>
+                                </LinearGradientBrush.RelativeTransform>
+                                <GradientStop Color="#9E2F86E0" Offset="0"/>
+                                <GradientStop Color="#85845BC8" Offset="0.25"/>
+                                <GradientStop Color="#80F08A4A" Offset="0.5"/>
+                                <GradientStop Color="#852BB8D6" Offset="0.75"/>
+                                <GradientStop Color="#9E2F86E0" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <!-- вуаль сверху вниз: в тёмном оформлении затемняет (текст читается в любом месте), в светлом высветляет верх -->
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush x:Name="VeilBrush" StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#420C1220" Offset="0"/>
+                                <GradientStop Color="#750C1220" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <Canvas x:Name="Lights"/>
+                </Grid>
+                <!-- зерно слоем — запасное, без видеокарты (Controls/Grain.cs); с ней зерно в цвете (BackdropPaint) -->
                 <Rectangle x:Name="GrainLayer" IsHitTestVisible="False"/>
                 <Canvas x:Name="Flies"/>
             </Grid>
@@ -1115,17 +1118,31 @@
                                         <TextBlock Text="Моды" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource Ink}"/>
                                         <TextBlock x:Name="PvCount" Foreground="{DynamicResource Ink2}" FontSize="12"/>
                                     </StackPanel>
-                                    <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="23" Blur="5" Tint="#BD0C1426" Iridescent="True"
-                                             Lens="24" Refraction="120" Brightness="1" Sparks="0" Seed="17"
-                                             VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,18,0,0" Height="46" IsHitTestVisible="False">
-                                        <StackPanel Orientation="Horizontal" Margin="5,0,6,0" VerticalAlignment="Center">
-                                            <Grid VerticalAlignment="Center">
-                                                <c:Droplet Corner="17" Width="56" Height="34"/>
-                                                <TextBlock Text="Все" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            </Grid>
-                                            <TextBlock Text="Включённые" FontSize="13" Foreground="{DynamicResource InkSoft}" Margin="12,0,12,0" VerticalAlignment="Center"/>
-                                            <Path Data="{StaticResource IconSearch}" Stroke="{DynamicResource Ink}" StrokeThickness="1.8" Stretch="Uniform"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="15" Height="15" Margin="4,0,8,0" VerticalAlignment="Center"/>
+                                    <!-- островок превью — тот же, что в окне (2026-10-18: «устарело»): стекло, дорожка фильтров, капля «Все» в покое
+                                         с радужной кромкой, «Включённые» и круглая кнопка поиска; размеры и цвета как у TopBar -->
+                                    <c:Glass x:Name="PreviewBar" Source="{Binding ElementName=PvScene}" Corner="24" Blur="3" Tint="#5A0E182C" Iridescent="True"
+                                             Lens="22" Refraction="130" Brightness="0.74" Sparks="0" Seed="17"
+                                             VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,18,0,0" Height="48" IsHitTestVisible="False">
+                                        <StackPanel Orientation="Horizontal" Margin="6,0" VerticalAlignment="Center">
+                                            <Border CornerRadius="21" Padding="3" Background="{DynamicResource SegBack}" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Grid>
+                                                        <!-- как капля фильтров: на 3 шире пункта с каждой стороны и на 5 выше и ниже -->
+                                                        <c:Droplet Corner="20" Margin="-3,-5" Under="{DynamicResource SegBack}"/>
+                                                        <Border Height="30" Padding="14,0">
+                                                            <TextBlock Text="Все" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource Ink}" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                    </Grid>
+                                                    <Border Height="30" Padding="14,0">
+                                                        <TextBlock Text="Включённые" FontSize="13" FontWeight="Medium" Foreground="{DynamicResource InkSoft}" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Width="38" Height="38" Margin="6,0,0,0">
+                                                <Path Data="{StaticResource IconSearch}" Stroke="{DynamicResource Ink}" StrokeThickness="1.8" Stretch="Uniform"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="17" Height="17"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
                                         </StackPanel>
                                     </c:Glass>
                                     <Border CornerRadius="22" BorderBrush="{DynamicResource TileRim}" BorderThickness="1" IsHitTestVisible="False"/>

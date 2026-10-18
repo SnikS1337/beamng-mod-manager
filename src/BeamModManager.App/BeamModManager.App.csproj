@@ -21,6 +21,8 @@
     <Resource Include="Shaders\Glass.ps"/>
     <!-- линза капли для подписей (Controls/LensEffect.cs) -->
     <Resource Include="Shaders\Lens.ps"/>
+    <!-- зерно фона прибавкой к цвету (Controls/DitherEffect.cs) -->
+    <Resource Include="Shaders\Dither.ps"/>
     <!-- тот же значок у окна (Alt+Tab, панель задач) -->
     <Resource Include="app.ico"/>
   </ItemGroup>
@@ -41,6 +43,7 @@
   <ItemGroup>
     <GlassShader Include="Shaders\Glass.fx" Out="Shaders\Glass.ps"/>
     <GlassShader Include="Shaders\Lens.fx" Out="Shaders\Lens.ps"/>
+    <GlassShader Include="Shaders\Dither.fx" Out="Shaders\Dither.ps"/>
   </ItemGroup>
 
   <Target Name="CompileGlassShader" BeforeTargets="BeforeBuild"
