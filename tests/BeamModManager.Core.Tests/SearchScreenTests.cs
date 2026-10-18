@@ -212,8 +212,8 @@ public static class SearchScreenTests
             await run;
             FoundCard C(string t) => r.Vm.Cards.Single(c => c.Title.StartsWith(t));
             Assert.True(C("Porsche") is { Primary: FoundAction.Buy, PrimaryLabel: "Купить у автора", PriceText: "Платный", ShowPage: false }, "платный");
-            Assert.True(C("Lada") is { Primary: FoundAction.Page, PriceText: "Бесплатно", Subtitle: "1.1 · garage47", SitesText: "Modland" }, "бесплатный: " + C("Lada").Subtitle);
-            Assert.True(C("Volvo") is { Price: PriceKind.Unknown, PriceText: "Цена не указана", Primary: FoundAction.Page }, "неизвестная");
+            Assert.True(C("Lada") is { Primary: FoundAction.Page, PriceText: null, Price: PriceKind.Free, Subtitle: "1.1 · garage47", SitesText: "Modland" }, "бесплатный: " + C("Lada").Subtitle);
+            Assert.True(C("Volvo") is { Price: PriceKind.Unknown, PriceText: null, Primary: FoundAction.Page }, "неизвестная");
             r.Vm.DownloadsAllowed = true;
             Assert.True(C("Lada") is { Primary: FoundAction.Install, PrimaryLabel: "Установить", ShowPage: true }, "с загрузкой");
             Assert.True(C("Porsche").Primary == FoundAction.Buy, "платный и с загрузкой — у автора");

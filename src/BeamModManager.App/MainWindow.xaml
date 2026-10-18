@@ -549,8 +549,8 @@
                         </Border.Background>
                     </Border>
 
-                    <!-- цена: белая «Бесплатно», «Платный» с янтарной точкой, контурная «Цена не указана» -->
-                    <Border x:Name="Price" Style="{StaticResource Chip}">
+                    <!-- цена: плашка только у платного — «Платный» с янтарной точкой (2026-10-18) -->
+                    <Border x:Name="Price" Style="{StaticResource Chip}" Visibility="{Binding PriceText, Converter={StaticResource NullToCollapsed}}">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Ellipse x:Name="PriceDot" Width="7" Height="7" Margin="0,0,7,0" Fill="#FFB340" Visibility="Collapsed"/>
                             <TextBlock x:Name="PriceText" Text="{Binding PriceText}" FontSize="12" FontWeight="SemiBold" Foreground="White"/>

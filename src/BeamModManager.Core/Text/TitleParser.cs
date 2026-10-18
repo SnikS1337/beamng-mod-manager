@@ -16,6 +16,9 @@ public static class TitleParser
 
     private static readonly Regex GameVersionParen = new(@"\(\s*v?(\d+\.\d+(?:\.(?:\d+|x))*)\s*\)", Opt);
     private static readonly Regex LeadingMod = new(@"^\s*(?:мод|mod)\s+", Opt);
+    // «BeamNG . drive скачать мод Карта …» (заголовки ModsGaming в выдаче поиска, 2026-10-18): игру и «скачать мод» убираем.
+    // Только с «скачать» или «мод» после игры: «BeamNG Drive Utility Mod» остаётся как есть
+    private static readonly Regex LeadingGame = new(@"^\s*beamng\s*\.?\s*drive\s*[-–—:]?\s*(?:скачать\s+моды?|скачать|моды?)\s+", Opt);
     private static readonly Regex ForBeam = new(@"\s*\b(?:для|for)\s+beamng(?:\s*\.?\s*drive)?\s*$", Opt);
     // Версия с префиксом v только с точкой («v1.2»); голое «v8» оставляем в названии (Ford V8).
     private static readonly Regex VersionWithV = new(@"(?<![\p{L}\p{Nd}])v(\d+(?:\.\d+)+[a-z]?)(?![\p{L}\p{Nd}.])", Opt);
@@ -47,6 +50,9 @@ public static class TitleParser
             s = s.Remove(gv.Index, gv.Length);
         }
 
+        // убираем, только если после «скачать мод» осталось само название
+        if (LeadingGame.Match(s) is { Success: true } lg && LeadingMod.Replace(s[lg.Length..], "").Trim() is { Length: > 0 } rest
+            && !Regex.IsMatch(rest, @"^моды?$", RegexOptions.IgnoreCase)) s = s[lg.Length..];
         s = LeadingMod.Replace(s, "");
         s = ForBeam.Replace(s, "");
 

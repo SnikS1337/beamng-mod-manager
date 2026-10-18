@@ -67,4 +67,5 @@ DropBodyTests.Register(t);
 WindowFitTests.Register(t);
 AuditFixesTests.Register(t);
 ModlandBrowserTests.Register(t);
+SearchQualityTests.Register(t);
 return t.Summary();

@@ -87,10 +87,11 @@ public static class SiteFixesTests
         {
             var site = new Site();
             var html = Fx("modsgaming/search-real.html");
-            site.Get["https://modsgaming.ru/search/?q=bmw%20beamng.drive&t=0"] = html;
-            site.Get["https://modsgaming.ru/search/?q=bmw%20beamng.drive&t=0&p=2"] = html; // та же выдача — ничего нового
+            // сохранённая выдача — по «sienna»: запрос тот же, иначе фильтр по словам человека (2026-10-18) её отбросит
+            site.Get["https://modsgaming.ru/search/?q=sienna%20beamng.drive&t=0"] = html;
+            site.Get["https://modsgaming.ru/search/?q=sienna%20beamng.drive&t=0&p=2"] = html; // та же выдача — ничего нового
             var src = new ModsGamingSource(Polite(site));
-            var one = await src.SearchAsync("bmw");
+            var one = await src.SearchAsync("sienna");
             Assert.True(one.Count > 0 && one.Select(l => l.SourceId).Distinct().Count() == one.Count, "без повторов");
             Assert.Eq(2, site.Log.Count);
             site.Log.Clear();
@@ -101,8 +102,8 @@ public static class SiteFixesTests
         t.Run("ModsGaming: вторая страница не открылась — найденное на первой остаётся", async () =>
         {
             var site = new Site();
-            site.Get["https://modsgaming.ru/search/?q=bmw%20beamng.drive&t=0"] = Fx("modsgaming/search-real.html");
-            var r = await new ModsGamingSource(Polite(site)).SearchAsync("bmw");
+            site.Get["https://modsgaming.ru/search/?q=sienna%20beamng.drive&t=0"] = Fx("modsgaming/search-real.html");
+            var r = await new ModsGamingSource(Polite(site)).SearchAsync("sienna");
             Assert.True(r.Count > 0, "первая страница");
         });
 
