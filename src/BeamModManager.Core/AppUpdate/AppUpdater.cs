@@ -8,7 +8,7 @@ public enum UpdateStage
     UpToDate,
     Available,
     Downloading,
-    /// <summary>Новая версия скачана, проверена и лежит рядом с программой: на выходе встанет на место (Commit) и запустится.</summary>
+    /// <summary>Новая версия скачана и проверена (<see cref="AppUpdater.StagedExe"/>): на выходе она запишет себя на место программы и запустит её.</summary>
     ReadyToRestart,
     Failed,
 }
@@ -44,6 +44,8 @@ public sealed class AppUpdater : IAppUpdater
     private readonly Func<string, Version?> _versionOf;
     private readonly Func<DateTimeOffset> _now;
     private readonly Version? _skipped;
+    private readonly Func<string, string?> _checkWritable;
+    private string? _staged;
     private readonly object _g = new();
     private Task? _running;
     private CancellationTokenSource? _install;
@@ -51,8 +53,9 @@ public sealed class AppUpdater : IAppUpdater
     private UpdateState _state = new(UpdateStage.Idle);
 
     public AppUpdater(UpdateDownloader net, Uri manifestUrl, Version current, string currentExe, string updateDir,
-        Func<string, Version?> versionOf, Func<DateTimeOffset>? now = null, Version? skipped = null)
+        Func<string, Version?> versionOf, Func<DateTimeOffset>? now = null, Version? skipped = null, Func<string, string?>? checkWritable = null)
     {
+        _checkWritable = checkWritable ?? UpdateInstaller.CheckWritable;
         _skipped = skipped is null ? null : AppVersion.Normalize(skipped);
         _net = net;
         _manifestUrl = manifestUrl;
@@ -64,6 +67,15 @@ public sealed class AppUpdater : IAppUpdater
     }
 
     public Version Current => _current;
+
+    /// <summary>Скачанная и проверенная новая версия (в папке обновления); null — ещё не готова.</summary>
+    public string? StagedExe { get { lock (_g) return _state.Stage == UpdateStage.ReadyToRestart ? _staged : null; } }
+
+    /// <summary>Куда новая версия копирует прежнюю перед записью на её место (из неё — откат).</summary>
+    public string BackupPath => Path.Combine(_updateDir, "previous.exe");
+
+    /// <summary>Файл программы, который обновляется.</summary>
+    public string CurrentExe => _currentExe;
 
     /// <summary>Версия, которая уже не запустилась на этом компьютере (вернули прежнюю): её не предлагаем.</summary>
     public Version? Skipped => _skipped;
@@ -161,10 +173,15 @@ public sealed class AppUpdater : IAppUpdater
 
             var (exe, xerr) = UpdateInstaller.Extract(zip, Path.Combine(dir, "exe"), m.Version, _versionOf);
             if (exe is null) { Fail(xerr!); return; }
-            // новая версия ложится рядом с программой («*.new»); подменит её Commit, когда окно уже закроется
-            var stage = UpdateInstaller.Stage(_currentExe, exe);
-            if (stage is not null) { Fail(stage); return; }
-            lock (_g) Set(new UpdateState(UpdateStage.ReadyToRestart, m, 1, CheckedAt: _state.CheckedAt));
+            // рядом с программой ничего не кладём: на выходе новая версия запишет себя в тот же файл. Нет прав на него —
+            // говорим сейчас, а не после перезапуска
+            var rights = _checkWritable(_currentExe);
+            if (rights is not null) { Fail(rights); return; }
+            lock (_g)
+            {
+                _staged = exe;
+                Set(new UpdateState(UpdateStage.ReadyToRestart, m, 1, CheckedAt: _state.CheckedAt));
+            }
         }
         catch (OperationCanceledException)
         {
@@ -176,20 +193,6 @@ public sealed class AppUpdater : IAppUpdater
             }
         }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException) { Fail(x.Message); }
-    }
-
-    /// <summary>
-    /// Поставить подготовленную версию на место текущей (<see cref="UpdateInstaller.Commit"/>). Зовётся на выходе, когда
-    /// окно закрыто и всё сохранено: после подмены прежний процесс уже не может догружать свои части из exe.
-    /// null — встала; иначе причина (прежняя версия на месте).
-    /// </summary>
-    public string? Commit()
-    {
-        lock (_g)
-        {
-            if (_state.Stage != UpdateStage.ReadyToRestart) return "обновление не подготовлено";
-            return UpdateInstaller.Commit(_currentExe);
-        }
     }
 
     private void Set(UpdateState s)
