@@ -362,11 +362,9 @@ public static class UpdatesScreenTests
                 new("beamng", "Репозиторий BeamNG", true, SourceStatus.Ok, 4, null),
             };
             vm.Rebuild();
-            Assert.Eq("нужна проверка|выключен|нет модов|4 мода", string.Join("|", vm.Sites.Select(s => s.State)));
+            Assert.Eq("не пускает программу|выключен|нет модов|4 мода", string.Join("|", vm.Sites.Select(s => s.State)));
             var ml = vm.Sites[0];
-            Assert.True(ml.ShowOpen, "кнопка «Открыть сайт»");
-            vm.SiteOpened(ml);
-            Assert.True(ml.AwaitingConfirm && !ml.ShowOpen, "теперь «Готово»");
+            Assert.True(ml.NeedsHuman && ml.Note!.Contains("Проверить снова"), "кнопка «Проверить снова» и честное объяснение, без «откройте в браузере»");
             b.SiteList[0] = b.SiteList[0] with { Status = SourceStatus.Ok };
             vm.SiteConfirmed(ml);
             Assert.True(b.Calls.Contains("human modland"), "пауза снята");
@@ -539,6 +537,7 @@ public static class UpdatesScreenTests
         public Pages(Dictionary<string, (int, string)> map) { _map = map; }
         public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) =>
             Task.FromResult(_map.TryGetValue(url.AbsoluteUri, out var r) ? new RawResponse(r.Item1, r.Item2) : new RawResponse(404, ""));
+        public Task<RawResponse> PostFormAsync(Uri url, string form, CancellationToken ct) => GetAsync(url, ct);
     }
 
     private static string Fx(string path)
@@ -553,7 +552,7 @@ public static class UpdatesScreenTests
         var pages = new Pages(new()
         {
             ["https://stmods.org/beamng_drive/mods/bmw_e34_by_matissator_for_beamng/"] = (200, Fx("stmods/mod-real.html")),
-            ["https://stmods.org/search.php?search_request=toyota%20sienna"] = (200, Fx("stmods/search-real.html")),
+            ["https://stmods.org/search.php?search_request=toyota%20sienna&partition=beamng"] = (200, Fx("stmods/search-real.html")),
         });
         var f = new PoliteFetcher(pages, new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero, MaxRetries = 0 });
         var store = new InMemoryLibraryStore();

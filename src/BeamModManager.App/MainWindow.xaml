@@ -429,17 +429,16 @@
             </DataTemplate.Triggers>
         </DataTemplate>
 
-        <!-- Строка сайта в панели «Проверка»: точка, название, состояние; «вы человек?» — «Открыть сайт», потом «Готово» -->
+        <!-- Строка сайта в панели «Проверка»: точка, название, состояние; «вы человек?» — «Проверить снова» (браузер не помогает:
+             он не делится с программой пройденной проверкой) -->
         <DataTemplate x:Key="SiteRowTemplate" DataType="{x:Type u:SiteRow}">
             <Border x:Name="Row" BorderBrush="{DynamicResource DataLine}" BorderThickness="0,1,0,0" Padding="14,0" MinHeight="42" ToolTip="{Binding Note}">
                 <DockPanel VerticalAlignment="Center">
                     <Ellipse x:Name="Dot" Width="8" Height="8" Fill="#30D158" Margin="0,0,9,0" VerticalAlignment="Center"/>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="{Binding State}" FontSize="12.5" Foreground="{DynamicResource Ink2}" VerticalAlignment="Center"/>
-                        <Button Style="{StaticResource Link}" Content="Открыть сайт" FontSize="12.5" Margin="8,0,0,0" Click="SiteOpen_Click"
-                                Visibility="{Binding ShowOpen, Converter={StaticResource BoolToVis}}"/>
-                        <Button Style="{StaticResource Link}" Content="Готово" FontSize="12.5" Margin="8,0,0,0" Click="SiteDone_Click"
-                                Visibility="{Binding AwaitingConfirm, Converter={StaticResource BoolToVis}}"/>
+                        <Button Style="{StaticResource Link}" Content="Проверить снова" FontSize="12.5" Margin="8,0,0,0" Click="SiteDone_Click"
+                                Visibility="{Binding NeedsHuman, Converter={StaticResource BoolToVis}}"/>
                     </StackPanel>
                     <TextBlock Text="{Binding Name}" FontWeight="Medium" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                 </DockPanel>

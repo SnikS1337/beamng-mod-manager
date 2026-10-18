@@ -292,7 +292,7 @@ public sealed class SearchViewModel : Observable
             (row.State, row.Dot, row.Note) = s switch
             {
                 { Pending: true } => ("ищем…", SiteDot.Off, null),
-                { Status: SourceStatus.NeedsHumanCheck } => ("просит проверку", SiteDot.Warn, s.Note),
+                { Status: SourceStatus.NeedsHumanCheck } => ("не пускает программу", SiteDot.Warn, s.Note),
                 { Status: not SourceStatus.Ok } => ("не ответил", SiteDot.Warn, s.Note),
                 { Count: 0 } => ("ничего", SiteDot.Ok, null),
                 _ => ($"нашёл {s.Count}", SiteDot.Ok, null),
@@ -303,7 +303,7 @@ public sealed class SearchViewModel : Observable
         var waiting = r.Sources.Any(s => s.Pending);
         var notes = new List<string>();
         if (failed.Count > 0) notes.Add($"{string.Join(", ", failed)} {(failed.Count == 1 ? "не ответил" : "не ответили")}, поэтому показаны не все результаты" + (waiting ? ". Поиск продолжается" : ""));
-        if (human.Count > 0) notes.Add($"{string.Join(", ", human)} {(human.Count == 1 ? "просит" : "просят")} подтвердить, что вы человек. Откройте сайт в браузере и повторите поиск");
+        if (human.Count > 0) notes.Add($"{string.Join(", ", human)} {(human.Count == 1 ? "не пускает" : "не пускают")} программу: просит подтвердить, что вы человек. Ищем без {(human.Count == 1 ? "него" : "них")}");
         SitesNote = notes.Count == 0 ? null : string.Join(". ", notes);
         Rebuild();
     }

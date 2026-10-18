@@ -52,6 +52,7 @@ SwitchingBackendTests.Register(t);
 SettingsScreenTests.Register(t);
 UpdatesScreenTests.Register(t);
 SiteChangeTests.Register(t);
+SiteFixesTests.Register(t);
 PathsTests.Register(t);
 BigLibraryTests.Register(t);
 LongRunTests.Register(t);

@@ -17,10 +17,11 @@ public static class BeamNgRepoParser
 
     private static readonly Regex Item = new(@"<li[^>]*class=""[^""]*\bresourceListItem\b[^""]*""[^>]*\bid=""resource-(?<id>\d+)""[^>]*>(?<b>.*?)(?=<li[^>]*class=""[^""]*\bresourceListItem\b|</ol>|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex TitleBlock = new(@"<h3 class=""title"">(?<t>.*?)</h3>", RegexOptions.Singleline | RegexOptions.Compiled);
-    private static readonly Regex TitleLink = new(@"<a href=""(?<h>resources/[^""?]+/)""[^>]*>(?<n>[^<]+)</a>", RegexOptions.Compiled);
+    // между «<a» и «href» бывает перенос строки с табуляцией (так отдаёт сайт с октября 2026): пробел — любой
+    private static readonly Regex TitleLink = new(@"<a\s+href=""(?<h>resources/[^""?]+/)""[^>]*>(?<n>[^<]+)</a>", RegexOptions.Compiled);
     private static readonly Regex VersionSpan = new(@"<span class=""(?:version|muted)"">(?<v>[^<]*)</span>", RegexOptions.Compiled);
-    private static readonly Regex Author = new(@"<a href=""resources/authors/[^""]*"">(?<a>[^<]+)</a>", RegexOptions.Compiled);
-    private static readonly Regex Category = new(@"<a href=""resources/categories/[^""]*"">(?<c>[^<]+)</a>", RegexOptions.Compiled);
+    private static readonly Regex Author = new(@"<a\s+href=""resources/authors/[^""]*"">(?<a>[^<]+)</a>", RegexOptions.Compiled);
+    private static readonly Regex Category = new(@"<a\s+href=""resources/categories/[^""]*"">(?<c>[^<]+)</a>", RegexOptions.Compiled);
     private static readonly Regex Updated = new(@"<dl class=""resourceUpdated"">.*?<(?:abbr|span)(?<attrs>[^>]*)>(?<txt>[^<]*)</(?:abbr|span)>", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex DataTime = new(@"data-time=""(?<t>\d+)""", RegexOptions.Compiled);
     private static readonly Regex TitleAttr = new(@"title=""(?<t>[^""]+)""", RegexOptions.Compiled);

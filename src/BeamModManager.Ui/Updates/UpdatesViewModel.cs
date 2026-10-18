@@ -97,7 +97,7 @@ public sealed class SiteRow : Observable
     private string _name = "", _state = "";
     private string? _note;
     private SiteDot _dot;
-    private bool _needsHuman, _awaitingConfirm;
+    private bool _needsHuman;
     private Uri? _home;
     public string Name { get => _name; internal set => Set(ref _name, value); }
     public string State { get => _state; internal set => Set(ref _state, value); }
@@ -105,11 +105,11 @@ public sealed class SiteRow : Observable
     public string? Note { get => _note; internal set => Set(ref _note, value); }
     public SiteDot Dot { get => _dot; internal set => Set(ref _dot, value); }
     public Uri? Home { get => _home; internal set => Set(ref _home, value); }
-    /// <summary>Сайт просит «вы человек?»: в строке кнопка «Открыть сайт».</summary>
-    public bool NeedsHuman { get => _needsHuman; internal set { if (Set(ref _needsHuman, value)) Raise(nameof(ShowOpen)); } }
-    /// <summary>Сайт открыли: теперь «Готово» снимает паузу.</summary>
-    public bool AwaitingConfirm { get => _awaitingConfirm; internal set { if (Set(ref _awaitingConfirm, value)) Raise(nameof(ShowOpen)); } }
-    public bool ShowOpen => NeedsHuman && !AwaitingConfirm;
+    /// <summary>
+    /// Сайт не пускает программу проверкой «вы человек?» (Cloudflare): в строке «Проверить снова». Открыть сайт в браузере
+    /// не помогает — браузер не делится с программой тем, что проверку прошли (решено 2026-10-18).
+    /// </summary>
+    public bool NeedsHuman { get => _needsHuman; internal set => Set(ref _needsHuman, value); }
 }
 
 /// <summary>
@@ -380,10 +380,9 @@ public sealed class UpdatesViewModel : Observable
             // «вы человек?» помнит библиотека, пока человек не нажмёт «Готово»; прошлый отчёт об этом сайте после «Готово» не в счёт
             if (_resolved.Contains(s.Id)) rep = null;
             r.NeedsHuman = s.Enabled && s.Status == SourceStatus.NeedsHumanCheck;
-            if (!r.NeedsHuman) r.AwaitingConfirm = false;
-            r.Note = rep?.Note;
+            r.Note = r.NeedsHuman ? "Сайт просит подтвердить, что вы человек, а программа так не умеет. Иногда проверка снимается сама — тогда «Проверить снова» поможет" : rep?.Note;
             (r.Dot, r.State) = !s.Enabled ? (SiteDot.Off, "выключен")
-                : r.NeedsHuman ? (SiteDot.Warn, "нужна проверка")
+                : r.NeedsHuman ? (SiteDot.Warn, "не пускает программу")
                 : _resolved.Contains(s.Id) ? (SiteDot.Off, "проверим в следующий раз")
                 : rep is { Status: SourceStatus.Unavailable } ? (SiteDot.Warn, "не отвечает")
                 : rep is { LayoutChanged: true } ? (SiteDot.Warn, "возможно, сайт изменился")
@@ -536,9 +535,7 @@ public sealed class UpdatesViewModel : Observable
     }
 
     /// <summary>Сайт просил «вы человек?»: человек открыл его в браузере — показываем «Готово».</summary>
-    public void SiteOpened(SiteRow row) => row.AwaitingConfirm = true;
-
-    /// <summary>«Готово» после проверки на сайте: снимаем паузу, следующая проверка его опросит.</summary>
+    /// <summary>«Проверить снова»: снимаем паузу, следующая проверка его опросит.</summary>
     public void SiteConfirmed(SiteRow row)
     {
         _backend.ResolveHumanCheck(row.Id);

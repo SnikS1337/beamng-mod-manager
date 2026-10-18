@@ -32,6 +32,12 @@ public abstract class SiteAdapter : IModSource
     protected abstract Listing ParseDetail(string html, Listing basis);
     protected abstract Uri FeedUrl(int page);
     protected abstract Uri? SearchUrl(string query);
+    /// <summary>Форма, которую поиск отправляет на <see cref="SearchUrl"/> (null — обычный GET).</summary>
+    protected virtual string? SearchForm(string query) => null;
+    /// <summary>Сколько страниц выдачи читать: сайт без сортировки и с 10 результатами на странице — больше одной.</summary>
+    protected virtual int SearchPages => 1;
+    /// <summary>Адрес следующей страницы выдачи (со второй); null — страниц больше нет.</summary>
+    protected virtual Uri? SearchPageUrl(string query, int page) => null;
     protected abstract string SlugOf(Uri url);
     /// <summary>Главная страница сайта: по ней проверяем, что адрес карточки действительно принадлежит этому сайту.</summary>
     protected abstract Uri SiteRoot { get; }
@@ -80,9 +86,9 @@ public abstract class SiteAdapter : IModSource
     }
 
     /// <summary>Страница или null, если её нет (404). Остальные неудачи — SourceException.</summary>
-    protected async Task<string?> LoadAsync(Uri url, CancellationToken ct)
+    protected async Task<string?> LoadAsync(Uri url, CancellationToken ct, string? form = null)
     {
-        var r = await Fetcher.GetAsync(url, ct).ConfigureAwait(false);
+        var r = form is null ? await Fetcher.GetAsync(url, ct).ConfigureAwait(false) : await Fetcher.PostFormAsync(url, form, ct).ConfigureAwait(false);
         if (r.IsSuccess) return r.Body;
         if (r.IsNotFound) return null;
         throw new SourceException(r.Source == SourceStatus.Ok ? SourceStatus.Unavailable : r.Source, r.Note ?? "сайт не ответил");
@@ -92,8 +98,22 @@ public abstract class SiteAdapter : IModSource
     {
         var url = SearchUrl(query);
         if (url is null) return Array.Empty<Listing>();
-        var html = await LoadAsync(url, ct).ConfigureAwait(false);
-        return html is null ? Array.Empty<Listing>() : Safe(() => ParseSearch(html), "поиск");
+        var html = await LoadAsync(url, ct, SearchForm(query)).ConfigureAwait(false);
+        if (html is null) return Array.Empty<Listing>();
+        var found = Safe(() => ParseSearch(html), "поиск").ToList();
+        for (var p = 2; p <= SearchPages && found.Count > 0; p++)
+        {
+            if (SearchPageUrl(query, p) is not { } next) break;
+            string? more;
+            try { more = await LoadAsync(next, ct).ConfigureAwait(false); }
+            catch (SourceException) { break; } // первая страница уже есть: сбой следующей не отменяет найденное
+            if (more is null) break;
+            var page = Safe(() => ParseSearch(more), "поиск");
+            var added = page.Where(l => found.All(f => f.SourceId != l.SourceId)).ToList();
+            if (added.Count == 0) break;
+            found.AddRange(added);
+        }
+        return found;
     }
 
     public async Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
@@ -169,7 +189,11 @@ public sealed class StModsSource : SiteAdapter
     protected override string SlugOf(Uri url) => StModsParser.SlugOf(url);
     protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "beamng_drive/" : $"beamng_drive/?page={page}");
-    protected override Uri? SearchUrl(string q) => new(Root, "search.php?search_request=" + Uri.EscapeDataString(q));
+    // Только раздел BeamNG.drive (без него ищет по всем играм: из первых 10 найденных для BeamNG 4–5, остальное — City Car
+    // Driving и SpinTires); 50 самых свежих за раз — сортировку и число на странице сайт берёт только из формы
+    // (проверено на живом сайте 2026-10-18: без формы 10 штук по «релевантности», первыми моды 2017 года).
+    protected override Uri? SearchUrl(string q) => new(Root, "search.php?search_request=" + Uri.EscapeDataString(q) + "&partition=beamng");
+    protected override string? SearchForm(string q) => "per_page_search=50&search_order_by=" + Uri.EscapeDataString("`date_public` DESC");
     // /beamng_drive/mods/bmw_e34_by_matissator_for_beamng/; /beamng_drive/ и /beamng_drive/mods/ — разделы
     protected override bool IsModPath(string[] p) => p.Length >= 3 && p[0].Equals("beamng_drive", StringComparison.OrdinalIgnoreCase);
 }
@@ -188,7 +212,12 @@ public sealed class ModsGamingSource : SiteAdapter
     protected override string SlugOf(Uri url) => Slug(url);
     protected override Uri SiteRoot => Root;
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "load/beamng_drive/mashiny/38" : $"load/beamng_drive/mashiny/38-{page}");
-    protected override Uri? SearchUrl(string q) => new(Root, "search/?q=" + Uri.EscapeDataString(q) + "&t=0");
+    // Поиск сайта идёт по всем играм, 10 на странице, без сортировки по дате: по «bmw» на первой странице — City Car
+    // Driving, GTA 5, Farming Simulator, ни одного BeamNG. С «beamng.drive» в запросе — только BeamNG (проверено 2026-10-18).
+    protected override Uri? SearchUrl(string q) => new(Root, "search/?q=" + Uri.EscapeDataString(ForBeamNg(q)) + "&t=0");
+    protected override int SearchPages => 2;
+    protected override Uri? SearchPageUrl(string q, int page) => new(Root, "search/?q=" + Uri.EscapeDataString(ForBeamNg(q)) + "&t=0&p=" + page);
+    private static string ForBeamNg(string q) => q.Contains("beamng", StringComparison.OrdinalIgnoreCase) ? q : q.Trim() + " beamng.drive";
     // /load/beamng_drive/mashiny/38-1-0-160435 или …/mod_vaz_2106_…; раздел — /load/beamng_drive/mashiny/38 и 38-2 (страницы)
     protected override bool IsModPath(string[] p) =>
         p.Length >= 4 && p[0].Equals("load", StringComparison.OrdinalIgnoreCase) && p[1].Equals("beamng_drive", StringComparison.OrdinalIgnoreCase) && !Regex.IsMatch(p[^1], @"^\d+(?:-\d+)?$");
