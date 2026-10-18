@@ -31,6 +31,12 @@
     <ProjectReference Include="..\BeamModManager.Ui\BeamModManager.Ui.csproj" />
   </ItemGroup>
 
+  <!-- встроенный браузер Edge для Modland (Services/BrowserPages.cs, 2026-10-18): сайт за защитой Cloudflare простой запрос
+       программы не пускает. Сам браузер (WebView2 Runtime) уже есть в Windows 10 и 11 -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
   <!-- Проверочная сборка самообновления (windows.yml, -p:SelfTestBuild=true): только она замечает BMM_TEST_UPDATE_FEED.
        Раньше отличали по номеру (третий от 1 до 49) — под это попали и настоящие 0.2.1, 0.3.1, а 0.3.0 нет (2026-10-18). -->
   <ItemGroup Condition="'$(SelfTestBuild)' == 'true'">

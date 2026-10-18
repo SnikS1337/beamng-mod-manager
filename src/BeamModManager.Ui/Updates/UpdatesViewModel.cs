@@ -109,7 +109,25 @@ public sealed class SiteRow : Observable
     /// Сайт не пускает программу проверкой «вы человек?» (Cloudflare): в строке «Проверить снова». Открыть сайт в браузере
     /// не помогает — браузер не делится с программой тем, что проверку прошли (решено 2026-10-18).
     /// </summary>
-    public bool NeedsHuman { get => _needsHuman; internal set => Set(ref _needsHuman, value); }
+    public bool NeedsHuman
+    {
+        get => _needsHuman;
+        internal set { if (Set(ref _needsHuman, value)) Raise(nameof(ShowRetry)); }
+    }
+
+    private bool _canPass;
+    /// <summary>
+    /// Проверку можно пройти во встроенном окне программы (Modland, 2026-10-18): в строке «Пройти проверку» вместо
+    /// «Проверить снова». Пройденная там проверка — у самой программы, а не у браузера.
+    /// </summary>
+    public bool CanPassCheck
+    {
+        get => _canPass;
+        internal set { if (Set(ref _canPass, value)) Raise(nameof(ShowRetry)); }
+    }
+
+    /// <summary>«Проверить снова» — только там, где пройти проверку в окне программы нельзя.</summary>
+    public bool ShowRetry => _needsHuman && !_canPass;
 }
 
 /// <summary>
@@ -134,6 +152,9 @@ public sealed class UpdatesViewModel : Observable
     private bool _offerForce;
 
     /// <param name="post">Выполнить в потоке окна (ход проверки приходит из фона).</param>
+    /// <summary>Сайты, проверку которых можно пройти во встроенном окне (окно знает, есть ли оно). По умолчанию — ни один.</summary>
+    public Func<string, bool> CanPassCheck { get; set; } = _ => false;
+
     public UpdatesViewModel(GarageViewModel garage, IUpdatesBackend backend, SettingsViewModel settings,
         Action<Action>? post = null, Func<DateTimeOffset>? now = null)
     {
@@ -380,7 +401,10 @@ public sealed class UpdatesViewModel : Observable
             // «вы человек?» помнит библиотека, пока человек не нажмёт «Готово»; прошлый отчёт об этом сайте после «Готово» не в счёт
             if (_resolved.Contains(s.Id)) rep = null;
             r.NeedsHuman = s.Enabled && s.Status == SourceStatus.NeedsHumanCheck;
-            r.Note = r.NeedsHuman ? "Сайт просит подтвердить, что вы человек, а программа так не умеет. Иногда проверка снимается сама — тогда «Проверить снова» поможет" : rep?.Note;
+            r.CanPassCheck = r.NeedsHuman && CanPassCheck(s.Id);
+            r.Note = r.CanPassCheck ? "Сайт просит подтвердить, что вы человек. «Пройти проверку» откроет его в окне программы, после проверки окно закроется само"
+                : r.NeedsHuman ? "Сайт просит подтвердить, что вы человек, а программа так не умеет. Иногда проверка снимается сама — тогда «Проверить снова» поможет"
+                : rep?.Note;
             (r.Dot, r.State) = !s.Enabled ? (SiteDot.Off, "выключен")
                 : r.NeedsHuman ? (SiteDot.Warn, "не пускает программу")
                 : _resolved.Contains(s.Id) ? (SiteDot.Off, "проверим в следующий раз")
@@ -534,12 +558,21 @@ public sealed class UpdatesViewModel : Observable
         }
     }
 
-    /// <summary>Сайт просил «вы человек?»: человек открыл его в браузере — показываем «Готово».</summary>
     /// <summary>«Проверить снова»: снимаем паузу, следующая проверка его опросит.</summary>
     public void SiteConfirmed(SiteRow row)
     {
         _backend.ResolveHumanCheck(row.Id);
         _resolved.Add(row.Id);
         RebuildSites();
+    }
+
+    /// <summary>
+    /// Проверку прошли во встроенном окне: пауза снята, и сразу проверяем снова (человек только что этого и ждал), если
+    /// проверка уже не идёт.
+    /// </summary>
+    public Task SitePassedAsync(SiteRow row)
+    {
+        SiteConfirmed(row);
+        return Checking ? Task.CompletedTask : RunAsync(force: false, manual: true);
     }
 }

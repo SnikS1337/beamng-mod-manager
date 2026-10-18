@@ -125,6 +125,28 @@ public static class SearchScreenTests
             Assert.True(r.Vm.Sites.All(x => x.State == "готов") && r.Vm.SitesNote is null, "сайты снова готовы");
         });
 
+        t.Run("Modland просит проверку: в его строке «Пройти проверку», подпись зовёт туда; без встроенного окна — как было", async () =>
+        {
+            foreach (var canPass in new[] { true, false })
+            {
+                var r = new Rig();
+                r.Vm.CanPassCheck = id => canPass && id == "modland";
+                r.Vm.Query = "sienna";
+                var run = r.Vm.RunAsync();
+                r.WaitCalls(3);
+                r.Modland.Answer.TrySetException(new SourceException(SourceStatus.NeedsHumanCheck, "страница проверки"));
+                r.Gaming.Reply();
+                r.St.Reply();
+                await run;
+                r.Q.Drain();
+                var ml = r.Vm.Sites.Single(s => s.Id == "modland");
+                Assert.Eq("не пускает программу", ml.State);
+                Assert.Eq(canPass, ml.CanPassCheck);
+                Assert.False(ml.ShowRetry, "«Проверить снова» в поиске не было и нет");
+                Assert.True(canPass ? r.Vm.SitesNote!.Contains("«Пройти проверку»") : r.Vm.SitesNote!.Contains("Ищем без него"), r.Vm.SitesNote ?? "");
+            }
+        });
+
         t.Run("новый запрос отменяет прежний: его поздний ответ не показывается", async () =>
         {
             var r = new Rig();

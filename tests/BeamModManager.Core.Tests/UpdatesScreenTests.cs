@@ -372,6 +372,27 @@ public static class UpdatesScreenTests
             Assert.False(ml.NeedsHuman, "кнопок больше нет");
         });
 
+        t.Run("Modland во встроенном окне: «Пройти проверку» вместо «Проверить снова»; прошли — пауза снята и сразу проверка", async () =>
+        {
+            var (vm, _, _, b, _) = Make(Board());
+            vm.CanPassCheck = id => id == "modland";
+            b.SiteList = new()
+            {
+                new("modland", "Modland", true, SourceStatus.NeedsHumanCheck, 2, new Uri("https://www.modland.net/")),
+                new("stmods", "STMods", true, SourceStatus.NeedsHumanCheck, 1, null),
+            };
+            vm.Rebuild();
+            var ml = vm.Sites[0];
+            var st = vm.Sites[1];
+            Assert.True(ml.CanPassCheck && !ml.ShowRetry && ml.Note!.Contains("Пройти проверку"), "Modland — проверка в окне программы");
+            Assert.True(!st.CanPassCheck && st.ShowRetry, "у остальных — как было");
+            b.SiteList[0] = b.SiteList[0] with { Status = SourceStatus.Ok };
+            await vm.SitePassedAsync(ml);
+            Assert.True(b.Calls.Contains("human modland"), "пауза снята");
+            Assert.True(b.Calls.Contains("check"), "и сразу проверка");
+            Assert.False(ml.CanPassCheck || ml.ShowRetry, "кнопок больше нет");
+        });
+
         t.Run("автопроверка: при запуске по настройке; повтор раз в N часов только когда пора", async () =>
         {
             var (vm, _, _, b, s) = Make(Board());

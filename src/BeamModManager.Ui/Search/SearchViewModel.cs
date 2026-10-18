@@ -143,6 +143,9 @@ public sealed class SearchViewModel : Observable
 
     /// <param name="installed">Карточки «Моды»: по ним фильтр «Установленные» и плашка «Установлен».</param>
     /// <param name="post">Выполнить в потоке окна (сайты отвечают из фона).</param>
+    /// <summary>Сайты, проверку которых можно пройти во встроенном окне (см. <see cref="Updates.SiteRow.CanPassCheck"/>).</summary>
+    public Func<string, bool> CanPassCheck { get; set; } = _ => false;
+
     public SearchViewModel(ISearchBackend backend, Func<IReadOnlyList<Garage.ModCard>> installed, Action<Action>? post = null)
     {
         _backend = backend;
@@ -255,7 +258,7 @@ public sealed class SearchViewModel : Observable
         _ranQuery = q;
         _response = null;
         Searching = true;
-        foreach (var r in _siteRows.Values) { r.State = "ищем…"; r.Dot = SiteDot.Off; r.Note = null; }
+        foreach (var r in _siteRows.Values) { r.State = "ищем…"; r.Dot = SiteDot.Off; r.Note = null; r.CanPassCheck = false; }
         Rebuild();
         try
         {
@@ -297,12 +300,15 @@ public sealed class SearchViewModel : Observable
                 { Count: 0 } => ("ничего", SiteDot.Ok, null),
                 _ => ($"нашёл {s.Count}", SiteDot.Ok, null),
             };
+            row.CanPassCheck = !s.Pending && s.Status == SourceStatus.NeedsHumanCheck && CanPassCheck(s.SourceId);
         }
-        var human = r.Sources.Where(s => !s.Pending && s.Status == SourceStatus.NeedsHumanCheck).Select(s => SiteNames.Of(s.SourceId)).ToList();
+        var human = r.Sources.Where(s => !s.Pending && s.Status == SourceStatus.NeedsHumanCheck && !CanPassCheck(s.SourceId)).Select(s => SiteNames.Of(s.SourceId)).ToList();
+        var passable = r.Sources.Where(s => !s.Pending && s.Status == SourceStatus.NeedsHumanCheck && CanPassCheck(s.SourceId)).Select(s => SiteNames.Of(s.SourceId)).ToList();
         var failed = r.Sources.Where(s => !s.Pending && s.Status is not SourceStatus.Ok and not SourceStatus.NeedsHumanCheck).Select(s => SiteNames.Of(s.SourceId)).ToList();
         var waiting = r.Sources.Any(s => s.Pending);
         var notes = new List<string>();
         if (failed.Count > 0) notes.Add($"{string.Join(", ", failed)} {(failed.Count == 1 ? "не ответил" : "не ответили")}, поэтому показаны не все результаты" + (waiting ? ". Поиск продолжается" : ""));
+        if (passable.Count > 0) notes.Add($"{string.Join(", ", passable)} {(passable.Count == 1 ? "просит" : "просят")} подтвердить, что вы человек: «Пройти проверку» в списке сайтов");
         if (human.Count > 0) notes.Add($"{string.Join(", ", human)} {(human.Count == 1 ? "не пускает" : "не пускают")} программу: просит подтвердить, что вы человек. Ищем без {(human.Count == 1 ? "него" : "них")}");
         SitesNote = notes.Count == 0 ? null : string.Join(". ", notes);
         Rebuild();
