@@ -136,10 +136,14 @@ jobs:
         run: |
           $exe = "src/BeamModManager.App/bin/Release/net10.0-windows/BeamModManager.exe"
           New-Item -ItemType Directory shots -Force | Out-Null
+          # сколько шёл каждый снимок — в shots/timings.txt (2026-10-18: снимки вдруг шли 17 минут вместо 6, а журнал
+          # сборки отсюда не достать)
           function Shot($name, [string[]]$extra) {
             $a = @('--demo', 'design/demo', '--shot', "shots/$name.png") + $extra
+            $sw = [Diagnostics.Stopwatch]::StartNew()
             $p = Start-Process $exe -ArgumentList $a -PassThru
             if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "${name}: окно не закрылось за 2 минуты" }
+            "{0,7:0.0} с  {1}" -f $sw.Elapsed.TotalSeconds, $name | Out-File -Append -Encoding utf8 shots/timings.txt
             if (-not (Test-Path "shots/$name.png")) { throw "${name}: снимка нет (код выхода $($p.ExitCode))" }
           }
           Shot 'garage' @('--select', '"Dacia Sandero Stepway"')
