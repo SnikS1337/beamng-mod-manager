@@ -45,6 +45,8 @@ public sealed class WindowHost
     public string? ShotOffer { get; init; }
     /// <summary>Снимок: подсказка «Отпустите — проверим…», как при перетаскивании архива.</summary>
     public bool ShotDropHint { get; init; }
+    /// <summary>Снимок: плашка «Интерфейс работает медленно».</summary>
+    public bool ShotSlowOffer { get; init; }
     /// <summary>Вместе со снимком записать замеры (запуск, фильтр, поиск, перечитывание, память) в &lt;снимок&gt;.perf.txt.</summary>
     public bool ShotPerf { get; init; }
     /// <summary>Вместе со снимком прогнать анимации и записать кадры в секунду в &lt;снимок&gt;.frames.txt (--frames).</summary>
@@ -223,6 +225,10 @@ public partial class MainWindow : Window
         _in.PropertyChanged += Incoming_PropertyChanged;
         _downloads = new DownloadsWatcher(p => Dispatcher.BeginInvoke(() => { if (IsLoaded) _ = _in.OfferAsync(p, IncomingOrigin.Downloaded, _closing.Token); }));
         Closed += (_, _) => _downloads.Dispose();
+        // «Интерфейс работает медленно»: итоги анимаций приходят от пружин (поток окна)
+        _slow.Suggest += () => { _slowOffered = true; FadePlate(SlowBox, SlowBoxMove, true); };
+        FramePolicy.Shared.Judged += _slow.Burst;
+        Closed += (_, _) => FramePolicy.Shared.Judged -= _slow.Burst;
         AllowDrop = true;
         DragEnter += Window_DragOver;
         DragOver += Window_DragOver;
@@ -355,6 +361,7 @@ public partial class MainWindow : Window
         if (_host.ShotIncoming is { } incoming) _ = _in.OfferAsync(incoming, IncomingOrigin.Dropped);
         if (_host.ShotOffer is { } offer) _ = _in.OfferAsync(offer, IncomingOrigin.Downloaded);
         if (_host.ShotDropHint) ShowDropHint(true);
+        if (_host.ShotSlowOffer) FadePlate(SlowBox, SlowBoxMove, true);
         UpdateDownloadsWatch(_host.Settings.Current);
         if (_host.StartSearch is { } query)
         {
@@ -617,6 +624,9 @@ public partial class MainWindow : Window
 
         // «Уменьшить прозрачность» в Windows сильнее настроек: стекло плоское (DESIGN.md 3.2, «Плоское»)
         var mode = Native.TransparencyOff() ? GlassMode.Flat : s.LiquidGlass && !WeakGraphics() ? GlassMode.Liquid : GlassMode.Matte;
+        // предлагать «Быстро» есть смысл только на жидком стекле, один раз и если не отказывались (на снимках — никогда)
+        var arm = mode == GlassMode.Liquid && !s.SlowOfferDeclined && !_slowOffered && _host.ShotPath is null;
+        if (arm != _slow.Armed) { _slow.Armed = arm; _slow.Reset(); }
         foreach (var (g, tint) in _glass)
         {
             g.SetLook(mode, s.Fireflies, light);
@@ -1723,6 +1733,24 @@ public partial class MainWindow : Window
     private void UpdateAct_Click(object sender, RoutedEventArgs e) => _host.Banner?.Act(_closing.Token);
     private void UpdateLater_Click(object sender, RoutedEventArgs e) => _host.Banner?.Dismiss();
     private void UpdateCancel_Click(object sender, RoutedEventArgs e) => _host.Banner?.Cancel();
+
+    // ───────────── «Интерфейс работает медленно» (2026-10-18) ─────────────
+
+    private readonly SlowGlassAdvisor _slow = new();
+    private bool _slowOffered;
+
+    private void SlowAccept_Click(object sender, RoutedEventArgs e)
+    {
+        FadePlate(SlowBox, SlowBoxMove, false);
+        _host.Settings.ApplyPreset(AppearancePreset.Fast);
+        _vm.Notify("Включён набор «Быстро». Вернуть «Красиво» можно в настройках");
+    }
+
+    private void SlowDecline_Click(object sender, RoutedEventArgs e)
+    {
+        FadePlate(SlowBox, SlowBoxMove, false);
+        _host.Settings.DeclineSlowOffer();
+    }
 
     // ───────────── установка из скачанного и перетащенного архива (2026-10-18) ─────────────
 

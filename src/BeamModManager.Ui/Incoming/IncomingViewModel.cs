@@ -115,6 +115,9 @@ public sealed class IncomingViewModel : Observable
 
     public ObservableCollection<IncomingItem> Items { get; } = new();
 
+    /// <summary>Есть что показать списком (при «ставить нечего» и во время разбора списка нет).</summary>
+    public bool HasItems => Items.Count > 0;
+
     /// <summary>Галочки у модов — только когда их в архиве несколько.</summary>
     public bool Several => Items.Count > 1;
 
@@ -311,6 +314,7 @@ public sealed class IncomingViewModel : Observable
     private void RaiseAll()
     {
         Raise(nameof(Several));
+        Raise(nameof(HasItems));
         Raise(nameof(Note));
         Raise(nameof(CanInstall));
         Raise(nameof(InstallLabel));

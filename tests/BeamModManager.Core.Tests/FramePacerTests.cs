@@ -152,5 +152,31 @@ public static class FramePacerTests
                 Assert.True(f == BackgroundPace.Preferred || hz % f == 0, $"{hz} Гц → {f}: не целая доля");
             }
         });
+    
+        t.Run("«Интерфейс работает медленно»: 4 медленные из 6 анимаций — предложить один раз; одиночная, короткие и без стекла — нет", () =>
+        {
+            var a = new SlowGlassAdvisor();
+            var n = 0;
+            a.Suggest += () => n++;
+            a.Burst(30, 29);
+            Assert.Eq(0, n, "не взведён (нет жидкого стекла или отказались)");
+            a.Armed = true;
+            a.Burst(5, 5); // короткая — не в счёт
+            a.Burst(30, 20); a.Burst(30, 2); a.Burst(30, 20); a.Burst(30, 1); a.Burst(30, 20);
+            Assert.Eq(0, n, "три медленные из пяти — ещё рано");
+            a.Burst(30, 13); // 13 из 30 > 40 %
+            Assert.Eq(1, n);
+            Assert.False(a.Armed, "больше не предлагает");
+            for (var i = 0; i < 10; i++) a.Burst(30, 30);
+            Assert.Eq(1, n, "один раз");
+            var policy = new FramePolicy();
+            var seen = 0;
+            policy.Judged += (f, l) => seen++;
+            policy.Report(5, 5, 1 / 60.0);
+            policy.Report(30, 20, 1 / 60.0);
+            policy.PowerSaving = true;
+            policy.Report(30, 20, 1 / 60.0);
+            Assert.Eq(2, seen, "итоги идут и от батареи; короткие — нет");
+        });
     }
 }
