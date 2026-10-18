@@ -1696,7 +1696,8 @@
         </Grid>
 
         <!-- Знакомство при первом запуске (2026-10-18): затемнение с «окном» вокруг нужного элемента, кольцо по его краю и
-             пузырь рядом; окно и пузырь перетекают от шага к шагу (TourPlace). Кнопки окна остаются доступны (капсула выше). -->
+             пузырь рядом; окно и пузырь перетекают от шага к шагу (TourPlace). Кнопки окна остаются доступны (капсула выше),
+             но притушены, пока на них не наведут (DimCaption). -->
         <Grid x:Name="TourLayer" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path x:Name="TourDim" Fill="#A6060A14">
                 <Path.Data>
@@ -1732,7 +1733,7 @@
         <c:Glass x:Name="Caption" Source="{Binding ElementName=Backdrop}" Corner="18" Blur="4" Tint="#700E182C"
                  Lens="18" Refraction="0" Brightness="0.78"
                  HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0" Width="132" Height="36"
-                 WindowChrome.IsHitTestVisibleInChrome="True" MouseLeave="Caption_MouseLeave"
+                 WindowChrome.IsHitTestVisibleInChrome="True" MouseEnter="Caption_MouseEnter" MouseLeave="Caption_MouseLeave"
                  PreviewMouseLeftButtonDown="Caption_PreviewMouseDown" PreviewMouseLeftButtonUp="Caption_PreviewMouseUp">
             <Grid>
                 <Canvas>

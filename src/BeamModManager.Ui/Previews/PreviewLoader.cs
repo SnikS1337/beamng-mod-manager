@@ -1,10 +1,12 @@
+using BeamModManager.Core.Packs;
 using BeamModManager.Core.Previews;
 
 namespace BeamModManager.Ui.Previews;
 
 /// <summary>
 /// Достаёт картинки для карточек в фоне: одна картинка из архива → уменьшение (делает окно, WPF) → кэш.
-/// Архив, где картинок нет, помечается, чтобы не перечитывать его при каждом запуске.
+/// Архив, где картинок нет, помечается, чтобы не перечитывать его при каждом запуске. Тем же проходом — название мода
+/// из его info.json (<see cref="ArchiveOverviewReader.TitleOf"/>), тоже в кэш.
 /// </summary>
 public sealed class PreviewLoader
 {
@@ -51,14 +53,45 @@ public sealed class PreviewLoader
         return _cache.PutImage(stamp, small);
     }
 
-    /// <summary>Пройти по списку архивов в фоне; onReady вызывается для каждого найденного (из фонового потока).</summary>
-    public Task FillAsync(IEnumerable<(string Key, string ZipPath)> archives, Action<string, string> onReady, CancellationToken ct = default) =>
+    /// <summary>
+    /// Название из архива, если его ещё не читали: (true, название или null) — прочитали сейчас; (false, …) — уже было
+    /// в кэше или архив не открылся.
+    /// </summary>
+    public (bool Fresh, string? Title) EnsureTitle(string zipPath)
+    {
+        ArchiveStamp stamp;
+        try
+        {
+            if (!File.Exists(zipPath)) return (false, null);
+            stamp = ArchiveStamp.Of(zipPath);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (false, null); }
+        if (_cache.TryGetTitle(stamp, out _)) return (false, null);
+        var t = ArchiveOverviewReader.TitleOf(zipPath);
+        if (!t.Known) return (false, null);
+        _cache.PutTitle(stamp, t.Title);
+        return (true, t.Title);
+    }
+
+    /// <summary>
+    /// Пройти по списку архивов в фоне; onReady — для каждой найденной картинки, onTitle — для каждого впервые прочитанного
+    /// названия (оба из фонового потока). Названия пишутся на диск пачками и в конце.
+    /// </summary>
+    public Task FillAsync(IEnumerable<(string Key, string ZipPath)> archives, Action<string, string> onReady, CancellationToken ct = default,
+        Action<string, string?>? onTitle = null) =>
         Task.Run(() =>
         {
-            foreach (var (key, path) in archives)
+            var n = 0;
+            try
             {
-                if (ct.IsCancellationRequested) return;
-                if (Ensure(path) is { } p) onReady(key, p);
+                foreach (var (key, path) in archives)
+                {
+                    if (ct.IsCancellationRequested) return;
+                    if (onTitle is not null && EnsureTitle(path) is (true, var title)) onTitle(key, title);
+                    if (Ensure(path) is { } p) onReady(key, p);
+                    if (++n % 50 == 0) _cache.SaveTitles();
+                }
             }
+            finally { _cache.SaveTitles(); }
         }, ct);
 }

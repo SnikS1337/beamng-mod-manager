@@ -80,12 +80,20 @@ public sealed class ModCard : Observable
 
     private string? _previewKey;
 
+    /// <summary>Фон дочитал название из архива: карточка меняет подпись сразу, не дожидаясь перечитывания гаража.</summary>
+    internal void ApplyArchiveTitle(string? title)
+    {
+        if (IsDeleted) return;
+        Data = Data with { ArchiveTitle = title, ArchiveTitleKnown = true };
+        Name = Data.Title;
+    }
+
     /// <param name="pending">Нужное состояние, которое ещё не применено (игра запущена); null — ничего не ждёт.</param>
     /// <param name="live">Изменение уже передано помощнику в игре и вот-вот применится.</param>
     internal void Apply(GarageMod d, bool? pending, bool live = false)
     {
         Data = d;
-        Name = d.Mod.Name;
+        Name = d.Title;
         FileName = d.Mod.FileName;
         // картинку, догруженную в фоне, не сбрасываем, пока архив тот же; обновили архив — берём новую
         var key = $"{d.ArchivePath}|{d.Mod.SizeBytes}|{d.Mod.FileName}";

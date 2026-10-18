@@ -4,6 +4,7 @@ using BeamModManager.Core.Library;
 using BeamModManager.Core.Packs;
 using BeamModManager.Core.Previews;
 using BeamModManager.Core.Updates;
+using BeamModManager.Core.Text;
 using BeamModManager.Core.Versioning;
 
 namespace BeamModManager.Ui.Garage;
@@ -31,6 +32,21 @@ public sealed record GarageMod(
     public DateTimeOffset? SiteChangedUtc { get; init; }
     /// <summary>Для какой версии игры мод, по сайту привязанной страницы (null — сайт не пишет или страницы нет).</summary>
     public string? SiteGameVersion { get; init; }
+
+    /// <summary>Название из репозитория игры (у модов, скачанных в самой игре).</summary>
+    public string? RepoTitle { get; init; }
+
+    /// <summary>Название из собственного info.json мода (<see cref="ArchiveTitleKnown"/> — архив уже читали).</summary>
+    public string? ArchiveTitle { get; init; }
+
+    /// <summary>Архив уже читали ради названия (оно в кэше, может быть «нет»): фону открывать его не нужно.</summary>
+    public bool ArchiveTitleKnown { get; init; }
+
+    /// <summary>Заголовок страницы, где следим за модом, как он был на сайте.</summary>
+    public string? SiteTitle { get; init; }
+
+    /// <summary>Название для карточки и панели (DESIGN_FLOWS 3.1а): репозиторий → info.json → сайт → имя файла.</summary>
+    public string Title => ModTitles.Choose(RepoTitle, ArchiveTitle, SiteTitle, Mod.Name);
 }
 
 /// <summary>
@@ -231,7 +247,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
         var result = new List<DeletedGarageMod>();
         foreach (var d in VersionHistory.Deleted(_installer, _store))
         {
-            string? preview = null;
+            string? preview = null, title = null;
             if (_installer.ListBackups(d.FileName).FirstOrDefault() is { } last)
             {
                 try
@@ -241,11 +257,12 @@ public sealed class LibraryGarageBackend : IGarageBackend
                     var stamp = new ArchiveStamp(d.FileName, fi.Length, fi.LastWriteTimeUtc);
                     stamps.Add(stamp); // картинка удалённого не убирается из кэша, пока копия жива
                     if (cached(stamp) == CacheState.Image) preview = _previews.ImagePath(stamp);
+                    _previews.TryGetTitle(stamp, out title); // копия — тот же архив: название прочитано, пока мод стоял
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             }
             var g = BindingSuggester.FromFileName(d.FileName);
-            var name = string.IsNullOrWhiteSpace(g.Name) ? Path.GetFileNameWithoutExtension(d.FileName) : g.Name;
+            var name = title ?? (string.IsNullOrWhiteSpace(g.Name) ? Path.GetFileNameWithoutExtension(d.FileName) : g.Name);
             result.Add(new DeletedGarageMod(d, name, g.Version, preview));
         }
         return result;
@@ -514,7 +531,8 @@ public sealed class LibraryGarageBackend : IGarageBackend
             var c = b is null ? null : _store.GetCheck(m.Id, b.Source);
             if (c is not null && (lastAll is null || c.LastCheckedUtc > lastAll)) lastAll = c.LastCheckedUtc;
             var path = ArchivePath(m, disk);
-            string? preview = null;
+            string? preview = null, archiveTitle = null;
+            var titleKnown = false;
             if (path is not null)
             {
                 try
@@ -524,6 +542,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
                     var stamp = d.ModifiedUtc is { } mt ? new ArchiveStamp(d.FileName, d.SizeBytes, mt) : ArchiveStamp.Of(path);
                     stamps.Add(stamp);
                     if (cached(stamp) == CacheState.Image) preview = _previews.ImagePath(stamp);
+                    titleKnown = _previews.TryGetTitle(stamp, out archiveTitle);
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // архив только что удалили или он занят
             }
@@ -538,6 +557,10 @@ public sealed class LibraryGarageBackend : IGarageBackend
                 SiteSizeBytes = uc?.LastSize,
                 SiteChangedUtc = uc?.LastChangedUtc,
                 SiteGameVersion = uc?.LastGameVersion ?? c?.LastGameVersion,
+                RepoTitle = entry?.Repo?.Title,
+                ArchiveTitle = archiveTitle,
+                ArchiveTitleKnown = titleKnown,
+                SiteTitle = c?.LastTitle,
             });
         }
         IReadOnlyList<DeletedGarageMod> deleted;

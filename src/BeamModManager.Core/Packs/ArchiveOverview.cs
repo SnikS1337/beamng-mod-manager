@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using BeamModManager.Core.Game;
 using BeamModManager.Core.Safety;
 
 namespace BeamModManager.Core.Packs;
@@ -22,6 +23,10 @@ public sealed record ArchiveOverview(
 
     public static ArchiveOverview Unreadable { get; } = new(Array.Empty<string>(), Array.Empty<string>(), 0, 0, 0, Array.Empty<Finding>()) { Broken = true };
 }
+
+/// <summary>Название из архива: <see cref="Title"/> null при <see cref="Known"/> — названия в архиве нет (запоминаем); не Known —
+/// архив не открылся (занят), спросим в другой раз.</summary>
+public readonly record struct ArchiveTitle(string? Title, bool Known);
 
 public static class ArchiveOverviewReader
 {
@@ -82,23 +87,63 @@ public static class ArchiveOverviewReader
     /// Имя из info.json машины («Brand» + «Name») или карты («title»); ключи перевода игры («levels.x.info.title») не берём.
     /// info.json у BeamNG — «вольный» JSON: с запятыми в конце и комментариями.
     /// </summary>
-    private static string NameOf(ZipArchive archive, string root, string folder, string key, string? brandKey, ref int reads)
+    private static string NameOf(ZipArchive archive, string root, string folder, string key, string? brandKey, ref int reads) =>
+        InfoName(archive, root, folder, key, brandKey, ref reads) ?? folder;
+
+    /// <summary>Имя из собственного info.json папки; null — файла нет, он не читается или имени в нём нет.</summary>
+    private static string? InfoName(ZipArchive archive, string root, string folder, string key, string? brandKey, ref int reads)
     {
-        if (reads >= MaxInfoReads) return folder;
+        if (reads >= MaxInfoReads) return null;
         var entry = archive.Entries.FirstOrDefault(e => IsInfo(e.FullName, root, folder));
-        if (entry is null || entry.Length > MaxInfoBytes) return folder;
+        if (entry is null || entry.Length > MaxInfoBytes) return null;
         reads++;
         try
         {
             using var s = entry.Open();
             using var doc = JsonDocument.Parse(s, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip, MaxDepth = 32 });
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return folder;
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
             var name = Text(doc.RootElement, key);
-            if (name is null) return folder;
+            if (name is null) return null;
             var brand = brandKey is null ? null : Text(doc.RootElement, brandKey);
             return brand is not null && !name.StartsWith(brand, StringComparison.OrdinalIgnoreCase) ? brand + " " + name : name;
         }
-        catch (Exception e) when (e is JsonException or InvalidDataException or IOException or NotSupportedException) { return folder; }
+        catch (Exception e) when (e is JsonException or InvalidDataException or IOException or NotSupportedException) { return null; }
+    }
+
+    /// <summary>
+    /// Название мода для карточки (2026-10-18): имя из собственного info.json, когда мод кладёт ровно одну свою машину или
+    /// одну свою карту. Пак из нескольких машин, покраска или тюнинг стандартной машины (<see cref="StockContent"/>), мод без
+    /// info.json — названия нет, карточка возьмёт его с сайта или из имени файла. Читает только оглавление и один маленький
+    /// файл: открывать можно для тысячи модов подряд.
+    /// </summary>
+    public static ArchiveTitle TitleOf(string zipPath)
+    {
+        try
+        {
+            using var f = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 16 * 1024);
+            using var archive = new ZipArchive(f, ZipArchiveMode.Read, leaveOpen: false);
+            return new ArchiveTitle(TitleIn(archive), true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new ArchiveTitle(null, false); } // занят: в другой раз
+        catch (Exception e) when (e is InvalidDataException or NotSupportedException or ArgumentException or OverflowException)
+        {
+            return new ArchiveTitle(null, true); // не zip или повреждён: названия в нём нет
+        }
+    }
+
+    private static string? TitleIn(ZipArchive archive)
+    {
+        var content = PackContentReader.ReadFrom(archive);
+        var vehicles = content.Vehicles.Where(v => !v.Equals("common", StringComparison.OrdinalIgnoreCase)).ToList();
+        var reads = 0;
+        if (vehicles.Count == 1 && content.Levels.Count == 0)
+            return StockContent.IsStockVehicle(vehicles[0]) ? null : InfoName(archive, "vehicles", vehicles[0], "Name", "Brand", ref reads);
+        if (content.Levels.Count == 1 && vehicles.Count == 0)
+        {
+            var level = content.Levels.First();
+            return StockContent.IsStockLevel(level) ? null : InfoName(archive, "levels", level, "title", null, ref reads);
+        }
+        return null;
     }
 
     private static string? Text(JsonElement o, string key)
