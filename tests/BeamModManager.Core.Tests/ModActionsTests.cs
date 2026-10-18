@@ -108,6 +108,19 @@ public static class ModActionsTests
             Assert.True(f.Vm.Cards.All(c => c.FileName != "a.zip"), "a не вернулся");
         });
 
+        t.Run("сколько висит тост: включение и выключение 3 с, «Отменить» удаления 6 с, длинное сообщение 5 с, короткое 3 с", () =>
+        {
+            using var f = new Folder(("a.zip", Car("a")), ("b.zip", Car("b")));
+            f.Vm.Toggle(f.Card("a.zip"));
+            Assert.True(f.Vm.Toast is { CanUndo: true, Seconds: 3 }, "выключение: " + f.Vm.Toast?.Seconds);
+            f.Vm.Delete(f.Card("b.zip"));
+            Assert.True(f.Vm.Toast is { CanUndo: true, Seconds: 6 }, "удаление: " + f.Vm.Toast?.Seconds);
+            f.Vm.Notify("Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить");
+            Assert.Eq(5.0, f.Vm.Toast!.Seconds, "длинное");
+            f.Vm.Notify("Готово");
+            Assert.Eq(3.0, f.Vm.Toast!.Seconds, "короткое");
+        });
+
         t.Run("окно закрыли с открытым тостом — удаление доводится", () =>
         {
             using var f = new Folder(("a.zip", Car("a")), ("b.zip", Car("b")));
