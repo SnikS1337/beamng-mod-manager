@@ -322,7 +322,8 @@ public sealed class LibraryGarageBackend : IGarageBackend
         foreach (var d in _installer.ScanDetailed())
         {
             ct.ThrowIfCancellationRequested();
-            if (d.FromGameRepo) continue; // моды из репозитория игры обновляет она сама
+            // моды из подпапок (скачанные в игре и разложенные вручную) тоже сравниваем: обновление такого программа не
+            // поставит (Locked), но и вторую копию рядом не положит
             var p = _installer.PathOf(d);
             ArchiveStamp stamp;
             try { stamp = ArchiveStamp.Of(p); }
@@ -336,7 +337,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { content = Core.Packs.ArchiveContent.Empty; }
                 lock (_contents) _contents[stamp] = content;
             }
-            installed.Add(new InstalledArchive(d.FileName, d.Enabled, d.SizeBytes, p, content));
+            installed.Add(new InstalledArchive(d.FileName, d.Enabled, d.SizeBytes, p, content, d.SubFolder));
         }
         lock (_contents) foreach (var k in _contents.Keys.Where(k => !seen.Contains(k)).ToList()) _contents.Remove(k); // ушедшие не копим
         var work = Path.Combine(_incomingRoot, Guid.NewGuid().ToString("N"));
@@ -352,6 +353,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
     {
         if (mod.Blocked) return new(false, "Архив не прошёл проверку, ставить его нельзя", null);
         if (mod.Kind == IncomingKind.AlreadyInstalled) return new(false, "Этот мод уже установлен", null);
+        if (mod.Locked) return new(false, $"Прежняя версия лежит в подпапке «{mod.ReplacesSubFolder}», такие моды программа не трогает", null);
         if (!_installer.ModsFolderAvailable) return new(false, "Папка модов недоступна", null);
         var disk = _installer.ScanDetailed();
         var old = mod.Kind == IncomingKind.Update && mod.Replaces is { } rep

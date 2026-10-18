@@ -35,7 +35,7 @@ public sealed class IncomingItem : Observable
     public string FileName => Mod.FileName;
     public IReadOnlyList<IncomingCheck> Checks { get; }
     public IReadOnlyList<Fact> Facts { get; }
-    public bool CanInstall => !Mod.Blocked && Mod.Kind != IncomingKind.AlreadyInstalled;
+    public bool CanInstall => !Mod.Blocked && !Mod.Locked && Mod.Kind != IncomingKind.AlreadyInstalled;
 
     /// <summary>«Новый мод», «Обновление: заменит audi_v1.0.zip», «Уже установлен».</summary>
     public string KindText => Mod.Kind switch
@@ -67,6 +67,10 @@ public sealed class IncomingItem : Observable
         if (m.Repacked) list.Add(new IncomingCheck(CheckLevel.Ok, "Файлы лежали в лишней папке — перепаковали, чтобы игра увидела мод"));
         foreach (var f in m.Overview.Findings.Where(f => f.Severity == Severity.Warning && f.Code is not "nested-root").DistinctBy(f => f.Code))
             list.Add(new IncomingCheck(CheckLevel.Attention, f.Message.TrimEnd('.')));
+        if (m.Locked)
+            list.Add(new IncomingCheck(CheckLevel.Blocked, m.ReplacesSubFolder!.Equals(ModInstaller.RepoFolder, StringComparison.OrdinalIgnoreCase)
+                ? "Прежняя версия скачана в самой игре — обновите её там, в «Репозитории»: иначе в игре будет два одинаковых мода"
+                : $"Прежняя версия лежит в подпапке «{m.ReplacesSubFolder}» — замените её там сами: иначе в игре будет два одинаковых мода"));
         if (m.Overview.LuaFiles > 0)
             list.Add(new IncomingCheck(CheckLevel.Attention,
                 $"Есть код: {m.Overview.LuaFiles} {Ru.Plural(m.Overview.LuaFiles, "файл", "файла", "файлов")} Lua. Устанавливайте, если доверяете автору"));
@@ -89,6 +93,7 @@ public sealed class IncomingViewModel : Observable
     private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
     private IncomingArchive? _current;
     private int _serial;
+    private CancellationTokenSource? _busyCts;
 
     /// <param name="ui">Выполнить в потоке окна.</param>
     public IncomingViewModel(IGarageBackend backend, GarageViewModel garage, Action<Action> ui)
@@ -157,11 +162,14 @@ public sealed class IncomingViewModel : Observable
         {
             if (Open) { await QueueDropAsync(path, ct).ConfigureAwait(false); return; }
             serial = ++_serial;
+            // «Отмена» во время разбора прерывает и распаковку (большой RAR распаковывается долго)
+            _busyCts?.Dispose();
+            _busyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            ct = _busyCts.Token;
             ShowBusy(path);
         }
-        IncomingArchive a;
-        try { a = await Task.Run(() => _backend.InspectIncoming(path, ct), ct).ConfigureAwait(false); }
-        catch (OperationCanceledException) { return; }
+        var a = await InspectAsync(path, ct).ConfigureAwait(false);
+        if (a is null) return;
         _ui(() =>
         {
             if (origin == IncomingOrigin.Dropped)
@@ -171,17 +179,27 @@ public sealed class IncomingViewModel : Observable
                 return;
             }
             // скачанное: предлагаем, только если есть что поставить
-            if (!a.Mods.Any(m => !m.Blocked && m.Kind != IncomingKind.AlreadyInstalled)) { _backend.DiscardIncoming(a); return; }
+            if (!a.Mods.Any(Installable)) { _backend.DiscardIncoming(a); return; }
             _offers.Enqueue(a);
             if (OfferText is null) NextOffer();
         });
     }
 
+    /// <summary>
+    /// Разбор не в потоке окна. Неожиданная ошибка (чужой архив бывает каким угодно) — «ставить нечего» с причиной, а не
+    /// окно, навсегда застрявшее на «Проверяем…». null — отменено (окно закрывается).
+    /// </summary>
+    private async Task<IncomingArchive?> InspectAsync(string path, CancellationToken ct)
+    {
+        try { return await Task.Run(() => _backend.InspectIncoming(path, ct), ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception e) { return IncomingArchive.Fail(path, "Не удалось проверить архив: " + e.Message.TrimEnd('.')); }
+    }
+
     private async Task QueueDropAsync(string path, CancellationToken ct)
     {
-        IncomingArchive a;
-        try { a = await Task.Run(() => _backend.InspectIncoming(path, ct), ct).ConfigureAwait(false); }
-        catch (OperationCanceledException) { return; }
+        var a = await InspectAsync(path, ct).ConfigureAwait(false);
+        if (a is null) return;
         // окно успели закрыть, пока разбирали, — открываем этот архив сразу (он перетащен, а не «скачан»)
         _ui(() => { _offers.Enqueue(a); if (!Open && OfferText is null) Review(); });
     }
@@ -209,12 +227,14 @@ public sealed class IncomingViewModel : Observable
     {
         if (_offers.Count == 0) { OfferText = null; return; }
         var a = _offers.Peek();
-        var mods = a.Mods.Where(m => !m.Blocked && m.Kind != IncomingKind.AlreadyInstalled).ToList();
+        var mods = a.Mods.Where(Installable).ToList();
         if (mods.Count == 0) { OfferText = null; return; } // перетащенный «не мод» стоит в очереди: окно покажет его само
         OfferText = mods.Count == 1
             ? $"Скачан мод {Ru.Quoted(mods[0].Title, 48)}" + (mods[0].Kind == IncomingKind.Update ? ": обновление" : "")
             : $"Скачан архив {Ru.Quoted(Path.GetFileName(a.SourcePath), 48)}: модов {mods.Count}";
     }
+
+    private static bool Installable(IncomingMod m) => !m.Blocked && !m.Locked && m.Kind != IncomingKind.AlreadyInstalled;
 
     private void ShowBusy(string path)
     {
@@ -259,6 +279,7 @@ public sealed class IncomingViewModel : Observable
     /// <summary>«Отмена» или «Понятно»: окно закрывается, следующий перетащенный архив (если ждёт) открывается сам.</summary>
     public void Close()
     {
+        if (Busy) _busyCts?.Cancel();
         if (_current is { } a) _backend.DiscardIncoming(a);
         _current = null;
         _serial++;

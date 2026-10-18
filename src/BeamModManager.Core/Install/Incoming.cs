@@ -38,8 +38,16 @@ public sealed record IncomingMod(
     string? Replaces,
     bool ReplacesEnabled,
     /// <summary>Архив пришлось перепаковать: файлы лежали в лишней папке, и игра бы их не увидела.</summary>
-    bool Repacked)
+    bool Repacked,
+    /// <summary>
+    /// Заменяемый мод лежит в подпапке mods (там моды, скачанные в самой игре, и разложенные вручную): такие программа не
+    /// трогает, а поставить рядом — получить в игре два одинаковых. Тогда ставить нельзя, окно объясняет почему.
+    /// </summary>
+    string? ReplacesSubFolder = null)
 {
+    /// <summary>Обновление мода из подпапки: ставить нельзя (см. <see cref="ReplacesSubFolder"/>).</summary>
+    public bool Locked => ReplacesSubFolder is not null && Kind == IncomingKind.Update;
+
     /// <summary>Проверка запретила ставить (повреждён, опасный путь, исполняемые файлы, бомба).</summary>
     public bool Blocked => Overview.Broken || Overview.Findings.Any(f => f.Severity == Severity.Block);
 
@@ -59,7 +67,7 @@ public sealed record IncomingArchive(string SourcePath, IReadOnlyList<IncomingMo
 }
 
 /// <summary>Установленный мод для сопоставления: по имени, по составу (машины и карты) и, при равном размере, по содержимому.</summary>
-public sealed record InstalledArchive(string FileName, bool Enabled, long Size, string Path, ArchiveContent Content);
+public sealed record InstalledArchive(string FileName, bool Enabled, long Size, string Path, ArchiveContent Content, string? SubFolder = null);
 
 /// <summary>
 /// Разбор архива, который человек скачал или перетащил на окно (2026-10-18): какие в нём моды BeamNG и чем каждый станет —
@@ -89,12 +97,28 @@ public static class IncomingAnalyzer
         return Extensions.Contains(ext, StringComparer.OrdinalIgnoreCase) && !System.IO.Path.GetFileName(path).StartsWith('.');
     }
 
+    /// <param name="budget">Сколько всего можно распаковать во временную папку (вложенные zip, перепаковка); по умолчанию
+    /// <see cref="MaxExtractBytes"/>. Сверх — «архив слишком большой», а не забитый диск.</param>
     public static IncomingArchive Analyze(string path, IReadOnlyList<InstalledArchive> installed, string workDir,
-        IArchiveExtractor? extractor, CancellationToken ct = default) =>
-        AnalyzeCore(path, installed, workDir, extractor, ct) with { WorkDir = workDir };
+        IArchiveExtractor? extractor, CancellationToken ct = default, long budget = MaxExtractBytes) =>
+        AnalyzeCore(path, installed, workDir, extractor, ct, new Budget(budget)) with { WorkDir = workDir };
+
+    /// <summary>Сколько ещё можно распаковать (общее на весь разбор одного архива).</summary>
+    private sealed class Budget(long left)
+    {
+        public long Left { get; private set; } = left;
+
+        public void Take(long n)
+        {
+            Left -= n;
+            if (Left < 0) throw new InvalidDataException(TooBig);
+        }
+    }
+
+    private const string TooBig = "после распаковки архив слишком большой";
 
     private static IncomingArchive AnalyzeCore(string path, IReadOnlyList<InstalledArchive> installed, string workDir,
-        IArchiveExtractor? extractor, CancellationToken ct)
+        IArchiveExtractor? extractor, CancellationToken ct, Budget budget)
     {
         var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
         if (!File.Exists(path)) return IncomingArchive.Fail(path, "Файл не найден.");
@@ -102,15 +126,15 @@ public static class IncomingAnalyzer
         {
             Directory.CreateDirectory(workDir);
             List<(string Zip, string Name, bool Repacked)> zips;
-            if (ext == ".zip") zips = FromZip(path, workDir, ct);
+            if (ext == ".zip") zips = FromZip(path, workDir, ct, budget);
             else if (ext is ".rar" or ".7z")
             {
                 if (extractor is null) return IncomingArchive.Fail(path, "RAR и 7z здесь не открываются.");
                 var dir = System.IO.Path.Combine(workDir, "unpacked");
                 Directory.CreateDirectory(dir);
-                var err = extractor.Extract(path, dir, MaxExtractBytes, ct);
+                var err = extractor.Extract(path, dir, budget.Left, ct);
                 if (err is not null) return IncomingArchive.Fail(path, err);
-                zips = FromFolder(dir, StemOf(path), workDir, ct);
+                zips = FromFolder(dir, StemOf(path), workDir, ct, budget);
             }
             else return IncomingArchive.Fail(path, "Это не архив мода (нужен zip, rar или 7z).");
 
@@ -126,13 +150,14 @@ public static class IncomingAnalyzer
                 ArchiveContent content;
                 using (var f = File.OpenRead(zip)) content = PackContentReader.Read(f);
                 var size = new FileInfo(zip).Length;
-                var (kind, replaces, enabled) = Match(zip, file, size, content, installed);
-                mods.Add(new IncomingMod(zip, file, size, overview, content, kind, replaces, enabled, repacked));
+                var (kind, target) = Match(zip, file, size, content, installed);
+                mods.Add(new IncomingMod(zip, file, size, overview, content, kind, target?.FileName, target?.Enabled ?? true, repacked, target?.SubFolder));
             }
             return new IncomingArchive(path, mods, null);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (InvalidDataException e) when (e.Message == TooBig) { return IncomingArchive.Fail(path, "Архив слишком большой после распаковки"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or NotSupportedException)
         {
             return IncomingArchive.Fail(path, "Архив не читается: " + e.Message);
         }
@@ -140,10 +165,13 @@ public static class IncomingAnalyzer
 
     // ───────────── откуда берутся zip ─────────────
 
-    private static List<(string, string, bool)> FromZip(string path, string workDir, CancellationToken ct)
+    private static List<(string, string, bool)> FromZip(string path, string workDir, CancellationToken ct, Budget budget)
     {
         var name = CleanName(System.IO.Path.GetFileName(path));
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        // архив с запретом проверки (бомба, опасные пути, исполняемые) не распаковываем и не перепаковываем: окно покажет запрет
+        if (ArchiveInspector.Inspect(fs).IsBlocked) return new() { (path, name, false) };
+        fs.Position = 0;
         ZipArchive zip;
         try { zip = new ZipArchive(fs, ZipArchiveMode.Read, leaveOpen: true); }
         catch (InvalidDataException) { return new() { (path, name, false) }; } // повреждённый: проверка скажет, что именно
@@ -163,24 +191,25 @@ public static class IncomingAnalyzer
                 foreach (var e in inner)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (e.Length > MaxExtractBytes) continue;
                     var target = System.IO.Path.Combine(dir, $"{i++}.zip");
                     using (var src = e.Open())
-                    using (var dst = File.Create(target)) CopyLimited(src, dst, MaxExtractBytes, ct);
-                    list.AddRange(Normalize(target, CleanName(e.Name), workDir, ct));
+                    using (var dst = File.Create(target)) CopyLimited(src, dst, budget, ct);
+                    list.AddRange(Normalize(target, CleanName(e.Name), workDir, ct, budget));
                 }
                 return list;
             }
             if (shape.WrapFolder is { } wrap)
-                return new() { (Repack(zip.Entries, wrap, System.IO.Path.Combine(workDir, "repacked-" + Guid.NewGuid().ToString("N")[..8] + ".zip"), ct), name, true) };
+                return new() { (Repack(zip.Entries, wrap, System.IO.Path.Combine(workDir, "repacked-" + Guid.NewGuid().ToString("N")[..8] + ".zip"), ct, budget), name, true) };
             return new();
         }
     }
 
     /// <summary>Внутренний zip: мод как есть, мод в лишней папке (перепаковать) или не мод (пропустить).</summary>
-    private static IEnumerable<(string, string, bool)> Normalize(string zipPath, string name, string workDir, CancellationToken ct)
+    private static IEnumerable<(string, string, bool)> Normalize(string zipPath, string name, string workDir, CancellationToken ct, Budget budget)
     {
         using var fs = File.OpenRead(zipPath);
+        if (ArchiveInspector.Inspect(fs).IsBlocked) return new[] { (zipPath, name, false) }; // как есть: окно покажет запрет
+        fs.Position = 0;
         ZipArchive zip;
         try { zip = new ZipArchive(fs, ZipArchiveMode.Read, leaveOpen: true); }
         catch (InvalidDataException) { return new[] { (zipPath, name, false) }; }
@@ -189,15 +218,24 @@ public static class IncomingAnalyzer
             var shape = ShapeOf(zip.Entries.Select(e => e.FullName));
             if (shape.IsMod) return new[] { (zipPath, name, false) };
             if (shape.WrapFolder is { } wrap)
-                return new[] { (Repack(zip.Entries, wrap, zipPath + ".repacked.zip", ct), name, true) };
+                return new[] { (Repack(zip.Entries, wrap, zipPath + ".repacked.zip", ct, budget), name, true) };
             return Array.Empty<(string, string, bool)>();
         }
     }
 
     /// <summary>Распакованный RAR или 7z: zip внутри (как файлы) или папка мода, которую собираем в zip.</summary>
-    private static List<(string, string, bool)> FromFolder(string dir, string stem, string workDir, CancellationToken ct)
+    /// <summary>
+    /// Обход распакованного: без ссылок (symlink, junction) — ссылка из чужого архива могла бы увести на файлы человека,
+    /// и они попали бы в собранный мод; скрытые файлы не пропускаем (у модов бывают).
+    /// </summary>
+    private static EnumerationOptions Walk(int depth = int.MaxValue) => new()
     {
-        var zips = Directory.EnumerateFiles(dir, "*.zip", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 4, IgnoreInaccessible = true })
+        RecurseSubdirectories = depth > 0, MaxRecursionDepth = depth, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint,
+    };
+
+    private static List<(string, string, bool)> FromFolder(string dir, string stem, string workDir, CancellationToken ct, Budget budget)
+    {
+        var zips = Directory.EnumerateFiles(dir, "*.zip", Walk(4))
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Take(MaxMods).ToList();
         if (zips.Count > 0)
         {
@@ -205,7 +243,7 @@ public static class IncomingAnalyzer
             foreach (var z in zips)
             {
                 ct.ThrowIfCancellationRequested();
-                list.AddRange(Normalize(z, CleanName(System.IO.Path.GetFileName(z)), workDir, ct));
+                list.AddRange(Normalize(z, CleanName(System.IO.Path.GetFileName(z)), workDir, ct, budget));
             }
             return list;
         }
@@ -225,7 +263,7 @@ public static class IncomingAnalyzer
         while (queue.Count > 0)
         {
             var (d, level) = queue.Dequeue();
-            var subs = Directory.GetDirectories(d);
+            var subs = Directory.GetDirectories(d, "*", Walk(0));
             if (subs.Any(s => ArchiveInspector.IsKnownRoot(System.IO.Path.GetFileName(s)))) return d;
             if (level < depth) foreach (var s in subs.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) queue.Enqueue((s, level + 1));
         }
@@ -235,7 +273,7 @@ public static class IncomingAnalyzer
     private static void ZipFolder(string root, string target, CancellationToken ct)
     {
         using var zip = ZipFile.Open(target, ZipArchiveMode.Create);
-        foreach (var file in Directory.EnumerateFiles(root, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+        foreach (var file in Directory.EnumerateFiles(root, "*", Walk()))
         {
             ct.ThrowIfCancellationRequested();
             var rel = System.IO.Path.GetRelativePath(root, file).Replace('\\', '/');
@@ -245,7 +283,7 @@ public static class IncomingAnalyzer
     }
 
     /// <summary>Перепаковка без лишней верхней папки: «Мод/vehicles/…» → «vehicles/…».</summary>
-    private static string Repack(IEnumerable<ZipArchiveEntry> entries, string wrap, string target, CancellationToken ct)
+    private static string Repack(IEnumerable<ZipArchiveEntry> entries, string wrap, string target, CancellationToken ct, Budget budget)
     {
         var prefix = wrap + "/";
         using var dst = ZipFile.Open(target, ZipArchiveMode.Create);
@@ -261,7 +299,7 @@ public static class IncomingAnalyzer
             if (rel.EndsWith('/')) continue;
             using var s = e.Open();
             using var d = ne.Open();
-            CopyLimited(s, d, MaxExtractBytes, ct);
+            CopyLimited(s, d, budget, ct);
         }
         return target;
     }
@@ -282,18 +320,18 @@ public static class IncomingAnalyzer
 
     // ───────────── сопоставление с установленными ─────────────
 
-    private static (IncomingKind, string?, bool) Match(string zip, string fileName, long size, ArchiveContent content, IReadOnlyList<InstalledArchive> installed)
+    private static (IncomingKind, InstalledArchive?) Match(string zip, string fileName, long size, ArchiveContent content, IReadOnlyList<InstalledArchive> installed)
     {
         // 1. ровно этот файл уже стоит (размер, потом содержимое)
         string? hash = null;
         foreach (var m in installed.Where(m => m.Size == size))
         {
             hash ??= Sha(zip);
-            if (File.Exists(m.Path) && Sha(m.Path) == hash) return (IncomingKind.AlreadyInstalled, m.FileName, m.Enabled);
+            if (File.Exists(m.Path) && Sha(m.Path) == hash) return (IncomingKind.AlreadyInstalled, m);
         }
         // 2. то же имя файла
         var same = installed.FirstOrDefault(m => string.Equals(m.FileName, fileName, StringComparison.OrdinalIgnoreCase));
-        if (same is not null) return (IncomingKind.Update, same.FileName, same.Enabled);
+        if (same is not null) return (IncomingKind.Update, same);
         // 3. те же машины и карты: доля общего от большего из двух — не меньше половины; двух равных лучших не выбираем
         if (content.Count > 0)
         {
@@ -303,17 +341,17 @@ public static class IncomingAnalyzer
                 .Where(x => x.Shared > 0 && x.Score >= 0.5)
                 .OrderByDescending(x => x.Score).ToList();
             if (scored.Count == 1 || (scored.Count > 1 && scored[0].Score > scored[1].Score))
-                return (IncomingKind.Update, scored[0].Mod.FileName, scored[0].Mod.Enabled);
-            if (scored.Count > 1) return (IncomingKind.New, null, true); // неоднозначно — не гадаем
+                return (IncomingKind.Update, scored[0].Mod);
+            if (scored.Count > 1) return (IncomingKind.New, null); // неоднозначно — не гадаем
         }
         // 4. то же название без версии («audi_v1.0» и «audi_v1.5»), если такой один
         var nk = LibrarySync.NameKey(fileName);
         if (nk.Length > 0)
         {
             var byName = installed.Where(m => LibrarySync.NameKey(m.FileName) == nk).ToList();
-            if (byName.Count == 1) return (IncomingKind.Update, byName[0].FileName, byName[0].Enabled);
+            if (byName.Count == 1) return (IncomingKind.Update, byName[0]);
         }
-        return (IncomingKind.New, null, true);
+        return (IncomingKind.New, null);
     }
 
     // ───────────── мелочи ─────────────
@@ -345,16 +383,14 @@ public static class IncomingAnalyzer
         return n;
     }
 
-    private static void CopyLimited(Stream src, Stream dst, long max, CancellationToken ct)
+    private static void CopyLimited(Stream src, Stream dst, Budget budget, CancellationToken ct)
     {
         var buf = new byte[81920];
-        long total = 0;
         int n;
         while ((n = src.Read(buf, 0, buf.Length)) > 0)
         {
             ct.ThrowIfCancellationRequested();
-            total += n;
-            if (total > max) throw new InvalidDataException("распакованный файл слишком большой");
+            budget.Take(n);
             dst.Write(buf, 0, n);
         }
     }

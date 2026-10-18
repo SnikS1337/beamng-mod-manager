@@ -166,6 +166,10 @@ public sealed class SettingsViewModel : Observable
         if (DownloadsFolder is { } d && string.Equals(AppSettings.CleanFolder(d), p, StringComparison.OrdinalIgnoreCase))
             return "«Загрузки» программа смотрит и так";
         if (_current.WatchFolders.Contains(p, StringComparer.OrdinalIgnoreCase)) return "Эту папку программа уже смотрит";
+        // папка модов (и всё внутри неё): моды там программа видит и так, а свои установки она бы «замечала» как скачанные
+        if (ModsFolderPath is { } mods && AppSettings.CleanFolder(mods) is { } m
+            && (p.Equals(m, StringComparison.OrdinalIgnoreCase) || p.StartsWith(m + "\\", StringComparison.OrdinalIgnoreCase) || p.StartsWith(m + "/", StringComparison.OrdinalIgnoreCase)))
+            return "Это папка модов: моды в ней программа видит и так";
         if (!CanAddWatchFolder) return $"Больше {AppSettings.MaxWatchFolders} папок не добавить";
         Update(s => s with { WatchFolders = s.WatchFolders.Append(p).ToList() });
         return null;
