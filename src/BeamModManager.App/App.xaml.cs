@@ -206,7 +206,11 @@ public partial class App : Application
             if (Arg("--update-failed") is { Length: > 0 } why)
                 host.StartupToast = $"Обновление не встало: {why}. Осталась версия {AppVersion.Display(up.Current)}";
         }
-        host.Banner = new UpdateBanner(host.Updater, a => Dispatcher.BeginInvoke(a), RestartIntoUpdate);
+        // в демо (--update состояние) — подделка с застывшим состоянием, для снимков плашки; перезапуска в демо нет
+        var demoUpdater = host.Updater is null && demo is not null ? DemoUpdater.From(Arg("--update")) : null;
+        host.Banner = demoUpdater is not null
+            ? new UpdateBanner(demoUpdater, a => Dispatcher.BeginInvoke(a), () => { })
+            : new UpdateBanner(host.Updater, a => Dispatcher.BeginInvoke(a), RestartIntoUpdate);
         host.Settings.CanUpdateApp = host.Updater is not null;
         host.Settings.VersionText = host.Updater is { } u
             ? $"Версия {AppVersion.Display(u.Current)}"

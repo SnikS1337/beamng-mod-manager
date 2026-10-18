@@ -699,9 +699,12 @@
                     </ControlTemplate>
                 </ScrollViewer.Template>
                 <StackPanel Margin="44,84,24,28">
-                    <!-- самообновление: «Вышла новая версия» → «Обновить» → загрузка → перезапуск -->
+                    <!-- самообновление: «Вышла новая версия» → «Обновить» → загрузка (полоса, сколько скачано и осталось,
+                         «Отменить») → проверка и распаковка (блик по полосе) → галочка и отсчёт до перезапуска. Появляется
+                         и уходит плавно (окно, UpdateBanner_Changed); полосу ведёт окно, а не привязка: она едет, а не прыгает -->
                     <Border x:Name="UpdateBox" CornerRadius="20" MinHeight="44" Margin="0,0,0,12" Padding="18,6,10,6" DataContext="{x:Null}"
-                            Visibility="{Binding Visible, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                            Visibility="Collapsed" Opacity="0">
+                        <Border.RenderTransform><TranslateTransform x:Name="UpdateBoxMove"/></Border.RenderTransform>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                 <GradientStop Color="#3D6EB4FF" Offset="0"/>
@@ -709,18 +712,46 @@
                             </LinearGradientBrush>
                         </Border.Background>
                         <Grid>
-                            <DockPanel VerticalAlignment="Center">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <DockPanel VerticalAlignment="Center" MinHeight="32">
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource Link}" Content="Отменить" Margin="12,0,6,0" Click="UpdateCancel_Click"
+                                            Visibility="{Binding CanCancel, Converter={StaticResource BoolToVis}}"/>
                                     <Button Style="{StaticResource Secondary}" Height="32" MinWidth="110" Padding="14,0" Content="{Binding ActionLabel}" Click="UpdateAct_Click"
                                             Visibility="{Binding ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
                                     <Button Style="{StaticResource Link}" Content="Позже" Margin="8,0,0,0" Click="UpdateLater_Click"
                                             Visibility="{Binding CanDismiss, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
-                                <TextBlock Text="{Binding Text}" VerticalAlignment="Center" FontSize="13.5" TextWrapping="Wrap"/>
+                                <!-- сколько скачано и сколько осталось: цифры одной ширины, строка не прыгает -->
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" VerticalAlignment="Center" FontSize="12.5" Margin="12,0,0,0"
+                                           Foreground="{DynamicResource Ink2}" Typography.NumeralAlignment="Tabular"
+                                           Visibility="{Binding Detail, Converter={StaticResource NullToCollapsed}}"/>
+                                <!-- готово: галочка в кружке -->
+                                <Grid x:Name="UpdateDone" Width="20" Height="20" Margin="0,0,10,0" VerticalAlignment="Center" Visibility="Collapsed">
+                                    <Ellipse Fill="{DynamicResource Ink}" Opacity="0.14"/>
+                                    <Path Data="M5.6,10.3 L8.6,13.2 L14.4,7.2" Stroke="{DynamicResource Ink}" StrokeThickness="1.8"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    <Grid.RenderTransform><ScaleTransform x:Name="UpdateDoneScale" CenterX="10" CenterY="10"/></Grid.RenderTransform>
+                                </Grid>
+                                <TextBlock Text="{Binding Text}" VerticalAlignment="Center" FontSize="13.5" TextWrapping="Wrap" Typography.NumeralAlignment="Tabular"/>
                             </DockPanel>
-                            <ProgressBar VerticalAlignment="Bottom" Height="3" Margin="0,0,8,-4" Minimum="0" Maximum="1" Value="{Binding Progress, Mode=OneWay, FallbackValue=0}"
-                                         Foreground="{DynamicResource Ink2}" Background="{DynamicResource SoftFill}" BorderThickness="0"
-                                         Visibility="{Binding Progress, Converter={StaticResource NullToCollapsed}}"/>
+                            <!-- полоса: своя, тонкая и скруглённая, внутри плашки (раньше — системная, торчала из-под края) -->
+                            <Grid x:Name="UpdateBar" Grid.Row="1" Height="3" Margin="0,7,8,4" ClipToBounds="True" Visibility="Collapsed">
+                                <Border CornerRadius="1.5" Background="{DynamicResource SoftFill}"/>
+                                <Border x:Name="UpdateBarFill" CornerRadius="1.5" Background="{DynamicResource Ink}" RenderTransformOrigin="0,0.5">
+                                    <Border.RenderTransform><ScaleTransform x:Name="UpdateBarScale" ScaleX="0"/></Border.RenderTransform>
+                                </Border>
+                                <Border x:Name="UpdateBarSheen" Width="90" HorizontalAlignment="Left" Opacity="0">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                            <GradientStop Color="#00FFFFFF" Offset="0"/>
+                                            <GradientStop Color="#CCFFFFFF" Offset="0.5"/>
+                                            <GradientStop Color="#00FFFFFF" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <Border.RenderTransform><TranslateTransform x:Name="UpdateBarSheenMove"/></Border.RenderTransform>
+                                </Border>
+                            </Grid>
                         </Grid>
                     </Border>
                     <Border CornerRadius="20" MinHeight="40" Background="#33FFB340" Margin="0,0,0,12" Padding="18,8"
@@ -1167,7 +1198,11 @@
                                                Visibility="{Binding Visible, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                                         <Button DockPanel.Dock="Right" Style="{StaticResource Secondary}" Height="32" Padding="14,0" Margin="12,0,0,0"
                                                 Content="{Binding ActionLabel}" Click="UpdateAct_Click" Visibility="{Binding ActionLabel, Converter={StaticResource NullToCollapsed}}"/>
-                                        <TextBlock Text="{Binding Text}" FontSize="13.5" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Text}" FontSize="13.5" TextWrapping="Wrap" Typography.NumeralAlignment="Tabular"/>
+                                            <ProgressBar Style="{StaticResource ThinProgress}" Height="3" Margin="0,7,0,0" Value="{Binding Progress, Mode=OneWay, FallbackValue=0}"
+                                                         Visibility="{Binding Progress, Converter={StaticResource NullToCollapsed}}"/>
+                                        </StackPanel>
                                     </DockPanel>
                                 </StackPanel>
                             </Border>
