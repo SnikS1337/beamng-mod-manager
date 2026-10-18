@@ -24,6 +24,12 @@ public interface IModSource
     /// <summary>Страница ленты «новое / обновлённое» (с 1). Нужна планировщику обновлений.</summary>
     Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default);
 
+    /// <summary>
+    /// Попадает ли страница мода в ленту сайта. Если нет, по ленте нельзя заключить, что мод не менялся: его проверяем по
+    /// карточке (2026-10-18: лента ModsGaming — только раздел «Машины», и обновления модов из других разделов не находились).
+    /// </summary>
+    bool FeedCovers(Uri page) => true;
+
     Task<IReadOnlyList<Listing>> LatestAsync(DateTimeOffset? since, CancellationToken ct = default);
 
     Task<IReadOnlyList<Offer>> GetOffersAsync(Listing listing, CancellationToken ct = default);

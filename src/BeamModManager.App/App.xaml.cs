@@ -521,7 +521,10 @@ public partial class App : Application
         var updates = new LibraryUpdatesBackend(store, sources, () => svm.Current, null, fetcher.ClearCache, fetcher.ResetHost, fetcher.StatusOf);
         // «Поиск»: те же сайты и загрузчик; решения «Это один мод» / «Это разные» хранятся навсегда
         var search = new LibrarySearchBackend(sources, () => svm.Current, new MatchDecisionStore(Path.Combine(appDir, "matches.json")), fetcher.StatusOf);
-        var remote = new RemotePreviews(Path.Combine(appDir, "search-previews"));
+        // картинки Modland (и его поддоменов) — встроенным браузером: они за той же защитой, что и страницы
+        var remote = new RemotePreviews(Path.Combine(appDir, "search-previews"),
+            browser is null ? null : u => u.Host.Equals("modland.net", StringComparison.OrdinalIgnoreCase) || u.Host.EndsWith(".modland.net", StringComparison.OrdinalIgnoreCase),
+            browser is null ? null : browser.GetBytesAsync);
         _ = Task.Run(() => remote.Prune(TimeSpan.FromDays(30)));
 
         var pendingPath = Path.Combine(appDir, "pending.json");

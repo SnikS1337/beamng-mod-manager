@@ -116,7 +116,8 @@ public static class UpdateCheckPlanner
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, FeedEntry>> feedBySource,
         DateTimeOffset now,
         UpdateCheckOptions? options = null,
-        IReadOnlyDictionary<string, DateTimeOffset>? coverage = null)
+        IReadOnlyDictionary<string, DateTimeOffset>? coverage = null,
+        Func<TrackedBinding, bool>? inFeed = null)
     {
         options ??= new UpdateCheckOptions();
         var unchanged = new List<TrackedBinding>();
@@ -142,8 +143,10 @@ public static class UpdateCheckPlanner
 
                 // Лента датирована и дошла глубже последней проверки мода: его в ленте нет, значит, он не менялся.
                 // Принудительная проверка этого доказательства не использует — пользователь просит перепроверить.
+                // Только если мод вообще мог попасть в эту ленту (у ModsGaming лента — один раздел, inFeed).
                 if (!options.Force && coverage is not null && coverage.TryGetValue(group.Key, out var cov)
-                    && b.LastVersion is not null && b.MissCount == 0 && FeedCoverage.Proves(cov, b.LastCheckedUtc, now))
+                    && b.LastVersion is not null && b.MissCount == 0 && FeedCoverage.Proves(cov, b.LastCheckedUtc, now)
+                    && (inFeed?.Invoke(b) ?? true))
                 {
                     unchanged.Add(b);
                     continue;
