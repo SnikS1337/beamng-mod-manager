@@ -15,6 +15,7 @@ using BeamModManager.App.Services;
 using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
 using BeamModManager.Ui.Incoming;
+using BeamModManager.Ui.Tour;
 using BeamModManager.Ui.Look;
 using BeamModManager.Ui.Search;
 using BeamModManager.Ui.Settings;
@@ -47,6 +48,8 @@ public sealed class WindowHost
     public bool ShotDropHint { get; init; }
     /// <summary>Снимок: плашка «Интерфейс работает медленно».</summary>
     public bool ShotSlowOffer { get; init; }
+    /// <summary>Снимок: шаг знакомства (1 — первый).</summary>
+    public int? ShotTour { get; init; }
     /// <summary>Вместе со снимком записать замеры (запуск, фильтр, поиск, перечитывание, память) в &lt;снимок&gt;.perf.txt.</summary>
     public bool ShotPerf { get; init; }
     /// <summary>Вместе со снимком прогнать анимации и записать кадры в секунду в &lt;снимок&gt;.frames.txt (--frames).</summary>
@@ -226,6 +229,7 @@ public partial class MainWindow : Window
         host.Settings.DownloadsFolder = DownloadsWatcher.DownloadsPath();
         _downloads = new DownloadsWatcher(p => Dispatcher.BeginInvoke(() => { if (IsLoaded) _ = _in.OfferAsync(p, IncomingOrigin.Downloaded, _closing.Token); }));
         Closed += (_, _) => _downloads.Dispose();
+        Root.SizeChanged += (_, _) => { if (_tour is not null) TourPlace(instant: true); };
         // «Интерфейс работает медленно»: итоги анимаций приходят от пружин (поток окна)
         _slow.Suggest += () => { _slowOffered = true; FadePlate(SlowBox, SlowBoxMove, true); };
         FramePolicy.Shared.Judged += _slow.Burst;
@@ -364,6 +368,7 @@ public partial class MainWindow : Window
         if (_host.ShotOffer is { } offer) _ = _in.OfferAsync(offer, IncomingOrigin.Downloaded);
         if (_host.ShotDropHint) ShowDropHint(true);
         if (_host.ShotSlowOffer) FadePlate(SlowBox, SlowBoxMove, true);
+        MaybeStartTour();
         UpdateDownloadsWatch(_host.Settings.Current);
         if (_host.StartSearch is { } query)
         {
@@ -1736,6 +1741,113 @@ public partial class MainWindow : Window
     private void UpdateLater_Click(object sender, RoutedEventArgs e) => _host.Banner?.Dismiss();
     private void UpdateCancel_Click(object sender, RoutedEventArgs e) => _host.Banner?.Cancel();
 
+    // ───────────── знакомство при первом запуске (2026-10-18) ─────────────
+
+    private TourViewModel? _tour;
+
+    /// <summary>Первый запуск: когда окно вошло и показало моды, — знакомство (если ничего другого поверх нет).</summary>
+    private void MaybeStartTour()
+    {
+        // снимок: после того как островок встал на место (AdaptTopBar идёт с приоритетом Loaded), но до снимка
+        if (_host.ShotTour is { } step) { Dispatcher.BeginInvoke(() => StartTour(step - 1), DispatcherPriority.ApplicationIdle); return; }
+        if (_host.Settings.Current.FirstRunDone || _host.ShotPath is not null) return;
+        _ = Task.Delay(TimeSpan.FromSeconds(1.4)).ContinueWith(_ => Dispatcher.BeginInvoke(() =>
+        {
+            if (!IsLoaded || _tour is not null || NavGarage.IsChecked != true) return;
+            if (IncomingLayer.Visibility == Visibility.Visible || BindLayer.Visibility == Visibility.Visible) return;
+            StartTour(0);
+        }), TaskScheduler.Default);
+    }
+
+    private void StartTour(int step)
+    {
+        _tour = new TourViewModel(_vm.Cards.Count > 0);
+        _tour.GoTo(step);
+        _tour.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(TourViewModel.Index)) TourPlace(instant: false); };
+        _tour.Done += EndTour;
+        TourLayer.DataContext = _tour;
+        TourLayer.Visibility = Visibility.Visible;
+        TourLayer.UpdateLayout();
+        TourPlace(instant: true);
+        if (!SpringDriver.ReducedMotion && _host.ShotPath is null)
+            TourLayer.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.4, Anim.Smooth));
+        Dispatcher.BeginInvoke(() => TourNext.Focus(), DispatcherPriority.Input);
+    }
+
+    private void EndTour()
+    {
+        if (_host.ShotPath is null) _host.Settings.MarkFirstRunDone();
+        var quick = SpringDriver.ReducedMotion;
+        _tour = null;
+        if (quick) { TourLayer.Visibility = Visibility.Collapsed; TourLayer.DataContext = null; return; }
+        var fade = Anim.Go(TourLayer.Opacity, 0, 0.25, Anim.Smooth);
+        fade.Completed += (_, _) => { if (_tour is null) { TourLayer.Visibility = Visibility.Collapsed; TourLayer.DataContext = null; TourLayer.BeginAnimation(OpacityProperty, null); TourLayer.Opacity = 1; } };
+        TourLayer.BeginAnimation(OpacityProperty, fade);
+    }
+
+    private void TourNext_Click(object sender, RoutedEventArgs e) => _tour?.Next();
+    private void TourSkip_Click(object sender, RoutedEventArgs e) => _tour?.Skip();
+
+    /// <summary>Рамка элемента шага в координатах окна с полями 8 px и её скругление; null — шаг без элемента (по центру).</summary>
+    private (Rect Rect, double Radius)? TourTargetOf(TourTarget t)
+    {
+        FrameworkElement? el = t switch { TourTarget.Nav => Nav, TourTarget.Filters => TopBar, TourTarget.Card => FindCard(), _ => null };
+        if (el is null || !el.IsVisible || el.ActualWidth <= 0) return null;
+        Rect r;
+        try { r = el.TransformToAncestor(Root).TransformBounds(new Rect(el.RenderSize)); }
+        catch (InvalidOperationException) { return null; }
+        r.Inflate(8, 8);
+        return (r, t switch { TourTarget.Nav => 50, TourTarget.Filters => 32, _ => 30 });
+    }
+
+    /// <summary>
+    /// Ставит «окно» в затемнении, кольцо и пузырь к элементу шага: у левой панели и карточки пузырь справа (у правого
+    /// края — слева), у островка — под ним, у последнего шага — по центру. Между шагами всё перетекает за 0,45 с.
+    /// </summary>
+    private void TourPlace(bool instant)
+    {
+        if (_tour is null) return;
+        var w = Root.ActualWidth;
+        var h = Root.ActualHeight;
+        TourAll.Rect = new Rect(0, 0, w, h);
+        var target = TourTargetOf(_tour.Current.Target);
+        var hole = target?.Rect ?? new Rect(w / 2, h / 2, 0, 0);
+        TourHole.RadiusX = TourHole.RadiusY = TourRing.RadiusX = TourRing.RadiusY = target?.Radius ?? 0;
+        TourRing.Visibility = target is null ? Visibility.Collapsed : Visibility.Visible;
+
+        TourBubble.Measure(new Size(TourBubble.Width, double.PositiveInfinity));
+        var bw = TourBubble.Width;
+        var bh = TourBubble.DesiredSize.Height;
+        double x, y;
+        switch (_tour.Current.Target)
+        {
+            case TourTarget.Filters when target is not null:
+                x = hole.Left + hole.Width / 2 - bw / 2; y = hole.Bottom + 14; break;
+            case TourTarget.Nav or TourTarget.Card when target is not null:
+                x = hole.Right + 14 + bw <= w - 16 ? hole.Right + 14 : hole.Left - 14 - bw;
+                y = hole.Top; break;
+            default:
+                x = (w - bw) / 2; y = (h - bh) / 2; break;
+        }
+        x = Math.Clamp(x, 16, Math.Max(16, w - bw - 16));
+        y = Math.Clamp(y, 16, Math.Max(16, h - bh - 16));
+
+        var quick = instant || SpringDriver.ReducedMotion || _host.ShotPath is not null;
+        void Go(DependencyObject o, DependencyProperty p, double to)
+        {
+            if (quick) { ((IAnimatable)o).BeginAnimation(p, null); o.SetValue(p, to); }
+            else ((IAnimatable)o).BeginAnimation(p, new DoubleAnimation(to, TimeSpan.FromSeconds(0.45)) { EasingFunction = Anim.Smooth });
+        }
+        if (quick) { TourHole.BeginAnimation(RectangleGeometry.RectProperty, null); TourHole.Rect = hole; }
+        else TourHole.BeginAnimation(RectangleGeometry.RectProperty, new RectAnimation(hole, TimeSpan.FromSeconds(0.45)) { EasingFunction = Anim.Smooth });
+        Go(TourRing, Canvas.LeftProperty, hole.Left);
+        Go(TourRing, Canvas.TopProperty, hole.Top);
+        Go(TourRing, WidthProperty, hole.Width);
+        Go(TourRing, HeightProperty, hole.Height);
+        Go(TourBubble, Canvas.LeftProperty, x);
+        Go(TourBubble, Canvas.TopProperty, y);
+    }
+
     // ───────────── «Интерфейс работает медленно» (2026-10-18) ─────────────
 
     private readonly SlowGlassAdvisor _slow = new();
@@ -2139,6 +2251,15 @@ public partial class MainWindow : Window
         if (e.Key == Key.System && e.SystemKey == Key.Space && (Keyboard.Modifiers & ModifierKeys.Alt) != 0)
         {
             SystemCommands.ShowSystemMenu(this, PointToScreen(new Point(16, 16)));
+            e.Handled = true;
+            return;
+        }
+        if (TourLayer.Visibility == Visibility.Visible && _tour is { } tour)
+        {
+            if (e.Key == Key.Escape) tour.Skip();
+            else if (e.Key is Key.Enter or Key.Right) tour.Next();
+            else if (e.Key == Key.Left) tour.Back();
+            else return;
             e.Handled = true;
             return;
         }

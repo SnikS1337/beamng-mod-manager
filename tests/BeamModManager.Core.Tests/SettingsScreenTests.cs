@@ -242,5 +242,33 @@ public static class SettingsScreenTests
             Assert.False(vm.WatchFolders.Contains(@"D:\Telegram Desktop"), "убрана");
             Assert.True(vm.CanAddWatchFolder, "снова можно");
         });
+    
+        t.Run("знакомство при первом запуске: 4 шага, без модов — 3; «Далее», «Готово», «Пропустить» — один раз", () =>
+        {
+            var tour = new BeamModManager.Ui.Tour.TourViewModel(hasCards: true);
+            var done = 0;
+            tour.Done += () => done++;
+            Assert.Eq(4, tour.Steps.Count);
+            Assert.Eq("1 из 4", tour.Counter);
+            Assert.Eq("Далее", tour.NextLabel);
+            tour.Next(); tour.Next(); tour.Next();
+            Assert.True(tour.IsLast && tour.NextLabel == "Готово" && tour.Current.Target == BeamModManager.Ui.Tour.TourTarget.Window, "последний");
+            tour.Back();
+            Assert.Eq("3 из 4", tour.Counter);
+            tour.Next(); tour.Next();
+            Assert.True(tour.Finished && done == 1, "дошли до конца");
+            tour.Next(); tour.Skip();
+            Assert.Eq(1, done, "один раз");
+            var empty = new BeamModManager.Ui.Tour.TourViewModel(hasCards: false);
+            Assert.Eq(3, empty.Steps.Count);
+            Assert.False(empty.Steps.Any(s => s.Target == BeamModManager.Ui.Tour.TourTarget.Card), "без карточки");
+            empty.GoTo(99);
+            Assert.True(empty.IsLast, "за краем — последний");
+            var vm = new SettingsViewModel(new AppSettings());
+            AppSettings? saved = null;
+            vm.Changed += s => saved = s;
+            vm.MarkFirstRunDone();
+            Assert.True(saved!.FirstRunDone, "запомнено");
+        });
     }
 }

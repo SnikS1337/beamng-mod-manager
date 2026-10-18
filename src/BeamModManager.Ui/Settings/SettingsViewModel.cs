@@ -174,6 +174,9 @@ public sealed class SettingsViewModel : Observable
     public void RemoveWatchFolder(string path) =>
         Update(s => s with { WatchFolders = s.WatchFolders.Where(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase)).ToList() });
 
+    /// <summary>Знакомство при первом запуске показано (или пропущено): больше не показываем.</summary>
+    public void MarkFirstRunDone() => Update(s => s with { FirstRunDone = true });
+
     /// <summary>«Оставить» на «Интерфейс работает медленно…»: больше не спрашиваем (запоминается).</summary>
     public void DeclineSlowOffer() => Update(s => s with { SlowOfferDeclined = true });
 
