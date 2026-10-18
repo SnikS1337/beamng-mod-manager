@@ -652,7 +652,7 @@
         <!-- ═════ Сцена: всё, что видно сквозь стекло ═════ -->
         <Grid x:Name="Scene">
             <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True">
-                <!-- всё, кроме огоньков: зерно прибавкой к цвету (DitherEffect) ставит окно, если видеокарта тянет -->
+                <!-- всё, кроме огоньков; без эффектов на весь фон: его копию каждый кадр считает каждое стекло -->
                 <Grid x:Name="BackdropPaint">
                     <!-- основа: тёмный градиент темы (DESIGN.md 3.1, темы — Ui/Look/BackgroundThemes); цвета ставит и плавно меняет окно -->
                     <Border>
@@ -690,7 +690,7 @@
                     </Border>
                     <Canvas x:Name="Lights"/>
                 </Grid>
-                <!-- зерно слоем — запасное, без видеокарты (Controls/Grain.cs); с ней зерно в цвете (BackdropPaint) -->
+                <!-- зерно слоем — запасное, без видеокарты (Controls/Grain.cs); с ней зерно в цвете пятен (BackgroundMotion) -->
                 <Rectangle x:Name="GrainLayer" IsHitTestVisible="False"/>
                 <Canvas x:Name="Flies"/>
             </Grid>

@@ -77,7 +77,9 @@ public static class AdapterTests
             Assert.True(src.SupportsSearch, "поиск включён");
             Assert.Eq(10, (await src.FeedPageAsync(2)).Count);
             var resp = await new SearchService(new IModSource[] { src }).SearchAsync("sienna");
-            Assert.Eq(9, resp.Cards.Count);
+            Assert.Eq(8, resp.Cards.Count, "Toyota Sienna 2017 v1.0 и v2.0 — одна карточка, новая (2026-10-18)");
+            Assert.True(resp.Cards.SelectMany(c => c.Listings).Count(l => l.Title.Contains("Sienna 2017", StringComparison.Ordinal)) == 1
+                && resp.Cards.Any(c => c.Listings.Any(l => l.Title.Contains("Sienna 2017 v2.0", StringComparison.Ordinal))), "осталась v2.0");
         });
 
         t.Run("карточка STMods: заголовок из h1, размер и хост", async () =>

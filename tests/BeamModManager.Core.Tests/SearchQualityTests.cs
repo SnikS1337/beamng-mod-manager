@@ -90,6 +90,22 @@ public static class SearchQualityTests
             Assert.Eq(0, (await new ModsGamingSource(F(u => Wide(u) ? html : "<html></html>")).SearchAsync("bmv")).Count);
         });
 
+        t.Run("один мод в нескольких версиях на сайте — одна запись, самая новая, на месте первой; разные авторы и сайты — отдельно", () =>
+        {
+            Listing V(string src, string id, string title, string? author = null) =>
+                new(src, new Uri($"https://{src}.test/{id}"), id, title) { Author = author, ModVersion = TitleParser.Parse(title).ModVersion };
+            var r = SearchService.NewestOnly(new[]
+            {
+                V("modsgaming", "a", "Temporal Anti Aliasing v1.0"), V("modsgaming", "b", "Toyota Sienna v2.0"),
+                V("modsgaming", "c", "Temporal Anti Aliasing v1.7"), V("modsgaming", "d", "Temporal Anti Aliasing v1.3"),
+                V("stmods", "e", "Temporal Anti Aliasing v1.2"), V("modsgaming", "f", "Toyota Sienna v1.0", "другой"),
+                V("modsgaming", "g", "Карта v1.0 (0.36)"), V("modsgaming", "h", "Карта v1.0 (0.38)"), V("modsgaming", "i", "X v1"), V("modsgaming", "j", "X v2"),
+                V("modsgaming", "k", "Ford Focus v1.0"), V("modsgaming", "l", "Ford Focus v1.0"), V("modsgaming", "m", "Ford Focus"),
+            });
+            // та же версия или без версии — возможно, разные моды с одним названием: обе остаются
+            Assert.Eq("c|b|e|f|h|i|j|k|l|m", string.Join("|", r.Select(l => l.SourceId)));
+        });
+
         t.Run("ModsGaming: картинка мода — со страницы мода (detimg), не из «похожих модов» ниже", () =>
         {
             var html = Fx("modsgaming/mod-real.html");

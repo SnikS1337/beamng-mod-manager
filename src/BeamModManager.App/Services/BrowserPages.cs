@@ -50,10 +50,22 @@ public sealed class BrowserPages : IPageFetcher
 
     public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) => OnUiAsync(() => LoadAsync(url, ct), ct);
 
+    /// <summary>
+    /// По одной загрузке. Между загрузками браузер спрятан (2026-10-18): открытая страница сайта с рекламой и скриптами
+    /// иначе рисовалась бы за краем экрана без остановки и отнимала время у окна программы; спрятанную Edge притормаживает.
+    /// </summary>
     private async Task<T> OnUiAsync<T>(Func<Task<T>> work, CancellationToken ct)
     {
         await _one.WaitAsync(ct).ConfigureAwait(false);
-        try { return await _ui.InvokeAsync(work).Task.Unwrap().ConfigureAwait(false); }
+        try
+        {
+            return await _ui.InvokeAsync(async () =>
+            {
+                if (_view is not null) _view.Visibility = Visibility.Visible;
+                try { return await work(); }
+                finally { if (_view is not null) _view.Visibility = Visibility.Collapsed; }
+            }).Task.Unwrap().ConfigureAwait(false);
+        }
         finally { _one.Release(); }
     }
 
