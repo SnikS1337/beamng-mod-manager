@@ -54,28 +54,29 @@ public sealed class PreviewLoader
     }
 
     /// <summary>
-    /// Название из архива, если его ещё не читали: (true, название или null) — прочитали сейчас; (false, …) — уже было
-    /// в кэше или архив не открылся.
+    /// Название из архива: Known — известно (из кэша или прочитано сейчас, Read), Title — само название или null (в архиве
+    /// его нет). Не Known — архива нет или он не открылся, спросим в другой раз.
     /// </summary>
-    public (bool Fresh, string? Title) EnsureTitle(string zipPath)
+    public (bool Known, string? Title, bool Read) EnsureTitle(string zipPath)
     {
         ArchiveStamp stamp;
         try
         {
-            if (!File.Exists(zipPath)) return (false, null);
+            if (!File.Exists(zipPath)) return (false, null, false);
             stamp = ArchiveStamp.Of(zipPath);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (false, null); }
-        if (_cache.TryGetTitle(stamp, out _)) return (false, null);
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (false, null, false); }
+        if (_cache.TryGetTitle(stamp, out var cached)) return (true, cached, false);
         var t = ArchiveOverviewReader.TitleOf(zipPath);
-        if (!t.Known) return (false, null);
+        if (!t.Known) return (false, null, false);
         _cache.PutTitle(stamp, t.Title);
-        return (true, t.Title);
+        return (true, t.Title, true);
     }
 
     /// <summary>
-    /// Пройти по списку архивов в фоне; onReady — для каждой найденной картинки, onTitle — для каждого впервые прочитанного
-    /// названия (оба из фонового потока). Названия пишутся на диск пачками и в конце.
+    /// Пройти по списку архивов в фоне; onReady — для каждой найденной картинки, onTitle — для каждого известного названия,
+    /// в том числе уже лежавшего в кэше: карточка могла собраться раньше, чем его туда положили (оба из фонового потока).
+    /// Названия пишутся на диск пачками и в конце.
     /// </summary>
     public Task FillAsync(IEnumerable<(string Key, string ZipPath)> archives, Action<string, string> onReady, CancellationToken ct = default,
         Action<string, string?>? onTitle = null) =>
@@ -87,7 +88,7 @@ public sealed class PreviewLoader
                 foreach (var (key, path) in archives)
                 {
                     if (ct.IsCancellationRequested) return;
-                    if (onTitle is not null && EnsureTitle(path) is (true, var title)) onTitle(key, title);
+                    if (onTitle is not null && EnsureTitle(path) is (true, var title, _)) onTitle(key, title);
                     if (Ensure(path) is { } p) onReady(key, p);
                     if (++n % 50 == 0) _cache.SaveTitles();
                 }

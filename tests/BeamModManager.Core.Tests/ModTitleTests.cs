@@ -187,7 +187,7 @@ public static class ModTitleTests
             var next = f.Open(new PreviewCache(Path.Combine(f.Root, "app", "previews")));
             var again = next.AllCards.Single();
             Assert.True(again is { Name: "Honda Civic EK9", Data.ArchiveTitleKnown: true }, "следующий запуск: из кэша, архив не открываем");
-            Assert.False(f.Loader.EnsureTitle(again.Data.ArchivePath!).Fresh, "второй раз не читается");
+            Assert.True(f.Loader.EnsureTitle(again.Data.ArchivePath!) is (true, "Honda Civic EK9", false), "второй раз — из кэша, архив не читается");
         });
 
         t.Run("поиск по моду находит и по названию, и по имени файла", () =>
@@ -198,6 +198,31 @@ public static class ModTitleTests
             Assert.Eq("hc_ek9_v1.6.zip", f.Vm.Cards.Single().FileName, "по названию");
             f.Vm.SearchText = "hc ek9";
             Assert.Eq("hc_ek9_v1.6.zip", f.Vm.Cards.Single().FileName, "по файлу");
+        });
+
+        t.Run("найдено перед выпуском: название попало в кэш после сборки карточки — фон всё равно его отдаёт", () =>
+        {
+            using var f = new Folder(("hc.zip", Civic()));
+            var card = f.Card("hc.zip");
+            Assert.True(f.Loader.EnsureTitle(card.Data.ArchivePath!) is (true, "Honda Civic EK9", true), "прочитали мимо гаража");
+            Assert.Eq("hc", card.Name, "карточка собрана раньше");
+            f.ReadTitlesInBackground();
+            Assert.Eq("Honda Civic EK9", card.Name);
+        });
+
+        t.Run("найдено перед выпуском: поиск по названию, введённый до того, как название дочиталось, находит мод сразу", () =>
+        {
+            using var f = new Folder(("hc.zip", Civic()), ("other.zip", Zip(("vehicles/other/x.jbeam", "{}"))));
+            f.Vm.SearchText = "civic";
+            Assert.Eq(0, f.Vm.Cards.Count, "пока название по файлу");
+            f.ReadTitlesInBackground();
+            Assert.Eq("hc.zip", f.Vm.Cards.Single().FileName);
+        });
+
+        t.Run("найдено перед выпуском: огромный info.json не читается целиком", () =>
+        {
+            var big = "{\"Name\":\"Big\",\"pad\":\"" + new string('x', 300 * 1024) + "\"}";
+            Assert.True(TitleOf(Zip(("vehicles/big/info.json", big))) is { Known: true, Title: null }, "больше 256 КБ — без названия");
         });
 
         t.Run("в архиве названия нет — заголовок страницы, где следим; нет и его — имя файла", () =>
