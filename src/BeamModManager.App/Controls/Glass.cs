@@ -169,7 +169,11 @@ public class Glass : ContentControl
     public override void OnApplyTemplate()
     {
         base.OnApplyTemplate();
+        if (_clip is not null) _clip.SizeChanged -= ClipResized;
         _clip = GetTemplateChild("PART_Clip") as Border;
+        // маска — по размеру самого слоя, который она скругляет (2026-10-18: у матового стекла в «Сайтах» и «Настройках»
+        // нижние углы бывали квадратными, пока не перещёлкаешь страницы — маска отставала от размера панели)
+        if (_clip is not null) _clip.SizeChanged += ClipResized;
         _lens = GetTemplateChild("PART_Lens") as Grid;
         _sample = GetTemplateChild("PART_Sample") as Rectangle;
         _edge = GetTemplateChild("PART_Edge") as GlassEdge;
@@ -268,10 +272,21 @@ public class Glass : ContentControl
     private void UpdateMask()
     {
         if (_clip is null) return;
-        var w = ActualWidth; var h = ActualHeight;
+        var w = _clip.ActualWidth > 0 ? _clip.ActualWidth : ActualWidth;
+        var h = _clip.ActualHeight > 0 ? _clip.ActualHeight : ActualHeight;
         var shader = _mode == GlassMode.Liquid && _lens?.Effect is RefractionEffect;
-        _clip.OpacityMask = shader || w <= 0 || h <= 0 ? null : RoundMask(w, h, Corner);
+        if (shader || w <= 0 || h <= 0) { _clip.OpacityMask = null; _maskSize = Size.Empty; return; }
+        var size = new Size(w, h);
+        if (size == _maskSize && _maskCorner == Corner && _clip.OpacityMask is not null) return;
+        _maskSize = size;
+        _maskCorner = Corner;
+        _clip.OpacityMask = RoundMask(w, h, Corner, stretch: true);
     }
+
+    private Size _maskSize = Size.Empty;
+    private double _maskCorner = -1;
+
+    private void ClipResized(object sender, SizeChangedEventArgs e) => UpdateMask();
 
     private static readonly Brush ContourLiquid = Frozen(new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
     private static readonly Brush ContourMatte = Frozen(new SolidColorBrush(Color.FromArgb(0x42, 0xFF, 0xFF, 0xFF)));
@@ -456,14 +471,19 @@ public class Glass : ContentControl
     /// Маска скруглённого прямоугольника в координатах элемента. Заливка фигуры сглаживается (в отличие от Clip), поэтому
     /// края стекла и капель ровные на любом масштабе.
     /// </summary>
-    internal static Brush RoundMask(double w, double h, double r)
+    /// <param name="stretch">
+    /// Маска растягивается на фактический размер слоя (а не стоит в точках): если она хоть раз отстанет от размера,
+    /// углы останутся скруглёнными, а не квадратными (матовое стекло, 2026-10-18).
+    /// </param>
+    internal static Brush RoundMask(double w, double h, double r, bool stretch = false)
     {
         var drawing = new GeometryDrawing(Brushes.Black, null, new RectangleGeometry(new Rect(0, 0, w, h), r, r));
         return Frozen(new DrawingBrush(drawing)
         {
             Stretch = Stretch.Fill,
             ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, w, h),
-            ViewportUnits = BrushMappingMode.Absolute, Viewport = new Rect(0, 0, w, h),
+            ViewportUnits = stretch ? BrushMappingMode.RelativeToBoundingBox : BrushMappingMode.Absolute,
+            Viewport = stretch ? new Rect(0, 0, 1, 1) : new Rect(0, 0, w, h),
         });
     }
 }
