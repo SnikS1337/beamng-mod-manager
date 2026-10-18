@@ -1494,17 +1494,27 @@
             </Grid>
         </c:Glass>
 
-        <!-- Тост: что сделано и «Отменить» -->
+        <!-- Тост: что сделано и «Отменить». Появляется и уходит окно (ShowToast): всплывает снизу пружиной, новый поверх
+             старого меняет только текст; у обратимого внизу тонкая полоса — сколько осталось на «Отменить», под мышью
+             она снова полная. DataContext — сам тост (а не окно): уходящий тост дорисовывается со своим текстом. -->
         <c:Glass x:Name="ToastBox" Source="{Binding ElementName=Scene}" Corner="24" Blur="6" Tint="#B30E182C"
                  Lens="24" Refraction="60" Brightness="0.70"
-                 VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="116,0,360,28" Height="48" Padding="20,0,12,0"
-                 Visibility="{Binding Toast, Converter={StaticResource NullToCollapsed}}" MouseEnter="Toast_Hold" MouseLeave="Toast_Release"
-                 IsKeyboardFocusWithinChanged="Toast_FocusChanged">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="{Binding Toast.Text}" FontSize="13.5" VerticalAlignment="Center"/>
-                <Button Style="{StaticResource Link}" Content="Отменить" Margin="14,0,0,0" Click="Undo_Click"
-                        Visibility="{Binding Toast.CanUndo, Converter={StaticResource BoolToVis}}"/>
-            </StackPanel>
+                 VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="116,0,360,28" Height="48"
+                 Visibility="Collapsed" Opacity="0" DataContext="{x:Null}" MouseEnter="Toast_Hold" MouseLeave="Toast_Release"
+                 IsKeyboardFocusWithinChanged="Toast_FocusChanged" AutomationProperties.LiveSetting="Polite">
+            <Grid>
+                <StackPanel x:Name="ToastBody" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,12,0">
+                    <StackPanel.RenderTransform><TranslateTransform x:Name="ToastBodyMove"/></StackPanel.RenderTransform>
+                    <TextBlock x:Name="ToastText" Text="{Binding Text}" FontSize="13.5" VerticalAlignment="Center"/>
+                    <Button Style="{StaticResource Link}" Content="Отменить" Margin="14,0,0,0" Click="Undo_Click"
+                            Visibility="{Binding CanUndo, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+                <Rectangle x:Name="ToastLeft" Height="2" RadiusX="1" RadiusY="1" VerticalAlignment="Bottom" Margin="24,0,24,4"
+                           Fill="{DynamicResource Ink3}" Opacity="0.5" IsHitTestVisible="False" RenderTransformOrigin="0,0.5"
+                           Visibility="{Binding CanUndo, Converter={StaticResource BoolToVis}}">
+                    <Rectangle.RenderTransform><ScaleTransform x:Name="ToastLeftScale"/></Rectangle.RenderTransform>
+                </Rectangle>
+            </Grid>
         </c:Glass>
 
         <!-- смена оформления: вуаль цвета нового фона расходится кругом от места нажатия (без снимка окна — он долгий) -->
