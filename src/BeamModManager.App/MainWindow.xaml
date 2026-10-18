@@ -1350,7 +1350,10 @@
                             <DockPanel Margin="2,10,2,0" Visibility="{Binding Details.CanDelete, Converter={StaticResource BoolToVis}}">
                                 <Button x:Name="DeleteMod" Style="{StaticResource Link}" Foreground="{DynamicResource Danger}" Content="Удалить" Click="Delete_Click"
                                         ToolTip="Delete" AutomationProperties.HelpText="Можно вернуть позже"/>
-                                <TextBlock Style="{StaticResource Note}" Text="Можно вернуть позже" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                <!-- подпись мельче ссылки: по центру она встаёт выше; ставим низ к низу текста ссылки (её поле снизу 6),
+                                     без своей высоты строки — тогда у обеих одна линия букв -->
+                                <TextBlock Style="{StaticResource Note}" Text="Можно вернуть позже" VerticalAlignment="Bottom" LineHeight="Auto"
+                                           Margin="8,0,0,6"/>
                             </DockPanel>
                         </StackPanel>
 
