@@ -48,10 +48,16 @@ public sealed class WindowHost
     public bool ShotDropHint { get; init; }
     /// <summary>Снимок: плашка «Интерфейс работает медленно».</summary>
     public bool ShotSlowOffer { get; init; }
+
+    /// <summary>Капли кнопок окна и фильтров посреди пути, линзой (--drop-motion): так видно, что они берут под собой.</summary>
+    public bool ShotDropMotion { get; init; }
     /// <summary>Снимок: шаг знакомства (1 — первый).</summary>
     public int? ShotTour { get; init; }
     /// <summary>Вместе со снимком записать замеры (запуск, фильтр, поиск, перечитывание, память) в &lt;снимок&gt;.perf.txt.</summary>
     public bool ShotPerf { get; init; }
+
+    /// <summary>Масштаб снимка (--scale 2): как экран с масштабом 200 % — так видны огрехи, которых нет при 100 % (2026-10-18).</summary>
+    public double ShotScale { get; init; } = 1;
     /// <summary>Вместе со снимком прогнать анимации и записать кадры в секунду в &lt;снимок&gt;.frames.txt (--frames).</summary>
     public bool ShotFrames { get; init; }
     /// <summary>Демо: открыть с раскрытым поиском и этим запросом (снимки островка).</summary>
@@ -370,6 +376,19 @@ public partial class MainWindow : Window
         if (_host.ShotOffer is { } offer) _ = _in.OfferAsync(offer, IncomingOrigin.Downloaded);
         if (_host.ShotDropHint) ShowDropHint(true);
         if (_host.ShotSlowOffer) FadePlate(SlowBox, SlowBoxMove, true);
+        if (_host.ShotDropMotion)
+            // капля кнопок окна между «−» и «□», капля фильтров у «Все» — обе в пути (линза), как на видео с виртуалки;
+            // после того как пружины встали (снимок через 1,5 с), иначе они вернули бы каплям покой
+            _ = Task.Delay(1000).ContinueWith(_ => Dispatcher.BeginInvoke(() =>
+            {
+                CapDrop.BeginAnimation(OpacityProperty, null);
+                CapDrop.Opacity = 1;
+                CapDropMove.X = 24;
+                CapDrop.Motion = 1;
+                CapDrop.Sync();
+                FilterDrop.Motion = 1;
+                FilterDrop.Sync();
+            }), TaskScheduler.Default);
         MaybeStartTour();
         UpdateDownloadsWatch(_host.Settings.Current);
         if (_host.StartSearch is { } query)
@@ -2619,7 +2638,8 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
             Root.UpdateLayout();
-            var rt = new RenderTargetBitmap((int)Math.Ceiling(Root.ActualWidth), (int)Math.Ceiling(Root.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            var k = _host.ShotScale;
+            var rt = new RenderTargetBitmap((int)Math.Ceiling(Root.ActualWidth * k), (int)Math.Ceiling(Root.ActualHeight * k), 96 * k, 96 * k, PixelFormats.Pbgra32);
             rt.Render(Root);
             var enc = new PngBitmapEncoder();
             enc.Frames.Add(BitmapFrame.Create(rt));

@@ -176,8 +176,10 @@ public partial class App : Application
                 ShotOffer = Arg("--offer"),
                 ShotDropHint = Array.IndexOf(Environment.GetCommandLineArgs(), "--drop-hint") >= 0,
                 ShotSlowOffer = Array.IndexOf(Environment.GetCommandLineArgs(), "--slow-offer") >= 0,
+                ShotDropMotion = Array.IndexOf(Environment.GetCommandLineArgs(), "--drop-motion") >= 0,
                 ShotTour = int.TryParse(Arg("--tour"), out var tourStep) ? tourStep : null,
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
+                ShotScale = double.TryParse(Arg("--scale"), System.Globalization.CultureInfo.InvariantCulture, out var sc) && sc is >= 1 and <= 3 ? sc : 1,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
                 // настройки в демо живут только в памяти: файл пользователя не трогаем
                 Settings = new SettingsViewModel(new AppSettings
@@ -308,7 +310,7 @@ public partial class App : Application
         var exe = _exePath;
         var ver = ThisVersion;
         if (exe is null || !string.Equals(Path.GetFileName(exe), UpdateInstaller.ExeName, StringComparison.OrdinalIgnoreCase)) return null;
-        if (ver.Major != 0 || ver.Build <= 0) return null; // 1.0.0.0 — сборка без номера (не с машины сборки)
+        if (!AppVersion.IsRelease(ver)) return null; // 1.0.0.0 — сборка без номера (не с машины сборки)
         var http = _testFeed is { } feed
             ? new HttpClient(new LocalFeedHandler(feed))
             : UpdateDownloader.CreateClient($"ModManagerBeamNG/{AppVersion.Display(ver)}");
