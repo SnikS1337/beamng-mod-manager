@@ -258,8 +258,15 @@ public static class XamlTests
             var drop = Read("Controls/Droplet.cs");
             Assert.True(drop.Contains("MotionProperty", StringComparison.Ordinal) && drop.Contains("class RestPaint", StringComparison.Ordinal), "плашка в покое и переход к линзе");
             Assert.True(drop.Contains("_glass.Visibility = lensVis", StringComparison.Ordinal), "пока капля стоит, линзы нет (сцена не копируется)");
-            Assert.True(drop.Contains("Children = { _clip, _tint, _under, _labels }", StringComparison.Ordinal) && drop.Contains("Effect = _refraction", StringComparison.Ordinal),
-                "в линзе преломляется и копия подписей (2026-10-18)");
+            Assert.True(drop.Contains("Children = { _clip, _tint, _under, _labelLens }", StringComparison.Ordinal) && drop.Contains("_labelLens.Effect = _labelFx = new LensEffect()", StringComparison.Ordinal),
+                "в линзе преломляется и копия подписей, своей линзой (2026-10-18)");
+            Assert.True(Read("BeamModManager.App.csproj").Contains("<GlassShader Include=\"Shaders\\Lens.fx\" Out=\"Shaders\\Lens.ps\"/>", StringComparison.Ordinal)
+                && Read("BeamModManager.App.csproj").Contains("<Resource Include=\"Shaders\\Lens.ps\"/>", StringComparison.Ordinal), "шейдер линзы подписей собирается и вложен");
+            var lens = Read("Shaders/Lens.fx");
+            Assert.True(lens.Contains("float2 nCorner = sg * normalize", StringComparison.Ordinal), "линза подписей берёт точки снаружи (сжатие к кромке), а не размазывает внутрь");
+            Assert.True(!drop.Contains("DrawLine", StringComparison.Ordinal) && drop.Contains("new Pen(brush, thick)", StringComparison.Ordinal), "радужная кромка — одна сплошная линия, не отрезки «в точку»");
+            Assert.True(code.Contains("DropHead = 0.34, DropHeadBounce = 0.32, DropTail = 0.40, DropTailBounce = 0.15", StringComparison.Ordinal),
+                "пружины капель те же, что в проверке живости (DropBodyTests)");
             var xaml = Read("MainWindow.xaml");
             foreach (var (name, labels, front) in new[] { ("FilterDrop", "FilterList", "FilterFront"), ("NavDrop", "NavItems", "NavFront"), ("CapDrop", "CapButtons", "CapFront") })
             {

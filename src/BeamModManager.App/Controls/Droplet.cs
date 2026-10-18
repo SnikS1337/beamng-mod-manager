@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 
 namespace BeamModManager.App.Controls;
@@ -66,7 +67,7 @@ public sealed class Droplet : FrameworkElement
     public Brush? Under { get => (Brush?)GetValue(UnderProperty); set => SetValue(UnderProperty, value); }
 
     private readonly VisualCollection _children;
-    private readonly Grid _clip, _lens, _glass;
+    private readonly Grid _clip, _lens, _glass, _labelLens;
     private readonly Rectangle _sample, _tint, _under, _labels;
     private readonly Layer _front;
     private readonly MatrixTransform _frontAt = new();
@@ -84,10 +85,13 @@ public sealed class Droplet : FrameworkElement
         ViewboxUnits = BrushMappingMode.Absolute, Stretch = Stretch.Fill,
         AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top, TileMode = TileMode.None,
     };
-    // _tone — сама линза сцены, как была (сильный сдвиг у кромки, цвет); _refraction — мягкий сдвиг у самой кромки и радуга
-    // для всего, что в линзе, прежде всего подписей. Сила линзы сцены для текста не годится: капля 40 высотой вся «у кромки»,
-    // и подписи перемешивались до нечитаемого (снимок 2026-10-18); у Apple текст гнётся только у края, середина читается
-    private readonly RefractionEffect? _tone, _refraction;
+    private readonly RefractionEffect? _refraction;
+    /// <summary>
+    /// Линза подписей (Shaders/Lens.fx): у кромки видно то, что чуть снаружи капли, сжатое к краю. Линза сцены для текста не
+    /// годится — она тянет точки внутрь, и значок у кромки размазывался к краю полосами, а другая половина капли оставалась
+    /// ровной (2026-10-18, «радуга обрывается на середине»).
+    /// </summary>
+    private readonly LensEffect? _labelFx;
     private Panel? _frontHost;
     private Glass? _owner;
     private Rect _lastBox = Rect.Empty;
@@ -98,28 +102,26 @@ public sealed class Droplet : FrameworkElement
         _sample = new Rectangle { Fill = _brush };
         _tint = new Rectangle();
         _under = new Rectangle();
-        _labels = new Rectangle { Fill = _labelBrush, Visibility = Visibility.Collapsed };
+        _labels = new Rectangle { Fill = _labelBrush };
         // как у панелей (Theme.xaml, c:Glass): форма — снаружи, эффект — на сетке, внутри обрезка ровно по размеру,
         // чтобы шейдер получал картинку размером с каплю, а не с запасом на размытие
         _lens = new Grid { Children = { new System.Windows.Controls.Border { ClipToBounds = true, Child = _sample } } };
         _clip = new Grid { ClipToBounds = true, Children = { _lens } };
         if (RefractionEffect.IsAvailable)
         {
-            // линза капли заметно сильнее, чем у панели (2026-10-16: «как капля»): широкая и сильная, насыщенный цвет —
-            // только сцене. Подписи и подложка своего цвета не меняют и гнутся мягко: сдвиг до 9 у самого края, к 6 от
-            // края — вчетверо меньше
-            _tone = new RefractionEffect { Strength = 100, Lens = 26, Saturation = 1.65 };
-            _lens.Effect = _tone;
-            _refraction = new RefractionEffect { Strength = 18, Lens = 12 };
-            _glass = new Grid { Children = { new Grid { ClipToBounds = true, Children = { _clip, _tint, _under, _labels } } }, Effect = _refraction };
+            // линза капли заметно сильнее, чем у панели (2026-10-16: «как капля»): широкая и сильная, насыщенный цвет
+            _refraction = new RefractionEffect { Strength = 100, Lens = 26, Saturation = 1.65 };
+            _lens.Effect = _refraction;
         }
-        else
+        // копия подписей — на поле шире капли: линзе нужно то, что лежит чуть снаружи (шейдер сам обрезает по форме капли)
+        _labelLens = new Grid
         {
-            // без шейдера подписи не копируются: без преломления копия только задвоила бы настоящие
-            _glass = new Grid { Children = { _clip, _tint, _under } };
-        }
-        // рисунок капли (кромка, блики, радужный край — сотни коротких штрихов) меняется только с формой и цветом, а капля
-        // в пути каждый кадр растягивается: кэш картинкой, иначе штрихи перерисовывались бы на каждом кадре
+            Margin = new Thickness(-LensEffect.Margin), Visibility = Visibility.Collapsed,
+            Children = { new System.Windows.Controls.Border { ClipToBounds = true, Child = _labels } },
+        };
+        if (_refraction is not null && LensEffect.IsAvailable) _labelLens.Effect = _labelFx = new LensEffect();
+        _glass = new Grid { Children = { _clip, _tint, _under, _labelLens } };
+        // рисунок капли (кромка, блики, радужный край) меняется только с формой и цветом: кэш картинкой
         _paint = new Paint(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
         // тень — нарисованные слои, а не DropShadowEffect: эффект на капле пересчитывался бы каждый кадр вместе с линзой
         _shadow = new Shadow(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
@@ -164,7 +166,7 @@ public sealed class Droplet : FrameworkElement
     private void PlaceLayers()
     {
         if (_children is null) return;
-        var host = Liquid && _refraction is not null && Labels is not null && IsLoaded ? Front : null;
+        var host = Liquid && _labelFx is not null && Labels is not null && IsLoaded ? Front : null;
         if (!ReferenceEquals(host, _frontHost))
         {
             if (_frontHost is not null) { _front.Take(_glass, _paint); _frontHost.Children.Remove(_front); }
@@ -181,7 +183,7 @@ public sealed class Droplet : FrameworkElement
             else { _children.Add(_glass); _children.Add(_paint); }
             InvalidateMeasure();
         }
-        _labels.Visibility = _frontHost is not null ? Visibility.Visible : Visibility.Collapsed;
+        _labelLens.Visibility = _frontHost is not null ? Visibility.Visible : Visibility.Collapsed;
         _labelBrush.Visual = _frontHost is not null ? Labels : null;
         _lastBox = Rect.Empty;
         Sync();
@@ -248,11 +250,12 @@ public sealed class Droplet : FrameworkElement
         if (_owner is not null)
         {
             _tint.Fill = _owner.Tint;
-            if (_tone is not null)
+            if (_refraction is not null)
             {
-                _tone.Brightness = Math.Min(1.15, _owner.EffectiveBrightness * 1.12);
-                _tone.Lift = _owner.EffectiveLift * 0.6; // капля светлее стекла и так: подъём мягче
+                _refraction.Brightness = Math.Min(1.15, _owner.EffectiveBrightness * 1.12);
+                _refraction.Lift = _owner.EffectiveLift * 0.6; // капля светлее стекла и так: подъём мягче
             }
+            if (_labelFx is not null) _labelFx.Under = _owner.Light ? 0.92 : 0.12; // цвет каймы там, где канал мимо подписи
         }
         _under.Fill = Under;
         _lastBox = Rect.Empty;
@@ -299,7 +302,7 @@ public sealed class Droplet : FrameworkElement
         _glass.OpacityMask = _refraction is null ? Glass.RoundMask(w, h, r) : null;
         _tint.RadiusX = _tint.RadiusY = _under.RadiusX = _under.RadiusY = r;
         if (_refraction is not null) { _refraction.Size = new Size(w, h); _refraction.Radius = r; }
-        if (_tone is not null) { _tone.Size = new Size(w, h); _tone.Radius = r; }
+        if (_labelFx is not null) { _labelFx.Size = new Size(w, h); _labelFx.Radius = r; }
         _lastBox = Rect.Empty;
         Repaint();
         Sync();
@@ -339,7 +342,8 @@ public sealed class Droplet : FrameworkElement
                 // в начале и в конце пути (Motion мал) копия не увеличена: она совпадает с настоящими подписями,
                 // которые просвечивают сквозь ещё прозрачную линзу, и не двоится
                 var m = Math.Clamp(Motion, 0, 1);
-                var box = Magnified(TransformToVisual(labels).TransformBounds(new Rect(0, 0, w, h)), 1 + (Magnify - 1) * m);
+                const double e = LensEffect.Margin;
+                var box = Magnified(TransformToVisual(labels).TransformBounds(new Rect(-e, -e, w + 2 * e, h + 2 * e)), 1 + (Magnify - 1) * m);
                 if (_labelBrush.Viewbox != box) _labelBrush.Viewbox = box;
             }
         }
@@ -522,40 +526,52 @@ public sealed class Droplet : FrameworkElement
             (0.60, Color.FromArgb(140, 255, 190, 110)), (0.80, Color.FromArgb(130, 160, 235, 150)), (1.00, Color.FromArgb(150, 110, 200, 255)),
         };
 
-        private static readonly Dictionary<uint, Pen> Pens = new();
-
         /// <summary>
-        /// Круговой градиент по кромке: WPF его не умеет, поэтому кромка режется на короткие отрезки, и у каждого свой
-        /// цвет по углу от центра капли (как у conic-gradient). Перья запоминаются по цвету.
+        /// Круговой градиент по кромке — одна сплошная линия (2026-10-18). Раньше кромка резалась на сотни коротких отрезков
+        /// со скруглёнными концами: на стыках полупрозрачные концы ложились друг на друга, и кант был в точку. Теперь цвет
+        /// берётся из квадратной картинки кругового градиента, поставленной центром в центр капли в её же точках — угол у
+        /// каждой точки кромки тот же, что был (отсчёт от 210°, как conic-gradient в образце).
         /// </summary>
         internal static void ConicRim(DrawingContext dc, double w, double h, double r, double strength = 1)
         {
             if (strength <= 0.02) return;
             const double inset = 0.75, thick = 1.2;
-            var pts = Outline(w, h, Math.Max(0, r - inset), inset);
-            double cx = w / 2, cy = h / 2;
-            for (var i = 0; i < pts.Count; i++)
+            if (w - 2 * inset <= 0 || h - 2 * inset <= 0) return;
+            var side = Math.Max(w, h) + 4;
+            var brush = new ImageBrush(ConicImage)
             {
-                var a = pts[i];
-                var b = pts[(i + 1) % pts.Count];
-                var mx = (a.X + b.X) / 2 - cx; var my = (a.Y + b.Y) / 2 - cy;
-                // угол как в CSS: 0° — вверх, по часовой; отсчёт от 210°
-                var deg = (Math.Atan2(mx, -my) * 180 / Math.PI + 360) % 360;
-                var c = ConicAt(((deg - 210) % 360 + 360) % 360 / 360);
-                c = Quant(Color.FromArgb((byte)Math.Round(c.A * Math.Clamp(strength, 0, 1)), c.R, c.G, c.B));
-                if (c.A < 8) continue;
-                var key = (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
-                if (!Pens.TryGetValue(key, out var pen))
-                {
-                    pen = new Pen(new SolidColorBrush(c), thick) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
-                    pen.Freeze();
-                    if (Pens.Count < 4096) Pens[key] = pen;
-                }
-                dc.DrawLine(pen, a, b);
-            }
+                ViewportUnits = BrushMappingMode.Absolute, Viewport = new Rect(w / 2 - side / 2, h / 2 - side / 2, side, side),
+                Stretch = Stretch.Fill, TileMode = TileMode.None,
+            };
+            brush.Freeze();
+            var ri = Math.Max(0, r - inset);
+            if (strength < 0.999) dc.PushOpacity(Math.Clamp(strength, 0, 1));
+            dc.DrawRoundedRectangle(null, new Pen(brush, thick), new Rect(inset, inset, w - 2 * inset, h - 2 * inset), ri, ri);
+            if (strength < 0.999) dc.Pop();
         }
 
-        private static Color ConicAt(double t)
+        /// <summary>Картинка кругового градиента 256 × 256: цвет по углу от центра (0° — вверх, по часовой, отсчёт от 210°).</summary>
+        private static readonly BitmapSource ConicImage = MakeConic(256);
+
+        internal static BitmapSource MakeConic(int n)
+        {
+            var px = new byte[n * n * 4];
+            for (var y = 0; y < n; y++)
+            for (var x = 0; x < n; x++)
+            {
+                double mx = x + 0.5 - n / 2.0, my = y + 0.5 - n / 2.0;
+                var deg = (Math.Atan2(mx, -my) * 180 / Math.PI + 360) % 360;
+                var c = ConicAt(((deg - 210) % 360 + 360) % 360 / 360);
+                var i = (y * n + x) * 4;
+                var a = c.A / 255.0; // Pbgra32: цвет уже умножен на прозрачность
+                px[i] = (byte)Math.Round(c.B * a); px[i + 1] = (byte)Math.Round(c.G * a); px[i + 2] = (byte)Math.Round(c.R * a); px[i + 3] = c.A;
+            }
+            var bmp = BitmapSource.Create(n, n, 96, 96, PixelFormats.Pbgra32, null, px, n * 4);
+            bmp.Freeze();
+            return bmp;
+        }
+
+        internal static Color ConicAt(double t)
         {
             for (var i = 1; i < Conic.Length; i++)
             {
@@ -563,42 +579,9 @@ public sealed class Droplet : FrameworkElement
                 var (a0, c0) = Conic[i - 1];
                 var (a1, c1) = Conic[i];
                 var k = a1 > a0 ? (t - a0) / (a1 - a0) : 0;
-                // перья по цвету: округляем, чтобы их было немного
-                return Quant(Mix(c0, c1, k));
+                return Mix(c0, c1, k);
             }
             return Conic[^1].C;
-        }
-
-        private static Color Quant(Color c) => Color.FromArgb((byte)(c.A / 8 * 8), (byte)(c.R / 8 * 8), (byte)(c.G / 8 * 8), (byte)(c.B / 8 * 8));
-
-        /// <summary>Точки по контуру скруглённого прямоугольника, по часовой стрелке, шаг ≈2 px.</summary>
-        private static List<Point> Outline(double w, double h, double r, double inset)
-        {
-            var pts = new List<Point>();
-            double x0 = inset, y0 = inset, x1 = w - inset, y1 = h - inset;
-            void Line(Point a, Point b)
-            {
-                var n = Math.Max(1, (int)((b - a).Length / 2));
-                for (var i = 0; i < n; i++) pts.Add(a + (b - a) * (i / (double)n));
-            }
-            void Arc(double cx, double cy, double start)
-            {
-                var n = Math.Max(2, (int)(Math.PI * r / 2 / 2));
-                for (var i = 0; i < n; i++)
-                {
-                    var t = (start + 90.0 * i / n) * Math.PI / 180;
-                    pts.Add(new Point(cx + r * Math.Cos(t), cy + r * Math.Sin(t)));
-                }
-            }
-            Line(new Point(x0 + r, y0), new Point(x1 - r, y0));
-            Arc(x1 - r, y0 + r, -90);
-            Line(new Point(x1, y0 + r), new Point(x1, y1 - r));
-            Arc(x1 - r, y1 - r, 0);
-            Line(new Point(x1 - r, y1), new Point(x0 + r, y1));
-            Arc(x0 + r, y1 - r, 90);
-            Line(new Point(x0, y1 - r), new Point(x0, y0 + r));
-            Arc(x0 + r, y0 + r, 180);
-            return pts;
         }
 
         internal static byte A(double a) => (byte)Math.Round(Math.Clamp(a, 0, 1) * 255);

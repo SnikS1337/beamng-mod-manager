@@ -19,6 +19,8 @@
     <!-- Шейдер преломления (DESIGN.md 3.2). Glass.ps собирает цель CompileGlassShader ниже; элемент без звёздочки
          остаётся в списке, даже если файла ещё нет. -->
     <Resource Include="Shaders\Glass.ps"/>
+    <!-- линза капли для подписей (Controls/LensEffect.cs) -->
+    <Resource Include="Shaders\Lens.ps"/>
     <!-- тот же значок у окна (Alt+Tab, панель задач) -->
     <Resource Include="app.ico"/>
   </ItemGroup>
@@ -33,16 +35,16 @@
     <AssemblyMetadata Include="SelfTestBuild" Value="true" />
   </ItemGroup>
 
-  <!-- Glass.fx -> Glass.ps компилятором fxc из Windows SDK (есть на машинах GitHub Actions). Путь можно задать
+  <!-- Glass.fx -> Glass.ps и Lens.fx -> Lens.ps компилятором fxc из Windows SDK (есть на машинах GitHub Actions). Путь можно задать
        свойством FxcPath. Без fxc, но с готовым Glass.ps в репозитории сборка идёт дальше с ним.
        Цель стоит до BeforeBuild: ресурсы WPF (.g.resources) собираются позже, внутри CoreBuild. -->
-  <PropertyGroup>
-    <GlassShaderSource>Shaders\Glass.fx</GlassShaderSource>
-    <GlassShaderOutput>Shaders\Glass.ps</GlassShaderOutput>
-  </PropertyGroup>
+  <ItemGroup>
+    <GlassShader Include="Shaders\Glass.fx" Out="Shaders\Glass.ps"/>
+    <GlassShader Include="Shaders\Lens.fx" Out="Shaders\Lens.ps"/>
+  </ItemGroup>
 
   <Target Name="CompileGlassShader" BeforeTargets="BeforeBuild"
-          Inputs="$(MSBuildProjectDirectory)\$(GlassShaderSource);$(MSBuildProjectFullPath)" Outputs="$(MSBuildProjectDirectory)\$(GlassShaderOutput)">
+          Inputs="@(GlassShader);$(MSBuildProjectFullPath)" Outputs="@(GlassShader->'%(Out)')">
     <ItemGroup Condition="'$(FxcPath)' == ''">
       <_FxcCandidate Include="$(MSBuildProgramFiles32)\Windows Kits\10\bin\10.*\x64\fxc.exe"/>
     </ItemGroup>
@@ -51,13 +53,13 @@
       <FxcPath Condition="'$(_FxcList)' != ''">$(_FxcList.Substring($([MSBuild]::Add($(_FxcList.LastIndexOf(';')), 1))))</FxcPath>
     </PropertyGroup>
 
-    <Error Condition="!Exists('$(FxcPath)') And !Exists('$(MSBuildProjectDirectory)\$(GlassShaderOutput)')"
-           Text="Не найден fxc.exe (Windows SDK) и нет готового $(GlassShaderOutput). Установите Windows SDK или укажите путь: -p:FxcPath=..."/>
+    <Error Condition="!Exists('$(FxcPath)') And !Exists('$(MSBuildProjectDirectory)\%(GlassShader.Out)')"
+           Text="Не найден fxc.exe (Windows SDK) и нет готового %(GlassShader.Out). Установите Windows SDK или укажите путь: -p:FxcPath=..."/>
     <Message Condition="!Exists('$(FxcPath)')" Importance="normal"
-             Text="fxc.exe не найден: используется готовый $(GlassShaderOutput)"/>
+             Text="fxc.exe не найден: используется готовый %(GlassShader.Out)"/>
 
     <Exec Condition="Exists('$(FxcPath)')" WorkingDirectory="$(MSBuildProjectDirectory)"
-          Command="&quot;$(FxcPath)&quot; /nologo /T ps_2_0 /E main /O3 /Fo &quot;$(GlassShaderOutput)&quot; &quot;$(GlassShaderSource)&quot;"
+          Command="&quot;$(FxcPath)&quot; /nologo /T ps_2_0 /E main /O3 /Fo &quot;%(GlassShader.Out)&quot; &quot;%(GlassShader.Identity)&quot;"
           IgnoreStandardErrorWarningFormat="true" CustomErrorRegularExpression="error X\d+" StandardOutputImportance="high"/>
   </Target>
 
