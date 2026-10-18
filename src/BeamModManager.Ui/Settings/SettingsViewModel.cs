@@ -73,7 +73,7 @@ public sealed class SettingsViewModel : Observable
         Themes = Enum.GetValues<BackgroundTheme>().Select(t => new ThemeTile(this, t)).ToList();
         Sites = new[]
         {
-            new SiteToggle(this, ModlandParser.SourceId, "Modland", "Большой каталог модов."),
+            new SiteToggle(this, ModlandParser.SourceId, "Modland", "Большой каталог модов. Сейчас не пускает программу: просит подтвердить, что вы человек."),
             new SiteToggle(this, ModsGamingParser.SourceId, "ModsGaming", "Каталог на русском."),
             new SiteToggle(this, StModsParser.SourceId, "STMods", "Каталог модов."),
             new SiteToggle(this, BeamNgRepoParser.SourceId, "Репозиторий BeamNG", "Официальный каталог и обновления от авторов."),

@@ -17,7 +17,11 @@ public enum UiMode { Dark = 0, Light = 1, System = 2 }
 /// </summary>
 public sealed record AppSettings
 {
-    public const int CurrentSchema = 1;
+    /// <summary>2 — Modland выключен по умолчанию (2026-10-18): у сохранённых настроек версии 1 он выключается один раз.</summary>
+    public const int CurrentSchema = 2;
+
+    /// <summary>Сайты, выключенные в новых настройках: Modland не пускает программу проверкой «вы человек?» (PHASE0, 2026-10-18).</summary>
+    public static readonly IReadOnlyList<string> DisabledByDefault = new[] { "modland" };
 
     public int SchemaVersion { get; init; } = CurrentSchema;
 
@@ -46,7 +50,7 @@ public sealed record AppSettings
     public int AutoCheckEveryHours { get; init; }
 
     /// <summary>Сайты, которые пользователь отключил (их не опрашивают ни в поиске, ни в проверке).</summary>
-    public IReadOnlyList<string> DisabledSources { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> DisabledSources { get; init; } = DisabledByDefault;
 
     /// <summary>Сколько резервных копий каждого мода хранить (1–20).</summary>
     public int KeepBackups { get; init; } = 3;

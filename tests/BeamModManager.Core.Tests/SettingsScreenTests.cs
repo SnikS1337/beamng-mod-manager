@@ -143,7 +143,7 @@ public static class SettingsScreenTests
 
         t.Run("сайты: выключение и включение пишут список отключённых без повторов", () =>
         {
-            var vm = new SettingsViewModel(new AppSettings());
+            var vm = new SettingsViewModel(new AppSettings { DisabledSources = Array.Empty<string>() });
             var st = vm.Sites.First(s => s.Name == "STMods");
             st.Enabled = false;
             Assert.False(vm.Current.IsSourceEnabled(st.Id), "выключен");

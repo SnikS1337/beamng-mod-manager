@@ -370,7 +370,8 @@ public static class DownloadPolicyTests
     private static Listing L(PriceStatus p = PriceStatus.Free, string src = "modland") =>
         new(src, new Uri("https://www.modland.net/x"), "x", "Audi") { Price = p };
     private static Offer O(string url, OfferKind k = OfferKind.ExternalHost) => new(k, new Uri(url).Host, new Uri(url));
-    private static AppSettings On => new() { AllowDownloads = true };
+    // все сайты включены: политику проверяем на Modland (по умолчанию он с 2026-10-18 выключен)
+    private static AppSettings On => new() { AllowDownloads = true, DisabledSources = Array.Empty<string>() };
 
     public static void Register(TestRunner t)
     {

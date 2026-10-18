@@ -58,7 +58,7 @@ public static class SearchScreenTests
     private sealed class Rig
     {
         public readonly Site Modland = new("modland"), Gaming = new("modsgaming"), St = new("stmods"), Repo = new("beamng", search: false);
-        public AppSettings Settings = new();
+        public AppSettings Settings = new() { DisabledSources = Array.Empty<string>() }; // все сайты, в том числе Modland
         public readonly MatchDecisionStore Decisions = new();
         public readonly List<BeamModManager.Ui.Garage.ModCard> Installed = new();
         public readonly Queue Q = new();

@@ -83,6 +83,9 @@ public sealed class SettingsStore
                     WindowHeight = Int(r, nameof(AppSettings.WindowHeight), d.WindowHeight, warnings),
                     WindowMaximized = Bool(r, nameof(AppSettings.WindowMaximized), d.WindowMaximized, warnings),
                 };
+                // версия 1 — до 2026-10-18: Modland тогда был включён; выключаем один раз, дальше решает человек
+                if (Int(r, nameof(AppSettings.SchemaVersion), 1, warnings) < 2)
+                    s = s with { DisabledSources = s.DisabledSources.Concat(AppSettings.DisabledByDefault).ToList() };
                 return new SettingsLoadResult(s.Normalize(), warnings);
             }
         }
