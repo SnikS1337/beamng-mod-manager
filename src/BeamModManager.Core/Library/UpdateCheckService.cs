@@ -74,7 +74,8 @@ public static class UpdateCheckService
             b.ModId, b.Source, now,
             changed ? now : prev!.LastChangedUtc,
             version,
-            current.SizeBytes ?? prev?.LastSize));
+            current.SizeBytes ?? prev?.LastSize,
+            LastGameVersion: current.GameVersion ?? prev?.LastGameVersion));
     }
 
     /// <summary>
@@ -84,7 +85,7 @@ public static class UpdateCheckService
     public static void ApplyFeedBaseline(ILibraryStore store, TrackedBinding b, FeedEntry entry, DateTimeOffset now)
     {
         var prev = store.GetCheck(b.ModId, b.Source);
-        store.SaveCheck(new CheckState(b.ModId, b.Source, now, now, entry.Version, entry.SizeBytes ?? prev?.LastSize));
+        store.SaveCheck(new CheckState(b.ModId, b.Source, now, now, entry.Version, entry.SizeBytes ?? prev?.LastSize, LastGameVersion: prev?.LastGameVersion));
     }
 
     /// <summary>

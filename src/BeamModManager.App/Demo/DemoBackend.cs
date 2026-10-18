@@ -23,7 +23,7 @@ public sealed class DemoBackend : IGarageBackend
         string? P(string n) { var p = Path.Combine(photos, n + ".jpg"); return File.Exists(p) ? Path.GetFullPath(p) : null; }
         void Add(string name, string ver, int mb, string photo, string? latest = null, bool on = true, bool tracked = true, bool missing = false,
             UpdateStatus st = UpdateStatus.Likely, string type = "vehicle", string? author = null, bool hidden = false, int? siteMb = null,
-            string site = "modland", int changedDays = 2)
+            string site = "modland", int changedDays = 2, string? game = null)
         {
             var id = "demo-" + _mods.Count;
             var mod = new InstalledMod(id, name, id + ".zip", ver, mb * 1024L * 1024, now.AddDays(-60 + _mods.Count), on);
@@ -33,15 +33,16 @@ public sealed class DemoBackend : IGarageBackend
             {
                 SiteSizeBytes = siteMb is { } s ? s * 1024L * 1024 : null,
                 SiteChangedUtc = latest is null ? null : now.AddDays(-changedDays),
+                SiteGameVersion = game,
             });
         }
-        Add("Honda Civic EK9", "1.6", 88, "dacia");
+        Add("Honda Civic EK9", "1.6", 88, "dacia", game: "0.39");
         Add("Subaru Impreza 22B", "1.3", 97, "truck");
         Add("Toyota AE86 Trueno", "2.1", 74, "lambo");
         Add("Dacia Sandero Stepway", "1.0", 142, "dacia", latest: "1.5", author: "kuro_garage", siteMb: 151);
         Add("Ford Mustang Shelby GT500", "1.2", 120, "mustang", missing: true);
         Add("New Holland T7", "2.3", 96, "tractor");
-        Add("Kenworth T610 с цистерной", "1.4b", 210, "truck", latest: "1.5", site: "modsgaming", changedDays: 21);
+        Add("Kenworth T610 с цистерной", "1.4b", 210, "truck", latest: "1.5", site: "modsgaming", changedDays: 21, game: "0.36");
         Add("Traffic Reborn", "3.1", 2, "traffic", tracked: false, type: "unknown");
         Add("Заправка Diesel", "1.0", 12, "station", on: false, type: "terrain");
         Add("Lamborghini Huracán EVO", "1.6", 88, "lambo");
@@ -72,6 +73,7 @@ public sealed class DemoBackend : IGarageBackend
 
     public GarageSnapshot Load() => new(_mods.ToList(), true, DateTimeOffset.UtcNow.AddMinutes(-18)) { Deleted = _gone.ToList() };
     public bool IsGameRunning() => false;
+    public string? GameVersion => "0.39.4.0";
 
     public ToggleResult SetEnabled(string fileName, bool enabled)
     {

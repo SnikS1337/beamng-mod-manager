@@ -188,5 +188,41 @@ public static class IncomingScreenTests
             Assert.True(f.InMods("bmw.zip") && !f.InMods("lada.zip"), "снятая галочка не ставится");
             Assert.True(f.Vm.Toast!.Text.StartsWith("Установлено 1 из 2. «GOLF»:"), f.Vm.Toast.Text);
         });
+    
+        t.Group("Совместимость с версией игры");
+
+        t.Run("версии: первые два числа, диапазон — по последней; строка для панели", () =>
+        {
+            Assert.Eq((0, 38), BeamModManager.Core.Game.GameCompat.Parse("v0.38.3")!.Value);
+            Assert.Eq((0, 38), BeamModManager.Core.Game.GameCompat.Parse("0.38.x")!.Value);
+            Assert.Eq((0, 38), BeamModManager.Core.Game.GameCompat.Parse("0.36–0.38")!.Value);
+            Assert.True(BeamModManager.Core.Game.GameCompat.Parse("новая") is null && BeamModManager.Core.Game.GameCompat.Parse(null) is null, "мусор");
+            Assert.Eq(BeamModManager.Core.Game.CompatLevel.Same, BeamModManager.Core.Game.GameCompat.Compare("0.39", "0.39.4.0"));
+            Assert.Eq(BeamModManager.Core.Game.CompatLevel.ModOlder, BeamModManager.Core.Game.GameCompat.Compare("0.38.5", "0.39.4.0"));
+            Assert.Eq(BeamModManager.Core.Game.CompatLevel.ModNewer, BeamModManager.Core.Game.GameCompat.Compare("0.40", "0.39.4"));
+            Assert.Eq(BeamModManager.Core.Game.CompatLevel.ModOlder, BeamModManager.Core.Game.GameCompat.Compare("0.9", "0.10"));
+            Assert.Eq("0.38 — у вас 0.39, может не работать", BeamModManager.Core.Game.GameCompat.Describe("0.38", "0.39.4.0"));
+            Assert.Eq("0.39, как у вас", BeamModManager.Core.Game.GameCompat.Describe("0.39.1", "0.39.4.0"));
+            Assert.Eq("0.40 — у вас 0.39, нужна игра новее", BeamModManager.Core.Game.GameCompat.Describe("0.40", "0.39"));
+            Assert.True(BeamModManager.Core.Game.GameCompat.Describe(null, "0.39") is null && BeamModManager.Core.Game.GameCompat.Describe("0.38", null) is null, "не знаем — строки нет");
+        });
+
+        t.Run("сайт пишет версию игры — запоминается и не теряется, когда при следующей проверке не разобрана; в панели «Для игры»", () =>
+        {
+            using var f = new Folder(("civic_v1.zip", Car("civic")));
+            File.WriteAllText(Path.Combine(f.Root, "beamng.log"), "Log started - v 0.39.4.0 - x64 - build 20972\n");
+            var rec = f.Store.Mods().Single();
+            f.Store.UpsertBinding(new ModBinding(rec.Id, "modland", "77", new Uri("https://modland.net/77"), true));
+            var tb = new BeamModManager.Core.Updates.TrackedBinding(rec.Id, "modland", "77");
+            var page = new BeamModManager.Core.Models.Listing("modland", new Uri("https://modland.net/77"), "77", "Civic") { ModVersion = "1" };
+            UpdateCheckService.ApplyCard(f.Store, tb, page with { GameVersion = "0.38" }, T0);
+            UpdateCheckService.ApplyCard(f.Store, tb, page, T0.AddHours(7));
+            Assert.Eq("0.38", f.Store.GetCheck(rec.Id, "modland")!.LastGameVersion);
+            f.Vm.Refresh();
+            f.Vm.Selected = f.Vm.Cards.Single();
+            var fact = f.Vm.Details!.Facts.Single(x => x.Label == "Для игры");
+            Assert.Eq("0.38 — у вас 0.39, может не работать", fact.Value);
+            Assert.True(fact.Attention, "янтарным");
+        });
     }
 }

@@ -29,7 +29,9 @@ public sealed record CheckState(
     string? LastVersion,
     long? LastSize,
     /// <summary>Сколько проверок подряд страница мода не нашлась (0 — страница есть). От <see cref="Updates.UpdateCheckPlanner.DeadAfterMisses"/> привязка считается потерянной.</summary>
-    int MissCount = 0);
+    int MissCount = 0,
+    /// <summary>Для какой версии игры мод, как пишет сайт («Game Version: 0.38»); null — сайт не пишет.</summary>
+    string? LastGameVersion = null);
 
 /// <summary>
 /// Хранилище библиотеки. Сейчас есть версия в памяти (для тестов и разработки без Windows);

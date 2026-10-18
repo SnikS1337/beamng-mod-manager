@@ -20,11 +20,12 @@ public sealed class IncomingItem : Observable
 {
     private readonly Action _changed;
 
-    public IncomingItem(IncomingMod mod, Action changed)
+    /// <param name="compat">Строка про версию игры (для обновления мода со страницей на сайте), если известна.</param>
+    public IncomingItem(IncomingMod mod, Action changed, IncomingCheck? compat = null)
     {
         Mod = mod;
         _changed = changed;
-        Checks = ChecksOf(mod);
+        Checks = compat is null ? ChecksOf(mod) : ChecksOf(mod).Append(compat).ToList();
         Facts = mod.Overview.Broken ? Array.Empty<Fact>() : GarageViewModel.Describe(mod.Overview).Facts;
         _include = CanInstall;
     }
@@ -229,7 +230,7 @@ public sealed class IncomingViewModel : Observable
     {
         _current = a;
         Items.Clear();
-        foreach (var m in a.Mods) Items.Add(new IncomingItem(m, RaiseAll));
+        foreach (var m in a.Mods) Items.Add(new IncomingItem(m, RaiseAll, CompatOf(m)));
         Problem = a.Problem;
         var name = Ru.Quoted(Path.GetFileName(a.SourcePath), 48);
         Title = a.Problem is not null ? $"{name}: ставить нечего"
@@ -238,6 +239,21 @@ public sealed class IncomingViewModel : Observable
         Busy = false;
         Open = true;
         RaiseAll();
+    }
+
+    /// <summary>
+    /// Версия игры для обновления: что пишет сайт привязанной страницы заменяемого мода (там уже новая версия) и что
+    /// стоит у человека. Для нового мода и без страницы не знаем — строки нет.
+    /// </summary>
+    private IncomingCheck? CompatOf(IncomingMod m)
+    {
+        if (m.Kind != IncomingKind.Update || m.Replaces is null) return null;
+        var card = _garage.AllCards.FirstOrDefault(c => string.Equals(c.Data.Mod.FileName, m.Replaces, StringComparison.OrdinalIgnoreCase));
+        var site = card?.Data.SiteGameVersion;
+        var game = _backend.GameVersion;
+        if (Core.Game.GameCompat.Describe(site, game) is not { } text) return null;
+        return new IncomingCheck(Core.Game.GameCompat.Compare(site, game) == Core.Game.CompatLevel.Same ? CheckLevel.Ok : CheckLevel.Attention,
+            "Для игры " + text);
     }
 
     /// <summary>«Отмена» или «Понятно»: окно закрывается, следующий перетащенный архив (если ждёт) открывается сам.</summary>

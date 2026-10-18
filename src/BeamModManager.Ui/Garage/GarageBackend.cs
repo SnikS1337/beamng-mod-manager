@@ -29,6 +29,8 @@ public sealed record GarageMod(
 
     /// <summary>Когда проверка в последний раз заметила изменение на странице.</summary>
     public DateTimeOffset? SiteChangedUtc { get; init; }
+    /// <summary>Для какой версии игры мод, по сайту привязанной страницы (null — сайт не пишет или страницы нет).</summary>
+    public string? SiteGameVersion { get; init; }
 }
 
 /// <summary>
@@ -108,6 +110,9 @@ public interface IGarageBackend
 
     /// <summary>«Вернуть» удалённый мод: последняя копия встаёт в папку модов (игра включит его сама).</summary>
     OpResult RestoreDeleted(DeletedGarageMod mod) => new(false, "Вернуть не получилось");
+
+    /// <summary>Версия установленной игры («0.39.4.0»); null — не узнать (игра не запускалась, папка не та).</summary>
+    string? GameVersion => null;
 
     /// <summary>Разобрать скачанный или перетащенный архив: какие в нём моды и чем станет каждый (долго — звать не из окна).</summary>
     IncomingArchive InspectIncoming(string path, CancellationToken ct) => IncomingArchive.Fail(path, "Установка здесь недоступна.");
@@ -284,6 +289,24 @@ public sealed class LibraryGarageBackend : IGarageBackend
             _inside[stamp] = o;
         }
         return o;
+    }
+
+    // ───────────── версия игры (совместимость, 2026-10-18) ─────────────
+
+    private string? _gameVersion;
+    private long _gameVersionAt = long.MinValue / 2;
+
+    /// <summary>Из BeamNG.drive.ini или beamng.log папки пользователя (над папкой mods); перечитывается не чаще раза в минуту.</summary>
+    public string? GameVersion
+    {
+        get
+        {
+            if (Environment.TickCount64 - _gameVersionAt < 60_000) return _gameVersion;
+            _gameVersionAt = Environment.TickCount64;
+            var user = Directory.GetParent(Path.GetFullPath(_installer.Layout.ModsDir).TrimEnd('\\', '/'))?.FullName;
+            _gameVersion = user is null ? null : GameInfo.DetectVersion(user);
+            return _gameVersion;
+        }
     }
 
     // ───────────── установка из скачанного или перетащенного архива (2026-10-18) ─────────────
@@ -512,6 +535,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
             {
                 SiteSizeBytes = uc?.LastSize,
                 SiteChangedUtc = uc?.LastChangedUtc,
+                SiteGameVersion = uc?.LastGameVersion ?? c?.LastGameVersion,
             });
         }
         IReadOnlyList<DeletedGarageMod> deleted;

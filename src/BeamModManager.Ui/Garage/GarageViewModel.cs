@@ -43,7 +43,11 @@ public sealed record Toast(string Text, bool CanUndo, long Serial);
 public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPage, Restore }
 
 /// <summary>Строка блока данных в правой панели: «Размер — 312 МБ».</summary>
-public sealed record Fact(string Label, string Value);
+public sealed record Fact(string Label, string Value)
+{
+    /// <summary>Значение требует внимания (янтарным): например, мод для другой версии игры.</summary>
+    public bool Attention { get; init; }
+}
 
 /// <summary>Строка «Прошлых версий»: «Версия 1.0» и «12 октября 2026 · 88 МБ», справа «Вернуть».</summary>
 public sealed record VersionRow(string Title, string Detail, PastVersion Version);
@@ -762,6 +766,9 @@ public sealed class GarageViewModel : Observable
         else facts.Add(new Fact("Следим на", d.CheckingDeclined ? "Не проверяем по вашему выбору" : "Страница не указана"));
         if (d.LastCheckedUtc is { } t) facts.Add(new Fact("Проверен", Ru.Ago(t, _now())));
         if (m.Version is { } v) facts.Add(new Fact("Версия", v));
+        // совместимость (DESIGN_FLOWS 6.8): только когда известны обе версии
+        if (Core.Game.GameCompat.Describe(d.SiteGameVersion, _backend.GameVersion) is { } compat)
+            facts.Add(new Fact("Для игры", compat) { Attention = Core.Game.GameCompat.Compare(d.SiteGameVersion, _backend.GameVersion) != Core.Game.CompatLevel.Same });
 
         return new ModDetails(m.Name, d.Author, act, label, hint, facts, d.Binding?.Url, act != MainAction.OpenPage && d.Binding is not null,
             act == MainAction.Enable ? null : c.Enabled ? "Выключить" : "Включить", c.PendingText);
