@@ -45,9 +45,9 @@ public readonly record struct DropBody(double Start, double Length, double Acros
             var w = Math.Min(2 * half, max - min);
             if (c < min) { lo = min; hi = min + w; } else { hi = max; lo = max - w; }
         }
-        var squash = 2 * half - (hi - lo);
         var length = (hi - lo) / scale;
-        var bulge = 1 + MaxBulge * Math.Min(1, squash / Math.Max(1, hi - lo));
+        // толще ровно настолько, насколько «объём» ужат (корень — мягче), но не больше предела
+        var bulge = Math.Min(1 + MaxBulge, Math.Sqrt(2 * half / Math.Max(1, hi - lo)));
         return this with { Start = (lo + hi) / 2 - length / 2, Length = length, Across = Across * bulge };
     }
 

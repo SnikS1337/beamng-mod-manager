@@ -69,6 +69,23 @@ public static class DropBodyTests
             Assert.Eq(b, b.Within(5, 5, 1)); // стенок нет — как есть
         });
 
+        t.Run("живость: на длинном пути голова заметно перелетает пункт, но немного, и всё стоит за полсекунды с небольшим", () =>
+        {
+            double lead = 0, lv = 0, trail = 0, tv = 0, over = 0, settled = -1;
+            const double target = 300, dt = 1 / 240.0;
+            double K(double resp) => Math.Pow(2 * Math.PI / resp, 2);
+            double C(double resp, double ratio) => 2 * ratio * 2 * Math.PI / resp;
+            for (var i = 1; i <= 240 * 2; i++)
+            {
+                lv += (-K(0.34) * (lead - target) - C(0.34, 1 - 0.32) * lv) * dt; lead += lv * dt;
+                tv += (-K(0.40) * (trail - target) - C(0.40, 1 - 0.15) * tv) * dt; trail += tv * dt;
+                over = Math.Max(over, lead - target);
+                if (settled < 0 && Math.Abs(lead - target) < 0.5 && Math.Abs(trail - target) < 0.5 && Math.Abs(lv) < 20) settled = i * dt;
+            }
+            Assert.True(over is > 8 and < 20, $"перелёт {over:0.0} из 300 — заметный, но небольшой");
+            Assert.True(settled is > 0 and < 0.65, $"успокоилась за {settled:0.00} с");
+        });
+
         t.Run("мусор (NaN, бесконечность, ноль, минус) не ломает каплю", () =>
         {
             foreach (var bad in new[] { double.NaN, double.PositiveInfinity, double.NegativeInfinity, 0, -50 })
@@ -81,15 +98,15 @@ public static class DropBodyTests
 
         t.Run("пружины головы и хвоста от одного пункта к другому: тело непрерывно на каждом кадре и в конце стоит", () =>
         {
-            // как в окне: голова 0,30 с с лёгким перелётом, хвост 0,46 с без отскока; шаг 1/144 с
+            // как в окне (MainWindow.DropHead…): голова 0,34 с с перелётом, хвост 0,40 с, чуть пружинит; шаг 1/144 с
             double lead = 8, lv = 0, trail = 8, tv = 0;
             const double target = 212, dt = 1 / 144.0;
             double K(double resp) => Math.Pow(2 * Math.PI / resp, 2);
             double C(double resp, double ratio) => 2 * ratio * 2 * Math.PI / resp;
             for (var i = 0; i < 144 * 2; i++)
             {
-                lv += (-K(0.30) * (lead - target) - C(0.30, 0.8) * lv) * dt; lead += lv * dt;
-                tv += (-K(0.46) * (trail - target) - C(0.46, 1.0) * tv) * dt; trail += tv * dt;
+                lv += (-K(0.34) * (lead - target) - C(0.34, 1 - 0.32) * lv) * dt; lead += lv * dt;
+                tv += (-K(0.40) * (trail - target) - C(0.40, 1 - 0.15) * tv) * dt; trail += tv * dt;
                 var b = DropBody.Of(lead, trail, 64, lv);
                 Assert.True(b.Start <= Math.Min(lead, trail) + 1e-9 && b.Start + b.Length >= Math.Max(lead, trail) + 64 - 1e-9, $"кадр {i}");
             }

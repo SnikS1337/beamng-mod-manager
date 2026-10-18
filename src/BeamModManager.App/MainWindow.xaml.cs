@@ -147,10 +147,13 @@ public partial class MainWindow : Window
         _capPress = new Spring(0.22, 0.3, 1);
         // капля в пути — одно тело (вариант «В», 2026-10-17): «голова» догоняет пункт быстро и с лёгким перелётом,
         // «хвост» — медленнее и без отскока; рисуется оболочка от хвоста до головы, без разрыва на две капли
-        _navDrop = new Spring(0.30, 0.2, NavDropTop);
-        _navTrail = new Spring(0.46, 0, NavDropTop);
-        _filterX = new Spring(0.30, 0.2, -3);
-        _filterTrail = new Spring(0.46, 0, -3);
+        // капли левой панели и фильтров (2026-10-18, «не хватает живости»): голова перелетает пункт заметнее (на 300 точек
+        // пути ≈14 вместо ≈3), хвост чуть пружинит следом; у крайнего пункта перелёт уходит в сплющивание о стенку.
+        // Всё успокаивается за ≈0,5 с — как и было
+        _navDrop = new Spring(DropHead, DropHeadBounce, NavDropTop);
+        _navTrail = new Spring(DropTail, DropTailBounce, NavDropTop);
+        _filterX = new Spring(DropHead, DropHeadBounce, -3);
+        _filterTrail = new Spring(DropTail, DropTailBounce, -3);
         _filterW = new Spring(0.30, 0.2, 60);
         // путь всего 44 точки: короткая пружина почти без перелёта, иначе капля отстаёт от курсора (видео с виртуалки, 2026-10-18)
         _capX = new Spring(0.18, 0.06, 2);
@@ -1113,6 +1116,9 @@ public partial class MainWindow : Window
         t.ScaleX = vertical ? b : a;
         t.ScaleY = vertical ? a : b;
     }
+
+    /// <summary>Пружины капель: голова (быстрая, с перелётом) и хвост (медленнее, чуть пружинит).</summary>
+    internal const double DropHead = 0.34, DropHeadBounce = 0.32, DropTail = 0.40, DropTailBounce = 0.15;
 
     /// <summary>Капля левой панели: 68 × 64, отступ 8 от краёв панели (форма 4, утверждена 2026-10-17).</summary>
     private const double NavDropTop = 8, NavDropH = 64;
