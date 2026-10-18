@@ -1692,6 +1692,37 @@
             </Border>
         </Grid>
 
+        <!-- Знакомство при первом запуске (2026-10-18): затемнение с «окном» вокруг нужного элемента, кольцо по его краю и
+             пузырь рядом; окно и пузырь перетекают от шага к шагу (TourPlace). Кнопки окна остаются доступны (капсула выше). -->
+        <Grid x:Name="TourLayer" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path x:Name="TourDim" Fill="#A6060A14">
+                <Path.Data>
+                    <GeometryGroup FillRule="EvenOdd">
+                        <RectangleGeometry x:Name="TourAll"/>
+                        <RectangleGeometry x:Name="TourHole" RadiusX="26" RadiusY="26"/>
+                    </GeometryGroup>
+                </Path.Data>
+            </Path>
+            <Canvas>
+                <Rectangle x:Name="TourRing" RadiusX="26" RadiusY="26" Stroke="{DynamicResource Ink3}" StrokeThickness="1.5" IsHitTestVisible="False"/>
+                <Border x:Name="TourBubble" Width="330" CornerRadius="22" Padding="20,16,18,16"
+                        Background="{DynamicResource MenuBack}" BorderBrush="{DynamicResource MenuRim}" BorderThickness="1">
+                    <Border.Effect><DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.35" Color="Black"/></Border.Effect>
+                    <StackPanel>
+                        <TextBlock Text="{Binding Counter}" FontSize="12" Foreground="{DynamicResource Ink2}"/>
+                        <TextBlock Text="{Binding Current.Title}" FontSize="17" FontWeight="Bold" Margin="0,4,0,0"/>
+                        <TextBlock Text="{Binding Current.Text}" FontSize="13.5" TextWrapping="Wrap" Margin="0,6,0,0" LineHeight="19"/>
+                        <DockPanel Margin="0,14,0,0" LastChildFill="False">
+                            <Button x:Name="TourNext" DockPanel.Dock="Right" Style="{StaticResource Primary}" Content="{Binding NextLabel}" Padding="22,0" MinWidth="110"
+                                    Click="TourNext_Click"/>
+                            <Button DockPanel.Dock="Left" Style="{StaticResource Link}" Content="Пропустить" VerticalAlignment="Center" Click="TourSkip_Click"
+                                    Visibility="{Binding IsLast, Converter={StaticResource BoolToCollapsed}}"/>
+                        </DockPanel>
+                    </StackPanel>
+                </Border>
+            </Canvas>
+        </Grid>
+
         <!-- Капсула кнопок окна 132 × 36 в правом верхнем углу; при наведении появляется капля, под «Закрыть» красная -->
         <!-- сквозь капсулу виден только фон: под ней край верхней тени, карточки там почти не видны, а капля на каждом шаге
              перерисовывала бы под собой всю сцену с карточками -->
