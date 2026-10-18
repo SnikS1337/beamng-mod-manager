@@ -1561,7 +1561,8 @@ public partial class MainWindow : Window
                 finally
                 {
                     var got = path;
-                    Dispatcher.BeginInvoke(() =>
+                    // не ждём: при закрытии окна очередь уже остановлена, ожидание повисло бы
+                    _ = Dispatcher.BeginInvoke(() =>
                     {
                         if (got is null) { _findAsked.Remove(url.AbsoluteUri); return; } // в следующий раз попробуем снова
                         _findImages[url.AbsoluteUri] = got;
