@@ -645,7 +645,7 @@ public static class AppUpdateTests
             using var r = new Rig();
             r.Publish();
             var restarts = 0;
-            var b = new UpdateBanner(r.U, a => { lock (r) a(); }, () => Interlocked.Increment(ref restarts));
+            var b = new UpdateBanner(r.U, a => { lock (r) a(); }, () => Interlocked.Increment(ref restarts), delay: _ => Task.CompletedTask);
             await b.CheckOnStartAsync();
             await Until(() => b.Visible);
             Assert.Eq("Вышла новая версия 0.1.30", b.Text);
@@ -653,6 +653,7 @@ public static class AppUpdateTests
             r.Net.Gate = new TaskCompletionSource();
             for (var i = 0; i < 5; i++) b.Act();
             Assert.True(b.ActionLabel is null && !b.CanDismiss, "во время загрузки кнопок нет");
+            Assert.True(b.CanCancel && b.Phase == BannerPhase.Downloading && b.Progress is not null, "загрузка: полоса и «Отменить»");
             b.Dismiss();
             Assert.True(b.Visible, "«Позже» не прячет загрузку");
             r.Net.Gate.SetResult();
@@ -676,5 +677,85 @@ public static class AppUpdateTests
             Assert.False(b.Visible, "спрятано");
             Assert.False(new UpdateBanner(null, a => a(), () => { }).Supported, "без обновлятора — нечего показывать");
         });
+    
+        t.Run("плашка: «Отменить» во время загрузки — снова «Вышла новая версия», без ошибки; потом можно обновиться", async () =>
+        {
+            using var r = new Rig();
+            r.Publish();
+            var restarts = 0;
+            var b = new UpdateBanner(r.U, a => { lock (r) a(); }, () => Interlocked.Increment(ref restarts), delay: _ => Task.CompletedTask);
+            await b.CheckOnStartAsync();
+            await Until(() => b.Visible);
+            r.Net.Gate = new TaskCompletionSource();
+            b.Act();
+            await Until(() => b.CanCancel);
+            b.Cancel();
+            r.Net.Gate.SetResult();
+            await Until(() => b.Phase == BannerPhase.Message && b.ActionLabel == "Обновить");
+            Assert.Eq("Вышла новая версия 0.1.30", b.Text);
+            Assert.True(b.Progress is null && !b.CanCancel, "полосы нет");
+            Assert.Eq(0, restarts);
+            r.Net.Gate = null;
+            b.Act();
+            await Until(() => restarts > 0);
+            Assert.Eq(1, restarts);
+        });
+
+        t.Run("плашка: сколько скачано и сколько осталось; «осталось» округляется и не мелькает", () =>
+        {
+            Assert.Eq("", UpdateBanner.Left(double.NaN));
+            Assert.Eq("несколько секунд", UpdateBanner.Left(3));
+            Assert.Eq("~10 с", UpdateBanner.Left(11));
+            Assert.Eq("~55 с", UpdateBanner.Left(56));
+            Assert.Eq("~1 мин", UpdateBanner.Left(58));
+            Assert.Eq("~3 мин", UpdateBanner.Left(170));
+            var now = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+            var fake = new FakeUpdater { Stage = UpdateStage.Downloading, Size = 60L * 1048576, P = 0.1 };
+            var b = new UpdateBanner(fake, a => a(), () => { }, () => now);
+            Assert.Eq("6 из 60 МБ", b.Detail);
+            now = now.AddSeconds(2); fake.Set(0.3); // 12 МБ за 2 с — 6 МБ/с, осталось 42 МБ ≈ 7 с
+            Assert.Eq("18 из 60 МБ, ~5 с", b.Detail);
+            Assert.True(b.Phase == BannerPhase.Downloading && Math.Abs(b.Progress!.Value - 0.3) < 1e-9, "полоса");
+            fake.Set(1);
+            Assert.True(b.Phase == BannerPhase.Verifying && b.Detail is null && !b.CanCancel, "проверка: без «Отменить» и цифр");
+            Assert.True(b.Text.StartsWith("Проверяем и распаковываем версию 0.1.30"), b.Text);
+            fake.Stage = UpdateStage.Available; fake.Error = "контрольная сумма не совпала"; fake.Set(1);
+            Assert.True(b.Phase == BannerPhase.Failed && b.Progress == 1 && b.ActionLabel == "Повторить", "сбой: полоса стоит, «Повторить»");
+        });
+
+        t.Run("плашка: готово — отсчёт 3, 2, 1 и один перезапуск; «Перезапустить сейчас» не ждёт", async () =>
+        {
+            var fake = new FakeUpdater { Stage = UpdateStage.ReadyToRestart, Size = 1 };
+            var texts = new List<string>();
+            var restarts = 0;
+            var gate = new TaskCompletionSource();
+            var b = new UpdateBanner(fake, a => { lock (texts) a(); }, () => Interlocked.Increment(ref restarts), delay: _ => gate.Task);
+            b.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(UpdateBanner.Text)) texts.Add(b.Text); };
+            await Until(() => b.Text.EndsWith("3 с"));
+            Assert.Eq("Версия 0.1.30 готова. Перезапуск через 3 с", b.Text);
+            Assert.True(b.Phase == BannerPhase.Ready && b.ActionLabel == "Перезапустить сейчас" && b.Progress is null, "галочка вместо полосы");
+            b.Act();
+            Assert.Eq(1, restarts);
+            Assert.Eq("Версия 0.1.30 готова. Перезапускаем…", b.Text);
+            gate.SetResult();
+            await Task.Delay(100);
+            Assert.Eq(1, restarts);
+        });
+    }
+
+    /// <summary>Подделка обновлятора для плашки: состояние задаётся напрямую.</summary>
+    private sealed class FakeUpdater : IAppUpdater
+    {
+        public UpdateStage Stage = UpdateStage.Idle;
+        public long Size;
+        public double P;
+        public string? Error;
+        public Version Current => new(0, 1, 29);
+        public UpdateState State => new(Stage, new UpdateManifest(new Version(0, 1, 30, 0), new Uri("https://github.com/o/r/releases/download/v0.1.30/a.zip"), Size, new string('0', 64), "", null), P, Error);
+        public event Action? Changed;
+        public void Set(double p) { P = p; Changed?.Invoke(); }
+        public Task CheckAsync(bool manual, CancellationToken ct = default) => Task.CompletedTask;
+        public Task InstallAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public void CancelInstall() { }
     }
 }

@@ -304,6 +304,10 @@ public partial class MainWindow : Window
         {
             UpdateBox.DataContext = banner;
             SettingsUpdateBox.DataContext = banner;
+            banner.PropertyChanged += Banner_PropertyChanged;
+            Closed += (_, _) => banner.PropertyChanged -= Banner_PropertyChanged;
+            ShowUpdateBox(banner.Visible, instant: true);
+            UpdateBarView(banner, instant: true);
             if (_host.CheckUpdatesOnStart)
                 Dispatcher.BeginInvoke(async () =>
                 {
@@ -1694,6 +1698,93 @@ public partial class MainWindow : Window
     private void DismissBanner_Click(object sender, RoutedEventArgs e) => _vm.DismissBanner();
     private void UpdateAct_Click(object sender, RoutedEventArgs e) => _host.Banner?.Act(_closing.Token);
     private void UpdateLater_Click(object sender, RoutedEventArgs e) => _host.Banner?.Dismiss();
+    private void UpdateCancel_Click(object sender, RoutedEventArgs e) => _host.Banner?.Cancel();
+
+    // ───────────── плашка обновления: появление, полоса, галочка (2026-10-18) ─────────────
+
+    private bool _updateShown;
+
+    private void Banner_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is not BeamModManager.Ui.AppUpdate.UpdateBanner b) return;
+        if (e.PropertyName == nameof(b.Visible)) ShowUpdateBox(b.Visible);
+        else if (e.PropertyName is nameof(b.Progress) or nameof(b.Phase)) UpdateBarView(b);
+    }
+
+    /// <summary>Плашка проявляется и чуть опускается на место; уходит — гаснет и прячется.</summary>
+    private void ShowUpdateBox(bool show, bool instant = false)
+    {
+        if (show == _updateShown && !instant) return;
+        _updateShown = show;
+        var quick = instant || SpringDriver.ReducedMotion || (_host.ShotPath is not null && !_probing);
+        if (show) UpdateBox.Visibility = Visibility.Visible;
+        if (quick)
+        {
+            UpdateBox.BeginAnimation(OpacityProperty, null);
+            UpdateBoxMove.BeginAnimation(TranslateTransform.YProperty, null);
+            UpdateBox.Opacity = show ? 1 : 0;
+            UpdateBoxMove.Y = 0;
+            if (!show) UpdateBox.Visibility = Visibility.Collapsed;
+            return;
+        }
+        if (show)
+        {
+            UpdateBox.BeginAnimation(OpacityProperty, Anim.Go(UpdateBox.Opacity, 1, 0.35, Anim.Smooth));
+            UpdateBoxMove.BeginAnimation(TranslateTransform.YProperty, Anim.Go(-8, 0, 0.5, Anim.Smooth));
+            return;
+        }
+        var fade = Anim.Go(UpdateBox.Opacity, 0, 0.22, Anim.Smooth);
+        fade.Completed += (_, _) => { if (!_updateShown) UpdateBox.Visibility = Visibility.Collapsed; };
+        UpdateBox.BeginAnimation(OpacityProperty, fade);
+        UpdateBoxMove.BeginAnimation(TranslateTransform.YProperty, Anim.Go(0, -6, 0.22, Anim.Smooth));
+    }
+
+    /// <summary>
+    /// Полоса едет к новому значению за 0,4 с (а не прыгает по процентам); при сбое — янтарная и стоит; при проверке
+    /// и распаковке полная, по ней раз в 1,3 с бежит блик; готово — вместо полосы галочка.
+    /// </summary>
+    private void UpdateBarView(BeamModManager.Ui.AppUpdate.UpdateBanner b, bool instant = false)
+    {
+        var quick = instant || SpringDriver.ReducedMotion || (_host.ShotPath is not null && !_probing);
+        var wasHidden = UpdateBar.Visibility != Visibility.Visible;
+        UpdateBar.Visibility = b.Progress is null ? Visibility.Collapsed : Visibility.Visible;
+        UpdateBarFill.SetResourceReference(Border.BackgroundProperty, b.Phase == BeamModManager.Ui.AppUpdate.BannerPhase.Failed ? "Warn" : "Ink");
+        var to = b.Progress ?? 0;
+        if (quick || wasHidden) { UpdateBarScale.BeginAnimation(ScaleTransform.ScaleXProperty, null); UpdateBarScale.ScaleX = to; }
+        else if (b.Phase != BeamModManager.Ui.AppUpdate.BannerPhase.Failed)
+            UpdateBarScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(to, TimeSpan.FromSeconds(0.4)) { EasingFunction = Anim.Smooth });
+        else
+        {
+            // сбой: полоса замирает там, где была на экране
+            var at = UpdateBarScale.ScaleX;
+            UpdateBarScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            UpdateBarScale.ScaleX = at;
+        }
+
+        var verifying = b.Phase == BeamModManager.Ui.AppUpdate.BannerPhase.Verifying && !SpringDriver.ReducedMotion;
+        if (verifying && UpdateBarSheen.Opacity == 0)
+        {
+            UpdateBarSheen.Opacity = 1;
+            var span = Math.Max(300, UpdateBox.ActualWidth) + UpdateBarSheen.Width;
+            var a = new DoubleAnimation(-UpdateBarSheen.Width, span, TimeSpan.FromSeconds(1.3)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = Anim.Smooth };
+            Timeline.SetDesiredFrameRate(a, 30);
+            UpdateBarSheenMove.BeginAnimation(TranslateTransform.XProperty, a);
+        }
+        else if (!verifying && UpdateBarSheen.Opacity != 0)
+        {
+            UpdateBarSheen.Opacity = 0;
+            UpdateBarSheenMove.BeginAnimation(TranslateTransform.XProperty, null);
+        }
+
+        var done = b.Phase == BeamModManager.Ui.AppUpdate.BannerPhase.Ready;
+        var doneWas = UpdateDone.Visibility == Visibility.Visible;
+        UpdateDone.Visibility = done ? Visibility.Visible : Visibility.Collapsed;
+        if (done && !doneWas && !quick)
+        {
+            UpdateDoneScale.BeginAnimation(ScaleTransform.ScaleXProperty, Anim.Go(0.5, 1, 0.45, Anim.Lift));
+            UpdateDoneScale.BeginAnimation(ScaleTransform.ScaleYProperty, Anim.Go(0.5, 1, 0.45, Anim.Lift));
+        }
+    }
 
     // ───────────── настройки ─────────────
 

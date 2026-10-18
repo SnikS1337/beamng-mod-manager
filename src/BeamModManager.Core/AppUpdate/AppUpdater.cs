@@ -20,7 +20,19 @@ public sealed record UpdateState(UpdateStage Stage, UpdateManifest? Manifest = n
 /// проверки или загрузки ничего не запускают заново (возвращают ту же задачу). Проверка по кнопке не чаще раза в 10 с.
 /// Сеть и диск — через <see cref="UpdateDownloader"/> и <see cref="UpdateInstaller"/>; это место только решает, что когда делать.
 /// </summary>
-public sealed class AppUpdater
+/// <summary>Что видит плашка обновления (UpdateBanner): настоящий <see cref="AppUpdater"/> или подделка для демо и снимков.</summary>
+public interface IAppUpdater
+{
+    Version Current { get; }
+    UpdateState State { get; }
+    event Action? Changed;
+    Task CheckAsync(bool manual, CancellationToken ct = default);
+    Task InstallAsync(CancellationToken ct = default);
+    /// <summary>«Отменить» во время загрузки: обновление снова доступно, без ошибки. После загрузки (проверка, распаковка) — ничего.</summary>
+    void CancelInstall();
+}
+
+public sealed class AppUpdater : IAppUpdater
 {
     public static readonly TimeSpan ManualCooldown = TimeSpan.FromSeconds(10);
 
@@ -34,6 +46,8 @@ public sealed class AppUpdater
     private readonly Version? _skipped;
     private readonly object _g = new();
     private Task? _running;
+    private CancellationTokenSource? _install;
+    private bool _cancelled;
     private UpdateState _state = new(UpdateStage.Idle);
 
     public AppUpdater(UpdateDownloader net, Uri manifestUrl, Version current, string currentExe, string updateDir,
@@ -109,7 +123,21 @@ public sealed class AppUpdater
             if (_running is { IsCompleted: false }) return _running;
             if (_state is not { Stage: UpdateStage.Available, Manifest: { } m }) return Task.CompletedTask;
             Set(_state with { Stage = UpdateStage.Downloading, Progress = 0, Error = null });
-            return _running = Task.Run(() => InstallCoreAsync(m, ct), CancellationToken.None);
+            _install?.Dispose();
+            _install = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _cancelled = false;
+            var token = _install.Token;
+            return _running = Task.Run(() => InstallCoreAsync(m, token), CancellationToken.None);
+        }
+    }
+
+    public void CancelInstall()
+    {
+        lock (_g)
+        {
+            if (_state is not { Stage: UpdateStage.Downloading, Progress: < 1 } || _install is null) return;
+            _cancelled = true;
+            _install.Cancel();
         }
     }
 
@@ -128,6 +156,7 @@ public sealed class AppUpdater
                 lock (_g) if (_state.Stage == UpdateStage.Downloading) Set(_state with { Progress = p });
             });
             var err = await _net.DownloadAsync(m, zip, progress, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested(); // «Отменить» в последний миг загрузки — тоже отмена, а не установка
             if (err is not null) { Fail(err); return; }
 
             var (exe, xerr) = UpdateInstaller.Extract(zip, Path.Combine(dir, "exe"), m.Version, _versionOf);
@@ -137,7 +166,15 @@ public sealed class AppUpdater
             if (stage is not null) { Fail(stage); return; }
             lock (_g) Set(new UpdateState(UpdateStage.ReadyToRestart, m, 1, CheckedAt: _state.CheckedAt));
         }
-        catch (OperationCanceledException) { Fail("загрузка отменена"); }
+        catch (OperationCanceledException)
+        {
+            // отменили сами — обновление снова просто доступно; закрыли окно посреди загрузки — «загрузка отменена»
+            lock (_g)
+            {
+                if (_cancelled) Set(new UpdateState(UpdateStage.Available, m, CheckedAt: _state.CheckedAt));
+                else Fail("загрузка отменена");
+            }
+        }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException) { Fail(x.Message); }
     }
 

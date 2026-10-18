@@ -128,6 +128,12 @@ jobs:
           Shot 'garage-panel' @('--height', '1500', '--select', '"Honda Civic EK9"')
           # фильтр «Удалённые»: серые карточки, справа «Вернуть»
           Shot 'garage-deleted' @('--filter', 'Deleted', '--select', '"BMW M3 E30"')
+          # плашка обновления программы: загрузка, проверка и распаковка, готово (отсчёт), сбой; светлая загрузка
+          Shot 'update-downloading' @('--update', 'downloading', '--width', '1360')
+          Shot 'update-verifying' @('--update', 'verifying', '--width', '1360')
+          Shot 'update-ready' @('--update', 'ready', '--width', '1360')
+          Shot 'update-failed' @('--update', 'failed', '--width', '1360')
+          Shot 'light-update-downloading' @('--mode', 'Light', '--update', 'downloading', '--width', '1360')
           # тост «выключен» с «Отменить» и полосой «сколько осталось» (тёмное и светлое)
           Shot 'garage-toast' @('--select', '"Dacia Sandero Stepway"', '--toggle')
           Shot 'light-garage-toast' @('--mode', 'Light', '--select', '"Dacia Sandero Stepway"', '--toggle')
