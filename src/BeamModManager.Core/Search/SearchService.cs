@@ -155,7 +155,7 @@ public sealed class SearchService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Unavailable, 0, ex.Message), Array.Empty<Listing>());
+            return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Unavailable, 0, Net.NetErrors.ForUser(ex)), Array.Empty<Listing>());
         }
     }
 

@@ -71,7 +71,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
-      - run: sudo apt-get install -y -q lua5.1 && lua5.1 tests/lua/bridge_test.lua src/BeamModManager.Core/Game/Bridge
+      # список пакетов на машине бывает устаревшим, и установка без его обновления изредка падала не из-за нас
+      - run: sudo apt-get update -q && sudo apt-get install -y -q lua5.1 && lua5.1 tests/lua/bridge_test.lua src/BeamModManager.Core/Game/Bridge
 
   # Окно на WPF (.NET 10): сборка на каждый push, снимки экрана в демо-режиме — только когда менялся интерфейс.
   # Снимки уходят в ветку ci-shots.

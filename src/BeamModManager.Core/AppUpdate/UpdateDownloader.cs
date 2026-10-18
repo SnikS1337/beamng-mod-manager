@@ -75,7 +75,7 @@ public sealed class UpdateDownloader
             return null;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return "сервер перестал отвечать"; }
-        catch (Exception e) when (e is HttpRequestException or IOException or UnauthorizedAccessException) { return "не удалось скачать: " + e.Message; }
+        catch (Exception e) when (e is HttpRequestException or IOException or UnauthorizedAccessException) { return "не удалось скачать: " + (e is HttpRequestException ? Net.NetErrors.Describe(e) : e.Message); }
         finally
         {
             try { if (File.Exists(part)) File.Delete(part); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }

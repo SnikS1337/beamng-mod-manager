@@ -65,4 +65,5 @@ MvvmTests.Register(t);
 GuardTests.Register(t);
 DropBodyTests.Register(t);
 WindowFitTests.Register(t);
+AuditFixesTests.Register(t);
 return t.Summary();

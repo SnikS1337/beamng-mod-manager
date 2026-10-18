@@ -280,7 +280,7 @@ public static class UpdateRunner
             var st = e is SourceException se ? se.Status : SourceStatus.Unavailable;
             // Проверка «вы человек?» запоминается, пока пользователь её не пройдёт; недоступность — нет, она может пройти сама.
             if (st == SourceStatus.NeedsHumanCheck) store.SetSourceStatus(source, SourceStatus.NeedsHumanCheck);
-            return (st, e.Message);
+            return (st, Net.NetErrors.ForUser(e)); // сетевой сбой — словами, а не системным текстом (2026-10-18)
         }
 
         // 4. Отчёт по сайтам.

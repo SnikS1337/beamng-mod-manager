@@ -13,7 +13,15 @@ namespace BeamModManager.App.Services;
 public sealed class RemotePreviews
 {
     private const long MaxBytes = 6L * 1024 * 1024;
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    // представляемся так же, как при загрузке страниц: часть сайтов не отдаёт картинки запросу без User-Agent (2026-10-18)
+    private static readonly HttpClient Http = CreateClient();
+
+    private static HttpClient CreateClient()
+    {
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        h.DefaultRequestHeaders.UserAgent.ParseAdd(BeamModManager.Core.Net.HttpPageFetcher.UserAgent);
+        return h;
+    }
     private readonly string _dir;
     private readonly SemaphoreSlim _gate = new(4, 4);
 
