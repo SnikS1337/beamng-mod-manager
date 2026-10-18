@@ -216,6 +216,9 @@ jobs:
           Shot 'light-garage-scrolled' @('--mode', 'Light', '--scroll', '400')
           Shot 'light-garage-search' @('--mode', 'Light', '--search', 'ford', '--scroll', '400')
           Shot 'matte-garage' @('--matte', '--select', '"Dacia Sandero Stepway"', '--scroll', '300')
+          # матовое стекло: нижние углы панелей «Сайты» и «Настройки» бывали квадратными (2026-10-18)
+          Shot 'matte-search' @('--matte', '--page', 'search', '--search', 'lamborghini')
+          Shot 'matte-settings-sites' @('--matte', '--page', 'settings', '--section', 'Sites')
           Shot 'updates-search' @('--page', 'updates', '--search', 'dacia', '--width', '1100', '--height', '760')
           # «Поиск»: до запроса, с результатами (одна карточка на мод, «возможно, тот же мод», платный), узкое окно, светлое
           Shot 'search-empty' @('--page', 'search')
