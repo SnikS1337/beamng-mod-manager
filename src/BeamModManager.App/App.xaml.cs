@@ -172,6 +172,9 @@ public partial class App : Application
                 StartScroll = double.TryParse(Arg("--scroll"), System.Globalization.CultureInfo.InvariantCulture, out var scr) ? scr : null,
                 ShotSelect = Arg("--select"),
                 ShotToggle = Array.IndexOf(Environment.GetCommandLineArgs(), "--toggle") >= 0,
+                ShotIncoming = Arg("--incoming"),
+                ShotOffer = Arg("--offer"),
+                ShotDropHint = Array.IndexOf(Environment.GetCommandLineArgs(), "--drop-hint") >= 0,
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
                 // настройки в демо живут только в памяти: файл пользователя не трогаем
@@ -462,7 +465,7 @@ public partial class App : Application
             var dir = modsDir ?? Path.Combine(appDir, "нет-папки-mods");
             // число копий читается при каждой уборке: «−»/«+» в настройках не пересоздают помощника и не перечитывают папку
             var installer = new ModInstaller(ModLayout.InAppFolder(dir, appDir), () => DateTimeOffset.UtcNow, () => svm.Current.KeepBackups);
-            switching.Inner = new LibraryGarageBackend(store, installer, cache, GameProcess.IsRunning, notice);
+            switching.Inner = new LibraryGarageBackend(store, installer, cache, GameProcess.IsRunning, notice, extractor: new TarExtractor());
             svm.ModsFolderPath = modsDir;
             notice = null;
         }

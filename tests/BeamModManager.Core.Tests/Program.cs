@@ -42,6 +42,8 @@ JsonStoreFailureTests.Register(t);
 PreviewTests.Register(t);
 PreviewLoaderTests.Register(t);
 GarageTests.Register(t);
+IncomingTests.Register(t);
+IncomingScreenTests.Register(t);
 ModActionsTests.Register(t);
 SearchScreenTests.Register(t);
 GarageCardTests.Register(t);

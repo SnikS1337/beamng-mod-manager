@@ -149,4 +149,34 @@ public sealed class DemoBackend : IGarageBackend
         "sound" => new(Array.Empty<string>(), Array.Empty<string>(), 0, 24, (mod.Mod.SizeBytes ?? 0) * 3 / 2, Array.Empty<Finding>()),
         _ => new(new[] { mod.Mod.Name }, Array.Empty<string>(), mod.Mod.Name.Contains("Kenworth") ? 6 : 0, 1240, (mod.Mod.SizeBytes ?? 0) * 3, Array.Empty<Finding>()),
     };
+
+    // ───────────── демо: скачанный или перетащенный архив (снимки окна проверки, --incoming) ─────────────
+
+    /// <summary>
+    /// Архив по имени: «…update…» — обновление Honda Civic, «…several…» — пак из трёх (один уже стоит, у одного код),
+    /// «…problem…» — не мод, остальное — новый мод из RAR, перепакованный из лишней папки.
+    /// </summary>
+    public IncomingArchive InspectIncoming(string path, CancellationToken ct)
+    {
+        var name = Path.GetFileName(path);
+        IncomingMod Mod(string file, string title, IncomingKind kind, string? replaces = null, int lua = 0, bool repacked = false, bool on = true, Finding[]? warn = null) =>
+            new(path, file, 90L * 1024 * 1024,
+                new ArchiveOverview(new[] { title }, Array.Empty<string>(), lua, 1240 + lua, 260L * 1024 * 1024, warn ?? Array.Empty<Finding>()),
+                ArchiveContent.Empty, kind, replaces, on, repacked);
+        if (name.Contains("problem", StringComparison.OrdinalIgnoreCase))
+            return IncomingArchive.Fail(path, "В архиве нет мода BeamNG: нет папок vehicles, levels и других, которые ждёт игра.");
+        if (name.Contains("update", StringComparison.OrdinalIgnoreCase))
+            return new(path, new[] { Mod("honda_civic_ek9_v1.7.zip", "Honda Civic EK9", IncomingKind.Update, "demo-0.zip") }, null);
+        if (name.Contains("several", StringComparison.OrdinalIgnoreCase))
+            return new(path, new[]
+            {
+                Mod("nissan_skyline_r34.zip", "Nissan Skyline GT-R R34", IncomingKind.New),
+                Mod("mazda_rx7_fd_v1.1.zip", "Mazda RX-7 FD", IncomingKind.Update, "demo-12.zip", lua: 4),
+                Mod("toyota_ae86.zip", "Toyota AE86 Trueno", IncomingKind.AlreadyInstalled, "demo-2.zip"),
+            }, null);
+        return new(path, new[] { Mod("Mitsubishi Lancer Evo IX.zip", "Mitsubishi Lancer Evo IX", IncomingKind.New, repacked: true) }, null);
+    }
+
+    public IncomingResult InstallIncoming(IncomingMod mod) => new(true, null, new IncomingTicket(mod.FileName, mod.Replaces, null, false, null, null, false));
+    public OpResult UndoIncoming(IncomingTicket ticket) => new(true);
 }

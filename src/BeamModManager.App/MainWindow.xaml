@@ -5,6 +5,7 @@
         xmlns:g="clr-namespace:BeamModManager.Ui.Garage;assembly=BeamModManager.Ui"
         xmlns:u="clr-namespace:BeamModManager.Ui.Updates;assembly=BeamModManager.Ui"
         xmlns:f="clr-namespace:BeamModManager.Ui.Search;assembly=BeamModManager.Ui"
+        xmlns:i="clr-namespace:BeamModManager.Ui.Incoming;assembly=BeamModManager.Ui"
         Title="ModManager BeamNG" Icon="/app.ico" Width="1440" Height="960" MinWidth="1000" MinHeight="680"
         WindowStyle="None" ResizeMode="CanResize" Background="{DynamicResource WindowBack}"
         FontFamily="{StaticResource Font}" Foreground="{DynamicResource Ink}" FontSize="14"
@@ -754,6 +755,27 @@
                             </Grid>
                         </Grid>
                     </Border>
+                    <!-- «Скачан мод …» (включено «Разрешить загрузку модов»): программа заметила архив в «Загрузках» и проверила его -->
+                    <Border x:Name="OfferBox" CornerRadius="20" MinHeight="44" Margin="0,0,0,12" Padding="18,6,10,6" DataContext="{x:Null}"
+                            Visibility="Collapsed" Opacity="0">
+                        <Border.RenderTransform><TranslateTransform x:Name="OfferBoxMove"/></Border.RenderTransform>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#3D8C6EFF" Offset="0"/>
+                                <GradientStop Color="#266EB4FF" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <DockPanel VerticalAlignment="Center" MinHeight="32">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Style="{StaticResource Secondary}" Height="32" MinWidth="110" Padding="14,0" Content="Посмотреть" Click="OfferReview_Click"/>
+                                <Button Style="{StaticResource Link}" Content="Не сейчас" Margin="8,0,0,0" Click="OfferDismiss_Click"/>
+                            </StackPanel>
+                            <Path DockPanel.Dock="Left" Width="20" Height="20" Margin="0,0,10,0" Stretch="None" VerticalAlignment="Center"
+                                  Data="M10,3 L10,12.5 M6.2,8.9 L10,12.6 L13.8,8.9 M4,15.5 L16,15.5" Stroke="{DynamicResource Ink}" StrokeThickness="1.7"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                            <TextBlock Text="{Binding OfferText}" VerticalAlignment="Center" FontSize="13.5" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
                     <Border CornerRadius="20" MinHeight="40" Background="#33FFB340" Margin="0,0,0,12" Padding="18,8"
                             Visibility="{Binding StorageWarning, Converter={StaticResource NullToCollapsed}}">
                         <TextBlock Text="{Binding StorageWarning}" VerticalAlignment="Center" FontSize="13.5" TextWrapping="Wrap"/>
@@ -1137,10 +1159,12 @@
 
                         <!-- Загрузка модов -->
                         <StackPanel MaxWidth="760" HorizontalAlignment="Left" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Downloads}">
-                            <CheckBox Style="{StaticResource Switch}" Content="Разрешить загрузку модов" IsEnabled="False" IsChecked="False"
-                                      Tag="Включено: в программе появятся кнопки «Скачать» и «Установить». Выключено: менеджер показывает ваши моды и ведёт на страницу автора, а скачиваете вы сами."/>
+                            <!-- 2026-10-18: включатель настоящий. Качает человек сам (капчи, реклама и таймеры сайтов — его), программа
+                                 замечает скачанный архив в «Загрузках», проверяет и предлагает поставить -->
+                            <CheckBox Style="{StaticResource Switch}" Content="Разрешить загрузку модов" IsChecked="{Binding AllowDownloads}"
+                                      Tag="Включено: пока программа открыта, она замечает скачанные моды в папке «Загрузки», проверяет их и предлагает установить. Выключено: «Загрузки» программа не смотрит."/>
                             <TextBlock Style="{StaticResource Note}" Margin="4,12,4,0"
-                                       Text="Скачивание из программы ещё не готово, поэтому включатель пока недоступен. Платные моды не скачиваются никогда: вместо «Скачать» будет «Купить у автора»."/>
+                                       Text="Архив можно и просто перетащить на окно — это работает всегда. Подойдут zip, rar и 7z. Платные моды программа не качает никогда: для них «Купить у автора»."/>
                         </StackPanel>
 
                         <!-- Папки -->
@@ -1495,6 +1519,125 @@
                     </DockPanel>
                 </StackPanel>
             </c:Glass>
+        </Grid>
+
+        <!-- Проверка архива перед установкой (2026-10-18, DESIGN.md 5.0.2 «Архив проверен»): что внутри, чем станет каждый мод,
+             что нашла проверка, «Установить» и «Отмена». Архив перетащили на окно или программа заметила его в «Загрузках». -->
+        <Grid x:Name="IncomingLayer" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Border Background="#8C060A14" MouseLeftButtonDown="IncomingDim_MouseDown"/>
+            <c:Glass x:Name="IncomingPanel" Source="{Binding ElementName=Scene}" Corner="32" Blur="6" Tint="#B80E182C"
+                     Lens="48" Refraction="120" Brightness="0.66" Sparks="6" Seed="23"
+                     Width="580" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                     KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle">
+                <StackPanel x:Name="IncomingBody" Margin="26,24,26,22">
+                    <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" TextWrapping="Wrap"/>
+                    <!-- разбор: распаковка, проверка, сравнение с установленными -->
+                    <StackPanel Margin="2,14,2,4" Visibility="{Binding Busy, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Note}" Text="Распаковываем, проверяем и сравниваем с установленными модами…" FontSize="13"/>
+                        <Grid x:Name="IncomingBusyBar" Height="3" Margin="0,12,0,0" ClipToBounds="True">
+                            <Border CornerRadius="1.5" Background="{DynamicResource SoftFill}"/>
+                            <Border x:Name="IncomingBusySheen" Width="120" HorizontalAlignment="Left" CornerRadius="1.5">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <GradientStop Color="#00FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#E6FFFFFF" Offset="0.5"/>
+                                        <GradientStop Color="#00FFFFFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <Border.RenderTransform><TranslateTransform x:Name="IncomingBusyMove"/></Border.RenderTransform>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                    <TextBlock Text="{Binding Problem}" FontSize="13.5" TextWrapping="Wrap" Margin="2,14,2,2" Foreground="{DynamicResource Ink2}"
+                               Visibility="{Binding Problem, Converter={StaticResource NullToCollapsed}}"/>
+                    <ScrollViewer MaxHeight="440" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Margin="0,14,0,0">
+                        <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type i:IncomingItem}">
+                                    <Border CornerRadius="18" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="16,13" Margin="0,0,0,8">
+                                        <StackPanel>
+                                            <DockPanel>
+                                                <CheckBox DockPanel.Dock="Right" Style="{StaticResource MiniSwitch}" IsChecked="{Binding Include, Mode=TwoWay}" VerticalAlignment="Center"
+                                                          IsEnabled="{Binding CanInstall}" Margin="12,0,0,0" AutomationProperties.Name="Ставить этот мод"
+                                                          Visibility="{Binding DataContext.Several, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToVis}}"/>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock FontSize="12.5" Foreground="{DynamicResource Ink2}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis">
+                                                        <Run Text="{Binding KindText, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding FileName, Mode=OneWay}"/>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </DockPanel>
+                                            <ItemsControl ItemsSource="{Binding Checks}" Focusable="False" Margin="0,10,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type i:IncomingCheck}">
+                                                        <DockPanel Margin="0,3,0,0">
+                                                            <Path x:Name="Mark" DockPanel.Dock="Left" Width="16" Height="16" Margin="0,1,9,0" VerticalAlignment="Top" Stretch="None"
+                                                                  Data="M3.5,8.3 L6.6,11.2 L12.5,5" Stroke="{DynamicResource Ink2}" StrokeThickness="1.6"
+                                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                                            <TextBlock x:Name="Line" Text="{Binding Text}" FontSize="13" TextWrapping="Wrap"/>
+                                                        </DockPanel>
+                                                        <DataTemplate.Triggers>
+                                                            <DataTrigger Binding="{Binding Level}" Value="Attention">
+                                                                <Setter TargetName="Mark" Property="Data" Value="M8,3.2 L8,9 M8,12.3 L8,12.4"/>
+                                                                <Setter TargetName="Mark" Property="Stroke" Value="{DynamicResource Warn}"/>
+                                                                <Setter TargetName="Mark" Property="StrokeThickness" Value="1.9"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Level}" Value="Blocked">
+                                                                <Setter TargetName="Mark" Property="Data" Value="M4.5,4.5 L11.5,11.5 M11.5,4.5 L4.5,11.5"/>
+                                                                <Setter TargetName="Mark" Property="Stroke" Value="{DynamicResource Danger}"/>
+                                                                <Setter TargetName="Line" Property="Foreground" Value="{DynamicResource Danger}"/>
+                                                            </DataTrigger>
+                                                        </DataTemplate.Triggers>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <ItemsControl ItemsSource="{Binding Facts}" Focusable="False" Margin="0,10,0,0">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type g:Fact}">
+                                                        <TextBlock FontSize="12.5" Margin="0,0,16,2" Foreground="{DynamicResource Ink2}">
+                                                            <Run Text="{Binding Label, Mode=OneWay}"/><Run Text=": "/><Run Text="{Binding Value, Mode=OneWay}" Foreground="{DynamicResource Ink}"/>
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Style="{StaticResource Note}" Text="{Binding Note}" Margin="4,6,4,0" TextWrapping="Wrap"
+                               Visibility="{Binding Note, Converter={StaticResource NullToCollapsed}}"/>
+                    <DockPanel Margin="0,16,0,0" LastChildFill="False">
+                        <Button x:Name="IncomingInstall" DockPanel.Dock="Right" Style="{StaticResource Primary}" Content="{Binding InstallLabel}" Padding="26,0" MinWidth="170"
+                                IsEnabled="{Binding CanInstall}" Click="IncomingInstall_Click"
+                                Visibility="{Binding Problem, Converter={StaticResource NullToVisible}}"/>
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Link}" Content="Отмена" Margin="0,0,16,0" VerticalAlignment="Center" Click="IncomingCancel_Click"
+                                Visibility="{Binding Problem, Converter={StaticResource NullToVisible}}"/>
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Secondary}" Content="Понятно" Padding="26,0" MinWidth="140" Click="IncomingCancel_Click"
+                                Visibility="{Binding Problem, Converter={StaticResource NullToCollapsed}}"/>
+                    </DockPanel>
+                </StackPanel>
+            </c:Glass>
+        </Grid>
+
+        <!-- Перетаскивают архив на окно: затемнение и плашка «Отпустите — проверим и предложим установить» -->
+        <Grid x:Name="DropLayer" Visibility="Collapsed" IsHitTestVisible="False" Opacity="0">
+            <Border Background="#73060A14"/>
+            <Border x:Name="DropHint" Width="420" Height="190" CornerRadius="32" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{DynamicResource MenuBack}" BorderBrush="{DynamicResource Ink3}" BorderThickness="1.5">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <Path Width="44" Height="44" HorizontalAlignment="Center" Stretch="None"
+                          Data="M22,6 L22,27 M13.5,19 L22,27.5 L30.5,19 M8,34 L36,34" Stroke="{DynamicResource Ink}" StrokeThickness="2.2"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                    <TextBlock Text="Отпустите — проверим и предложим установить" FontSize="15" FontWeight="SemiBold" Margin="0,14,0,0" HorizontalAlignment="Center"/>
+                    <TextBlock Text="zip, rar или 7z" FontSize="12.5" Foreground="{DynamicResource Ink2}" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                </StackPanel>
+                <Border.RenderTransform><ScaleTransform x:Name="DropHintScale" CenterX="210" CenterY="95"/></Border.RenderTransform>
+            </Border>
         </Grid>
 
         <!-- Капсула кнопок окна 132 × 36 в правом верхнем углу; при наведении появляется капля, под «Закрыть» красная -->

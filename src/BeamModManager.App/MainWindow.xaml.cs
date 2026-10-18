@@ -14,6 +14,7 @@ using BeamModManager.App.Motion;
 using BeamModManager.App.Services;
 using BeamModManager.Core.Settings;
 using BeamModManager.Ui.Garage;
+using BeamModManager.Ui.Incoming;
 using BeamModManager.Ui.Look;
 using BeamModManager.Ui.Search;
 using BeamModManager.Ui.Settings;
@@ -38,6 +39,12 @@ public sealed class WindowHost
     public string? ShotSelect { get; init; }
     /// <summary>Снимок: выключить выбранный мод (тост «выключен» с «Отменить»).</summary>
     public bool ShotToggle { get; init; }
+    /// <summary>Снимок: окно проверки архива с таким (демо) именем; «…update…», «…several…», «…problem…» — разные случаи.</summary>
+    public string? ShotIncoming { get; init; }
+    /// <summary>Снимок: плашка «Скачан мод …» для такого (демо) архива.</summary>
+    public string? ShotOffer { get; init; }
+    /// <summary>Снимок: подсказка «Отпустите — проверим…», как при перетаскивании архива.</summary>
+    public bool ShotDropHint { get; init; }
     /// <summary>Вместе со снимком записать замеры (запуск, фильтр, поиск, перечитывание, память) в &lt;снимок&gt;.perf.txt.</summary>
     public bool ShotPerf { get; init; }
     /// <summary>Вместе со снимком прогнать анимации и записать кадры в секунду в &lt;снимок&gt;.frames.txt (--frames).</summary>
@@ -203,12 +210,24 @@ public partial class MainWindow : Window
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies, BackgroundPace.Fps(Native.RefreshRate()));
         SpringDriver.AnyRunningChanged += _motion.Hold;
         Closed += (_, _) => SpringDriver.AnyRunningChanged -= _motion.Hold;
-        _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, SitesPanel, BindPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
+        _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, SitesPanel, BindPanel, IncomingPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
         // «Обновления»: список из тех же карточек гаража, проверка через один координатор
         _upd = new UpdatesViewModel(vm, host.Updates ?? new NoUpdates(), host.Settings, a => Dispatcher.BeginInvoke(a));
         UpdScroller.DataContext = UpdEmptyBox.DataContext = CheckPanel.DataContext = _upd;
         // «Поиск»: сайты отвечают из фона, их ответы окно применяет у себя
         _find = new SearchViewModel(host.Search ?? new NoSearch(), () => vm.AllCards, a => Dispatcher.BeginInvoke(a)) { DownloadsAllowed = host.DownloadsAllowed };
+        // установка из скачанного и перетащенного архива (2026-10-18)
+        _in = new IncomingViewModel(host.Backend, vm, a => Dispatcher.BeginInvoke(a));
+        IncomingLayer.DataContext = _in;
+        OfferBox.DataContext = _in;
+        _in.PropertyChanged += Incoming_PropertyChanged;
+        _downloads = new DownloadsWatcher(p => Dispatcher.BeginInvoke(() => { if (IsLoaded) _ = _in.OfferAsync(p, IncomingOrigin.Downloaded, _closing.Token); }));
+        Closed += (_, _) => _downloads.Dispose();
+        AllowDrop = true;
+        DragEnter += Window_DragOver;
+        DragOver += Window_DragOver;
+        DragLeave += (_, _) => ShowDropHint(false);
+        Drop += Window_Drop;
         FindScroller.DataContext = FindEmptyBox.DataContext = SitesPanel.DataContext = _find;
         FindSkeletons.ItemsSource = Enumerable.Range(0, SearchViewModel.SkeletonSlots).ToArray();
         _find.PropertyChanged += Find_PropertyChanged;
@@ -333,6 +352,10 @@ public partial class MainWindow : Window
         }
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
         if (_host.ShotToggle && _vm.Selected is not null) _vm.ToggleSelected();
+        if (_host.ShotIncoming is { } incoming) _ = _in.OfferAsync(incoming, IncomingOrigin.Dropped);
+        if (_host.ShotOffer is { } offer) _ = _in.OfferAsync(offer, IncomingOrigin.Downloaded);
+        if (_host.ShotDropHint) ShowDropHint(true);
+        UpdateDownloadsWatch(_host.Settings.Current);
         if (_host.StartSearch is { } query)
         {
             if (SearchPage) { QueryText.Text = query; _ = _find.RunAsync(); }
@@ -568,6 +591,7 @@ public partial class MainWindow : Window
 
     private void OnSettingsChanged(AppSettings s)
     {
+        UpdateDownloadsWatch(s);
         ApplyLook(s, _revealFrom);
         _revealFrom = null;
         _vm.ManyEnabledThreshold = s.ActiveModsWarnAbove;
@@ -1700,6 +1724,142 @@ public partial class MainWindow : Window
     private void UpdateLater_Click(object sender, RoutedEventArgs e) => _host.Banner?.Dismiss();
     private void UpdateCancel_Click(object sender, RoutedEventArgs e) => _host.Banner?.Cancel();
 
+    // ───────────── установка из скачанного и перетащенного архива (2026-10-18) ─────────────
+
+    private readonly IncomingViewModel _in;
+    private readonly DownloadsWatcher _downloads;
+    private IInputElement? _focusBeforeIncoming;
+
+    /// <summary>«Загрузки» смотрим, только пока включено «Разрешить загрузку модов» (на снимках — никогда).</summary>
+    private void UpdateDownloadsWatch(AppSettings s) => _downloads.SetEnabled(s.AllowDownloads && _host.ShotPath is null && IsLoaded);
+
+    private void Incoming_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(IncomingViewModel.Open): ShowIncoming(_in.Open); break;
+            case nameof(IncomingViewModel.Busy): IncomingBusy(_in.Busy); break;
+            case nameof(IncomingViewModel.OfferText): FadePlate(OfferBox, OfferBoxMove, _in.OfferText is not null); break;
+        }
+    }
+
+    /// <summary>Окно проверки проявляется, содержимое чуть поднимается (как «Указать страницу»); закрылось — фокус назад.</summary>
+    private void ShowIncoming(bool open)
+    {
+        if (open == (IncomingLayer.Visibility == Visibility.Visible)) return;
+        if (!open)
+        {
+            IncomingLayer.Visibility = Visibility.Collapsed;
+            IncomingBusy(false);
+            if (_focusBeforeIncoming is UIElement { IsVisible: true } f) f.Focus();
+            return;
+        }
+        _focusBeforeIncoming = Keyboard.FocusedElement;
+        IncomingLayer.Visibility = Visibility.Visible;
+        if (!SpringDriver.ReducedMotion && _host.ShotPath is null)
+        {
+            IncomingLayer.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.35, Anim.Smooth));
+            Anim.Mover(IncomingBody).BeginAnimation(TranslateTransform.YProperty, Anim.Go(12, 0, 0.4, Anim.Smooth));
+        }
+        Dispatcher.BeginInvoke(() => { if (IncomingInstall.IsVisible && IncomingInstall.IsEnabled) IncomingInstall.Focus(); }, DispatcherPriority.Input);
+    }
+
+    /// <summary>Пока архив разбирается, по полоске раз в 1,3 с бежит блик (без анимаций — просто полоска).</summary>
+    private void IncomingBusy(bool busy)
+    {
+        if (!busy || SpringDriver.ReducedMotion) { IncomingBusyMove.BeginAnimation(TranslateTransform.XProperty, null); IncomingBusySheen.Opacity = busy ? 0.5 : 0; return; }
+        IncomingBusySheen.Opacity = 1;
+        var a = new DoubleAnimation(-IncomingBusySheen.Width, IncomingPanel.Width, TimeSpan.FromSeconds(1.3)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = Anim.Smooth };
+        Timeline.SetDesiredFrameRate(a, 30);
+        IncomingBusyMove.BeginAnimation(TranslateTransform.XProperty, a);
+    }
+
+    private void IncomingInstall_Click(object sender, RoutedEventArgs e) => _in.Install();
+    private void IncomingCancel_Click(object sender, RoutedEventArgs e) => _in.Close();
+    private void IncomingDim_MouseDown(object sender, MouseButtonEventArgs e) { if (!_in.Busy) _in.Close(); }
+    private void OfferReview_Click(object sender, RoutedEventArgs e) => _in.Review();
+    private void OfferDismiss_Click(object sender, RoutedEventArgs e) => _in.DismissOffer();
+
+    /// <summary>Над окном несут файлы: принимаем, только если среди них есть zip, rar или 7z (остальное — знак «нельзя»).</summary>
+    private void Window_DragOver(object sender, DragEventArgs e)
+    {
+        var ok = DroppedArchives(e.Data).Count > 0 && IncomingLayer.Visibility != Visibility.Visible;
+        e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+        ShowDropHint(ok);
+    }
+
+    private void Window_Drop(object sender, DragEventArgs e)
+    {
+        ShowDropHint(false);
+        var files = DroppedArchives(e.Data);
+        e.Handled = true;
+        if (files.Count == 0 || IncomingLayer.Visibility == Visibility.Visible) return;
+        Activate();
+        foreach (var f in files) _ = _in.OfferAsync(f, IncomingOrigin.Dropped, _closing.Token); // первый — окном, остальные следом
+    }
+
+    private static List<string> DroppedArchives(IDataObject data) =>
+        data.GetDataPresent(DataFormats.FileDrop) && data.GetData(DataFormats.FileDrop) is string[] paths
+            ? paths.Where(p => File.Exists(p) && BeamModManager.Core.Install.IncomingAnalyzer.IsCandidate(p)).Take(8).ToList()
+            : new List<string>();
+
+    private bool _dropShown;
+
+    /// <summary>Подсказка «Отпустите…» проявляется и чуть увеличивается навстречу; ушли с окна — гаснет.</summary>
+    private void ShowDropHint(bool show)
+    {
+        if (show == _dropShown) return;
+        _dropShown = show;
+        var quick = SpringDriver.ReducedMotion || _host.ShotPath is not null;
+        if (show) DropLayer.Visibility = Visibility.Visible;
+        if (quick)
+        {
+            DropLayer.BeginAnimation(OpacityProperty, null);
+            DropLayer.Opacity = show ? 1 : 0;
+            if (!show) DropLayer.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var fade = Anim.Go(DropLayer.Opacity, show ? 1 : 0, show ? 0.25 : 0.18, Anim.Smooth);
+        if (!show) fade.Completed += (_, _) => { if (!_dropShown) DropLayer.Visibility = Visibility.Collapsed; };
+        DropLayer.BeginAnimation(OpacityProperty, fade);
+        if (show)
+        {
+            DropHintScale.BeginAnimation(ScaleTransform.ScaleXProperty, Anim.Go(0.94, 1, 0.4, Anim.Lift));
+            DropHintScale.BeginAnimation(ScaleTransform.ScaleYProperty, Anim.Go(0.94, 1, 0.4, Anim.Lift));
+        }
+    }
+
+    private readonly Dictionary<FrameworkElement, bool> _plates = new();
+
+    /// <summary>Плашка над сеткой проявляется и опускается на место; уходит — гаснет (как плашка обновления).</summary>
+    private void FadePlate(FrameworkElement box, TranslateTransform move, bool show)
+    {
+        if (_plates.TryGetValue(box, out var was) && was == show) return;
+        _plates[box] = show;
+        var quick = SpringDriver.ReducedMotion || (_host.ShotPath is not null && !_probing);
+        if (show) box.Visibility = Visibility.Visible;
+        if (quick)
+        {
+            box.BeginAnimation(OpacityProperty, null);
+            move.BeginAnimation(TranslateTransform.YProperty, null);
+            box.Opacity = show ? 1 : 0;
+            move.Y = 0;
+            if (!show) box.Visibility = Visibility.Collapsed;
+            return;
+        }
+        if (show)
+        {
+            box.BeginAnimation(OpacityProperty, Anim.Go(box.Opacity, 1, 0.35, Anim.Smooth));
+            move.BeginAnimation(TranslateTransform.YProperty, Anim.Go(-8, 0, 0.5, Anim.Smooth));
+            return;
+        }
+        var fade = Anim.Go(box.Opacity, 0, 0.22, Anim.Smooth);
+        fade.Completed += (_, _) => { if (_plates.TryGetValue(box, out var s) && !s) box.Visibility = Visibility.Collapsed; };
+        box.BeginAnimation(OpacityProperty, fade);
+        move.BeginAnimation(TranslateTransform.YProperty, Anim.Go(0, -6, 0.22, Anim.Smooth));
+    }
+
     // ───────────── плашка обновления: появление, полоса, галочка (2026-10-18) ─────────────
 
     private bool _updateShown;
@@ -1860,7 +2020,13 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException) { }
     }
 
-    private void OpenPage_Click(object sender, RoutedEventArgs e) => OpenUrl(_vm.Details?.PageUrl);
+    private void OpenPage_Click(object sender, RoutedEventArgs e)
+    {
+        OpenUrl(_vm.Details?.PageUrl);
+        // страница обновления, «Загрузки» смотрим: подскажем, что дальше всё само
+        if (_vm.Selected is { Data.NeedsUpdate: true } && _host.Settings.Current.AllowDownloads && _vm.Details?.PageUrl is not null)
+            _vm.Notify("Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить");
+    }
 
     private void MainAction_Click(object sender, RoutedEventArgs e)
     {
@@ -1916,6 +2082,12 @@ public partial class MainWindow : Window
             SystemCommands.ShowSystemMenu(this, PointToScreen(new Point(16, 16)));
             e.Handled = true;
             return;
+        }
+        if (IncomingLayer.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Escape && !_in.Busy) { _in.Close(); e.Handled = true; }
+            else if (e.Key == Key.Enter && _in.CanInstall && Keyboard.FocusedElement is not Button) { _in.Install(); e.Handled = true; }
+            return; // окно поверх: остальные клавиши — его кнопкам
         }
         if (BindLayer.Visibility == Visibility.Visible)
         {

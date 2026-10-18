@@ -63,6 +63,15 @@ public sealed record DeletedTicket(string ModId, string FileName, string BackupI
 
 public sealed record DeleteResult(bool Success, string? Message, DeletedTicket? Ticket);
 
+/// <summary>
+/// Что поставили из пришедшего архива — чтобы «Отменить» вернул как было: новый файл уходит в копии, а прежняя версия
+/// (если это было обновление) встаёт обратно из своей копии, в ту же папку и с той же записью в библиотеке.
+/// </summary>
+public sealed record IncomingTicket(string FileName, string? Replaced, string? ReplacedBackupId, bool ReplacedWasDisabled,
+    string? PrevVersion, long? PrevSize, bool SameName);
+
+public sealed record IncomingResult(bool Success, string? Message, IncomingTicket? Ticket);
+
 /// <summary>Чем гараж пользуется снаружи. В тестах подменяется, в приложении — <see cref="LibraryGarageBackend"/>.</summary>
 public interface IGarageBackend
 {
@@ -99,6 +108,18 @@ public interface IGarageBackend
 
     /// <summary>«Вернуть» удалённый мод: последняя копия встаёт в папку модов (игра включит его сама).</summary>
     OpResult RestoreDeleted(DeletedGarageMod mod) => new(false, "Вернуть не получилось");
+
+    /// <summary>Разобрать скачанный или перетащенный архив: какие в нём моды и чем станет каждый (долго — звать не из окна).</summary>
+    IncomingArchive InspectIncoming(string path, CancellationToken ct) => IncomingArchive.Fail(path, "Установка здесь недоступна.");
+
+    /// <summary>Поставить мод из разобранного архива: новым или обновлением, с копией прежней версии.</summary>
+    IncomingResult InstallIncoming(IncomingMod mod) => new(false, "Установка здесь недоступна.", null);
+
+    /// <summary>«Отменить» после установки из архива.</summary>
+    OpResult UndoIncoming(IncomingTicket ticket) => new(false, "Отменить не получилось");
+
+    /// <summary>Архив больше не нужен (поставили или закрыли проверку): убрать то, что собрали во временной папке.</summary>
+    void DiscardIncoming(IncomingArchive archive) { }
 }
 
 /// <summary>Гараж поверх настоящих библиотеки, папки модов и db.json игры.</summary>
@@ -112,8 +133,17 @@ public sealed class LibraryGarageBackend : IGarageBackend
     private string? _notice;
 
     /// <param name="startupNotice">Что сказать один раз при запуске (например, настройки сброшены); предупреждения библиотеки добавятся сами.</param>
-    public LibraryGarageBackend(ILibraryStore store, ModInstaller installer, PreviewCache previews, Func<bool>? gameRunning = null, string? startupNotice = null)
+    private readonly IArchiveExtractor? _extractor;
+    private readonly string _incomingRoot;
+
+    /// <param name="extractor">Распаковщик RAR и 7z (в окне — tar из Windows); null — только zip.</param>
+    /// <param name="incomingRoot">Где разбирать пришедшие архивы; по умолчанию во временной папке Windows.</param>
+    public LibraryGarageBackend(ILibraryStore store, ModInstaller installer, PreviewCache previews, Func<bool>? gameRunning = null, string? startupNotice = null,
+        IArchiveExtractor? extractor = null, string? incomingRoot = null)
     {
+        _extractor = extractor;
+        _incomingRoot = incomingRoot ?? Path.Combine(Path.GetTempPath(), "BeamModManager", "incoming");
+        CleanupIncoming(TimeSpan.FromDays(1));
         var notes = new List<string>();
         if (!string.IsNullOrEmpty(startupNotice)) notes.Add(startupNotice);
         if (store is JsonLibraryStore { LoadWarnings.Count: > 0 } js) notes.Add("Библиотека: " + string.Join("; ", js.LoadWarnings));
@@ -255,6 +285,145 @@ public sealed class LibraryGarageBackend : IGarageBackend
         }
         return o;
     }
+
+    // ───────────── установка из скачанного или перетащенного архива (2026-10-18) ─────────────
+
+    /// <summary>Состав установленных архивов по их отметке: при каждом новом архиве заново читаем только изменившиеся.</summary>
+    private readonly Dictionary<ArchiveStamp, Core.Packs.ArchiveContent> _contents = new();
+
+    public IncomingArchive InspectIncoming(string path, CancellationToken ct)
+    {
+        if (!_installer.ModsFolderAvailable) return IncomingArchive.Fail(path, "Папка модов недоступна.");
+        var installed = new List<InstalledArchive>();
+        var seen = new HashSet<ArchiveStamp>();
+        foreach (var d in _installer.ScanDetailed())
+        {
+            ct.ThrowIfCancellationRequested();
+            if (d.FromGameRepo) continue; // моды из репозитория игры обновляет она сама
+            var p = _installer.PathOf(d);
+            ArchiveStamp stamp;
+            try { stamp = ArchiveStamp.Of(p); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
+            seen.Add(stamp);
+            Core.Packs.ArchiveContent? content;
+            lock (_contents) _contents.TryGetValue(stamp, out content);
+            if (content is null)
+            {
+                try { using var f = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); content = PackContentReader.Read(f); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { content = Core.Packs.ArchiveContent.Empty; }
+                lock (_contents) _contents[stamp] = content;
+            }
+            installed.Add(new InstalledArchive(d.FileName, d.Enabled, d.SizeBytes, p, content));
+        }
+        lock (_contents) foreach (var k in _contents.Keys.Where(k => !seen.Contains(k)).ToList()) _contents.Remove(k); // ушедшие не копим
+        var work = Path.Combine(_incomingRoot, Guid.NewGuid().ToString("N"));
+        try { return IncomingAnalyzer.Analyze(path, installed, work, _extractor, ct); }
+        catch
+        {
+            TryDelete(work);
+            throw;
+        }
+    }
+
+    public IncomingResult InstallIncoming(IncomingMod mod)
+    {
+        if (mod.Blocked) return new(false, "Архив не прошёл проверку, ставить его нельзя", null);
+        if (mod.Kind == IncomingKind.AlreadyInstalled) return new(false, "Этот мод уже установлен", null);
+        if (!_installer.ModsFolderAvailable) return new(false, "Папка модов недоступна", null);
+        var disk = _installer.ScanDetailed();
+        var old = mod.Kind == IncomingKind.Update && mod.Replaces is { } rep
+            ? disk.FirstOrDefault(d => string.Equals(d.FileName, rep, StringComparison.OrdinalIgnoreCase) && !d.FromGameRepo)
+            : null;
+        var now = DateTimeOffset.UtcNow;
+        var options = new InstallOptions { AllowWarnings = true }; // человек видел предупреждения и нажал «Установить»
+        try
+        {
+            using var src = new FileStream(mod.ZipPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (old is null)
+            {
+                var res = _installer.Install(src, mod.FileName, options);
+                if (!res.Success) return new(false, Plain(res.Message), null);
+                LibrarySync.RecordInstalled(_store, mod.FileName, mod.Size, null, enabled: true, now);
+                return new(true, null, new IncomingTicket(mod.FileName, null, null, false, null, null, false));
+            }
+            var record = _store.Mods().FirstOrDefault(m => string.Equals(m.FileName, old.FileName, StringComparison.OrdinalIgnoreCase));
+            var up = _installer.Update(old.FileName, src, mod.FileName, options);
+            if (!up.Install.Success) return new(false, Plain(up.Install.Message), null);
+            var sameName = string.Equals(old.FileName, mod.FileName, StringComparison.OrdinalIgnoreCase);
+            var backup = _installer.ListBackups(old.FileName).FirstOrDefault()?.Id;
+            LibrarySync.RecordInstalled(_store, mod.FileName, mod.Size, SiteVersion(record, mod.Size), up.WasEnabled, now, replacesFileName: old.FileName);
+            return new(true, up.Install.Message, new IncomingTicket(mod.FileName, old.FileName, backup, !up.WasEnabled, record?.Version, record?.SizeBytes ?? old.SizeBytes, sameName));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new(false, "Архив не читается: " + e.Message, null);
+        }
+    }
+
+    /// <summary>Версия новой установки: та, что показывает сайт привязанного мода, если размер совпал; иначе пусть угадает имя файла.</summary>
+    private string? SiteVersion(InstalledMod? record, long size)
+    {
+        if (record is null) return null;
+        foreach (var b in _store.Bindings().Where(x => x.ModId == record.Id && x.Confirmed))
+            if (_store.GetCheck(record.Id, b.Source) is { LastVersion: { } v, LastSize: { } s } && !SizeComparer.Differs(size, s))
+                return v;
+        return null;
+    }
+
+    public OpResult UndoIncoming(IncomingTicket t)
+    {
+        if (!_installer.ModsFolderAvailable) return new OpResult(false, "Папка модов недоступна");
+        var now = DateTimeOffset.UtcNow;
+        if (t.Replaced is null)
+        {
+            var gone = _installer.Remove(t.FileName);
+            if (!gone.Success) return gone;
+            if (_store.Mods().FirstOrDefault(m => string.Equals(m.FileName, t.FileName, StringComparison.OrdinalIgnoreCase)) is { } rec) _store.RemoveMod(rec.Id);
+            return new OpResult(true);
+        }
+        if (t.ReplacedBackupId is null) return new OpResult(false, "Копия прежней версии пропала");
+        OpResult back;
+        if (t.SameName) back = _installer.RestoreBackup(t.Replaced, t.ReplacedBackupId); // новая сама уходит в копии
+        else
+        {
+            var gone = _installer.Remove(t.FileName);
+            if (!gone.Success) return gone;
+            back = _installer.Unremove(t.Replaced, t.ReplacedBackupId, t.ReplacedWasDisabled);
+        }
+        if (!back.Success) return back;
+        LibrarySync.RecordInstalled(_store, t.Replaced, t.PrevSize ?? 0, t.PrevVersion, !t.ReplacedWasDisabled, now, replacesFileName: t.FileName);
+        return new OpResult(true);
+    }
+
+    public void DiscardIncoming(IncomingArchive archive)
+    {
+        // только своя временная папка: путь пришёл из разбора, но лишний раз не доверяем
+        if (archive.WorkDir is { } dir && IsUnder(dir, _incomingRoot)) TryDelete(dir);
+    }
+
+    /// <summary>Брошенные разборы (программу закрыли посреди проверки) старше суток убираются при запуске.</summary>
+    private void CleanupIncoming(TimeSpan olderThan)
+    {
+        try
+        {
+            if (!Directory.Exists(_incomingRoot)) return;
+            foreach (var d in Directory.GetDirectories(_incomingRoot))
+                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(d) > olderThan) TryDelete(d);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static bool IsUnder(string path, string root) =>
+        Path.GetFullPath(path).StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    private static void TryDelete(string dir)
+    {
+        try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>Сообщения установщика — для человека: без точки в конце (тост сам по себе фраза).</summary>
+    private static string Plain(string? m) => string.IsNullOrEmpty(m) ? "Поставить не получилось" : m.TrimEnd('.');
 
     private GameBridge Bridge => _bridge ??= new GameBridge(_installer.Layout.ModsDir);
     private GameBridge? _bridge;
