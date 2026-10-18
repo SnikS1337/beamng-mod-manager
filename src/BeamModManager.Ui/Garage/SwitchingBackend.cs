@@ -62,6 +62,7 @@ public sealed class SwitchingBackend : IGarageBackend
         return r;
     }
 
+    public string? GameVersion => Inner.GameVersion;
     public OpResult UndoIncoming(IncomingTicket ticket) => (_installed.TryGetValue(ticket, out var b) ? b : Inner).UndoIncoming(ticket);
     public void DiscardIncoming(IncomingArchive archive) => (_incoming.TryGetValue(archive, out var b) ? b : Inner).DiscardIncoming(archive);
 }
