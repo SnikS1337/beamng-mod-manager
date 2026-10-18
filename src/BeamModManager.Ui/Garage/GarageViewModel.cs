@@ -330,7 +330,7 @@ public sealed class GarageViewModel : Observable
     private EmptyState? EmptyFor(int total, int visible, bool searching)
     {
         if (!_snap.FolderAvailable) return new("Не нашли папку с модами", "Укажите её, и моды появятся здесь", "Указать папку", EmptyAction.PickFolder);
-        if (total == 0) return new("Модов пока нет", "Найдите первый мод в поиске", "Перейти в поиск", EmptyAction.OpenSearch);
+        if (total == 0) return new("Модов пока нет", "Найдите мод в поиске или перетащите архив на окно", "Перейти в поиск", EmptyAction.OpenSearch);
         if (visible > 0) return null;
         if (searching) return new("Нет такого мода", "Проверьте написание. Ищем только среди ваших модов", "Искать на сайтах", EmptyAction.SearchSites);
         return _filter switch
@@ -528,7 +528,7 @@ public sealed class GarageViewModel : Observable
         }, () => _backend.ForgetDeleted(t));
     }
 
-    /// <summary>«Вернуть» удалённый: копия встаёт в папку модов, мод снова в «Все». Тост «Вернули «…»».</summary>
+    /// <summary>«Вернуть» удалённый: копия встаёт в папку модов, мод снова в «Все». Тост «Возвращён «…»».</summary>
     public void RestoreDeleted(ModCard card)
     {
         if (card.Deleted is not { } d) return;
@@ -536,7 +536,7 @@ public sealed class GarageViewModel : Observable
         if (!r.Success) { ShowToast(r.Message ?? "Вернуть не получилось", null); return; }
         if (ReferenceEquals(Selected, card)) Selected = null;
         Refresh();
-        ShowToast($"Вернули {Ru.Quoted(d.Name, 34)}", null);
+        ShowToast($"Возвращён {Ru.Quoted(d.Name, 34)}", null);
     }
 
     // ───────────── прошлые версии и «Внутри архива» ─────────────
@@ -597,7 +597,7 @@ public sealed class GarageViewModel : Observable
         if (o.Levels.Count > 0) facts.Add(new Fact(o.Levels.Count == 1 ? "Карта" : "Карты", Names(o.Levels)));
         facts.Add(new Fact("Скрипты", o.LuaFiles == 0 ? "нет" : $"есть, {o.LuaFiles} {Ru.Plural(o.LuaFiles, "файл", "файла", "файлов")} Lua"));
         var files = Ru.Number(o.Files);
-        facts.Add(new Fact("Файлов", o.UnpackedBytes > 0 ? $"{files}, распакованным {Ru.Size(o.UnpackedBytes)}" : files));
+        facts.Add(new Fact("Файлов", o.UnpackedBytes > 0 ? $"{files}, {Ru.Size(o.UnpackedBytes)} после распаковки" : files));
         return new InsideInfo(facts, o.Findings.Select(f => f.Message).Distinct().Take(3).ToList());
     }
 
@@ -605,7 +605,7 @@ public sealed class GarageViewModel : Observable
     private static string Names(IReadOnlyList<string> names) =>
         names.Count <= 3 ? string.Join(", ", names) : string.Join(", ", names.Take(3)) + $" и ещё {names.Count - 3}";
 
-    /// <summary>«Вернуть»: тост «Вернули 1.0» с «Отменить» (текущая версия ушла в копии, её можно вернуть обратно).</summary>
+    /// <summary>«Вернуть»: тост «Возвращена версия 1.0» с «Отменить» (текущая версия ушла в копии, её можно вернуть обратно).</summary>
     public void RestoreVersion(VersionRow row)
     {
         if (Selected is not { } c) return;
@@ -613,8 +613,8 @@ public sealed class GarageViewModel : Observable
         var r = _backend.RestoreVersion(before, row.Version);
         if (!r.Success) { ShowToast(r.Message ?? "Вернуть не получилось", null); return; }
         Refresh();
-        var what = row.Version.Version.Length > 0 ? row.Version.Version : "прошлую копию";
-        ShowToast($"Вернули {what}", () => UndoRestore(c.Id, before.Mod.FileName));
+        var what = row.Version.Version.Length > 0 ? "версия " + row.Version.Version : "прошлая копия";
+        ShowToast($"Возвращена {what}", () => UndoRestore(c.Id, before.Mod.FileName));
     }
 
     private void UndoRestore(string id, string fileName)
@@ -659,7 +659,7 @@ public sealed class GarageViewModel : Observable
         CommitToast();
         _undo = undo;
         _commit = commit;
-        Toast = new Toast(text, undo is not null, ++_toastSerial);
+        Toast = new Toast(Ru.Line(text), undo is not null, ++_toastSerial);
         UndoCommand.Refresh();
     }
 
@@ -723,13 +723,13 @@ public sealed class GarageViewModel : Observable
             {
                 act = MainAction.Update;
                 label = u.LatestVersion is null ? "Обновить" : $"Обновить до {u.LatestVersion}";
-                hint = "Прежняя версия сохранится, её можно вернуть";
+                hint = "Прошлая версия сохранится, её можно вернуть";
             }
             else
             {
                 act = MainAction.OpenPage;
                 label = "Открыть страницу";
-                hint = $"Новая версия{(u.LatestVersion is null ? "" : " " + u.LatestVersion)} на {Host(u.Url)}. Скачайте её там, менеджер заметит обновление сам";
+                hint = $"Новая версия{(u.LatestVersion is null ? "" : " " + u.LatestVersion)} на {Host(u.Url)}. Скачайте её там и перетащите архив на окно";
             }
         }
         else if (d.NeedsUpdate && d.Update is { Status: UpdateStatus.Possible } p)
@@ -755,7 +755,7 @@ public sealed class GarageViewModel : Observable
             act = MainAction.SetPage;
             label = "Указать страницу";
             hint = d.CheckingDeclined ? "Сейчас не проверяем по вашему выбору. Укажете страницу — снова будем следить"
-                : "Тогда менеджер будет сам замечать новые версии";
+                : "Тогда программа будет сама замечать новые версии";
         }
         else act = MainAction.None;
 

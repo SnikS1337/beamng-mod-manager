@@ -135,7 +135,7 @@ public static class GameDbSync
                 if (onDisk.FromGameRepo) return new(false, ToggleWay.Failed, "Игра ещё не знает этот мод. Запустите игру один раз, потом выключите.");
                 var mv = installer.Disable(onDisk.FileName);
                 return mv.Success
-                    ? new(true, ToggleWay.MoveFile, "Выключен. Игра ещё не видела этот мод, поэтому файл убран в папку менеджера.")
+                    ? new(true, ToggleWay.MoveFile, "Выключен. Игра ещё не видела этот мод, поэтому файл убран в папку программы.")
                     : new(false, ToggleWay.Failed, mv.Message ?? "Не удалось выключить.");
             case SetActiveOutcome.GameRunning:
                 return new(false, ToggleWay.Failed, "Закройте игру: пока она запущена, список модов она держит у себя.");

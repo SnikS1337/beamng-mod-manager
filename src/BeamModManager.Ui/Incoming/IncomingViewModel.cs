@@ -41,8 +41,8 @@ public sealed class IncomingItem : Observable
     public string KindText => Mod.Kind switch
     {
         IncomingKind.Update when string.Equals(Mod.Replaces, Mod.FileName, StringComparison.OrdinalIgnoreCase)
-            => Mod.ReplacesEnabled ? "Обновление" : "Обновление выключенного: останется выключенным",
-        IncomingKind.Update => Mod.ReplacesEnabled ? $"Обновление: заменит {Mod.Replaces}" : $"Обновление выключенного {Mod.Replaces}: останется выключенным",
+            => Mod.ReplacesEnabled ? "Обновление" : "Обновление, мод останется выключенным",
+        IncomingKind.Update => Mod.ReplacesEnabled ? $"Обновление: заменит {Mod.Replaces}" : $"Обновление: заменит {Mod.Replaces}, мод останется выключенным",
         IncomingKind.AlreadyInstalled => $"Уже установлен ({Mod.Replaces})",
         _ => "Новый мод",
     };
@@ -50,7 +50,7 @@ public sealed class IncomingItem : Observable
     public bool IsUpdate => Mod.Kind == IncomingKind.Update;
 
     private bool _include;
-    /// <summary>Ставить ли этот мод (галочка видна, когда модов в архиве больше одного).</summary>
+    /// <summary>Устанавливать ли этот мод (галочка видна, когда модов в архиве больше одного).</summary>
     public bool Include
     {
         get => _include;
@@ -69,11 +69,11 @@ public sealed class IncomingItem : Observable
             list.Add(new IncomingCheck(CheckLevel.Attention, f.Message.TrimEnd('.')));
         if (m.Locked)
             list.Add(new IncomingCheck(CheckLevel.Blocked, m.ReplacesSubFolder!.Equals(ModInstaller.RepoFolder, StringComparison.OrdinalIgnoreCase)
-                ? "Прежняя версия скачана в самой игре — обновите её там, в «Репозитории»: иначе в игре будет два одинаковых мода"
-                : $"Прежняя версия лежит в подпапке «{m.ReplacesSubFolder}» — замените её там сами: иначе в игре будет два одинаковых мода"));
+                ? "Установленная версия скачана в самой игре — обновите её там, в «Репозитории», иначе в игре будет два одинаковых мода"
+                : $"Установленная версия лежит в подпапке «{m.ReplacesSubFolder}» — замените её там сами, иначе в игре будет два одинаковых мода"));
         if (m.Overview.LuaFiles > 0)
             list.Add(new IncomingCheck(CheckLevel.Attention,
-                $"Есть код: {m.Overview.LuaFiles} {Ru.Plural(m.Overview.LuaFiles, "файл", "файла", "файлов")} Lua. Устанавливайте, если доверяете автору"));
+                $"Есть скрипты: {m.Overview.LuaFiles} {Ru.Plural(m.Overview.LuaFiles, "файл", "файла", "файлов")} Lua. Устанавливайте, если доверяете автору"));
         return list;
     }
 }
@@ -127,9 +127,9 @@ public sealed class IncomingViewModel : Observable
     /// <summary>Галочки у модов — только когда их в архиве несколько.</summary>
     public bool Several => Items.Count > 1;
 
-    /// <summary>«Прежняя версия уйдёт в копии…» — если среди выбранных есть обновление.</summary>
+    /// <summary>«Прошлая версия сохранится…» — если среди выбранных есть обновление.</summary>
     public string? Note => Items.Any(i => i.Include && i.IsUpdate)
-        ? "Прежняя версия уйдёт в копии — её можно вернуть в «Прошлых версиях»."
+        ? "Прошлая версия сохранится — её можно вернуть в «Прошлых версиях»"
         : null;
 
     public bool CanInstall => !Busy && Problem is null && Items.Any(i => i.Include);
@@ -231,7 +231,7 @@ public sealed class IncomingViewModel : Observable
         if (mods.Count == 0) { OfferText = null; return; } // перетащенный «не мод» стоит в очереди: окно покажет его само
         OfferText = mods.Count == 1
             ? $"Скачан мод {Ru.Quoted(mods[0].Title, 48)}" + (mods[0].Kind == IncomingKind.Update ? ": обновление" : "")
-            : $"Скачан архив {Ru.Quoted(Path.GetFileName(a.SourcePath), 48)}: модов {mods.Count}";
+            : $"Скачан архив {Ru.Quoted(Path.GetFileName(a.SourcePath), 48)}: {Ru.Mods(mods.Count)}";
     }
 
     private static bool Installable(IncomingMod m) => !m.Blocked && !m.Locked && m.Kind != IncomingKind.AlreadyInstalled;
@@ -251,11 +251,11 @@ public sealed class IncomingViewModel : Observable
         _current = a;
         Items.Clear();
         foreach (var m in a.Mods) Items.Add(new IncomingItem(m, RaiseAll, CompatOf(m)));
-        Problem = a.Problem;
+        Problem = a.Problem is null ? null : Ru.Line(a.Problem);
         var name = Ru.Quoted(Path.GetFileName(a.SourcePath), 48);
-        Title = a.Problem is not null ? $"{name}: ставить нечего"
+        Title = a.Problem is not null ? $"В {name} нечего установить"
             : a.Mods.Count == 1 ? $"Архив {name} проверен"
-            : $"В архиве {name} модов: {a.Mods.Count}";
+            : $"В архиве {name} {Ru.Mods(a.Mods.Count)}";
         Busy = false;
         Open = true;
         RaiseAll();
@@ -303,7 +303,7 @@ public sealed class IncomingViewModel : Observable
         {
             var r = _backend.InstallIncoming(it.Mod);
             if (r.Success && r.Ticket is { } t) tickets.Add(t);
-            else failed.Add((it, r.Message ?? "поставить не получилось"));
+            else failed.Add((it, r.Message ?? "установить не получилось"));
         }
         Close();
         _garage.Refresh();
@@ -333,11 +333,11 @@ public sealed class IncomingViewModel : Observable
     {
         if (failed.Count == 0)
         {
-            if (ok == 1) return picked[0].IsUpdate ? $"{Ru.Quoted(picked[0].Title, 40)} обновлён" : $"Установлен {Ru.Quoted(picked[0].Title, 40)}";
+            if (ok == 1) return picked[0].IsUpdate ? $"Обновлён {Ru.Quoted(picked[0].Title, 40)}" : $"Установлен {Ru.Quoted(picked[0].Title, 40)}";
             return $"Установлено {ok} {Ru.Plural(ok, "мод", "мода", "модов")}";
         }
         var (item, why) = failed[0];
-        if (ok == 0) return $"Не удалось поставить {Ru.Quoted(item.Title, 40)}: {Lower(why)}";
+        if (ok == 0) return $"Не удалось установить {Ru.Quoted(item.Title, 40)}: {Lower(why)}";
         return $"Установлено {ok} из {picked.Count}. {Ru.Quoted(item.Title, 32)}: {Lower(why)}";
     }
 

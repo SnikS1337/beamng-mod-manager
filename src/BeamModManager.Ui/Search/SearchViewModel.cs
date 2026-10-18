@@ -112,7 +112,7 @@ public sealed class FoundCard : Observable
         var notPaid = f.Listings.FirstOrDefault(l => l.Price != PriceStatus.Paid);
         PageUrl = (free ?? notPaid ?? f.Listings[0]).Url;
         Primary = f.Price == PriceSummary.Paid ? FoundAction.Buy : downloads ? FoundAction.Install : FoundAction.Page;
-        PrimaryLabel = Primary switch { FoundAction.Buy => "Купить у автора", FoundAction.Install => "Установить", _ => "Страница" };
+        PrimaryLabel = Primary switch { FoundAction.Buy => "Купить у автора", FoundAction.Install => "Установить", _ => "Открыть страницу" };
         PreviewUrl = f.Listings.Select(l => l.PreviewUrl).FirstOrDefault(u => u is not null);
         Placeholder = f.Listings.Any(l => l.Category is { } c && (c.Contains("карт", StringComparison.OrdinalIgnoreCase) || c.Contains("map", StringComparison.OrdinalIgnoreCase)))
             ? PlaceholderKind.Map : PlaceholderKind.Vehicle;
@@ -229,7 +229,7 @@ public sealed class SearchViewModel : Observable
     /// <summary>Напоминание внизу панели «Сайты».</summary>
     public string PaidNote => DownloadsAllowed
         ? "Платные моды не скачиваются: вместо «Установить» кнопка ведёт на страницу автора"
-        : "Скачиваете вы сами на странице мода, менеджер заметит новый мод в папке. Платные — у автора";
+        : "Скачайте мод на его странице и перетащите архив на окно. Платные — у автора";
 
     /// <summary>Найдено ли что-то для последнего запроса (нужно окну: показывать ли сетку).</summary>
     public bool HasResults => _response is { Cards.Count: > 0 };

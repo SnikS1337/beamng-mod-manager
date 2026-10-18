@@ -65,7 +65,7 @@ public static class ArchiveInspector
         catch (InvalidDataException)
         {
             return new InspectionResult(
-                new[] { new Finding(Severity.Block, "not-zip", "Файл не является корректным ZIP-архивом.") }, 0, 0);
+                new[] { new Finding(Severity.Block, "not-zip", "Это не zip-архив или он повреждён.") }, 0, 0);
         }
 
         using (archive)
@@ -88,18 +88,18 @@ public static class ArchiveInspector
                 total += entry.Length;
 
                 if (IsUnsafePath(name))
-                    findings.Add(new Finding(Severity.Block, "zip-slip", "Небезопасный путь внутри архива.", entry.FullName));
+                    findings.Add(new Finding(Severity.Block, "zip-slip", "В архиве есть файл с опасным путём.", entry.FullName));
 
                 var isDirectory = name.EndsWith('/');
                 // Windows отбрасывает точки и пробелы в конце имени: «run.exe.» и «run.exe » — тот же исполняемый файл.
                 if (!isDirectory && BlockedExtensions.Contains(Path.GetExtension(name.TrimEnd('.', ' '))))
                     findings.Add(new Finding(Severity.Block, "executable",
-                        "Исполняемый файл или скрипт: моды BeamNG так не распространяются.", entry.FullName));
+                        "Исполняемый файл или скрипт Windows: в модах BeamNG их не бывает.", entry.FullName));
 
                 if (!isDirectory && entry.Length >= limits.RatioCheckMinBytes && entry.CompressedLength > 0 &&
                     (double)entry.Length / entry.CompressedLength > limits.MaxCompressionRatio)
                     findings.Add(new Finding(Severity.Block, "compression-bomb",
-                        "Подозрительно высокая степень сжатия.", entry.FullName));
+                        "Архив сжат подозрительно сильно.", entry.FullName));
 
                 var clean = name;
                 while (clean.StartsWith("./")) clean = clean[2..];

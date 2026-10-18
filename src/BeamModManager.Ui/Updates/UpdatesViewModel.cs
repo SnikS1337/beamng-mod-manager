@@ -486,7 +486,7 @@ public sealed class UpdatesViewModel : Observable
             var head = total > 0 && done < total ? $"Проверили {done} из {total}. Остальные при следующей проверке." : "Проверили не всё.";
             return string.Join(" ", new[] { found, head + why }.Where(x => x is not null));
         }
-        return found ?? "Новых версий нет. Всё свежее.";
+        return found ?? "Новых версий нет.";
     }
 
     /// <summary>Ход проверки без захвата потока (его передаём в окно сами через post).</summary>

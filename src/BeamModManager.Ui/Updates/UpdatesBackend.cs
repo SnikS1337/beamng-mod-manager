@@ -228,7 +228,7 @@ public sealed class LibraryUpdatesBackend : IUpdatesBackend
             return new PageCheck(null, "Это не похоже на ссылку");
         var src = _all.OfType<SiteAdapter>().FirstOrDefault(a => a.Owns(url));
         if (src is null)
-            return new PageCheck(null, "Этот сайт менеджер не знает. Подойдут Modland, ModsGaming, STMods и репозиторий BeamNG");
+            return new PageCheck(null, "Этот сайт программа не знает. Подойдут Modland, ModsGaming, STMods и репозиторий BeamNG");
         if (!_settings().IsSourceEnabled(src.Id))
             return new PageCheck(null, $"{SiteNames.Of(src.Id)} выключен в настройках. Включите его в «Настройки → Сайты»");
         // раздел, поиск, профиль: открываются, но следить на них не за чем

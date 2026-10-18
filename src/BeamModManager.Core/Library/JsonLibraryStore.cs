@@ -186,7 +186,7 @@ public sealed class JsonLibraryStore : ILibraryStore
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 _saveBlocked = true;
-                w.Add($"библиотека не прочиталась ({e.Message}); изменения не сохранятся до перезапуска менеджера");
+                w.Add($"библиотека не прочиталась ({e.Message}); изменения не сохранятся до перезапуска программы");
                 return;
             }
         }

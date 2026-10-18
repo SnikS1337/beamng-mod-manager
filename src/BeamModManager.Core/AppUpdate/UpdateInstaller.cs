@@ -105,10 +105,10 @@ public static class UpdateInstaller
         try { if (!File.Exists(currentExe)) move(old, currentExe); }
         catch (Exception y) when (y is IOException or UnauthorizedAccessException)
         {
-            return $"обновление не встало, и прежняя версия не вернулась: переименуйте {Path.GetFileName(old)} обратно в {Path.GetFileName(currentExe)}";
+            return $"обновление не установилось, и прежняя версия не вернулась: переименуйте {Path.GetFileName(old)} обратно в {Path.GetFileName(currentExe)}";
         }
         TryDelete(staged);
-        return "новая версия не встала на место: " + failed.Message;
+        return "новая версия не установилась: " + failed.Message;
     }
 
     private const string NoRights = "нет прав менять файлы в папке программы. Перенесите её, например, на рабочий стол";

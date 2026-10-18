@@ -189,7 +189,7 @@ public sealed class UpdateBanner : Observable
                 Progress = _lastProgress = Math.Clamp(s.Progress, 0, 1);
                 CanCancel = true;
                 Detail = s.Manifest is { } dm ? Downloaded(dm.Size, s.Progress) : null;
-                Show($"Скачивается версия {ver}", null, dismiss: false);
+                Show($"Скачиваем версию {ver}", null, dismiss: false);
                 break;
             case UpdateStage.ReadyToRestart:
                 Phase = BannerPhase.Ready;

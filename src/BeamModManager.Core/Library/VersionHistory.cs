@@ -73,7 +73,7 @@ public static class VersionHistory
     public static OpResult RestoreDeleted(ModInstaller installer, ILibraryStore store, DeletedMod deleted, DateTimeOffset now, string? backupId = null)
     {
         var id = backupId ?? installer.ListBackups(deleted.FileName).FirstOrDefault()?.Id;
-        if (id is null) return new OpResult(false, "Резервных копий нет.");
+        if (id is null) return new OpResult(false, "Копий нет.");
         var r = installer.RestoreBackup(deleted.FileName, id);
         if (!r.Success || r.Path is null) return r;
         var name = Path.GetFileName(r.Path);

@@ -285,7 +285,7 @@ public static class AppUpdateTests
                 if (a.EndsWith(UpdateInstaller.NewSuffix)) throw new IOException("файл занят");
                 File.Move(a, b);
             });
-            Assert.True(err!.Contains("не встала"), err);
+            Assert.True(err!.Contains("не установилась"), err);
             Assert.Eq("старая версия", File.ReadAllText(r.Exe));
             Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "копия убрана");
         });
@@ -376,7 +376,7 @@ public static class AppUpdateTests
             File.WriteAllText(neu, "новая");
             Assert.True(UpdateInstaller.Stage(r.Exe, neu) is null, "подготовлено");
             var err = UpdateInstaller.Commit(r.Exe, (a, b) => { if (a.EndsWith(UpdateInstaller.NewSuffix)) throw new IOException("занято"); File.Move(a, b); });
-            Assert.True(err!.Contains("не встала"), err);
+            Assert.True(err!.Contains("не установилась"), err);
             Assert.Eq("старая версия", File.ReadAllText(r.Exe));
             Assert.False(File.Exists(r.Exe + UpdateInstaller.NewSuffix), "убран");
         });

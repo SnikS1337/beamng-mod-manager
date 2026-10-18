@@ -115,10 +115,10 @@ public interface IGarageBackend
     string? GameVersion => null;
 
     /// <summary>Разобрать скачанный или перетащенный архив: какие в нём моды и чем станет каждый (долго — звать не из окна).</summary>
-    IncomingArchive InspectIncoming(string path, CancellationToken ct) => IncomingArchive.Fail(path, "Установка здесь недоступна.");
+    IncomingArchive InspectIncoming(string path, CancellationToken ct) => IncomingArchive.Fail(path, "Установка здесь недоступна");
 
     /// <summary>Поставить мод из разобранного архива: новым или обновлением, с копией прежней версии.</summary>
-    IncomingResult InstallIncoming(IncomingMod mod) => new(false, "Установка здесь недоступна.", null);
+    IncomingResult InstallIncoming(IncomingMod mod) => new(false, "Установка здесь недоступна", null);
 
     /// <summary>«Отменить» после установки из архива.</summary>
     OpResult UndoIncoming(IncomingTicket ticket) => new(false, "Отменить не получилось");
@@ -151,7 +151,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
         CleanupIncoming(TimeSpan.FromDays(1));
         var notes = new List<string>();
         if (!string.IsNullOrEmpty(startupNotice)) notes.Add(startupNotice);
-        if (store is JsonLibraryStore { LoadWarnings.Count: > 0 } js) notes.Add("Библиотека: " + string.Join("; ", js.LoadWarnings));
+        if (store is JsonLibraryStore { LoadWarnings.Count: > 0 } js) notes.Add("Данные программы: " + string.Join("; ", js.LoadWarnings));
         _notice = notes.Count == 0 ? null : string.Join(". ", notes);
         _store = store;
         _installer = installer;
@@ -316,7 +316,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
 
     public IncomingArchive InspectIncoming(string path, CancellationToken ct)
     {
-        if (!_installer.ModsFolderAvailable) return IncomingArchive.Fail(path, "Папка модов недоступна.");
+        if (!_installer.ModsFolderAvailable) return IncomingArchive.Fail(path, "Папка модов недоступна");
         var installed = new List<InstalledArchive>();
         var seen = new HashSet<ArchiveStamp>();
         foreach (var d in _installer.ScanDetailed())
@@ -353,7 +353,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
     {
         if (mod.Blocked) return new(false, "Архив не прошёл проверку, ставить его нельзя", null);
         if (mod.Kind == IncomingKind.AlreadyInstalled) return new(false, "Этот мод уже установлен", null);
-        if (mod.Locked) return new(false, $"Прежняя версия лежит в подпапке «{mod.ReplacesSubFolder}», такие моды программа не трогает", null);
+        if (mod.Locked) return new(false, $"Установленная версия лежит в подпапке «{mod.ReplacesSubFolder}» — такие моды программа не трогает", null);
         if (!_installer.ModsFolderAvailable) return new(false, "Папка модов недоступна", null);
         var disk = _installer.ScanDetailed();
         var old = mod.Kind == IncomingKind.Update && mod.Replaces is { } rep
@@ -406,7 +406,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
             if (_store.Mods().FirstOrDefault(m => string.Equals(m.FileName, t.FileName, StringComparison.OrdinalIgnoreCase)) is { } rec) _store.RemoveMod(rec.Id);
             return new OpResult(true);
         }
-        if (t.ReplacedBackupId is null) return new OpResult(false, "Копия прежней версии пропала");
+        if (t.ReplacedBackupId is null) return new OpResult(false, "Копия прошлой версии пропала");
         OpResult back;
         if (t.SameName) back = _installer.RestoreBackup(t.Replaced, t.ReplacedBackupId); // новая сама уходит в копии
         else
@@ -448,7 +448,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
     }
 
     /// <summary>Сообщения установщика — для человека: без точки в конце (тост сам по себе фраза).</summary>
-    private static string Plain(string? m) => string.IsNullOrEmpty(m) ? "Поставить не получилось" : m.TrimEnd('.');
+    private static string Plain(string? m) => string.IsNullOrEmpty(m) ? "Установить не получилось" : m.TrimEnd('.');
 
     private GameBridge Bridge => _bridge ??= new GameBridge(_installer.Layout.ModsDir);
     private GameBridge? _bridge;
@@ -551,7 +551,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
         return new GarageSnapshot(result, true, lastAll)
         {
             Deleted = deleted,
-            StorageWarning = warn is null ? null : "Библиотека не сохраняется на диск: " + warn,
+            StorageWarning = warn is null ? null : "Изменения не сохраняются на диск: " + warn,
             Notice = notice,
         };
     }
