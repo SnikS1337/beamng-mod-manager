@@ -418,13 +418,13 @@ public class Glass : ContentControl
 
     /// <summary>
     /// Искры мерцают, пока панель на экране и фон живой. Окно неактивно или игра запущена — замирают, где были.
-    /// «Уменьшить анимацию» в Windows — стоят неподвижно и видны наполовину (как на доске: opacity .55).
+    /// «Анимации интерфейса» выключены — стоят неподвижно и видны наполовину (как на доске: opacity .55).
     /// </summary>
     private void RunSparks()
     {
         if (_sparkBoard is null || _sparks is null) return;
         var shown = IsVisible && _sparks.Visibility == Visibility.Visible;
-        if (Motion.SpringDriver.SystemReduced)
+        if (Motion.SpringDriver.ReducedMotion)
         {
             if (_sparkRunning) { _sparkBoard.Stop(this); _sparkRunning = false; _sparkPaused = false; }
             foreach (FrameworkElement sp in _sparks.Children)
