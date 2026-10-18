@@ -148,7 +148,19 @@ public sealed class UpdateBanner : Observable
         _ui(RequestRestart);
     }
 
+    private readonly object _syncGate = new();
+
+    /// <summary>
+    /// Показать текущее состояние. Под замком: в окне всё идёт через его поток, но при синхронном <c>ui</c> (тесты) сообщение
+    /// обновлятора из пула потоков могло записать новое состояние раньше, чем дописалось старое, и плашка застревала на
+    /// «Проверяем…» (редкий сбой теста 2026-10-18).
+    /// </summary>
     private void Sync()
+    {
+        lock (_syncGate) SyncCore();
+    }
+
+    private void SyncCore()
     {
         if (_updater is null) { Visible = false; return; }
         var s = _updater.State;

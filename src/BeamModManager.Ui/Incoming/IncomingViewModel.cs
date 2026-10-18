@@ -181,7 +181,8 @@ public sealed class IncomingViewModel : Observable
         IncomingArchive a;
         try { a = await Task.Run(() => _backend.InspectIncoming(path, ct), ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { return; }
-        _ui(() => { _offers.Enqueue(a); if (!Open && OfferText is null) NextOffer(); });
+        // окно успели закрыть, пока разбирали, — открываем этот архив сразу (он перетащен, а не «скачан»)
+        _ui(() => { _offers.Enqueue(a); if (!Open && OfferText is null) Review(); });
     }
 
     /// <summary>«Посмотреть» на плашке: окно проверки с этим архивом.</summary>
