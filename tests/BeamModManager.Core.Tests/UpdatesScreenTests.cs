@@ -309,7 +309,7 @@ public static class UpdatesScreenTests
             b.OnCheck = (_, _) => Task.FromResult(Empty());
             await vm.CheckNowAsync();
             Assert.Eq("check,check!", string.Join(",", b.Calls.Where(c => c.StartsWith("check"))));
-            Assert.Eq("Новых версий нет. Всё свежее.", vm.CheckText);
+            Assert.Eq("Новых версий нет.", vm.CheckText);
             Assert.Eq("Проверить сейчас", vm.CheckButton);
         });
 
@@ -479,7 +479,7 @@ public static class UpdatesScreenTests
         {
             var (be, _, _) = Real();
             Assert.Eq("Это не похоже на ссылку", (await be.CheckPageAsync("просто текст")).Problem);
-            Assert.True((await be.CheckPageAsync("https://example.com/mod")).Problem!.StartsWith("Этот сайт менеджер не знает"), "чужой сайт");
+            Assert.True((await be.CheckPageAsync("https://example.com/mod")).Problem!.StartsWith("Этот сайт программа не знает"), "чужой сайт");
             Assert.Eq("Такой страницы на сайте нет. Проверьте ссылку", (await be.CheckPageAsync("https://stmods.org/beamng_drive/mods/нет/")).Problem);
             var ok = await be.CheckPageAsync("stmods.org/beamng_drive/mods/bmw_e34_by_matissator_for_beamng/");
             Assert.True(ok.Ok, ok.Problem ?? "");

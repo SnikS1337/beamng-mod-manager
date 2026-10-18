@@ -130,10 +130,10 @@ public static class IncomingScreenTests
             Assert.Eq("Обновление: заменит civic_v1.zip", it.KindText);
             Assert.Eq("civic_v2.zip", it.FileName);
             Assert.Eq("Обновить", f.In.InstallLabel);
-            Assert.True(f.In.Note!.StartsWith("Прежняя версия уйдёт в копии"), "про копии");
+            Assert.True(f.In.Note!.StartsWith("Прошлая версия сохранится"), "про копии");
             f.In.Install();
             Assert.True(f.InMods("civic_v2.zip") && !f.InMods("civic_v1.zip"), "одна версия");
-            Assert.Eq("«CIVIC» обновлён", f.Vm.Toast!.Text);
+            Assert.Eq("Обновлён «CIVIC»", f.Vm.Toast!.Text);
             var now = f.Store.Mods().Single();
             Assert.Eq("civic_v2.zip", now.FileName);
             Assert.True(f.Store.Bindings().Any(b => b.ModId == now.Id && b.Source == "modland"), "привязка у того же мода");
@@ -150,7 +150,7 @@ public static class IncomingScreenTests
             f.Vm.Refresh();
             var v1 = File.ReadAllBytes(Path.Combine(f.Inst.Layout.DisabledDir, "golf.zip"));
             await f.In.OfferAsync(f.Download("golf.zip", Car("golf", " new")), IncomingOrigin.Dropped);
-            Assert.Eq("Обновление выключенного: останется выключенным", f.In.Items.Single().KindText);
+            Assert.Eq("Обновление, мод останется выключенным", f.In.Items.Single().KindText);
             f.In.Install();
             Assert.True(f.Disabled("golf.zip") && !f.InMods("golf.zip"), "по-прежнему выключен");
             Assert.False(v1.SequenceEqual(File.ReadAllBytes(Path.Combine(f.Inst.Layout.DisabledDir, "golf.zip"))), "новое содержимое");
@@ -166,8 +166,8 @@ public static class IncomingScreenTests
             Assert.True(f.In.Items.Single().KindText.StartsWith("Уже установлен") && !f.In.CanInstall, "кнопка недоступна");
             f.In.Close();
             await f.In.OfferAsync(f.Download("photos.zip", Zip(("a.jpg", "x"))), IncomingOrigin.Dropped);
-            Assert.True(f.In.Problem!.StartsWith("В архиве нет мода BeamNG") && !f.In.CanInstall, f.In.Problem);
-            Assert.Eq("«photos.zip»: ставить нечего", f.In.Title);
+            Assert.True(f.In.Problem!.StartsWith("В архиве нет мода BeamNG") && !f.In.Problem.EndsWith(".") && !f.In.CanInstall, f.In.Problem);
+            Assert.Eq("В «photos.zip» нечего установить", f.In.Title);
             f.In.Close();
             Assert.False(f.In.Open, "закрыто");
         });

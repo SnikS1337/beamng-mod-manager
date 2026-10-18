@@ -225,7 +225,7 @@ public static class GarageTests
             vm.Selected = vm.Cards[0];
             Assert.Eq(MainAction.OpenPage, vm.Details!.Action);
             Assert.Eq("Открыть страницу", vm.Details.ActionLabel);
-            Assert.Eq("Новая версия 1.5 на beamng.com. Скачайте её там, менеджер заметит обновление сам", vm.Details.ActionHint);
+            Assert.Eq("Новая версия 1.5 на beamng.com. Скачайте её там и перетащите архив на окно", vm.Details.ActionHint);
             Assert.False(vm.Details.OpenPageLink, "внизу «Открыть страницу» не дублируется");
             vm.DownloadsAllowed = true;
             vm.Selected = null;
@@ -334,7 +334,7 @@ public static class GarageTests
         t.Run("ошибка записи без игры: карточка как была, тост с причиной без «Отменить»", () =>
         {
             var (vm, b) = Make(Mod("A"));
-            b.Override = (_, _) => new ToggleResult(false, ToggleWay.Failed, "Нет доступа к db.json");
+            b.Override = (_, _) => new ToggleResult(false, ToggleWay.Failed, "Нет доступа к db.json."); // ядро пишет с точкой — тост без неё
             vm.Toggle(vm.Cards[0]);
             Assert.True(vm.Cards[0].Enabled, "не изменилась");
             Assert.True(vm.Toast is { Text: "Нет доступа к db.json", CanUndo: false }, "тост");
@@ -553,7 +553,7 @@ public static class GarageTests
             var store = new JsonLibraryStore(lib);
             var vm = new GarageViewModel(new LibraryGarageBackend(store, g.Inst, new PreviewCache(Path.Combine(g.Root, "p")), () => false, "Часть настроек сброшена"), () => T0);
             vm.Refresh();
-            Assert.True(vm.Toast is { CanUndo: false } toast && toast.Text.StartsWith("Часть настроек сброшена. Библиотека: "), "тост");
+            Assert.True(vm.Toast is { CanUndo: false } toast && toast.Text.StartsWith("Часть настроек сброшена. Данные программы: "), "тост");
             vm.DismissToast(vm.Toast!.Serial);
             vm.Refresh();
             Assert.True(vm.Toast is null, "второй раз не показываем");
@@ -583,6 +583,15 @@ public static class GarageTests
             Assert.Eq("traffic|reborn|free|v1|7|0|0|zip", string.Join("|", Ru.Words("TrafficReborn_Free_v1.7.0.0.zip")));
             Assert.Eq("елка|racing", string.Join("|", Ru.Words("Ёлка Racing")));
             Assert.Eq("bmw|m2|g87", string.Join("|", Ru.Words("BMW M2-G87")));
+        });
+
+        t.Run("строка тоста: точка в конце снимается, многоточие и точки внутри остаются", () =>
+        {
+            Assert.Eq("Папка модов недоступна", Ru.Line("Папка модов недоступна."));
+            Assert.Eq("Версия 1.5 скрыта. Другая версия снова покажет обновление", Ru.Line("Версия 1.5 скрыта. Другая версия снова покажет обновление."));
+            Assert.Eq("Проверяем…", Ru.Line("Проверяем…"));
+            Assert.Eq("Ждём...", Ru.Line("Ждём..."));
+            Assert.Eq("", Ru.Line(null));
         });
 
         t.Run("числа, время и размер", () =>

@@ -1178,9 +1178,9 @@
                             <!-- 2026-10-18: включатель настоящий. Качает человек сам (капчи, реклама и таймеры сайтов — его), программа
                                  замечает скачанный архив в «Загрузках», проверяет и предлагает поставить -->
                             <CheckBox Style="{StaticResource Switch}" Content="Разрешить загрузку модов" IsChecked="{Binding AllowDownloads}"
-                                      Tag="Включено: пока программа открыта, она замечает скачанные моды в «Загрузках» и в папках ниже, проверяет их и предлагает установить. Выключено: эти папки программа не смотрит."/>
+                                      Tag="Пока программа открыта, она замечает моды, скачанные в «Загрузки» и в папки ниже, проверяет их и предлагает установить."/>
                             <TextBlock Style="{StaticResource Note}" Margin="4,12,4,0"
-                                       Text="Архив можно и просто перетащить на окно — это работает всегда. Подойдут zip, rar и 7z. Платные моды программа не качает никогда: для них «Купить у автора»."/>
+                                       Text="Архив можно и просто перетащить на окно — это работает всегда. Подойдут zip, rar и 7z. Платные моды программа не скачивает: для них есть «Купить у автора»."/>
                             <!-- где искать скачанное (2026-10-18): «Загрузки» всегда, плюс свои папки; без подпапок. Без включателя пункты
                                  остаются на месте и тускнеют (DESIGN.md 5.1, правило зависимых пунктов) -->
                             <TextBlock Style="{StaticResource GroupTitle}" Text="Где искать скачанные моды" Margin="4,22,4,8"/>
@@ -1215,7 +1215,7 @@
                                         <Button DockPanel.Dock="Left" Style="{StaticResource Secondary}" Content="Добавить папку" Padding="16,0" Click="AddWatchFolder_Click"
                                                 IsEnabled="{Binding CanAddWatchFolder}"/>
                                         <TextBlock DockPanel.Dock="Left" Style="{StaticResource Note}" Margin="12,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="420"
-                                                   Text="Например, папка Telegram Desktop или своя папка браузера. Подпапки не смотрим."/>
+                                                   Text="Например, папка Telegram Desktop или своя папка браузера. Подпапки программа не смотрит."/>
                                     </DockPanel>
                                 </StackPanel>
                             </Border>
@@ -1258,7 +1258,7 @@
                         <!-- Обновления: программы (работает) и модов (появится вместе с разделом «Обновления») -->
                         <StackPanel MaxWidth="760" HorizontalAlignment="Left" Visibility="{Binding Section, Converter={StaticResource EnumToVis}, ConverterParameter=Updates}">
                             <TextBlock Style="{StaticResource GroupTitle}" Text="Программа"/>
-                            <CheckBox Style="{StaticResource Switch}" Content="Проверять новую версию при запуске" Margin="0,0,0,8"
+                            <CheckBox Style="{StaticResource Switch}" Content="Проверять обновления программы при запуске" Margin="0,0,0,8"
                                       Tag="Если вышла новая версия, над модами появится строка «Обновить». Обновляется только по вашей кнопке."
                                       IsChecked="{Binding CheckAppUpdates}"/>
                             <Border CornerRadius="18" Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Padding="16,12" Margin="0,0,0,18">
@@ -1289,7 +1289,7 @@
                             <CheckBox Style="{StaticResource Switch}" Content="Проверять обновления модов при запуске" Margin="0,0,0,8"
                                       Tag="Программа сама смотрит на сайтах, не вышли ли новые версии ваших модов."
                                       IsChecked="{Binding AutoCheckOnStart}"/>
-                            <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Проверять ещё раз через" Tag="Если менеджер не закрывать, он сам проверит снова через это время. «Нет» — только при запуске и по кнопке." Margin="0,0,0,10">
+                            <HeaderedContentControl Style="{StaticResource OptionRow}" Header="Проверять ещё раз через" Tag="Пока программа открыта, она проверяет снова через это время. «Нет» — только при запуске и по кнопке." Margin="0,0,0,10">
                                 <Border Style="{StaticResource SegmentBox}">
                                     <StackPanel Orientation="Horizontal">
                                         <RadioButton Style="{StaticResource Segment}" GroupName="repeat" Content="Нет" IsChecked="{Binding RepeatOff}"/>
@@ -1613,7 +1613,7 @@
                                         <StackPanel>
                                             <DockPanel>
                                                 <CheckBox DockPanel.Dock="Right" Style="{StaticResource MiniSwitch}" IsChecked="{Binding Include, Mode=TwoWay}" VerticalAlignment="Center"
-                                                          IsEnabled="{Binding CanInstall}" Margin="12,0,0,0" AutomationProperties.Name="Ставить этот мод"
+                                                          IsEnabled="{Binding CanInstall}" Margin="12,0,0,0" AutomationProperties.Name="Установить этот мод"
                                                           Visibility="{Binding DataContext.Several, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToVis}}"/>
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>

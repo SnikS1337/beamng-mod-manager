@@ -64,6 +64,16 @@ public static class Ru
         return "«" + n + "»";
     }
 
+    /// <summary>
+    /// Строка тоста: без точки в конце (DESIGN_COMPONENTS 5.2), как бы ни пришло сообщение из ядра. Многоточие остаётся,
+    /// точки между предложениями тоже.
+    /// </summary>
+    public static string Line(string? text)
+    {
+        var s = (text ?? "").Trim();
+        return s.EndsWith('.') && !s.EndsWith("..", StringComparison.Ordinal) ? s[..^1].TrimEnd() : s;
+    }
+
     /// <summary>Для поиска: регистр и «ё» не важны.</summary>
     public static string Fold(string s) => s.ToLowerInvariant().Replace('ё', 'е');
 

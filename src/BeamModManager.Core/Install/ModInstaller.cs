@@ -167,7 +167,7 @@ public sealed class ModInstaller
             if (inspection.IsBlocked)
                 return InstallResult.Fail(InstallError.Blocked, "Архив не прошёл проверку безопасности.", inspection);
             if (inspection.HasWarnings && !options.AllowWarnings)
-                return InstallResult.Fail(InstallError.HasWarnings, "В архиве есть предупреждения, нужно решение пользователя.", inspection);
+                return InstallResult.Fail(InstallError.HasWarnings, "В архиве есть предупреждения: нужно ваше решение.", inspection);
 
             var hash = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
 
@@ -278,7 +278,7 @@ public sealed class ModInstaller
         var inDisabled = File.Exists(Path.Combine(_layout.DisabledDir, name));
         var inMods = File.Exists(Path.Combine(_layout.ModsDir, name));
         if (inDisabled && inMods)
-            return InstallResult.Fail(InstallError.AlreadyExists, "Файл с таким именем есть и среди включённых, и среди отключённых; уберите лишнюю копию.");
+            return InstallResult.Fail(InstallError.AlreadyExists, "Файл с таким именем есть и среди включённых, и среди выключенных: уберите лишнюю копию.");
         if ((inDisabled || inMods) && !options.ReplaceExisting)
             return InstallResult.Fail(InstallError.AlreadyExists, "Такой файл уже установлен.");
         return null;
@@ -304,7 +304,7 @@ public sealed class ModInstaller
     /// <summary>Windows: ERROR_SHARING_VIOLATION (32) и ERROR_LOCK_VIOLATION (33) — файл открыт другой программой.</summary>
     private static bool IsSharingViolation(IOException e) => (e.HResult & 0xFFFF) is 32 or 33;
 
-    public OpResult Disable(string fileName) => Move(fileName, _layout.ModsDir, _layout.DisabledDir, "отключён");
+    public OpResult Disable(string fileName) => Move(fileName, _layout.ModsDir, _layout.DisabledDir, "выключен");
     public OpResult Enable(string fileName) => Move(fileName, _layout.DisabledDir, _layout.ModsDir, "включён");
 
     /// <summary>Удаление не окончательное: файл уходит в резервные копии.</summary>
@@ -321,7 +321,7 @@ public sealed class ModInstaller
             {
                 var backup = BackupFile(p, name, move: true);
                 Rotate(name);
-                return new OpResult(true, "Удалён, копия в резервных.", backup);
+                return new OpResult(true, "Удалён, копия сохранена.", backup);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -351,7 +351,7 @@ public sealed class ModInstaller
             {
                 Directory.CreateDirectory(dir);
                 File.Move(src, target, overwrite: false);
-                return new OpResult(true, "Восстановлено.", target);
+                return new OpResult(true, "Возвращено.", target);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -541,7 +541,7 @@ public sealed class ModInstaller
         lock (Gate)
         {
             var last = Backups(name).LastOrDefault();
-            if (last is null) return new OpResult(false, "Резервных копий нет.");
+            if (last is null) return new OpResult(false, "Копий нет.");
             return RestoreFrom(name, last);
         }
     }
@@ -554,7 +554,7 @@ public sealed class ModInstaller
         lock (Gate)
         {
             var path = FindBackup(name, backupId);
-            return path is null ? new OpResult(false, "Такой резервной копии нет.") : RestoreFrom(name, path);
+            return path is null ? new OpResult(false, "Такой копии нет.") : RestoreFrom(name, path);
         }
     }
 
@@ -576,11 +576,11 @@ public sealed class ModInstaller
         lock (Gate)
         {
             var src = FindBackup(old, backupId);
-            if (src is null) return new OpResult(false, "Такой резервной копии нет.");
+            if (src is null) return new OpResult(false, "Такой копии нет.");
 
             var curEnabled = File.Exists(Path.Combine(_layout.ModsDir, cur));
             var curDisabled = File.Exists(Path.Combine(_layout.DisabledDir, cur));
-            if (curEnabled && curDisabled) return new OpResult(false, "Файл с таким именем есть и среди включённых, и среди отключённых; уберите лишнюю копию.");
+            if (curEnabled && curDisabled) return new OpResult(false, "Файл с таким именем есть и среди включённых, и среди выключенных: уберите лишнюю копию.");
             var dir = curDisabled ? _layout.DisabledDir : _layout.ModsDir;
             var target = Path.Combine(dir, old);
             // Файл с именем возвращаемой версии уже лежит в одной из папок (не копия): молча затирать нельзя.
@@ -601,7 +601,7 @@ public sealed class ModInstaller
                 }
                 Rotate(cur);
                 Rotate(old);
-                return new OpResult(true, "Восстановлено.", target);
+                return new OpResult(true, "Возвращено.", target);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -651,7 +651,7 @@ public sealed class ModInstaller
                 throw;
             }
             Rotate(name);
-            return new OpResult(true, "Восстановлено.", target);
+            return new OpResult(true, "Возвращено.", target);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -669,7 +669,7 @@ public sealed class ModInstaller
         try
         {
             if (!File.Exists(src)) return new OpResult(false, "Файл не найден.");
-            if (File.Exists(dst)) return new OpResult(false, "В целевой папке уже есть файл с таким именем.");
+            if (File.Exists(dst)) return new OpResult(false, "В папке уже есть файл с таким именем.");
             Directory.CreateDirectory(to);
             File.Move(src, dst);
             return new OpResult(true, $"Мод {verb}.", dst);
@@ -683,7 +683,7 @@ public sealed class ModInstaller
     private static string IoMessage(Exception e) =>
         e is IOException io && IsSharingViolation(io)
             ? "Файл занят другой программой (возможно, запущена игра). Закройте игру и повторите."
-            : $"Не удалось выполнить операцию с файлом: {e.Message}";
+            : $"Не получилось изменить файл: {e.Message}";
 
     private string BackupFolderFor(string name) => Path.Combine(_layout.BackupDir, name);
 

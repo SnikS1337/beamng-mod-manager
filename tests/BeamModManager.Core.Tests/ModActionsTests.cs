@@ -225,7 +225,7 @@ public static class ModActionsTests
 
             f.Vm.RestoreDeleted(gone);
             Assert.True(File.Exists(Path.Combine(f.Mods, "audi_v1.0.zip")), "файл на месте");
-            Assert.Eq("Вернули «audi»", f.Vm.Toast!.Text);
+            Assert.Eq("Возвращён «audi»", f.Vm.Toast!.Text);
             Assert.Eq(GarageFilter.All, f.Vm.Filter, "удалённых больше нет — назад во «Все»");
             Assert.Eq(4, f.Vm.Filters.Count);
             Assert.Eq(2, f.Vm.Cards.Count);
@@ -257,7 +257,7 @@ public static class ModActionsTests
             Assert.True(f.Vm.Versions[0].Detail.Contains("Б"), "размер: " + f.Vm.Versions[0].Detail);
 
             f.Vm.RestoreVersion(f.Vm.Versions[0]);
-            Assert.True(f.Vm.Toast is { CanUndo: true, Text: "Вернули 1.0" }, "тост: " + f.Vm.Toast?.Text);
+            Assert.True(f.Vm.Toast is { CanUndo: true, Text: "Возвращена версия 1.0" }, "тост: " + f.Vm.Toast?.Text);
             Assert.True(File.Exists(Path.Combine(f.Mods, "audi_v1.0.zip")) && !File.Exists(Path.Combine(f.Mods, "audi_v2.0.zip")), "на месте 1.0");
             Assert.Eq(id, f.Card("audi_v1.0.zip").Id);
             Assert.True(ReferenceEquals(f.Vm.Selected, f.Card("audi_v1.0.zip")), "выбор остался");

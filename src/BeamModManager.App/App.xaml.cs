@@ -114,7 +114,7 @@ public partial class App : Application
                 Log(a.Exception);
                 // повторяющаяся ошибка не должна засыпать окнами: три сообщения за запуск, дальше только журнал
                 if (++shown <= 3 && _testFeed is null)
-                    MessageBox.Show($"Что-то пошло не так: {a.Exception.Message}\n\nПодробности записаны в {LogPath}. Моды и библиотека не тронуты.",
+                    MessageBox.Show($"Что-то пошло не так: {a.Exception.Message}\n\nПодробности записаны в {LogPath}. Моды и данные программы не тронуты.",
                         "ModManager BeamNG", MessageBoxButton.OK, MessageBoxImage.Warning);
             };
             _single = new Mutex(true, @"Local\BeamModManager.Single", out var first);
@@ -122,7 +122,7 @@ public partial class App : Application
             {
                 _single.Dispose();
                 _single = null;
-                MessageBox.Show("Менеджер уже открыт. Окно может быть свёрнуто на панели задач.", "ModManager BeamNG",
+                MessageBox.Show("Программа уже открыта. Её окно может быть свёрнуто на панели задач.", "ModManager BeamNG",
                     MessageBoxButton.OK, MessageBoxImage.Information);
                 Shutdown();
                 return;
@@ -213,7 +213,7 @@ public partial class App : Application
             if (_rolledBack is { } bad)
                 host.StartupToast = $"Версия {AppVersion.Display(bad)} не запустилась, вернули {AppVersion.Display(up.Current)}. Подождём следующую";
             if (Arg("--update-failed") is { Length: > 0 } why)
-                host.StartupToast = $"Обновление не встало: {why}. Осталась версия {AppVersion.Display(up.Current)}";
+                host.StartupToast = $"Обновление не установилось: {why}. Осталась версия {AppVersion.Display(up.Current)}";
         }
         // в демо (--update состояние) — подделка с застывшим состоянием, для снимков плашки; перезапуска в демо нет
         var demoUpdater = host.Updater is null && demo is not null ? DemoUpdater.From(Arg("--update")) : null;
@@ -260,7 +260,7 @@ public partial class App : Application
             Environment.Exit(RolledBackExitCode);
         }
         if (_testFeed is null)
-            MessageBox.Show($"Программа не смогла запуститься: {x.Message}\n\nПодробности записаны в {LogPath}. Моды и библиотека не тронуты.",
+            MessageBox.Show($"Программа не смогла запуститься: {x.Message}\n\nПодробности записаны в {LogPath}. Моды и данные программы не тронуты.",
                 "ModManager BeamNG", MessageBoxButton.OK, MessageBoxImage.Error);
         ReleaseSingle();
         Environment.Exit(1);

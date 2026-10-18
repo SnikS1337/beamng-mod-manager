@@ -2539,7 +2539,7 @@ public partial class MainWindow : Window
         var toast = await vm.ApplyAsync(cts.Token);
         if (!ReferenceEquals(_bind, vm)) return; // окно закрыли, пока открывали страницу
         CloseBind();
-        if (toast is null) { _vm.Notify("Не получилось: мода уже нет в библиотеке"); return; }
+        if (toast is null) { _vm.Notify("Не получилось: этого мода уже нет в списке"); return; }
         Refresh();
         _vm.Notify(toast);
     }
