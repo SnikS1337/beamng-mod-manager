@@ -443,6 +443,18 @@ jobs:
           Write-Host "последняя: $(if ($curV) { Show $curV } else { 'нет' }); выпускаем: $show"
           "VER=$($v.ToString(3))" | Out-File -Append $env:GITHUB_ENV
           "SHOW=$show" | Out-File -Append $env:GITHUB_ENV
+      # что нового — раздел «## версия» из CHANGES.md (с 0.3.3): без него не выпускаем, «Выпуск 0.3.3» никому ничего не говорит
+      - name: Что нового
+        shell: pwsh
+        run: |
+          $in = $false
+          $lines = foreach ($l in Get-Content CHANGES.md -Encoding utf8) {
+            if ($l -match '^##\s+v?(\S+)\s*$') { $in = ($Matches[1] -eq $env:SHOW); continue }
+            if ($in -and $l.Trim()) { $l.TrimEnd() }
+          }
+          if (-not $lines) { throw "в CHANGES.md нет раздела «## $env:SHOW»: запишите коротко, что нового" }
+          ($lines -join "`n") | Out-File -Encoding utf8NoBOM notes.md
+          Get-Content notes.md
       - name: Сборка exe
         shell: pwsh
         run: |
@@ -460,15 +472,15 @@ jobs:
             url       = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$env:SHOW/ModManagerBeamNG.zip"
             size      = $zip.Length
             sha256    = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-            notes     = (git log -1 --pretty=%s)
+            notes     = (Get-Content notes.md -Raw -Encoding utf8).Trim()
             published = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           } | ConvertTo-Json | Out-File -Encoding utf8NoBOM latest.json
           Get-Content latest.json
       - name: Выпуск
         shell: pwsh
         run: |
-          $msg = (git log -1 --pretty=%s)
-          $notes = "$msg`n`nСкачать ModManagerBeamNG.zip, распаковать в любую папку, запустить BeamModManager.exe. Подробности — в «Как запустить.txt» внутри архива. Уже установленная программа обновится сама."
+          $news = (Get-Content notes.md -Raw -Encoding utf8).Trim()
+          $notes = "$news`n`nСкачать ModManagerBeamNG.zip, распаковать в любую папку, запустить BeamModManager.exe. Подробности — в «Как запустить.txt» внутри архива. Уже установленная программа обновится сама."
           gh release create "v$env:SHOW" ModManagerBeamNG.zip latest.json --title "ModManager BeamNG $env:SHOW" --notes $notes --target $env:GITHUB_SHA --latest
           if ($LASTEXITCODE -ne 0) { throw "выпуск не создан" }
           # плавающий «latest» (свежая сборка до 0.2) больше не ведём: выпуски теперь с версиями
