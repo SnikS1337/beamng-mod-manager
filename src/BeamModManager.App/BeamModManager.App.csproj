@@ -27,6 +27,12 @@
     <ProjectReference Include="..\BeamModManager.Ui\BeamModManager.Ui.csproj" />
   </ItemGroup>
 
+  <!-- Проверочная сборка самообновления (windows.yml, -p:SelfTestBuild=true): только она замечает BMM_TEST_UPDATE_FEED.
+       Раньше отличали по номеру (третий от 1 до 49) — под это попали и настоящие 0.2.1, 0.3.1, а 0.3.0 нет (2026-10-18). -->
+  <ItemGroup Condition="'$(SelfTestBuild)' == 'true'">
+    <AssemblyMetadata Include="SelfTestBuild" Value="true" />
+  </ItemGroup>
+
   <!-- Glass.fx -> Glass.ps компилятором fxc из Windows SDK (есть на машинах GitHub Actions). Путь можно задать
        свойством FxcPath. Без fxc, но с готовым Glass.ps в репозитории сборка идёт дальше с ним.
        Цель стоит до BeforeBuild: ресурсы WPF (.g.resources) собираются позже, внутри CoreBuild. -->

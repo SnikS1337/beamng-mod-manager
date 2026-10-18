@@ -283,7 +283,7 @@ jobs:
           foreach ($v in '0.3.0', '0.3.1') {
             dotnet publish src/BeamModManager.App -c Release -r win-x64 --self-contained true `
               -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
-              -p:DebugType=none -p:Version=$v -nologo -o "pub-$v"
+              -p:DebugType=none -p:Version=$v -p:SelfTestBuild=true -nologo -o "pub-$v"
             if ($LASTEXITCODE -ne 0) { throw "publish $v не прошёл" }
           }
           $feed = Join-Path $env:RUNNER_TEMP 'feed'

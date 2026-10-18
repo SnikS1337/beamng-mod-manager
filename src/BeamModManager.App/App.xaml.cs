@@ -80,6 +80,11 @@ public partial class App : Application
     /// <summary>Папка с выпусками вместо GitHub: проверка самообновления на сборочной машине (BMM_TEST_UPDATE_FEED).</summary>
     private string? _testFeed;
 
+    /// <summary>Сборка помечена как проверочная (-p:SelfTestBuild=true, только в windows.yml).</summary>
+    private static bool IsSelfTestBuild =>
+        typeof(App).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .OfType<System.Reflection.AssemblyMetadataAttribute>().Any(a => a.Key == "SelfTestBuild" && a.Value == "true");
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -95,8 +100,8 @@ public partial class App : Application
         // после самообновления прежний процесс ждёт, пока новая версия покажет окно (и отпустил «один экземпляр»)
         _afterUpdate = int.TryParse(Arg("--after-update"), out _parentPid);
         _rolledBack = AppVersion.Parse(Arg("--rolled-back"));
-        // только проверочные сборки сборочной машины (0.1.1, 0.1.2): настоящие выпуски (номер сборки от 57) переменную не замечают
-        if (demo is null && ThisVersion.Build is > 0 and < 50
+        // только проверочные сборки сборочной машины (помечены при сборке, SelfTestBuild): настоящие выпуски переменную не замечают
+        if (demo is null && IsSelfTestBuild
             && Environment.GetEnvironmentVariable("BMM_TEST_UPDATE_FEED") is { Length: > 0 } feed && Directory.Exists(feed))
             _testFeed = Path.GetFullPath(feed);
 
