@@ -20,9 +20,26 @@ public sealed class RefractionEffect : ShaderEffect
     public static readonly DependencyProperty InputProperty =
         RegisterPixelShaderSamplerProperty("Input", typeof(RefractionEffect), 0);
 
+    private static readonly PropertyChangedCallback SizeToShader = PixelShaderConstantCallback(0);
+
     public static readonly DependencyProperty SizeProperty = DependencyProperty.Register(
         nameof(Size), typeof(System.Windows.Size), typeof(RefractionEffect),
-        new UIPropertyMetadata(new System.Windows.Size(1, 1), PixelShaderConstantCallback(0)));
+        new UIPropertyMetadata(new System.Windows.Size(1, 1), (d, e) =>
+        {
+            SizeToShader(d, e);
+            var s = (System.Windows.Size)e.NewValue;
+            d.SetValue(InsetProperty, new System.Windows.Size(1.0 / Math.Max(2, s.Width), 1.0 / Math.Max(2, s.Height)));
+        }));
+
+    /// <summary>
+    /// Отступ выборок от края картинки (регистр c8), в долях: одна точка WPF — не меньше полупикселя при любом масштабе.
+    /// Сильная линза капли тянет выборки за край, и видеокарта на самом краю подмешивает прозрачное: в каплях кнопок окна
+    /// и фильтров в пути были серая «шапка» и оранжевая полоса (у друга и у меня, 2026-10-18). Программная отрисовка
+    /// (снимки) у края повторяет крайние точки, поэтому там этого не было видно.
+    /// </summary>
+    private static readonly DependencyProperty InsetProperty = DependencyProperty.Register(
+        "Inset", typeof(System.Windows.Size), typeof(RefractionEffect),
+        new UIPropertyMetadata(new System.Windows.Size(0.5, 0.5), PixelShaderConstantCallback(8)));
 
     public static readonly DependencyProperty RadiusProperty = DependencyProperty.Register(
         nameof(Radius), typeof(double), typeof(RefractionEffect), new UIPropertyMetadata(26.0, PixelShaderConstantCallback(1)));
@@ -103,6 +120,7 @@ public sealed class RefractionEffect : ShaderEffect
         UpdateShaderValue(BrightnessProperty);
         UpdateShaderValue(LiftProperty);
         UpdateShaderValue(ShadeProperty);
+        UpdateShaderValue(InsetProperty);
     }
 
     /// <summary>Один шейдер на все панели; грузится при первом обращении, неудача запоминается.</summary>
