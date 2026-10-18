@@ -267,6 +267,19 @@ public static class XamlTests
             Assert.True(!drop.Contains("DrawLine", StringComparison.Ordinal) && drop.Contains("new Pen(brush, thick)", StringComparison.Ordinal), "радужная кромка — одна сплошная линия, не отрезки «в точку»");
             Assert.True(code.Contains("DropHead = 0.34, DropHeadBounce = 0.32, DropTail = 0.40, DropTailBounce = 0.15", StringComparison.Ordinal),
                 "пружины капель те же, что в проверке живости (DropBodyTests)");
+            Assert.True(code.Contains("_ when g == TopBar || g == PreviewBar => IslandTintDark", StringComparison.Ordinal)
+                && code.Contains("Color.FromArgb(0x40, 0x0E, 0x18, 0x2C)", StringComparison.Ordinal), "островок в тёмном прозрачнее (0,25), превью — такой же");
+            var xw = Read("MainWindow.xaml");
+            var pvAt = xw.IndexOf("x:Name=\"PreviewBar\"", StringComparison.Ordinal);
+            var pv = xw[pvAt..xw.IndexOf("</c:Glass>", pvAt, StringComparison.Ordinal)];
+            var barAt = xw.IndexOf("x:Name=\"TopBar\"", StringComparison.Ordinal);
+            var bar = xw[barAt..xw.IndexOf('>', barAt)];
+            foreach (var attr in new[] { "Corner=\"24\"", "Tint=\"#5A0E182C\"", "Lens=\"22\"", "Refraction=\"130\"", "Brightness=\"0.74\"", "Height=\"48\"" })
+                Assert.True(pv.Contains(attr, StringComparison.Ordinal) && bar.Contains(attr, StringComparison.Ordinal), $"превью островка как настоящий: {attr}");
+            Assert.True(pv.Contains("<c:Droplet Corner=\"20\" Margin=\"-3,-5\" Under=\"{DynamicResource SegBack}\"/>", StringComparison.Ordinal)
+                && pv.Contains("Background=\"{DynamicResource SegBack}\"", StringComparison.Ordinal), "в превью капля и дорожка фильтров как в окне");
+            Assert.True(Read("BeamModManager.App.csproj").Contains("<GlassShader Include=\"Shaders\\Dither.fx\" Out=\"Shaders\\Dither.ps\"/>", StringComparison.Ordinal)
+                && code.Contains("BackdropPaint.Effect = _dither", StringComparison.Ordinal), "зерно фона прибавкой к цвету");
             var xaml = Read("MainWindow.xaml");
             foreach (var (name, labels, front) in new[] { ("FilterDrop", "FilterList", "FilterFront"), ("NavDrop", "NavItems", "NavFront"), ("CapDrop", "CapButtons", "CapFront") })
             {

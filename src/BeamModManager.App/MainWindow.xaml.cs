@@ -223,7 +223,9 @@ public partial class MainWindow : Window
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies, BackgroundPace.Fps(Native.RefreshRate()));
-        GrainLayer.Fill = Grain.Brush();
+        // зерно фона: в цвете, точка в точку экрана (DitherEffect), или запасной слой поверх (UpdateGrain, из ApplyLook)
+        DpiChanged += (_, _) => SizeDither();
+        BackdropPaint.SizeChanged += (_, _) => SizeDither();
         SpringDriver.AnyRunningChanged += _motion.Hold;
         Closed += (_, _) => SpringDriver.AnyRunningChanged -= _motion.Hold;
         _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, SitesPanel, BindPanel, IncomingPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
@@ -612,6 +614,12 @@ public partial class MainWindow : Window
     /// тёмной (0,44 → 0,22, 0,50 → 0,25), стекло прозрачное. Читаемость тёмного текста держит шейдер: тёмное под стеклом
     /// он подтягивает к белому (Glass.EffectiveLift). Тост и окно привязки — плашки поверх всего, у них плотнее: 0,70 → 0,82.
     /// </summary>
+    /// <summary>
+    /// Подложка островка в тёмном жидком стекле: 0,25 вместо 0,35 (2026-10-18, «прозрачнее процентов на 10»). Светлая
+    /// считается от прежней (Tint в разметке), её не трогали.
+    /// </summary>
+    private static readonly Brush IslandTintDark = Frozen(new SolidColorBrush(Color.FromArgb(0x40, 0x0E, 0x18, 0x2C)));
+
     private Brush LightTint(Glass g, Brush dark)
     {
         if (_lightTints.TryGetValue(g, out var b)) return b;
@@ -676,10 +684,12 @@ public partial class MainWindow : Window
                 (GlassMode.Matte, false) => MatteTint,
                 (GlassMode.Matte, true) => MatteTintLight,
                 (_, true) => LightTint(g, tint),
+                _ when g == TopBar || g == PreviewBar => IslandTintDark,
                 _ => tint,
             };
         }
 
+        UpdateGrain();
         Flies.Visibility = s.Fireflies ? Visibility.Visible : Visibility.Collapsed;
         Flies.Opacity = light ? 0.7 : 1; // белые огоньки на светлом фоне тише, иначе рябят
         var palette = BackgroundThemes.Of(s.Theme, light);
@@ -776,6 +786,36 @@ public partial class MainWindow : Window
         }
         PlaceBlobs(time);
         LayoutPreviewShapes(time); // фигуры превью настроек — в цветах новой темы, тем же перетеканием
+    }
+
+    private DitherEffect? _dither;
+
+    /// <summary>
+    /// Зерно фона (2026-10-18, «видны градации цветов»): с видеокартой — прибавкой к цвету, одинаково вверх и вниз на любом
+    /// фоне (DitherEffect); без неё и на слабой графике — прежний слой поверх (Grain): шейдер на весь фон каждый кадр
+    /// программная отрисовка не потянет. На снимках — всегда в цвете, чтобы его было видно.
+    /// </summary>
+    private void UpdateGrain()
+    {
+        if (DitherEffect.IsAvailable && !WeakGraphics())
+        {
+            _dither ??= new DitherEffect();
+            if (!ReferenceEquals(BackdropPaint.Effect, _dither)) BackdropPaint.Effect = _dither;
+            GrainLayer.Fill = null;
+            SizeDither();
+        }
+        else
+        {
+            BackdropPaint.Effect = null;
+            GrainLayer.Fill ??= Grain.Brush();
+        }
+    }
+
+    private void SizeDither()
+    {
+        if (_dither is null || BackdropPaint.ActualWidth <= 0) return;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        _dither.SetPixelSize(BackdropPaint.ActualWidth * dpi.DpiScaleX, BackdropPaint.ActualHeight * dpi.DpiScaleY);
     }
 
     /// <summary>Пятна на места темы под текущий размер окна; при смене темы — переезд за то же время, что и цвет.</summary>
@@ -1352,7 +1392,7 @@ public partial class MainWindow : Window
     {
         var w = LookPreview.ActualWidth;
         if (w <= 0) return;
-        PreviewBar.Measure(new Size(double.PositiveInfinity, 46));
+        PreviewBar.Measure(new Size(double.PositiveInfinity, 48));
         PvTitle.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         var bar = PreviewBar.DesiredSize.Width;
         var title = PvTitle.DesiredSize.Width;
