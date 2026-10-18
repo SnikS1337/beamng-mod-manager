@@ -684,6 +684,8 @@
                     </Border.Background>
                 </Border>
                 <Canvas x:Name="Lights"/>
+                <!-- зерно: пятна света и переходы фона без него ложатся кольцами-ступеньками (Controls/Grain.cs) -->
+                <Rectangle x:Name="GrainLayer" IsHitTestVisible="False"/>
                 <Canvas x:Name="Flies"/>
             </Grid>
 

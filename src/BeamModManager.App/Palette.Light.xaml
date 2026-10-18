@@ -72,5 +72,7 @@
     <!-- свечение главной кнопки и тень стеклянных панелей: на светлом фоне большое свечение и тень читались как грязное
          пятно вокруг кнопок (решено 2026-10-16) — здесь короткая мягкая тень снизу -->
     <DropShadowEffect x:Key="PrimaryGlow" BlurRadius="12" ShadowDepth="3" Direction="270" Color="#1B2540" Opacity="0.18" RenderingBias="Performance"/>
-    <DropShadowEffect x:Key="GlassShadow" BlurRadius="34" ShadowDepth="10" Direction="270" Color="#1B2540" Opacity="0.17" RenderingBias="Performance"/>
+    <!-- Quality: на видеокарте «Performance» размывает упрощённо, и тень скруглённого угла выходит угловатой — у островка и
+         капсулы проступали «квадраты» (виртуалка, масштаб 200 %, 2026-10-18). Тень и так в кэше картинкой: дороже не стало -->
+    <DropShadowEffect x:Key="GlassShadow" BlurRadius="34" ShadowDepth="10" Direction="270" Color="#1B2540" Opacity="0.17" RenderingBias="Quality"/>
 </ResourceDictionary>

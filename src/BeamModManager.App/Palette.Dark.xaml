@@ -73,5 +73,7 @@
     </LinearGradientBrush>
     <!-- свечение главной кнопки и тень стеклянных панелей: на тёмном — холодное свечение и глубокая тень -->
     <DropShadowEffect x:Key="PrimaryGlow" BlurRadius="30" ShadowDepth="0" Color="#AACDFF" Opacity="0.42" RenderingBias="Performance"/>
-    <DropShadowEffect x:Key="GlassShadow" BlurRadius="56" ShadowDepth="22" Direction="270" Color="#080C18" Opacity="0.38" RenderingBias="Performance"/>
+    <!-- Quality: на видеокарте «Performance» размывает упрощённо, и тень скруглённого угла выходит угловатой — у островка и
+         капсулы проступали «квадраты» (виртуалка, масштаб 200 %, 2026-10-18). Тень и так в кэше картинкой: дороже не стало -->
+    <DropShadowEffect x:Key="GlassShadow" BlurRadius="56" ShadowDepth="22" Direction="270" Color="#080C18" Opacity="0.38" RenderingBias="Quality"/>
 </ResourceDictionary>

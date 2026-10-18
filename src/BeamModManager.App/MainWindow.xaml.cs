@@ -152,7 +152,8 @@ public partial class MainWindow : Window
         _filterX = new Spring(0.30, 0.2, -3);
         _filterTrail = new Spring(0.46, 0, -3);
         _filterW = new Spring(0.30, 0.2, 60);
-        _capX = new Spring(0.3, 0.15, 2);
+        // путь всего 44 точки: короткая пружина почти без перелёта, иначе капля отстаёт от курсора (видео с виртуалки, 2026-10-18)
+        _capX = new Spring(0.18, 0.06, 2);
         _capScale = new Spring(0.24, 0.18, 0.6);
         _springs.Add(_navPress, _ => NavDropShape());
         _springs.Add(_filterPress, _ => FilterDropShape());
@@ -219,6 +220,7 @@ public partial class MainWindow : Window
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies, BackgroundPace.Fps(Native.RefreshRate()));
+        GrainLayer.Fill = Grain.Brush();
         SpringDriver.AnyRunningChanged += _motion.Hold;
         Closed += (_, _) => SpringDriver.AnyRunningChanged -= _motion.Hold;
         _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, SitesPanel, BindPanel, IncomingPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
@@ -1080,10 +1082,10 @@ public partial class MainWindow : Window
         _springs.To(_capX, 2 + 44 * i, instant: appearing);
         _springs.To(_capScale, 1);
         Fade(CapDrop, 1, 0.2);
-        // под «Закрыть» капля краснеет за 0,25 с (доска: transition background .25s); появляясь, сразу нужного цвета
+        // под «Закрыть» капля краснеет за 0,15 с (было 0,25: красное успевало растечься по соседней кнопке); появляясь — сразу
         var danger = i == 2 ? 1.0 : 0.0;
         if (appearing || SpringDriver.ReducedMotion) { CapDrop.BeginAnimation(Droplet.DangerProperty, null); CapDrop.Danger = danger; }
-        else CapDrop.BeginAnimation(Droplet.DangerProperty, new DoubleAnimation(danger, TimeSpan.FromSeconds(0.25)) { EasingFunction = Anim.Smooth });
+        else CapDrop.BeginAnimation(Droplet.DangerProperty, new DoubleAnimation(danger, TimeSpan.FromSeconds(0.15)) { EasingFunction = Anim.Smooth });
     }
 
     // ───────────── форма капель: растяжение в пути и сжатие при нажатии (DESIGN_MOTION 3.3) ─────────────
