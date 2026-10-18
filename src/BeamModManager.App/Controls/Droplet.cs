@@ -18,6 +18,10 @@ namespace BeamModManager.App.Controls;
 /// <item>тонкий контур и радужная кромка по кругу.</item>
 /// </list>
 /// Пока капля стоит, линзы нет совсем (копия сцены не считается) — это и дешевле.
+/// Подписи под каплей в пути преломляются вместе со сценой (как у Apple и в первом образце; 2026-10-18 — «текст не
+/// преломляется на кромках капли»): если заданы <see cref="Labels"/> и <see cref="Front"/>, линза рисуется не под подписями,
+/// а поверх них (в <see cref="Front"/>), и в ней — копия подписей: у кромки они изгибаются и расходятся радугой, как сцена.
+/// В покое подписи настоящие и лежат на плашке, как раньше.
 /// При выключенном жидком стекле (матовое и плоское стекло) капли нет: вместо неё ровная полупрозрачная плашка без линзы,
 /// бликов и тени — двигается и тянется так же. Вариант «опасно» (<see cref="Danger"/>, кнопка «Закрыть») плавно
 /// перекрашивает каплю или плашку в красный. Капля не перехватывает мышь.
@@ -43,14 +47,29 @@ public sealed class Droplet : FrameworkElement
     public static readonly DependencyProperty MotionProperty = DependencyProperty.Register(
         nameof(Motion), typeof(double), typeof(Droplet), new FrameworkPropertyMetadata(0.0, (d, _) => ((Droplet)d).ApplyMotion()));
 
+    /// <summary>Что лежит над каплей и должно преломляться в её линзе (подписи и значки пунктов). null — только сцена.</summary>
+    public static readonly DependencyProperty LabelsProperty = DependencyProperty.Register(
+        nameof(Labels), typeof(Visual), typeof(Droplet), new PropertyMetadata(null, (d, _) => ((Droplet)d).PlaceLayers()));
+
+    /// <summary>
+    /// Пустая панель поверх <see cref="Labels"/> (тот же угол, мышь не ловит): туда переезжает линза капли, чтобы закрыть
+    /// настоящие подписи своей преломлённой копией. null — линза под подписями, как раньше.
+    /// </summary>
+    public static readonly DependencyProperty FrontProperty = DependencyProperty.Register(
+        nameof(Front), typeof(Panel), typeof(Droplet), new PropertyMetadata(null, (d, _) => ((Droplet)d).PlaceLayers()));
+
     public double Corner { get => (double)GetValue(CornerProperty); set => SetValue(CornerProperty, value); }
+    public Visual? Labels { get => (Visual?)GetValue(LabelsProperty); set => SetValue(LabelsProperty, value); }
+    public Panel? Front { get => (Panel?)GetValue(FrontProperty); set => SetValue(FrontProperty, value); }
     public double Motion { get => (double)GetValue(MotionProperty); set => SetValue(MotionProperty, value); }
     public double Danger { get => (double)GetValue(DangerProperty); set => SetValue(DangerProperty, value); }
     public Brush? Under { get => (Brush?)GetValue(UnderProperty); set => SetValue(UnderProperty, value); }
 
     private readonly VisualCollection _children;
-    private readonly Grid _clip, _lens;
-    private readonly Rectangle _sample, _tint, _under;
+    private readonly Grid _clip, _lens, _glass;
+    private readonly Rectangle _sample, _tint, _under, _labels;
+    private readonly Layer _front;
+    private readonly MatrixTransform _frontAt = new();
     private readonly Paint _paint;
     private readonly RestPaint _rest;
     private readonly Shadow _shadow;
@@ -59,7 +78,16 @@ public sealed class Droplet : FrameworkElement
         ViewboxUnits = BrushMappingMode.Absolute, Stretch = Stretch.Fill,
         AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top, TileMode = TileMode.None,
     };
-    private readonly RefractionEffect? _refraction;
+    /// <summary>Копия подписей над каплей (<see cref="Labels"/>), в тех же координатах, что сцена в <see cref="_brush"/>.</summary>
+    private readonly VisualBrush _labelBrush = new()
+    {
+        ViewboxUnits = BrushMappingMode.Absolute, Stretch = Stretch.Fill,
+        AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top, TileMode = TileMode.None,
+    };
+    // _tone — цвет сцены (насыщенность, яркость, подъём, без сдвига); _refraction — сдвиг у кромки и радуга для всего, что
+    // в линзе: сцены, подложки и подписей. Раньше одним эффектом преломлялась только сцена
+    private readonly RefractionEffect? _tone, _refraction;
+    private Panel? _frontHost;
     private Glass? _owner;
     private Rect _lastBox = Rect.Empty;
 
@@ -69,15 +97,24 @@ public sealed class Droplet : FrameworkElement
         _sample = new Rectangle { Fill = _brush };
         _tint = new Rectangle();
         _under = new Rectangle();
+        _labels = new Rectangle { Fill = _labelBrush, Visibility = Visibility.Collapsed };
         // как у панелей (Theme.xaml, c:Glass): форма — снаружи, эффект — на сетке, внутри обрезка ровно по размеру,
         // чтобы шейдер получал картинку размером с каплю, а не с запасом на размытие
         _lens = new Grid { Children = { new System.Windows.Controls.Border { ClipToBounds = true, Child = _sample } } };
         _clip = new Grid { ClipToBounds = true, Children = { _lens } };
         if (RefractionEffect.IsAvailable)
         {
-            // линза капли заметно сильнее, чем у панели (2026-10-16: «как капля»): широкая и сильная, насыщенный цвет
-            _refraction = new RefractionEffect { Strength = 100, Lens = 26, Saturation = 1.65 };
-            _lens.Effect = _refraction;
+            // линза капли заметно сильнее, чем у панели (2026-10-16: «как капля»): широкая и сильная, насыщенный цвет.
+            // Цвет — только сцене (подписи и подложка своего цвета не меняют), сдвиг и радуга — всему, что в линзе
+            _tone = new RefractionEffect { Strength = 0, Lens = 26, Saturation = 1.65 };
+            _lens.Effect = _tone;
+            _refraction = new RefractionEffect { Strength = 100, Lens = 26 };
+            _glass = new Grid { Children = { new Grid { ClipToBounds = true, Children = { _clip, _tint, _under, _labels } } }, Effect = _refraction };
+        }
+        else
+        {
+            // без шейдера подписи не копируются: без преломления копия только задвоила бы настоящие
+            _glass = new Grid { Children = { _clip, _tint, _under } };
         }
         // рисунок капли (кромка, блики, радужный край — сотни коротких штрихов) меняется только с формой и цветом, а капля
         // в пути каждый кадр растягивается: кэш картинкой, иначе штрихи перерисовывались бы на каждом кадре
@@ -85,7 +122,12 @@ public sealed class Droplet : FrameworkElement
         // тень — нарисованные слои, а не DropShadowEffect: эффект на капле пересчитывался бы каждый кадр вместе с линзой
         _shadow = new Shadow(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
         _rest = new RestPaint(this) { CacheMode = new BitmapCache { SnapsToDevicePixels = false } };
-        _children = new VisualCollection(this) { _shadow, _rest, _clip, _tint, _under, _paint };
+        _children = new VisualCollection(this) { _shadow, _rest, _glass, _paint };
+        _front = new Layer();
+        _front.RenderTransform = _frontAt;
+        // поверх подписей линза видна, только пока видна сама капля (у кнопок окна она проявляется при наведении)
+        _front.SetBinding(OpacityProperty, new System.Windows.Data.Binding(nameof(Opacity)) { Source = this });
+        _front.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(Visibility)) { Source = this });
         // свойства самой капли — только после детей: смена IsHitTestVisible уже обходит дочерние элементы
         IsHitTestVisible = false;
         RenderTransformOrigin = new Point(0.5, 0.5);
@@ -108,7 +150,68 @@ public sealed class Droplet : FrameworkElement
     protected override Size ArrangeOverride(Size final)
     {
         foreach (UIElement c in _children) c.Arrange(new Rect(final));
+        if (_frontHost is not null) { _front.Width = final.Width; _front.Height = final.Height; }
         return final;
+    }
+
+    /// <summary>
+    /// Линза и блики — на месте капли поверх подписей (<see cref="Front"/>), когда подписи преломляются: жидкое стекло,
+    /// шейдер есть, заданы <see cref="Labels"/> и <see cref="Front"/>. Иначе — в самой капле, под подписями: матовой и
+    /// плоской плашке подписи закрывать нечем, а без шейдера их копия только задвоила бы настоящие.
+    /// </summary>
+    private void PlaceLayers()
+    {
+        if (_children is null) return;
+        var host = Liquid && _refraction is not null && Labels is not null && IsLoaded ? Front : null;
+        if (!ReferenceEquals(host, _frontHost))
+        {
+            if (_frontHost is not null) { _front.Take(_glass, _paint); _frontHost.Children.Remove(_front); }
+            else { _children.Remove(_glass); _children.Remove(_paint); }
+            _frontHost = host;
+            if (host is not null)
+            {
+                _front.Put(_glass, _paint);
+                _front.Width = ActualWidth; _front.Height = ActualHeight;
+                _front.HorizontalAlignment = HorizontalAlignment.Left;
+                _front.VerticalAlignment = VerticalAlignment.Top;
+                host.Children.Add(_front);
+            }
+            else { _children.Add(_glass); _children.Add(_paint); }
+            InvalidateMeasure();
+        }
+        _labels.Visibility = _frontHost is not null ? Visibility.Visible : Visibility.Collapsed;
+        _labelBrush.Visual = _frontHost is not null ? Labels : null;
+        _lastBox = Rect.Empty;
+        Sync();
+    }
+
+    /// <summary>
+    /// Слой капли поверх подписей: те же линза и блики, что были бы в самой капле, на её месте и с её растяжением
+    /// (матрица от капли к <see cref="Front"/> на каждом шаге пружины). Мышь не ловит.
+    /// </summary>
+    private sealed class Layer : FrameworkElement
+    {
+        private readonly VisualCollection _items;
+        public Layer() { _items = new VisualCollection(this); IsHitTestVisible = false; Focusable = false; }
+
+        public void Put(params UIElement[] els) { foreach (var e in els) _items.Add(e); InvalidateMeasure(); }
+        public void Take(params UIElement[] els) { foreach (var e in els) _items.Remove(e); }
+
+        protected override int VisualChildrenCount => _items.Count;
+        protected override Visual GetVisualChild(int index) => _items[index];
+
+        protected override Size MeasureOverride(Size available)
+        {
+            var size = new Size(double.IsNaN(Width) ? 0 : Width, double.IsNaN(Height) ? 0 : Height);
+            foreach (UIElement c in _items) c.Measure(size);
+            return size;
+        }
+
+        protected override Size ArrangeOverride(Size final)
+        {
+            foreach (UIElement c in _items) c.Arrange(new Rect(final));
+            return final;
+        }
     }
 
     // ───────────── стекло-хозяин и копия сцены ─────────────
@@ -126,6 +229,7 @@ public sealed class Droplet : FrameworkElement
     {
         if (_owner is not null) _owner.LookChanged -= UpdateLens;
         _owner = null;
+        if (_frontHost is not null) PlaceLayers(); // IsLoaded уже false: слой возвращается в каплю и уходит из чужой панели
     }
 
     /// <summary>Капля — только у жидкого стекла; у матового и плоского вместо неё плашка (см. описание класса).</summary>
@@ -142,16 +246,16 @@ public sealed class Droplet : FrameworkElement
         if (_owner is not null)
         {
             _tint.Fill = _owner.Tint;
-            if (_refraction is not null)
+            if (_tone is not null)
             {
-                _refraction.Brightness = Math.Min(1.15, _owner.EffectiveBrightness * 1.12);
-                _refraction.Lift = _owner.EffectiveLift * 0.6; // капля светлее стекла и так: подъём мягче
+                _tone.Brightness = Math.Min(1.15, _owner.EffectiveBrightness * 1.12);
+                _tone.Lift = _owner.EffectiveLift * 0.6; // капля светлее стекла и так: подъём мягче
             }
         }
         _under.Fill = Under;
         _lastBox = Rect.Empty;
         Repaint();
-        Sync();
+        PlaceLayers(); // жидкое стекло включили или выключили: линза над подписями или под ними
     }
 
     private void Repaint()
@@ -172,10 +276,10 @@ public sealed class Droplet : FrameworkElement
         var m = liquid ? Math.Clamp(Motion, 0, 1) : 0;
         var lens = liquid && m > 0.01;
         var lensVis = lens ? Visibility.Visible : Visibility.Collapsed;
-        var wasOff = _clip.Visibility != Visibility.Visible;
-        _clip.Visibility = _tint.Visibility = lensVis;
-        _under.Visibility = lens && Under is not null ? Visibility.Visible : Visibility.Collapsed;
-        _clip.Opacity = _tint.Opacity = _under.Opacity = m;
+        var wasOff = _glass.Visibility != Visibility.Visible;
+        _glass.Visibility = lensVis;
+        _under.Visibility = Under is not null ? Visibility.Visible : Visibility.Collapsed;
+        _glass.Opacity = m;
         // без жидкого стекла _paint — сама плашка и видна всегда; с жидким — блики линзы, вместе с ней
         _paint.Visibility = !liquid || lens ? Visibility.Visible : Visibility.Collapsed;
         _paint.Opacity = liquid ? m : 1;
@@ -190,9 +294,10 @@ public sealed class Droplet : FrameworkElement
         if (w <= 0 || h <= 0) return;
         var r = Math.Min(Corner, Math.Min(w, h) / 2);
         // скругление линзы делает шейдер со сглаживанием; без шейдера — маска (не Clip: он не сглаживается)
-        _clip.OpacityMask = _refraction is null ? Glass.RoundMask(w, h, r) : null;
+        _glass.OpacityMask = _refraction is null ? Glass.RoundMask(w, h, r) : null;
         _tint.RadiusX = _tint.RadiusY = _under.RadiusX = _under.RadiusY = r;
         if (_refraction is not null) { _refraction.Size = new Size(w, h); _refraction.Radius = r; }
+        if (_tone is not null) { _tone.Size = new Size(w, h); _tone.Radius = r; }
         _lastBox = Rect.Empty;
         Repaint();
         Sync();
@@ -207,19 +312,43 @@ public sealed class Droplet : FrameworkElement
     /// </summary>
     public void Sync()
     {
-        if (_clip.Visibility != Visibility.Visible || _owner?.Source is not Visual src || !IsVisible) { _brush.Visual = null; return; }
+        if (_glass.Visibility != Visibility.Visible || _owner?.Source is not Visual src || !IsVisible) { _brush.Visual = null; return; }
         var w = ActualWidth; var h = ActualHeight;
         if (w <= 0 || h <= 0) return;
         if (!ReferenceEquals(_brush.Visual, src)) _brush.Visual = src;
+        if (_frontHost is not null) SyncFront(w, h);
         Rect box;
         try { box = TransformToVisual(src).TransformBounds(new Rect(0, 0, w, h)); }
         catch (InvalidOperationException) { return; } // ещё не в одном дереве со сценой
-        // увеличение от центра капли
-        var bw = box.Width / Magnify; var bh = box.Height / Magnify;
-        box = new Rect(box.X + (box.Width - bw) / 2, box.Y + (box.Height - bh) / 2, bw, bh);
+        box = Magnified(box, Magnify);
         if (box == _lastBox) return;
         _lastBox = box;
         _brush.Viewbox = box;
+    }
+
+    /// <summary>Слой поверх подписей — точно на месте капли; копия подписей — под каплей, увеличенная, как сцена.</summary>
+    private void SyncFront(double w, double h)
+    {
+        try
+        {
+            if (TransformToVisual(_frontHost) is Transform t && _frontAt.Matrix != t.Value) _frontAt.Matrix = t.Value;
+            if (Labels is { } labels)
+            {
+                // в начале и в конце пути (Motion мал) копия не увеличена: она совпадает с настоящими подписями,
+                // которые просвечивают сквозь ещё прозрачную линзу, и не двоится
+                var m = Math.Clamp(Motion, 0, 1);
+                var box = Magnified(TransformToVisual(labels).TransformBounds(new Rect(0, 0, w, h)), 1 + (Magnify - 1) * m);
+                if (_labelBrush.Viewbox != box) _labelBrush.Viewbox = box;
+            }
+        }
+        catch (InvalidOperationException) { } // ещё не в одном дереве
+    }
+
+    /// <summary>Увеличение от центра капли: под каплей виден кусок меньше её самой, растянутый на всю каплю.</summary>
+    private static Rect Magnified(Rect box, double k)
+    {
+        var bw = box.Width / k; var bh = box.Height / k;
+        return new Rect(box.X + (box.Width - bw) / 2, box.Y + (box.Height - bh) / 2, bw, bh);
     }
 
     // ───────────── рисунок капли ─────────────
@@ -253,7 +382,7 @@ public sealed class Droplet : FrameworkElement
 
     /// <summary>
     /// Капля в покое (жидкое стекло): тихая светлая плашка, блик по верхней кромке, тонкий контур и радужная кромка.
-    /// Значок и подпись пункта лежат поверх и не искажаются.
+    /// Значок и подпись пункта лежат поверх и в покое не искажаются (в пути их копия преломляется в линзе, см. <see cref="Labels"/>).
     /// </summary>
     private sealed class RestPaint : FrameworkElement
     {

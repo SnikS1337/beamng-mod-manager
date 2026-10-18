@@ -13,7 +13,7 @@ namespace BeamModManager.Ui.Look;
 /// <param name="Lift">Масштаб «подъёма» в пути: 1 в покое, до 1,08.</param>
 public readonly record struct DropBody(double Start, double Length, double Across, double Motion, double Lift)
 {
-    public const double MaxSquash = 0.16, MaxLift = 0.08;
+    public const double MaxSquash = 0.16, MaxLift = 0.08, MaxBulge = 0.06;
 
     public static DropBody Of(double lead, double trail, double size, double leadVelocity)
     {
@@ -22,6 +22,33 @@ public readonly record struct DropBody(double Start, double Length, double Acros
         var sep = Math.Abs(lead - trail);
         var m = MotionOf(sep, leadVelocity);
         return new DropBody(Math.Min(lead, trail), size + sep, 1 - MaxSquash * Math.Min(1, sep / size), m, 1 + MaxLift * m);
+    }
+
+    /// <summary>
+    /// Капля упирается в стенку островка, а не уходит за неё (2026-10-18: из крайнего правого фильтра в крайний левый перелёт
+    /// пружины выносил каплю за край, и там её обрезало). То, что на экране (с учётом масштаба <paramref name="scale"/> вокруг
+    /// середины), обрезается стенками <paramref name="min"/>–<paramref name="max"/>: дальний край остаётся, ближний прижат к стенке,
+    /// капля короче — сплющилась об неё — и поперёк чуть толще (до <see cref="MaxBulge"/>).
+    /// </summary>
+    public DropBody Within(double min, double max, double scale)
+    {
+        if (!double.IsFinite(min) || !double.IsFinite(max) || max - min < 1) return this;
+        scale = double.IsFinite(scale) && scale > 0 ? scale : 1;
+        var c = Start + Length / 2;
+        var half = Length * scale / 2;
+        var lo = Math.Max(c - half, min);
+        var hi = Math.Min(c + half, max);
+        if (hi - lo >= 2 * half - 1e-9) return this;
+        if (hi - lo < 1)
+        {
+            // целиком за стенкой (не бывает, но мало ли): прижимаем к ближней
+            var w = Math.Min(2 * half, max - min);
+            if (c < min) { lo = min; hi = min + w; } else { hi = max; lo = max - w; }
+        }
+        var squash = 2 * half - (hi - lo);
+        var length = (hi - lo) / scale;
+        var bulge = 1 + MaxBulge * Math.Min(1, squash / Math.Max(1, hi - lo));
+        return this with { Start = (lo + hi) / 2 - length / 2, Length = length, Across = Across * bulge };
     }
 
     /// <summary>Насколько капля «в пути»: от разрыва головы и хвоста и от скорости; стоит — 0.</summary>

@@ -907,7 +907,8 @@
                 <!-- капля (Controls/Droplet.cs, вариант «В»): в покое светлая плашка с радужной кромкой, в пути — линза одним телом.
                      Форма 4 (2026-10-17): панель — целая капсула (радиус 42), капля 68 × 64 с отступом 8 со всех сторон,
                      её радиус 32 (капсула): контур повторяет изгиб панели -->
-                <c:Droplet x:Name="NavDrop" Corner="32" Width="68" Height="64" Canvas.Left="8" Canvas.Top="0">
+                <c:Droplet x:Name="NavDrop" Corner="32" Width="68" Height="64" Canvas.Left="8" Canvas.Top="0"
+                           Labels="{Binding ElementName=NavItems}" Front="{Binding ElementName=NavFront}">
                     <c:Droplet.RenderTransform>
                         <TransformGroup>
                             <ScaleTransform x:Name="NavDropScale"/>
@@ -915,25 +916,29 @@
                         </TransformGroup>
                     </c:Droplet.RenderTransform>
                 </c:Droplet>
-                <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="8" Content="Моды" Tag="{StaticResource IconMods}"
-                             IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
-                <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
-                             Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
-                <!-- бейдж: пока «Обновления» не открывали, раз в 6 с от него расходится мягкое светлое кольцо (DESIGN.md 6 «Единый ритм») -->
-                <Grid x:Name="UpdatesBadge" Canvas.Left="57" Canvas.Top="83" IsHitTestVisible="False"
-                      Visibility="{Binding Filters[2].ShowCount, Converter={StaticResource BoolToVis}}">
-                    <Border x:Name="BadgeRing" CornerRadius="9" Background="{DynamicResource BadgeBack}" Opacity="0" RenderTransformOrigin="0.5,0.5">
-                        <Border.RenderTransform><ScaleTransform x:Name="BadgeRingScale"/></Border.RenderTransform>
-                    </Border>
-                    <Border MinWidth="18" Height="18" CornerRadius="9" Background="{DynamicResource BadgeBack}" Padding="5,0">
-                        <TextBlock Text="{Binding Filters[2].Count}" Foreground="{DynamicResource BadgeInk}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                </Grid>
-                <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="144" Content="Поиск" Tag="{StaticResource IconSearch}"
-                             Checked="Nav_Checked" ToolTip="Поиск (Ctrl+3)"/>
-                <Rectangle Canvas.Left="22" Canvas.Top="209.5" Width="40" Height="1" Fill="{DynamicResource Divider}"/>
-                <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="212" Content="Настройки" Tag="{StaticResource IconSettings}"
-                             Checked="Nav_Checked" ToolTip="Настройки (Ctrl+,)"/>
+                <!-- пункты отдельно от капли: их копия преломляется в линзе (Droplet.Labels) -->
+                <Canvas x:Name="NavItems" Width="84" Height="284">
+                    <RadioButton x:Name="NavGarage" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="8" Content="Моды" Tag="{StaticResource IconMods}"
+                                 IsChecked="True" Checked="Nav_Checked" ToolTip="Моды (Ctrl+1)"/>
+                    <RadioButton x:Name="NavUpdates" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="76" Content="Обновления" Tag="{StaticResource IconUpdates}"
+                                 Checked="Nav_Checked" ToolTip="Обновления (Ctrl+2)"/>
+                    <!-- бейдж: пока «Обновления» не открывали, раз в 6 с от него расходится мягкое светлое кольцо (DESIGN.md 6 «Единый ритм») -->
+                    <Grid x:Name="UpdatesBadge" Canvas.Left="57" Canvas.Top="83" IsHitTestVisible="False"
+                          Visibility="{Binding Filters[2].ShowCount, Converter={StaticResource BoolToVis}}">
+                        <Border x:Name="BadgeRing" CornerRadius="9" Background="{DynamicResource BadgeBack}" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform><ScaleTransform x:Name="BadgeRingScale"/></Border.RenderTransform>
+                        </Border>
+                        <Border MinWidth="18" Height="18" CornerRadius="9" Background="{DynamicResource BadgeBack}" Padding="5,0">
+                            <TextBlock Text="{Binding Filters[2].Count}" Foreground="{DynamicResource BadgeInk}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                    <RadioButton x:Name="NavSearch" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="144" Content="Поиск" Tag="{StaticResource IconSearch}"
+                                 Checked="Nav_Checked" ToolTip="Поиск (Ctrl+3)"/>
+                    <Rectangle Canvas.Left="22" Canvas.Top="209.5" Width="40" Height="1" Fill="{DynamicResource Divider}"/>
+                    <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Canvas.Left="7" Canvas.Top="212" Content="Настройки" Tag="{StaticResource IconSettings}"
+                                 Checked="Nav_Checked" ToolTip="Настройки (Ctrl+,)"/>
+                </Canvas>
+                <Canvas x:Name="NavFront" IsHitTestVisible="False"/>
             </Canvas>
         </c:Glass>
 
@@ -1002,7 +1007,8 @@
                                 WindowChrome.IsHitTestVisibleInChrome="True">
                             <Grid>
                                 <Canvas>
-                                    <c:Droplet x:Name="FilterDrop" Corner="20" Height="40" Canvas.Top="-5" Width="60" Under="{DynamicResource SegBack}">
+                                    <c:Droplet x:Name="FilterDrop" Corner="20" Height="40" Canvas.Top="-5" Width="60" Under="{DynamicResource SegBack}"
+                                               Labels="{Binding ElementName=FilterList}" Front="{Binding ElementName=FilterFront}">
                                         <c:Droplet.RenderTransform>
                                             <TransformGroup>
                                                 <ScaleTransform x:Name="FilterDropScale"/>
@@ -1021,6 +1027,8 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <!-- линза капли в пути — поверх подписей: в ней их преломлённая копия (Droplet.Front, 2026-10-18) -->
+                                <Canvas x:Name="FilterFront" IsHitTestVisible="False"/>
                             </Grid>
                         </Border>
                         <Button x:Name="SearchButton" Style="{StaticResource IslandButton}" Tag="{StaticResource IconSearch}" FontSize="17" Margin="6,0,0,0"
@@ -1743,7 +1751,8 @@
                 <Canvas>
                     <!-- капля на 3 px меньше капсулы со всех сторон: в пути и на перелёте она не наезжает на блик кромки капсулы
                          (раньше край капли резал светлую линию сверху — «артефакт сверху капли») -->
-                    <c:Droplet x:Name="CapDrop" Corner="15" Width="40" Height="30" Canvas.Top="3" Opacity="0">
+                    <c:Droplet x:Name="CapDrop" Corner="15" Width="40" Height="30" Canvas.Top="3" Opacity="0"
+                               Labels="{Binding ElementName=CapButtons}" Front="{Binding ElementName=CapFront}">
                         <c:Droplet.RenderTransform>
                             <TransformGroup>
                                 <ScaleTransform x:Name="CapDropScale" ScaleX="0.6" ScaleY="0.6"/>
@@ -1752,7 +1761,7 @@
                         </c:Droplet.RenderTransform>
                     </c:Droplet>
                 </Canvas>
-                <StackPanel Orientation="Horizontal">
+                <StackPanel x:Name="CapButtons" Orientation="Horizontal">
                     <Button x:Name="MinButton" Style="{StaticResource CaptionButton}" Tag="{StaticResource IconMin}" Click="Min_Click" MouseEnter="CapButton_MouseEnter"
                             AutomationProperties.Name="Свернуть" ToolTip="Свернуть"/>
                     <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Tag="{StaticResource IconMax}" Click="Max_Click" MouseEnter="CapButton_MouseEnter"
@@ -1760,6 +1769,7 @@
                     <Button x:Name="CloseButton" Style="{StaticResource CaptionButton}" Tag="{StaticResource IconClose}" Click="Close_Click" MouseEnter="CapButton_MouseEnter"
                             AutomationProperties.Name="Закрыть" ToolTip="Закрыть"/>
                 </StackPanel>
+                <Canvas x:Name="CapFront" IsHitTestVisible="False"/>
             </Grid>
         </c:Glass>
 

@@ -45,6 +45,30 @@ public static class DropBodyTests
             Assert.Eq(0.0, DropBody.MotionOf(0, 0));
         });
 
+        t.Run("стенка островка: перелёт не выносит каплю за край — она сплющивается об него, дальний край на месте", () =>
+        {
+            // из крайнего правого в крайний левый: голова перелетела за левую стенку (-3) на 14, хвост ещё справа
+            var b = DropBody.Of(-17, 40, 70, -500);
+            var lift = b.Lift;
+            var w = b.Within(-3, 400, lift);
+            var c = w.Start + w.Length / 2;
+            Assert.True(Math.Abs(c - w.Length * lift / 2 - -3) < 1e-6, $"левый край на экране — у стенки: {w}");
+            var farEnd = b.Start + b.Length / 2 + b.Length * lift / 2;
+            Assert.True(Math.Abs(c + w.Length * lift / 2 - farEnd) < 1e-6, "правый край не двигается");
+            Assert.True(w.Length < b.Length && w.Across > b.Across && w.Across <= b.Across * (1 + DropBody.MaxBulge) + 1e-9, $"сплющилась: {w}");
+            var inside = DropBody.Of(100, 120, 70, 300);
+            Assert.Eq(inside, inside.Within(-3, 400, inside.Lift));
+            var right = DropBody.Of(350, 300, 70, 500).Within(-3, 400, 1.08);
+            var rc = right.Start + right.Length / 2;
+            Assert.True(rc + right.Length * 1.08 / 2 <= 400 + 1e-6, "и у правой стенки");
+            foreach (var bad in new[] { double.NaN, double.PositiveInfinity, 0 })
+            {
+                var x = DropBody.Of(-500, -500, 70, 0).Within(-3, 400, bad);
+                Assert.True(double.IsFinite(x.Start) && x.Length >= 1, $"{bad}: {x}");
+            }
+            Assert.Eq(b, b.Within(5, 5, 1)); // стенок нет — как есть
+        });
+
         t.Run("мусор (NaN, бесконечность, ноль, минус) не ломает каплю", () =>
         {
             foreach (var bad in new[] { double.NaN, double.PositiveInfinity, double.NegativeInfinity, 0, -50 })

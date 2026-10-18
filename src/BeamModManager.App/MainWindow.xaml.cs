@@ -319,6 +319,8 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         Loaded += (_, _) => FitMaximized();
         // свернули или развернули окно: Windows не сообщает, что мышь ушла с кнопки, и капля осталась бы висеть
+        // развёрнутое окно переехало на другой монитор или сменился масштаб — выступ за рабочую область пересчитываем
+        SizeChanged += (_, _) => { if (WindowState == WindowState.Maximized) FitMaximized(); };
         StateChanged += (_, _) => { FitMaximized(); UpdateMotion(); HideCapDrop(instant: true); };
         Activated += (_, _) => { UpdateMotion(); RefreshIfStale(); if (!Caption.IsMouseOver) HideCapDrop(instant: true); };
         Deactivated += (_, _) => UpdateMotion();
@@ -524,6 +526,8 @@ public partial class MainWindow : Window
     private IntPtr SizeMoveHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         const int WM_ENTERSIZEMOVE = 0x0231, WM_EXITSIZEMOVE = 0x0232;
+        // развёрнутое окно — по рабочей области монитора, панель задач остаётся видна (2026-10-18)
+        if (msg == Native.WM_GETMINMAXINFO) Native.FitMaximizedToWorkArea(hwnd, lParam);
         if (msg is WM_ENTERSIZEMOVE or WM_EXITSIZEMOVE)
         {
             _sizeMoving = msg == WM_ENTERSIZEMOVE;
@@ -800,11 +804,19 @@ public partial class MainWindow : Window
 
     // ───────────── окно ─────────────
 
-    /// <summary>Развёрнутое окно без рамки Windows вылезает за экран на толщину рамки: убираем это отступом.</summary>
+    /// <summary>Развёрнутое окно занимает рабочую область монитора; если оно всё же выступает за неё, убираем выступ отступом.</summary>
     private void FitMaximized()
     {
-        var b = SystemParameters.WindowResizeBorderThickness;
-        Root.Margin = WindowState == WindowState.Maximized ? b : new Thickness(0);
+        // окно, развёрнутое по рабочей области, может всё же выступать за неё на толщину рамки: содержимое отодвигаем ровно
+        // на этот выступ (раньше — всегда на толщину рамки Windows, а окно при этом закрывало панель задач)
+        var margin = new Thickness(0);
+        if (WindowState == WindowState.Maximized && new WindowInteropHelper(this).Handle is var hwnd && hwnd != IntPtr.Zero)
+        {
+            var (l, t, r, bt) = Native.Overhang(hwnd);
+            var dpi = VisualTreeHelper.GetDpi(this);
+            margin = new Thickness(l / dpi.DpiScaleX, t / dpi.DpiScaleY, r / dpi.DpiScaleX, bt / dpi.DpiScaleY);
+        }
+        Root.Margin = margin;
         MaxButton.Tag = FindResource(WindowState == WindowState.Maximized ? "IconRestore" : "IconMax");
         MaxButton.ToolTip = WindowState == WindowState.Maximized ? "Вернуть размер" : "Развернуть";
         System.Windows.Automation.AutomationProperties.SetName(MaxButton, (string)MaxButton.ToolTip);
@@ -1108,6 +1120,8 @@ public partial class MainWindow : Window
     private void NavDropShape()
     {
         var b = DropBody.Of(_navDrop.Value, _navTrail.Value, NavDropH, _navDrop.Velocity);
+        // как у фильтров: перелёт у крайнего пункта не выносит каплю за его место — она сплющивается о край
+        if (Nav.ActualHeight > 0) b = b.Within(NavDropTop, Nav.ActualHeight - NavDropTop, _navPress.Value * b.Lift);
         NavDropMove.Y = b.Start;
         if (Math.Abs(NavDrop.Height - b.Length) > 0.01) NavDrop.Height = b.Length;
         NavDrop.Motion = b.Motion;
@@ -1120,6 +1134,8 @@ public partial class MainWindow : Window
     {
         var w = Math.Max(20, _filterW.Value);
         var b = DropBody.Of(_filterX.Value, _filterTrail.Value, w, _filterX.Velocity);
+        // стенки островка: капля у крайнего пункта стоит на 3 точки за ним (поле островка), дальше — сплющивается об край
+        if (FilterList.ActualWidth > 0) b = b.Within(-3, FilterList.ActualWidth + 3, _filterPress.Value * b.Lift);
         FilterDropMove.X = b.Start;
         if (Math.Abs(FilterDrop.Width - b.Length) > 0.01) FilterDrop.Width = b.Length;
         FilterDrop.Motion = b.Motion;
