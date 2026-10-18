@@ -229,11 +229,12 @@ public partial class MainWindow : Window
         _slow.Suggest += () => { _slowOffered = true; FadePlate(SlowBox, SlowBoxMove, true); };
         FramePolicy.Shared.Judged += _slow.Burst;
         Closed += (_, _) => FramePolicy.Shared.Judged -= _slow.Burst;
+        // Preview…: поле поиска само принимает перетаскивание текста и не пустило бы файл дальше к окну
         AllowDrop = true;
-        DragEnter += Window_DragOver;
-        DragOver += Window_DragOver;
-        DragLeave += (_, _) => ShowDropHint(false);
-        Drop += Window_Drop;
+        PreviewDragEnter += Window_DragOver;
+        PreviewDragOver += Window_DragOver;
+        PreviewDragLeave += Window_DragLeave;
+        PreviewDrop += Window_Drop;
         FindScroller.DataContext = FindEmptyBox.DataContext = SitesPanel.DataContext = _find;
         FindSkeletons.ItemsSource = Enumerable.Range(0, SearchViewModel.SkeletonSlots).ToArray();
         _find.PropertyChanged += Find_PropertyChanged;
@@ -1811,14 +1812,23 @@ public partial class MainWindow : Window
     /// <summary>Над окном несут файлы: принимаем, только если среди них есть zip, rar или 7z (остальное — знак «нельзя»).</summary>
     private void Window_DragOver(object sender, DragEventArgs e)
     {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return; // текст в поле поиска — как обычно
         var ok = DroppedArchives(e.Data).Count > 0 && IncomingLayer.Visibility != Visibility.Visible;
         e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
         ShowDropHint(ok);
     }
 
+    /// <summary>«Ушли» приходит и при переходе между элементами окна: прячем, только когда курсор правда вне окна.</summary>
+    private void Window_DragLeave(object sender, DragEventArgs e)
+    {
+        var p = e.GetPosition(this);
+        if (p.X <= 0 || p.Y <= 0 || p.X >= ActualWidth || p.Y >= ActualHeight) ShowDropHint(false);
+    }
+
     private void Window_Drop(object sender, DragEventArgs e)
     {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
         ShowDropHint(false);
         var files = DroppedArchives(e.Data);
         e.Handled = true;
