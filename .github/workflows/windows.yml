@@ -128,6 +128,9 @@ jobs:
           Shot 'garage-panel' @('--height', '1500', '--select', '"Honda Civic EK9"')
           # фильтр «Удалённые»: серые карточки, справа «Вернуть»
           Shot 'garage-deleted' @('--filter', 'Deleted', '--select', '"BMW M3 E30"')
+          # тост «выключен» с «Отменить» и полосой «сколько осталось» (тёмное и светлое)
+          Shot 'garage-toast' @('--select', '"Dacia Sandero Stepway"', '--toggle')
+          Shot 'light-garage-toast' @('--mode', 'Light', '--select', '"Dacia Sandero Stepway"', '--toggle')
           Shot 'garage-deep' @('--theme', 'Deep', '--select', '"Dacia Sandero Stepway"')
           Shot 'garage-forest' @('--theme', 'Forest')
           Shot 'light-garage-graphite' @('--mode', 'Light', '--theme', 'Graphite')

@@ -171,6 +171,7 @@ public partial class App : Application
                 StartSearch = Arg("--search"),
                 StartScroll = double.TryParse(Arg("--scroll"), System.Globalization.CultureInfo.InvariantCulture, out var scr) ? scr : null,
                 ShotSelect = Arg("--select"),
+                ShotToggle = Array.IndexOf(Environment.GetCommandLineArgs(), "--toggle") >= 0,
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
                 // настройки в демо живут только в памяти: файл пользователя не трогаем

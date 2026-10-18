@@ -36,6 +36,8 @@ public sealed class WindowHost
     /// <summary>Сделать снимок окна в этот файл и закрыться (сборочная машина).</summary>
     public string? ShotPath { get; init; }
     public string? ShotSelect { get; init; }
+    /// <summary>Снимок: выключить выбранный мод (тост «выключен» с «Отменить»).</summary>
+    public bool ShotToggle { get; init; }
     /// <summary>Вместе со снимком записать замеры (запуск, фильтр, поиск, перечитывание, память) в &lt;снимок&gt;.perf.txt.</summary>
     public bool ShotPerf { get; init; }
     /// <summary>Вместе со снимком прогнать анимации и записать кадры в секунду в &lt;снимок&gt;.frames.txt (--frames).</summary>
@@ -161,6 +163,16 @@ public partial class MainWindow : Window
             if (moving && Inspector.CacheMode is null && ++_inspLiveFrames > 2) Inspector.CacheMode = new BitmapCache { SnapsToDevicePixels = true };
             else if (!moving && Inspector.CacheMode is not null) { Inspector.CacheMode = null; Inspector.InvalidateArrange(); }
             if (v >= 343 && _vm.Selected is null) Inspector.Visibility = Visibility.Collapsed; // уехала: стекло не считаем зря
+        });
+
+        // тост всплывает снизу с лёгким перелётом и уходит вниз; спрятавшись, убирается совсем (стекло не считаем зря)
+        _toastIn = _springs.Add(new Spring(0.42, 0.16, 0), v =>
+        {
+            ToastBox.Opacity = Math.Clamp(v, 0, 1);
+            var m = ToastBox.Margin;
+            var bottom = ToastBottom - (1 - v) * ToastRise;
+            if (m.Bottom != bottom) ToastBox.Margin = new Thickness(m.Left, 0, m.Right, bottom);
+            if (_toastIn is { Target: 0, Resting: true } && _vm.Toast is null) { ToastBox.Visibility = Visibility.Collapsed; ToastBox.DataContext = null; }
         });
 
         // островок перетекает между фильтрами и поиском пружиной с лёгким перелётом, как капля; по ходу чуть сплющивается
@@ -316,6 +328,7 @@ public partial class MainWindow : Window
             _autoCheckTimer.Start();
         }
         if (_host.ShotSelect is { } name && _vm.Cards.FirstOrDefault(c => c.Name == name) is { } sel) _vm.Selected = sel;
+        if (_host.ShotToggle && _vm.Selected is not null) _vm.ToggleSelected();
         if (_host.StartSearch is { } query)
         {
             if (SearchPage) { QueryText.Text = query; _ = _find.RunAsync(); }
@@ -403,7 +416,8 @@ public partial class MainWindow : Window
                 _toastTimer.Stop();
                 // обратимое (удаление, выключение) живёт 8 с, остальное 6 с (DESIGN_COMPONENTS 3.7); под мышью или в фокусе не гаснет
                 _toastTimer.Interval = TimeSpan.FromSeconds(_vm.Toast is { CanUndo: true } ? 8 : 6);
-                if (_vm.Toast is not null && !ToastHeld) _toastTimer.Start();
+                ShowToast(_vm.Toast);
+                if (_vm.Toast is not null && !ToastHeld) { _toastTimer.Start(); ToastCountdown(true); }
                 if (_vm.LiveWaiting && !_liveTimer.IsEnabled) _liveTimer.Start();
                 break;
             case nameof(GarageViewModel.Filter):
@@ -753,7 +767,7 @@ public partial class MainWindow : Window
         {
             Scroller.Margin = UpdScroller.Margin = FindScroller.Margin = gridMargin;
             EmptyBox.Margin = UpdEmptyBox.Margin = FindEmptyBox.Margin = new Thickness(116, 84, right, 0);
-            ToastBox.Margin = new Thickness(116, 0, right, 28);
+            ToastBox.Margin = new Thickness(116, 0, right, ToastBox.Margin.Bottom);
             TopFade.Margin = new Thickness(104, 0, right - 12, 0);
         }
         Dim.Visibility = open && _narrow ? Visibility.Visible : Visibility.Collapsed;
@@ -1567,17 +1581,65 @@ public partial class MainWindow : Window
 
     private bool ToastHeld => ToastBox.IsMouseOver || ToastBox.IsKeyboardFocusWithin;
 
-    private void Toast_Hold(object sender, MouseEventArgs e) => _toastTimer.Stop();
+    /// <summary>Как далеко тост всплыл: 0 — спрятан внизу, 1 — на месте (пружина с лёгким перелётом).</summary>
+    private Spring _toastIn = null!;
+    /// <summary>Отступ тоста снизу на месте (на узком окне и рядом с панелью меняются только поля слева и справа).</summary>
+    private const double ToastBottom = 28, ToastRise = 22;
+
+    /// <summary>
+    /// Тост появился, сменился или ушёл (2026-10-18). Появление — всплывает снизу и проявляется пружиной; новый поверх
+    /// показанного — тот же тост, меняется только текст (короткий сдвиг и проявление); уход — опускается и гаснет, а
+    /// после прячется совсем. Тост — стекло: двигается он полем снизу, а не сдвигом картинки, чтобы копия сцены под ним
+    /// шла вместе с ним. Без анимаций — сразу.
+    /// </summary>
+    private void ShowToast(Toast? t)
+    {
+        if (t is not null)
+        {
+            var wasShown = ToastBox.Visibility == Visibility.Visible && _toastIn.Target > 0;
+            ToastBox.DataContext = t;
+            ToastBox.Visibility = Visibility.Visible;
+            if (wasShown && !SpringDriver.ReducedMotion)
+            {
+                ToastBodyMove.BeginAnimation(TranslateTransform.YProperty, Anim.Go(6, 0, 0.32, Anim.Smooth));
+                ToastBody.BeginAnimation(OpacityProperty, Anim.Go(0.2, 1, 0.26, Anim.Smooth));
+            }
+            _springs.To(_toastIn, 1, instant: _host.ShotPath is not null && !_probing);
+        }
+        else if (ToastBox.Visibility == Visibility.Visible)
+        {
+            ToastCountdown(false, refill: false);
+            _springs.To(_toastIn, 0);
+        }
+    }
+
+    /// <summary>Полоса «сколько осталось на отмену»: идёт вместе с таймером тоста; под мышью или в фокусе — снова полная.</summary>
+    private void ToastCountdown(bool run, bool refill = true)
+    {
+        if (!run || SpringDriver.ReducedMotion)
+        {
+            ToastLeftScale.BeginAnimation(ScaleTransform.ScaleXProperty,
+                refill && !SpringDriver.ReducedMotion ? Anim.Go(ToastLeftScale.ScaleX, 1, 0.3, Anim.Smooth) : null);
+            if (SpringDriver.ReducedMotion) ToastLeft.Opacity = 0;
+            return;
+        }
+        ToastLeft.Opacity = 0.5;
+        var a = new DoubleAnimation(1, 0, _toastTimer.Interval);
+        Timeline.SetDesiredFrameRate(a, 30); // полоса тонкая и медленная: 30 кадров хватает
+        ToastLeftScale.BeginAnimation(ScaleTransform.ScaleXProperty, a);
+    }
+
+    private void Toast_Hold(object sender, MouseEventArgs e) { _toastTimer.Stop(); ToastCountdown(false); }
 
     private void Toast_Release(object sender, MouseEventArgs e)
     {
-        if (_vm.Toast is not null && !ToastHeld) { _toastTimer.Stop(); _toastTimer.Start(); } // после ухода — полный срок заново
+        if (_vm.Toast is not null && !ToastHeld) { _toastTimer.Stop(); _toastTimer.Start(); ToastCountdown(true); } // после ухода — полный срок заново
     }
 
     private void Toast_FocusChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        if (ToastHeld) _toastTimer.Stop();
-        else if (_vm.Toast is not null) { _toastTimer.Stop(); _toastTimer.Start(); }
+        if (ToastHeld) { _toastTimer.Stop(); ToastCountdown(false); }
+        else if (_vm.Toast is not null) { _toastTimer.Stop(); _toastTimer.Start(); ToastCountdown(true); }
     }
 
     // ───────────── меню карточки (DESIGN_COMPONENTS 3.9) ─────────────
@@ -2208,6 +2270,8 @@ public partial class MainWindow : Window
                 rim?.BeginAnimation(OpacityProperty, null);
                 hover?.BeginAnimation(TranslateTransform.YProperty, null);
             }
+            await Run("тост всплывает", () => _vm.Notify("Проверка кадров"));
+            await Run("тост уходит", () => { if (_vm.Toast is { } t) _vm.DismissToast(t.Serial); });
             await Run("поиск раскрывается", () => OpenSearch(focus: true));
             await Run("поиск сворачивается", () => CloseSearch());
             await Run("заголовок сжимается", () => Scroller.ScrollToVerticalOffset(300));
