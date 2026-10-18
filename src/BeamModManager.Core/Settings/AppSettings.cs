@@ -91,6 +91,14 @@ public sealed record AppSettings
     /// <summary>На «Интерфейс работает медленно. Включить «Быстро»?» ответили «Оставить»: больше не спрашиваем (2026-10-18).</summary>
     public bool SlowOfferDeclined { get; init; }
 
+    /// <summary>
+    /// Куда ещё смотреть, кроме «Загрузок», при включённом «Разрешить загрузку модов» (2026-10-18: «Добавить папку» —
+    /// своя папка браузера, Telegram Desktop и т. п.). Без подпапок. Не больше <see cref="MaxWatchFolders"/>.
+    /// </summary>
+    public IReadOnlyList<string> WatchFolders { get; init; } = Array.Empty<string>();
+
+    public const int MaxWatchFolders = 10;
+
     /// <summary>Размер окна при закрытии (0 — не сохранён, окно открывается по умолчанию). Меньше минимума окна 1000 × 680
     /// (DESIGN_FLOWS.md 2) не бывает: такое значение считается мусором.</summary>
     public int WindowWidth { get; init; }
@@ -114,7 +122,18 @@ public sealed record AppSettings
         MaxCardChecksPerSource = Math.Clamp(MaxCardChecksPerSource, 5, 500),
         DisabledSources = DisabledSources.Select(s => s?.Trim().ToLowerInvariant() ?? "")
             .Where(s => s.Length > 0).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(),
+        WatchFolders = (WatchFolders ?? Array.Empty<string>()).Select(CleanFolder).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxWatchFolders).ToList(),
     };
+
+    /// <summary>Папка без пробелов по краям и без косой черты в конце («C:\Mods\» и «C:\Mods» — одна); пустое — null.</summary>
+    public static string? CleanFolder(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        var t = s.Trim();
+        while (t.Length > 3 && (t.EndsWith('\\') || t.EndsWith('/'))) t = t[..^1];
+        return t;
+    }
 
     private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 

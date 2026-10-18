@@ -78,6 +78,7 @@ public sealed class SettingsStore
                     ActiveModsWarnAbove = Int(r, nameof(AppSettings.ActiveModsWarnAbove), d.ActiveModsWarnAbove, warnings),
                     FirstRunDone = Bool(r, nameof(AppSettings.FirstRunDone), d.FirstRunDone, warnings),
                     SlowOfferDeclined = Bool(r, nameof(AppSettings.SlowOfferDeclined), d.SlowOfferDeclined, warnings),
+                    WatchFolders = Strs(r, nameof(AppSettings.WatchFolders), warnings),
                     WindowWidth = Int(r, nameof(AppSettings.WindowWidth), d.WindowWidth, warnings),
                     WindowHeight = Int(r, nameof(AppSettings.WindowHeight), d.WindowHeight, warnings),
                     WindowMaximized = Bool(r, nameof(AppSettings.WindowMaximized), d.WindowMaximized, warnings),

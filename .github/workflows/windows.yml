@@ -154,6 +154,7 @@ jobs:
           Shot 'incoming-offer' @('--offer', 'civic_update.zip', '--width', '1360')
           Shot 'drop-hint' @('--drop-hint')
           Shot 'slow-offer' @('--slow-offer', '--width', '1360')
+          Shot 'settings-downloads' @('--page', 'settings', '--section', 'Downloads', '--allow-downloads')
           # тост «выключен» с «Отменить» и полосой «сколько осталось» (тёмное и светлое)
           Shot 'garage-toast' @('--select', '"Dacia Sandero Stepway"', '--toggle')
           Shot 'light-garage-toast' @('--mode', 'Light', '--select', '"Dacia Sandero Stepway"', '--toggle')
