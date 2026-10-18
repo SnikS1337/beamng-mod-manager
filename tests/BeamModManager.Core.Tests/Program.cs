@@ -45,6 +45,7 @@ GarageTests.Register(t);
 IncomingTests.Register(t);
 IncomingScreenTests.Register(t);
 ModActionsTests.Register(t);
+ModTitleTests.Register(t);
 SearchScreenTests.Register(t);
 GarageCardTests.Register(t);
 SwitchingBackendTests.Register(t);

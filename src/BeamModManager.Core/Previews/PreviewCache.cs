@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace BeamModManager.Core.Previews;
 
@@ -26,7 +27,8 @@ public enum CacheState { Missing, Image, NoImage }
 
 /// <summary>
 /// Кэш уменьшенных картинок рядом с библиотекой: &lt;ключ&gt;.jpg или &lt;ключ&gt;.none (в архиве картинок нет).
-/// Само уменьшение делает приложение: в ядре нет декодера изображений.
+/// Само уменьшение делает приложение: в ядре нет декодера изображений. Там же названия модов из их info.json
+/// (titles.json: ключ архива → название, пустая строка — названия в архиве нет), чтобы не открывать архивы при каждом запуске.
 /// </summary>
 public sealed class PreviewCache
 {
@@ -75,11 +77,89 @@ public sealed class PreviewCache
         TryDelete(ImagePath(s));
     }
 
-    /// <summary>Убирает картинки архивов, которых больше нет или которые изменились. Возвращает число удалённых файлов.</summary>
+    // ───────────── названия ─────────────
+
+    /// <summary>titles.json больше этого не читаем: тысяча названий — около 60 КБ.</summary>
+    private const long MaxTitlesBytes = 4L * 1024 * 1024;
+
+    private readonly object _titlesGate = new();
+    private Dictionary<string, string>? _titles;
+    private bool _titlesDirty;
+
+    private string TitlesPath => Path.Combine(Folder, "titles.json");
+
+    private Dictionary<string, string> Titles()
+    {
+        if (_titles is not null) return _titles;
+        var loaded = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var fi = new FileInfo(TitlesPath);
+            if (fi.Exists && fi.Length <= MaxTitlesBytes)
+                using (var st = fi.OpenRead())
+                    if (JsonSerializer.Deserialize<Dictionary<string, string>>(st) is { } d)
+                        foreach (var (k, v) in d)
+                            if (k.Length > 0 && v is not null && v.Length <= 200) loaded[k] = v;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { } // нет или повреждён: прочитаем архивы заново
+        return _titles = loaded;
+    }
+
+    /// <summary>Название архива: известно ли оно (архив уже читали) и само название (null — в архиве его нет).</summary>
+    public bool TryGetTitle(ArchiveStamp s, out string? title)
+    {
+        lock (_titlesGate)
+        {
+            if (Titles().TryGetValue(s.Key, out var t)) { title = t.Length == 0 ? null : t; return true; }
+        }
+        title = null;
+        return false;
+    }
+
+    /// <summary>Запомнить название (null — названия в архиве нет). На диск попадает при <see cref="SaveTitles"/>.</summary>
+    public void PutTitle(ArchiveStamp s, string? title)
+    {
+        lock (_titlesGate)
+        {
+            var t = Titles();
+            var v = title ?? "";
+            if (t.TryGetValue(s.Key, out var old) && old == v) return;
+            t[s.Key] = v;
+            _titlesDirty = true;
+        }
+    }
+
+    /// <summary>Записать изменившиеся названия (атомарно, через временный файл). Не вышло — останутся в памяти до следующего раза.</summary>
+    public void SaveTitles()
+    {
+        byte[] bytes;
+        lock (_titlesGate)
+        {
+            if (!_titlesDirty || _titles is null) return;
+            bytes = JsonSerializer.SerializeToUtf8Bytes(_titles);
+            _titlesDirty = false;
+        }
+        try
+        {
+            Directory.CreateDirectory(Folder);
+            var tmp = TitlesPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllBytes(tmp, bytes);
+            File.Move(tmp, TitlesPath, overwrite: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { lock (_titlesGate) _titlesDirty = true; }
+    }
+
+    /// <summary>Убирает картинки и названия архивов, которых больше нет или которые изменились. Возвращает число удалённых файлов.</summary>
     public int Prune(IEnumerable<ArchiveStamp> alive)
     {
-        if (!Directory.Exists(Folder)) return 0;
         var keep = new HashSet<string>(alive.Select(a => a.Key), StringComparer.OrdinalIgnoreCase);
+        lock (_titlesGate)
+        {
+            var t = Titles();
+            foreach (var k in t.Keys.Where(k => !keep.Contains(k)).ToList()) { t.Remove(k); _titlesDirty = true; }
+        }
+        SaveTitles();
+        if (!Directory.Exists(Folder)) return 0;
         var removed = 0;
         foreach (var f in Directory.EnumerateFiles(Folder))
         {

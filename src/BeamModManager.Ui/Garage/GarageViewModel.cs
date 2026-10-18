@@ -644,6 +644,15 @@ public sealed class GarageViewModel : Observable
     /// <summary>Куда ведёт «Открыть страницу»: страница с новой версией, иначе та, где следим.</summary>
     public static Uri? PageOf(ModCard c) => c.Data.NeedsUpdate && c.Data.Update is { } u ? u.Url : c.Data.Binding?.Url;
 
+    /// <summary>Фон прочитал название мода из его архива (из фонового потока не звать — только из окна).</summary>
+    public void ArchiveTitleRead(string id, string? title)
+    {
+        if (!_cards.TryGetValue(id, out var card)) return;
+        var before = card.Name;
+        card.ApplyArchiveTitle(title);
+        if (ReferenceEquals(Selected, card) && card.Name != before) RaiseDetails();
+    }
+
     // ───────────── тост ─────────────
 
     /// <summary>Сообщение без «Отменить» (например, «Программа обновлена до 0.1.30»).</summary>
@@ -770,7 +779,9 @@ public sealed class GarageViewModel : Observable
         if (Core.Game.GameCompat.Describe(d.SiteGameVersion, _backend.GameVersion) is { } compat)
             facts.Add(new Fact("Для игры", compat) { Attention = Core.Game.GameCompat.Compare(d.SiteGameVersion, _backend.GameVersion) != Core.Game.CompatLevel.Same });
 
-        return new ModDetails(m.Name, d.Author, act, label, hint, facts, d.Binding?.Url, act != MainAction.OpenPage && d.Binding is not null,
+        facts.Add(new Fact("Файл", m.FileName));
+
+        return new ModDetails(c.Name, d.Author, act, label, hint, facts, d.Binding?.Url, act != MainAction.OpenPage && d.Binding is not null,
             act == MainAction.Enable ? null : c.Enabled ? "Выключить" : "Включить", c.PendingText);
     }
 }

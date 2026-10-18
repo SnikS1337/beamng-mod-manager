@@ -441,14 +441,15 @@ public partial class MainWindow : Window
         if (_host.Previews is not { } loader) return;
         _previewCts?.Cancel();
         _previewCts = new CancellationTokenSource();
-        var todo = _vm.AllCards.Where(c => c.PreviewPath is null && c.Data.ArchivePath is not null)
+        // картинка ещё не в кэше или архив ещё не читали ради названия (DESIGN_FLOWS 3.1а)
+        var todo = _vm.AllCards.Where(c => (c.PreviewPath is null || !c.Data.ArchiveTitleKnown) && c.Data.ArchivePath is not null)
                                .Select(c => (c.Id, c.Data.ArchivePath!)).ToList();
         if (todo.Count == 0) return;
         var byId = _vm.AllCards.ToDictionary(c => c.Id);
         _ = loader.FillAsync(todo, (id, path) => Dispatcher.BeginInvoke(() =>
         {
             if (byId.TryGetValue(id, out var card)) card.PreviewPath = path;
-        }), _previewCts.Token);
+        }), _previewCts.Token, (id, title) => Dispatcher.BeginInvoke(() => _vm.ArchiveTitleRead(id, title)));
     }
 
     private void Vm_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -1139,6 +1140,22 @@ public partial class MainWindow : Window
     {
         _springs.To(_capPress, 1);
         HideCapDrop();
+        if (_tour is not null) DimCaption(true);
+    }
+
+    private void Caption_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (_tour is not null) DimCaption(false);
+    }
+
+    /// <summary>Кнопки окна при знакомстве: тусклые, как всё под затемнением, но живые — навёл, и капсула ожила.</summary>
+    private const double CaptionTourOpacity = 0.4;
+
+    private void DimCaption(bool dim)
+    {
+        var to = dim && !Caption.IsMouseOver ? CaptionTourOpacity : 1;
+        if (SpringDriver.ReducedMotion || _host.ShotPath is not null) { Caption.BeginAnimation(OpacityProperty, null); Caption.Opacity = to; return; }
+        Caption.BeginAnimation(OpacityProperty, Anim.Go(Caption.Opacity, to, 0.25, Anim.Smooth));
     }
 
     private void HideCapDrop(bool instant = false)
@@ -1777,6 +1794,7 @@ public partial class MainWindow : Window
         TourLayer.Visibility = Visibility.Visible;
         TourLayer.UpdateLayout();
         TourPlace(instant: true);
+        DimCaption(true);
         if (!SpringDriver.ReducedMotion && _host.ShotPath is null)
             TourLayer.BeginAnimation(OpacityProperty, Anim.Go(0, 1, 0.4, Anim.Smooth));
         Dispatcher.BeginInvoke(() => TourNext.Focus(), DispatcherPriority.Input);
@@ -1787,6 +1805,7 @@ public partial class MainWindow : Window
         if (_host.ShotPath is null) _host.Settings.MarkFirstRunDone();
         var quick = SpringDriver.ReducedMotion;
         _tour = null;
+        DimCaption(false);
         if (quick) { TourLayer.Visibility = Visibility.Collapsed; TourLayer.DataContext = null; return; }
         var fade = Anim.Go(TourLayer.Opacity, 0, 0.25, Anim.Smooth);
         fade.Completed += (_, _) => { if (_tour is null) { TourLayer.Visibility = Visibility.Collapsed; TourLayer.DataContext = null; TourLayer.BeginAnimation(OpacityProperty, null); TourLayer.Opacity = 1; } };
@@ -1955,7 +1974,11 @@ public partial class MainWindow : Window
         IncomingBusyMove.BeginAnimation(TranslateTransform.XProperty, a);
     }
 
-    private void IncomingInstall_Click(object sender, RoutedEventArgs e) => _in.Install();
+    private void IncomingInstall_Click(object sender, RoutedEventArgs e)
+    {
+        _in.Install();
+        LoadPreviews(); // у нового мода сразу картинка и название, а не после возвращения в окно
+    }
     private void IncomingCancel_Click(object sender, RoutedEventArgs e) => _in.Close();
     private void IncomingDim_MouseDown(object sender, MouseButtonEventArgs e) => _in.Close();
     private void OfferReview_Click(object sender, RoutedEventArgs e) => _in.Review();
