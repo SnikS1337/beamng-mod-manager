@@ -1769,12 +1769,13 @@
                  Lens="24" Refraction="60" Brightness="0.70"
                  VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="116,0,360,28" Height="48"
                  Visibility="Collapsed" Opacity="0" DataContext="{x:Null}" MouseEnter="Toast_Hold" MouseLeave="Toast_Release"
-                 IsKeyboardFocusWithinChanged="Toast_FocusChanged" AutomationProperties.LiveSetting="Polite">
+                 AutomationProperties.LiveSetting="Polite">
             <Grid>
                 <StackPanel x:Name="ToastBody" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,12,0">
                     <StackPanel.RenderTransform><TranslateTransform x:Name="ToastBodyMove"/></StackPanel.RenderTransform>
                     <TextBlock x:Name="ToastText" Text="{Binding Text}" FontSize="13.5" VerticalAlignment="Center"/>
-                    <Button Style="{StaticResource Link}" Content="Отменить" Margin="14,0,0,0" Click="Undo_Click"
+                    <Button Style="{StaticResource Link}" Content="Отменить" Margin="14,0,0,0" Click="Undo_Click" Focusable="False"
+                            ToolTip="Ctrl+Z" AutomationProperties.HelpText="Ctrl+Z"
                             Visibility="{Binding CanUndo, Converter={StaticResource BoolToVis}}"/>
                 </StackPanel>
                 <Rectangle x:Name="ToastLeft" Height="2" RadiusX="1" RadiusY="1" VerticalAlignment="Bottom" Margin="24,0,24,4"

@@ -37,7 +37,17 @@ public enum EmptyAction { None, OpenSearch, PickFolder, CheckNow, SearchSites, S
 public sealed record EmptyState(string Title, string Text, string? ActionLabel, EmptyAction Action);
 
 /// <summary>Тост внизу: что сделано и «Отменить» на несколько секунд вместо вопроса «Вы уверены?».</summary>
-public sealed record Toast(string Text, bool CanUndo, long Serial);
+public sealed record Toast(string Text, bool CanUndo, long Serial)
+{
+    /// <summary>
+    /// Сколько тост висит (DESIGN_COMPONENTS 3.7, 2026-10-18): включение и выключение и короткие сообщения — 3 с, длинное
+    /// сообщение — 5 с, «Отменить» удаления, установки и возврата версии — 6 с.
+    /// </summary>
+    public double Seconds { get; init; } = 3;
+
+    /// <summary>Длина сообщения, после которой трёх секунд на чтение мало.</summary>
+    public const int LongText = 48;
+}
 
 /// <summary>Главная кнопка правой панели меняется по состоянию мода (DESIGN.md раздел 4).</summary>
 public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPage, Restore }
@@ -409,7 +419,8 @@ public sealed class GarageViewModel : Observable
 
         var label = want ? "Включён" : "Выключен";
         if (_pending.ContainsKey(file) && !LiveWaiting) label += ". Применится, когда закроете игру";
-        ShowToast(label, withUndo ? () => { if (_cards.TryGetValue(card.Id, out var c)) SetEnabled(c, before, withUndo: false); } : null);
+        // включить обратно — тот же щелчок: долго держать «Отменить» не нужно
+        ShowToast(label, withUndo ? () => { if (_cards.TryGetValue(card.Id, out var c)) SetEnabled(c, before, withUndo: false); } : null, seconds: 3);
     }
 
     private void Queue(string file, bool want, ModCard card)
@@ -666,12 +677,16 @@ public sealed class GarageViewModel : Observable
 
     /// <param name="commit">Что сделать, когда «Отменить» больше не нажать (тост погас или его сменил другой): удаление
     /// становится окончательным для библиотеки.</param>
-    private void ShowToast(string text, Action? undo, Action? commit = null)
+    private void ShowToast(string text, Action? undo, Action? commit = null, double? seconds = null)
     {
         CommitToast();
         _undo = undo;
         _commit = commit;
-        Toast = new Toast(Ru.Line(text), undo is not null, ++_toastSerial);
+        var line = Ru.Line(text);
+        Toast = new Toast(line, undo is not null, ++_toastSerial)
+        {
+            Seconds = seconds ?? (undo is not null ? 6 : line.Length > BeamModManager.Ui.Garage.Toast.LongText ? 5 : 3),
+        };
         UndoCommand.Refresh();
     }
 

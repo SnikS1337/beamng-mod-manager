@@ -458,8 +458,8 @@ public partial class MainWindow : Window
         {
             case nameof(GarageViewModel.Toast):
                 _toastTimer.Stop();
-                // обратимое (удаление, выключение) живёт 8 с, остальное 6 с (DESIGN_COMPONENTS 3.7); под мышью или в фокусе не гаснет
-                _toastTimer.Interval = TimeSpan.FromSeconds(_vm.Toast is { CanUndo: true } ? 8 : 6);
+                // сколько висит, решает гараж (Toast.Seconds, DESIGN_COMPONENTS 3.7); под мышью не гаснет
+                _toastTimer.Interval = TimeSpan.FromSeconds(_vm.Toast?.Seconds ?? 3);
                 ShowToast(_vm.Toast);
                 if (_vm.Toast is not null && !ToastHeld) { _toastTimer.Start(); ToastCountdown(true); }
                 if (_vm.LiveWaiting && !_liveTimer.IsEnabled) _liveTimer.Start();
@@ -1634,6 +1634,15 @@ public partial class MainWindow : Window
 
     private void Toggle_Click(object sender, RoutedEventArgs e) => _vm.ToggleSelected();
     private void Undo_Click(object sender, RoutedEventArgs e) => _vm.Undo();
+
+    /// <summary>
+    /// Под мышью тост не гаснет. Фокус у «Отменить» тост больше не держит: кнопка фокус не берёт (иначе пробел, которым
+    /// переключают мод, нажимал её, а тост висел, пока фокус внутри), с клавиатуры отмена — Ctrl+Z.
+    /// </summary>
+    private void UndoByKey()
+    {
+        if (_vm.Toast is { CanUndo: true }) _vm.Undo();
+    }
     private void Delete_Click(object sender, RoutedEventArgs e) => _vm.DeleteSelected();
 
     private void RestoreVersion_Click(object sender, RoutedEventArgs e)
@@ -1643,7 +1652,7 @@ public partial class MainWindow : Window
 
     // ───────────── тост: под мышью и в фокусе не гаснет ─────────────
 
-    private bool ToastHeld => ToastBox.IsMouseOver || ToastBox.IsKeyboardFocusWithin;
+    private bool ToastHeld => ToastBox.IsMouseOver;
 
     /// <summary>Как далеко тост всплыл: 0 — спрятан внизу, 1 — на месте (пружина с лёгким перелётом).</summary>
     private Spring _toastIn = null!;
@@ -1656,6 +1665,9 @@ public partial class MainWindow : Window
     /// после прячется совсем. Тост — стекло: двигается он полем снизу, а не сдвигом картинки, чтобы копия сцены под ним
     /// шла вместе с ним. Без анимаций — сразу.
     /// </summary>
+    /// <summary>Когда сменился текст тоста: частые смены (щёлкают переключатель) идут без подъёма текста, иначе он дрожит.</summary>
+    private long _toastChangedAt;
+
     private void ShowToast(Toast? t)
     {
         if (t is not null)
@@ -1663,7 +1675,10 @@ public partial class MainWindow : Window
             var wasShown = ToastBox.Visibility == Visibility.Visible && _toastIn.Target > 0;
             ToastBox.DataContext = t;
             ToastBox.Visibility = Visibility.Visible;
-            if (wasShown && !SpringDriver.ReducedMotion)
+            var now = Environment.TickCount64;
+            var calm = now - _toastChangedAt > 500;
+            _toastChangedAt = now;
+            if (wasShown && calm && !SpringDriver.ReducedMotion)
             {
                 ToastBodyMove.BeginAnimation(TranslateTransform.YProperty, Anim.Go(6, 0, 0.32, Anim.Smooth));
                 ToastBody.BeginAnimation(OpacityProperty, Anim.Go(0.2, 1, 0.26, Anim.Smooth));
@@ -1682,8 +1697,16 @@ public partial class MainWindow : Window
     {
         if (!run || SpringDriver.ReducedMotion)
         {
-            ToastLeftScale.BeginAnimation(ScaleTransform.ScaleXProperty,
-                refill && !SpringDriver.ReducedMotion ? Anim.Go(ToastLeftScale.ScaleX, 1, 0.3, Anim.Smooth) : null);
+            if (refill && !SpringDriver.ReducedMotion)
+                ToastLeftScale.BeginAnimation(ScaleTransform.ScaleXProperty, Anim.Go(ToastLeftScale.ScaleX, 1, 0.3, Anim.Smooth));
+            else
+            {
+                // тост уходит: полоса стоит, где кончилась. Просто снять анимацию — значит вернуть исходную 1, и уходящий
+                // тост показал бы её полной
+                var at = ToastLeftScale.ScaleX;
+                ToastLeftScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                ToastLeftScale.ScaleX = at;
+            }
             if (SpringDriver.ReducedMotion) ToastLeft.Opacity = 0;
             return;
         }
@@ -1700,11 +1723,6 @@ public partial class MainWindow : Window
         if (_vm.Toast is not null && !ToastHeld) { _toastTimer.Stop(); _toastTimer.Start(); ToastCountdown(true); } // после ухода — полный срок заново
     }
 
-    private void Toast_FocusChanged(object sender, DependencyPropertyChangedEventArgs e)
-    {
-        if (ToastHeld) { _toastTimer.Stop(); ToastCountdown(false); }
-        else if (_vm.Toast is not null) { _toastTimer.Stop(); _toastTimer.Start(); ToastCountdown(true); }
-    }
 
     // ───────────── меню карточки (DESIGN_COMPONENTS 3.9) ─────────────
 
@@ -2338,6 +2356,8 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        // Ctrl+Z — «Отменить» у тоста (кнопка фокус не берёт, DESIGN_FLOWS 7); в поле ввода Ctrl+Z отменяет набор
+        if (ctrl && e.Key == Key.Z && !typing && _vm.Toast is { CanUndo: true }) { UndoByKey(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.D1) { NavGarage.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D2) { NavUpdates.IsChecked = true; e.Handled = true; return; }
         if (ctrl && e.Key == Key.D3) { NavSearch.IsChecked = true; e.Handled = true; return; }
