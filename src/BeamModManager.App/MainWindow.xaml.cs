@@ -230,13 +230,15 @@ public partial class MainWindow : Window
         _downloads = new DownloadsWatcher(p => Dispatcher.BeginInvoke(() => { if (IsLoaded) _ = _in.OfferAsync(p, IncomingOrigin.Downloaded, _closing.Token); }));
         Closed += (_, _) => _downloads.Dispose();
         Root.SizeChanged += (_, _) => { if (_tour is not null) TourPlace(instant: true); };
+        // плашка над сеткой появилась (обновление, «Скачан мод») — карточки сдвинулись: «окно» знакомства за ними
+        Root.LayoutUpdated += (_, _) => { if (_tour is not null && !_tourMoving && TourTargetOf(_tour.Current.Target)?.Rect is { } r && !Near(r, _tourHole)) TourPlace(instant: true); };
         // «Интерфейс работает медленно»: итоги анимаций приходят от пружин (поток окна)
         _slow.Suggest += () => { _slowOffered = true; FadePlate(SlowBox, SlowBoxMove, true); };
         FramePolicy.Shared.Judged += _slow.Burst;
         Closed += (_, _) => FramePolicy.Shared.Judged -= _slow.Burst;
         // Preview…: поле поиска само принимает перетаскивание текста и не пустило бы файл дальше к окну
         AllowDrop = true;
-        PreviewDragEnter += Window_DragOver;
+        PreviewDragEnter += (s, e) => { _dragArchives = e.Data.GetDataPresent(DataFormats.FileDrop) ? DroppedArchives(e.Data).Count : 0; Window_DragOver(s, e); };
         PreviewDragOver += Window_DragOver;
         PreviewDragLeave += Window_DragLeave;
         PreviewDrop += Window_Drop;
@@ -1744,6 +1746,12 @@ public partial class MainWindow : Window
     // ───────────── знакомство при первом запуске (2026-10-18) ─────────────
 
     private TourViewModel? _tour;
+    /// <summary>Где сейчас «окно» знакомства и идёт ли перетекание к следующему шагу (тогда за сдвигами не следим).</summary>
+    private Rect _tourHole = Rect.Empty;
+    private bool _tourMoving;
+
+    private static bool Near(Rect a, Rect b) =>
+        !b.IsEmpty && Math.Abs(a.X - b.X) < 1 && Math.Abs(a.Y - b.Y) < 1 && Math.Abs(a.Width - b.Width) < 1 && Math.Abs(a.Height - b.Height) < 1;
 
     /// <summary>Первый запуск: когда окно вошло и показало моды, — знакомство (если ничего другого поверх нет).</summary>
     private void MaybeStartTour()
@@ -1812,6 +1820,7 @@ public partial class MainWindow : Window
         TourAll.Rect = new Rect(0, 0, w, h);
         var target = TourTargetOf(_tour.Current.Target);
         var hole = target?.Rect ?? new Rect(w / 2, h / 2, 0, 0);
+        _tourHole = hole;
         TourHole.RadiusX = TourHole.RadiusY = TourRing.RadiusX = TourRing.RadiusY = target?.Radius ?? 0;
         TourRing.Visibility = target is null ? Visibility.Collapsed : Visibility.Visible;
 
@@ -1839,7 +1848,13 @@ public partial class MainWindow : Window
             else ((IAnimatable)o).BeginAnimation(p, new DoubleAnimation(to, TimeSpan.FromSeconds(0.45)) { EasingFunction = Anim.Smooth });
         }
         if (quick) { TourHole.BeginAnimation(RectangleGeometry.RectProperty, null); TourHole.Rect = hole; }
-        else TourHole.BeginAnimation(RectangleGeometry.RectProperty, new RectAnimation(hole, TimeSpan.FromSeconds(0.45)) { EasingFunction = Anim.Smooth });
+        else
+        {
+            _tourMoving = true;
+            var move = new RectAnimation(hole, TimeSpan.FromSeconds(0.45)) { EasingFunction = Anim.Smooth };
+            move.Completed += (_, _) => _tourMoving = false;
+            TourHole.BeginAnimation(RectangleGeometry.RectProperty, move);
+        }
         Go(TourRing, Canvas.LeftProperty, hole.Left);
         Go(TourRing, Canvas.TopProperty, hole.Top);
         Go(TourRing, WidthProperty, hole.Width);
@@ -1901,7 +1916,11 @@ public partial class MainWindow : Window
         {
             case nameof(IncomingViewModel.Open): ShowIncoming(_in.Open); break;
             case nameof(IncomingViewModel.Busy): IncomingBusy(_in.Busy); break;
-            case nameof(IncomingViewModel.OfferText): FadePlate(OfferBox, OfferBoxMove, _in.OfferText is not null); break;
+            case nameof(IncomingViewModel.OfferText):
+                FadePlate(OfferBox, OfferBoxMove, _in.OfferText is not null);
+                // плашка живёт над сеткой «Модов»: в другом разделе её не видно — подскажем, где она
+                if (_in.OfferText is { } offer && NavGarage.IsChecked != true) _vm.Notify(offer + " — посмотреть можно в «Модах»");
+                break;
         }
     }
 
@@ -1938,15 +1957,19 @@ public partial class MainWindow : Window
 
     private void IncomingInstall_Click(object sender, RoutedEventArgs e) => _in.Install();
     private void IncomingCancel_Click(object sender, RoutedEventArgs e) => _in.Close();
-    private void IncomingDim_MouseDown(object sender, MouseButtonEventArgs e) { if (!_in.Busy) _in.Close(); }
+    private void IncomingDim_MouseDown(object sender, MouseButtonEventArgs e) => _in.Close();
     private void OfferReview_Click(object sender, RoutedEventArgs e) => _in.Review();
     private void OfferDismiss_Click(object sender, RoutedEventArgs e) => _in.DismissOffer();
 
     /// <summary>Над окном несут файлы: принимаем, только если среди них есть zip, rar или 7z (остальное — знак «нельзя»).</summary>
+    /// <summary>Сколько архивов несут над окном: считается раз при входе (на каждом движении мыши диск не спрашиваем).</summary>
+    private int _dragArchives;
+
     private void Window_DragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return; // текст в поле поиска — как обычно
-        var ok = DroppedArchives(e.Data).Count > 0 && IncomingLayer.Visibility != Visibility.Visible;
+        // поверх окна проверки и знакомства не принимаем: сначала закончить то, что открыто
+        var ok = _dragArchives > 0 && IncomingLayer.Visibility != Visibility.Visible && TourLayer.Visibility != Visibility.Visible;
         e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
         ShowDropHint(ok);
@@ -1965,7 +1988,7 @@ public partial class MainWindow : Window
         ShowDropHint(false);
         var files = DroppedArchives(e.Data);
         e.Handled = true;
-        if (files.Count == 0 || IncomingLayer.Visibility == Visibility.Visible) return;
+        if (files.Count == 0 || IncomingLayer.Visibility == Visibility.Visible || TourLayer.Visibility == Visibility.Visible) return;
         Activate();
         foreach (var f in files) _ = _in.OfferAsync(f, IncomingOrigin.Dropped, _closing.Token); // первый — окном, остальные следом
     }
@@ -2265,7 +2288,7 @@ public partial class MainWindow : Window
         }
         if (IncomingLayer.Visibility == Visibility.Visible)
         {
-            if (e.Key == Key.Escape && !_in.Busy) { _in.Close(); e.Handled = true; }
+            if (e.Key == Key.Escape) { _in.Close(); e.Handled = true; }
             else if (e.Key == Key.Enter && _in.CanInstall && Keyboard.FocusedElement is not Button) { _in.Install(); e.Handled = true; }
             return; // окно поверх: остальные клавиши — его кнопкам
         }

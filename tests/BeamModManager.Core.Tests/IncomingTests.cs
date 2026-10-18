@@ -216,5 +216,41 @@ public static class IncomingTests
             Assert.True(!none.IsMod && none.WrapFolder is null, "не мод");
             Assert.False(IncomingAnalyzer.ShapeOf(Array.Empty<string>()).IsMod, "пусто");
         });
+    
+        t.Run("найдено перед выпуском: распаковка ограничена общим объёмом; архив с запретом не перепаковывается", () =>
+        {
+            using var d = new Dir();
+            // пак из трёх zip по ~3 КБ при общем пределе 5 КБ: «слишком большой», а не забитый диск
+            var big = new string('x', 3000);
+            var ms = new MemoryStream();
+            using (var z = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+                foreach (var n in new[] { "a", "b", "c" })
+                {
+                    var inner = new MemoryStream();
+                    using (var iz = new ZipArchive(inner, ZipArchiveMode.Create, leaveOpen: true))
+                        using (var w = new StreamWriter(iz.CreateEntry($"vehicles/{n}/{n}.jbeam", CompressionLevel.NoCompression).Open())) w.Write(big);
+                    using var s = z.CreateEntry(n + ".zip", CompressionLevel.NoCompression).Open();
+                    s.Write(inner.ToArray());
+                }
+            var pack = d["pack.zip"];
+            File.WriteAllBytes(pack, ms.ToArray());
+            var r = IncomingAnalyzer.Analyze(pack, Array.Empty<InstalledArchive>(), d["w"], null, budget: 5000);
+            Assert.Eq("Архив слишком большой после распаковки", r.Problem);
+            Assert.Eq(3, IncomingAnalyzer.Analyze(pack, Array.Empty<InstalledArchive>(), d["w2"], null).Mods.Count);
+
+            // в лишней папке, но с исполняемым файлом: не перепаковываем, окно покажет запрет на исходном архиве
+            var evil = Zip(d, "evil.zip", "Car/vehicles/car/a.jbeam", "Car/setup.exe");
+            var m = IncomingAnalyzer.Analyze(evil, Array.Empty<InstalledArchive>(), d["w3"], null).Mods.Single();
+            Assert.True(m.Blocked && !m.Repacked && m.ZipPath == evil, "как есть, с запретом");
+        });
+
+        t.Run("найдено перед выпуском: обновление мода из подпапки не ставится (иначе в игре два одинаковых)", () =>
+        {
+            using var d = new Dir();
+            var src = Zip(d, "car_v2.zip", "vehicles/car/a.jbeam");
+            var repo = Installed(d, "car_v1.zip", true, "vehicles/car/b.jbeam") with { SubFolder = "repo" };
+            var m = IncomingAnalyzer.Analyze(src, new[] { repo }, d["w"], null).Mods.Single();
+            Assert.True(m.Kind == IncomingKind.Update && m.Locked && m.ReplacesSubFolder == "repo", $"{m.Kind} {m.Locked}");
+        });
     }
 }

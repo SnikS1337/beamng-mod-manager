@@ -28,6 +28,28 @@ public static class IncomingScreenTests
     private static byte[] Car(string folder, string extra = "") =>
         Zip(($"vehicles/{folder}/info.json", $"{{\"Name\":\"{folder.ToUpperInvariant()}\"}}"), ($"vehicles/{folder}/{folder}.jbeam", "{}" + extra));
 
+    private sealed class Throwing : IGarageBackend
+    {
+        public GarageSnapshot Load() => new(Array.Empty<GarageMod>(), true, null);
+        public bool IsGameRunning() => false;
+        public ToggleResult SetEnabled(string fileName, bool enabled) => throw new NotSupportedException();
+        public IncomingArchive InspectIncoming(string path, CancellationToken ct) => throw new FormatException("сломалось.");
+    }
+
+    private sealed class Slow : IGarageBackend
+    {
+        public volatile bool Cancelled;
+        public GarageSnapshot Load() => new(Array.Empty<GarageMod>(), true, null);
+        public bool IsGameRunning() => false;
+        public ToggleResult SetEnabled(string fileName, bool enabled) => throw new NotSupportedException();
+        public IncomingArchive InspectIncoming(string path, CancellationToken ct)
+        {
+            try { Task.Delay(TimeSpan.FromSeconds(10), ct).Wait(ct); }
+            catch (OperationCanceledException) { Cancelled = true; throw; }
+            return IncomingArchive.Fail(path, "долго");
+        }
+    }
+
     private sealed class Folder : IDisposable
     {
         public readonly string Root = Path.Combine(Path.GetTempPath(), "bmm-incoming-" + Guid.NewGuid().ToString("N"));
@@ -189,6 +211,38 @@ public static class IncomingScreenTests
             Assert.True(f.Vm.Toast!.Text.StartsWith("Установлено 1 из 2. «GOLF»:"), f.Vm.Toast.Text);
         });
     
+        t.Run("найдено перед выпуском: сбой разбора — «ставить нечего» с причиной, а не вечное «Проверяем…»", async () =>
+        {
+            using var f = new Folder();
+            var vm = new IncomingViewModel(new Throwing(), f.Vm, a => a());
+            await vm.OfferAsync(f.Download("x.zip", Car("a")), IncomingOrigin.Dropped);
+            Assert.True(vm.Open && !vm.Busy && vm.Problem!.StartsWith("Не удалось проверить архив: сломалось"), vm.Problem ?? "");
+            await vm.OfferAsync(f.Download("y.zip", Car("b")), IncomingOrigin.Downloaded); // скачанное — молча
+            Assert.True(vm.OfferText is null, "без плашки");
+        });
+
+        t.Run("найдено перед выпуском: «Отмена» во время разбора прерывает его, следующий архив открывается как обычно", async () =>
+        {
+            using var f = new Folder();
+            var slow = new Slow();
+            var vm = new IncomingViewModel(slow, f.Vm, a => a());
+            var task = vm.OfferAsync(f.Download("big.rar", new byte[] { 1 }), IncomingOrigin.Dropped);
+            Assert.True(vm.Open && vm.Busy, "разбирается");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            vm.Close();
+            await task;
+            // разбор либо прерван на ходу, либо так и не начался — но ждать его 10 с не пришлось
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5) && !vm.Open, $"прерван за {sw.Elapsed}, окно закрыто");
+        });
+
+        t.Run("найдено перед выпуском: папку модов в «Где искать» не добавить", () =>
+        {
+            var vm = new BeamModManager.Ui.Settings.SettingsViewModel(new BeamModManager.Core.Settings.AppSettings()) { ModsFolderPath = @"C:\Games\mods" };
+            Assert.Eq("Это папка модов: моды в ней программа видит и так", vm.AddWatchFolder(@"C:\Games\mods\"));
+            Assert.Eq("Это папка модов: моды в ней программа видит и так", vm.AddWatchFolder(@"C:\Games\mods\repo"));
+            Assert.Eq(null, vm.AddWatchFolder(@"C:\Games\mods_old"));
+        });
+
         t.Group("Совместимость с версией игры");
 
         t.Run("версии: первые два числа, диапазон — по последней; строка для панели", () =>

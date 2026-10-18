@@ -76,7 +76,8 @@ public sealed class TarExtractor : IArchiveExtractor
         long total = 0;
         try
         {
-            foreach (var f in new DirectoryInfo(dir).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+            // ссылки не считаем (и не идём по ним): размер — только того, что распаковано на самом деле
+            foreach (var f in new DirectoryInfo(dir).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
                 total += f.Length;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
