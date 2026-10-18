@@ -36,6 +36,12 @@ public sealed record CheckState(
     string? LastTitle = null);
 
 /// <summary>
+/// Подбор страницы для мода без неё (<see cref="PageGuesser"/>): когда искали и отказался ли человек от предложенной.
+/// Ничего не нашли — ищем снова не раньше чем через <see cref="PageGuesser.RetryAfter"/>; отказался — больше не предлагаем.
+/// </summary>
+public sealed record PageSearch(DateTimeOffset At, bool Rejected = false);
+
+/// <summary>
 /// Хранилище библиотеки. Сейчас есть версия в памяти (для тестов и разработки без Windows);
 /// версия на SQLite добавится, когда будет доступен NuGet.
 /// </summary>
@@ -71,6 +77,10 @@ public interface ILibraryStore
     /// <summary>«Не проверять этот мод»: пользователь отказался от привязки; подсказки привязки такому моду не предлагаются.</summary>
     bool IsCheckingDeclined(string modId);
     void SetCheckingDeclined(string modId, bool declined);
+
+    /// <summary>Подбор страницы для мода: когда искали и чем кончилось (null — не искали).</summary>
+    PageSearch? GetPageSearch(string modId);
+    void SetPageSearch(string modId, PageSearch? state);
 }
 
 public sealed class InMemoryLibraryStore : ILibraryStore
@@ -87,6 +97,7 @@ public sealed class InMemoryLibraryStore : ILibraryStore
     private readonly Dictionary<string, string> _dismissed = new();
     private readonly Dictionary<string, List<string>> _history = new();
     private readonly HashSet<string> _declined = new();
+    private readonly Dictionary<string, PageSearch> _pageSearch = new();
 
     public IReadOnlyList<InstalledMod> Mods() { lock (_g) return _mods.Values.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList(); }
     public InstalledMod? GetMod(string id) { lock (_g) return _mods.GetValueOrDefault(id); }
@@ -102,6 +113,18 @@ public sealed class InMemoryLibraryStore : ILibraryStore
             _dismissed.Remove(id);
             _history.Remove(id);
             _declined.Remove(id);
+            _pageSearch.Remove(id);
+        }
+    }
+
+    public PageSearch? GetPageSearch(string modId) { lock (_g) return _pageSearch.GetValueOrDefault(modId); }
+
+    public void SetPageSearch(string modId, PageSearch? state)
+    {
+        lock (_g)
+        {
+            if (!_mods.ContainsKey(modId)) return; // мода уже нет: ничего не запоминаем
+            if (state is null) _pageSearch.Remove(modId); else _pageSearch[modId] = state;
         }
     }
 

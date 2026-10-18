@@ -50,6 +50,19 @@ public interface IUpdatesBackend
     /// <paramref name="verified"/> — запись открыта целиком (ссылка проверена): её версия и размер сразу становятся известны.
     /// </summary>
     bool Bind(string modId, Listing listing, string? replaceSource, bool verified);
+
+    /// <summary>
+    /// Подбор страниц модам, у которых их нет (PageGuesser): поиск по названию на включённых сайтах, по одному моду, и
+    /// неподтверждённая привязка, если страница явно та. Возвращает, скольким модам нашли. Останавливает <see cref="Cancel"/>.
+    /// </summary>
+    /// <param name="titleOf">Название мода, как его видит окно (репозиторий, info.json, сайт); null — не знаем.</param>
+    Task<int> FindPagesAsync(Func<string, string?> titleOf, IProgress<UpdateProgress>? progress = null) => Task.FromResult(0);
+    /// <summary>«Следить»: предложенная страница становится настоящей привязкой. Возвращает её (для «Отменить») или null.</summary>
+    ModBinding? ConfirmPage(string modId) => null;
+    /// <summary>«Это другой мод»: предложенная страница убирается и больше не предлагается. Возвращает её или null.</summary>
+    ModBinding? RejectPage(string modId) => null;
+    /// <summary>«Отменить» после «Следить» или «Это другой мод»: страница снова только предложена.</summary>
+    void UndoPage(ModBinding suggestion) { }
 }
 
 /// <summary>Проверять нечем (папка модов не задана в демо или раздел ещё не подключён): всё пусто, ничего не делается.</summary>
@@ -152,7 +165,100 @@ public sealed class LibraryUpdatesBackend : IUpdatesBackend
         }
     }
 
-    public void Cancel() => _coordinator.Cancel();
+    public void Cancel()
+    {
+        _coordinator.Cancel();
+        _findCts?.Cancel();
+    }
+
+    private volatile CancellationTokenSource? _findCts;
+
+    public async Task<int> FindPagesAsync(Func<string, string?> titleOf, IProgress<UpdateProgress>? progress = null)
+    {
+        var due = PageGuesser.Due(_store, _now());
+        if (due.Count == 0) return 0;
+        using var cts = new CancellationTokenSource();
+        _findCts = cts;
+        var search = Search();
+        var found = 0;
+        var js = _store as JsonLibraryStore;
+        try
+        {
+            using (js?.Batch())
+            {
+                for (var i = 0; i < due.Count; i++)
+                {
+                    if (cts.IsCancellationRequested) break;
+                    var mod = due[i];
+                    progress?.Report(new UpdateProgress(PagesStage, PagesStage, i, due.Count));
+                    var title = titleOf(mod.Id);
+                    SearchResponse r;
+                    try { r = await search.SearchAsync(PageGuesser.QueryFor(mod, title), cts.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { break; }
+                    // ни один сайт не ответил: не считаем, что искали, — попробуем при следующей проверке
+                    if (!r.Sources.Any(s => s.Status == SourceStatus.Ok)) continue;
+                    var listings = r.Listings.Count > 0 ? r.Listings : r.Cards.SelectMany(c => c.Listings).ToList();
+                    lock (BindGate)
+                    {
+                        // за время поиска мод могли удалить, привязать вручную или отказаться от проверки
+                        if (_store.GetMod(mod.Id) is null || _store.IsCheckingDeclined(mod.Id) || _store.Bindings().Any(b => b.ModId == mod.Id)) continue;
+                        if (PageGuesser.Pick(mod, title, listings) is { } g)
+                        {
+                            _store.UpsertBinding(new ModBinding(mod.Id, g.Listing.Source, g.Listing.SourceId, g.Listing.Url, Confirmed: false));
+                            found++;
+                        }
+                        _store.SetPageSearch(mod.Id, new PageSearch(_now()));
+                    }
+                }
+                progress?.Report(new UpdateProgress(PagesStage, PagesStage, due.Count, due.Count));
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_findCts, cts)) _findCts = null;
+        }
+        return found;
+    }
+
+    /// <summary>Этап подбора страниц в ходе проверки (окно пишет «ищем страницы новых модов»).</summary>
+    public const string PagesStage = "страницы";
+
+    public ModBinding? ConfirmPage(string modId)
+    {
+        lock (BindGate)
+        {
+            if (_store.Bindings().FirstOrDefault(b => b.ModId == modId && !b.Confirmed) is not { } s) return null;
+            _store.UpsertBinding(s with { Confirmed = true });
+            _store.SetCheckingDeclined(modId, false);
+            _store.SetDismissedUpdate(modId, null);
+            return s;
+        }
+    }
+
+    public ModBinding? RejectPage(string modId)
+    {
+        lock (BindGate)
+        {
+            if (_store.Bindings().FirstOrDefault(b => b.ModId == modId && !b.Confirmed) is not { } s) return null;
+            _store.RemoveBinding(modId, s.Source);
+            _store.SetPageSearch(modId, new PageSearch(_now(), Rejected: true));
+            return s;
+        }
+    }
+
+    public void UndoPage(ModBinding suggestion)
+    {
+        lock (BindGate)
+        {
+            if (_store.GetMod(suggestion.ModId) is null) return;
+            // за это время могли привязать другую страницу того же сайта: её не трогаем
+            var now = _store.Bindings().FirstOrDefault(b => b.ModId == suggestion.ModId && b.Source == suggestion.Source);
+            if (now is not null && now.SourceId != suggestion.SourceId) return;
+            if (now is not null) _store.RemoveBinding(suggestion.ModId, suggestion.Source); // вместе с проверками этой страницы
+            _store.UpsertBinding(suggestion with { Confirmed = false });
+            _store.SetPageSearch(suggestion.ModId, new PageSearch(_now()));
+        }
+    }
 
     public IReadOnlyList<SiteInfo> Sites()
     {

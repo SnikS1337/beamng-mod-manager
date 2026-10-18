@@ -50,7 +50,7 @@ public sealed record Toast(string Text, bool CanUndo, long Serial)
 }
 
 /// <summary>Главная кнопка правой панели меняется по состоянию мода (DESIGN.md раздел 4).</summary>
-public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPage, Restore }
+public enum MainAction { None, Update, OpenPage, Enable, FindReplacement, SetPage, Restore, ConfirmPage }
 
 /// <summary>Строка блока данных в правой панели: «Размер — 312 МБ».</summary>
 public sealed record Fact(string Label, string Value)
@@ -87,6 +87,9 @@ public sealed record ModDetails(
 {
     /// <summary>Внизу «Удалить» с «Можно вернуть позже»; у удалённого — нет.</summary>
     public bool CanDelete { get; init; } = true;
+
+    /// <summary>Ссылка под главной кнопкой («Это другой мод» у найденной страницы); null — нет.</summary>
+    public string? AltLabel { get; init; }
 }
 
 /// <summary>
@@ -776,6 +779,13 @@ public sealed class GarageViewModel : Observable
             act = MainAction.Enable;
             label = "Включить";
         }
+        else if (!d.Tracked && d.Suggested is { } sg)
+        {
+            // страницу нашла программа (PageGuesser): следить начнём, только когда человек согласится
+            act = MainAction.ConfirmPage;
+            label = $"Следить на {Updates.SiteNames.Of(sg.Source)}";
+            hint = "Похоже, это он. Проверьте: «Открыть страницу» внизу";
+        }
         else if (!d.Tracked)
         {
             // без страницы на сайте новую версию не узнать: предлагаем её указать (DESIGN_FLOWS 6.4)
@@ -790,6 +800,7 @@ public sealed class GarageViewModel : Observable
         if (m.SizeBytes is { } size) facts.Add(new Fact("Размер", Ru.Size(size)));
         facts.Add(new Fact("Установлен", Ru.Date(m.InstalledAtUtc)));
         if (site is not null) facts.Add(new Fact("Следим на", site));
+        else if (d.Suggested is { } found) facts.Add(new Fact("Следим на", $"Ждёт «Следить»: {Host(found.Url)}"));
         else facts.Add(new Fact("Следим на", d.CheckingDeclined ? "Не проверяем по вашему выбору" : "Страница не указана"));
         if (d.LastCheckedUtc is { } t) facts.Add(new Fact("Проверен", Ru.Ago(t, _now())));
         if (m.Version is { } v) facts.Add(new Fact("Версия", v));
@@ -799,7 +810,11 @@ public sealed class GarageViewModel : Observable
 
         facts.Add(new Fact("Файл", m.FileName));
 
-        return new ModDetails(c.Name, d.Author, act, label, hint, facts, d.Binding?.Url, act != MainAction.OpenPage && d.Binding is not null,
-            act == MainAction.Enable ? null : c.Enabled ? "Выключить" : "Включить", c.PendingText);
+        var page = d.Binding?.Url ?? (act == MainAction.ConfirmPage ? d.Suggested?.Url : null);
+        return new ModDetails(c.Name, d.Author, act, label, hint, facts, page, act != MainAction.OpenPage && page is not null,
+            act == MainAction.Enable ? null : c.Enabled ? "Выключить" : "Включить", c.PendingText)
+        {
+            AltLabel = act == MainAction.ConfirmPage ? "Это другой мод" : null,
+        };
     }
 }
