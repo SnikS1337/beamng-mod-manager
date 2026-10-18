@@ -26,6 +26,12 @@ public interface ISearchBackend
 
     /// <summary>Самый короткий запрос, который уходит на сайты.</summary>
     int MinQueryLength => 2;
+
+    /// <summary>
+    /// Картинка мода по его странице — для выдачи без картинок (ModsGaming, 2026-10-18). Страница грузится той же вежливой
+    /// очередью, что и поиск. null — картинки нет или сайт не наш.
+    /// </summary>
+    Task<Uri?> PreviewOfAsync(Uri page, CancellationToken ct) => Task.FromResult<Uri?>(null);
 }
 
 /// <summary>Поиск поверх настоящих сайтов, настроек («Настройки → Сайты») и ручных решений по дублям.</summary>
@@ -50,6 +56,20 @@ public sealed class LibrarySearchBackend : ISearchBackend
     {
         var s = _settings();
         return _all.Select(x => new SearchSite(x.Id, SiteNames.Of(x.Id), s.IsSourceEnabled(x.Id), x.SupportsSearch)).ToList();
+    }
+
+    /// <summary>Картинка со страницы мода: страницу открывает только её сайт (остальные отвечают null без запроса).</summary>
+    public async Task<Uri?> PreviewOfAsync(Uri page, CancellationToken ct)
+    {
+        foreach (var src in _all)
+        {
+            try
+            {
+                if (await src.GetListingAsync(page, ct).ConfigureAwait(false) is { PreviewUrl: { } img }) return img;
+            }
+            catch (Exception e) when (e is not OperationCanceledException) { return null; } // сайт не ответил — без картинки
+        }
+        return null;
     }
 
     private SearchService Service()

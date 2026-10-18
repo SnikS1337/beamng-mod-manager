@@ -90,6 +90,31 @@ public static class SearchQualityTests
             Assert.Eq(0, (await new ModsGamingSource(F(u => Wide(u) ? html : "<html></html>")).SearchAsync("bmv")).Count);
         });
 
+        t.Run("ModsGaming: картинка мода — со страницы мода (detimg), не из «похожих модов» ниже", () =>
+        {
+            var html = Fx("modsgaming/mod-real.html");
+            Assert.Eq("https://modsgaming.ru/_ld/1604/53750859.jpg", ModsGamingParser.ImageOf(html)?.AbsoluteUri);
+            var related = "<tr><td class=\"poh-td\" style=\"background:url(/_ld/1588/59283584.jpg);\"></td></tr>";
+            Assert.True(ModsGamingParser.ImageOf(related) is null, "чужая картинка");
+            Assert.True(ModsGamingParser.ImageOf("<td class=\"detimg\" style=\"background:url(http://evil.example/a.jpg);\">") is null, "только свой сайт");
+        });
+
+        t.Run("поиск: картинку со страницы мода открывает только её сайт; чужой адрес — без запросов", async () =>
+        {
+            var html = Fx("modsgaming/mod-real.html");
+            var asked = new List<string>();
+            var f = new PoliteFetcher(new Page(u => { lock (asked) asked.Add(u.AbsoluteUri); return html; }),
+                new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero }, delay: (_, _) => Task.CompletedTask);
+            var backend = new BeamModManager.Ui.Search.LibrarySearchBackend(
+                new IModSource[] { new StModsSource(f), new ModsGamingSource(f) }, () => new BeamModManager.Core.Settings.AppSettings(),
+                new BeamModManager.Core.Matching.MatchDecisionStore());
+            var page = new Uri("https://modsgaming.ru/load/beamng_drive/mashiny/x/38-1-0-1");
+            Assert.Eq("https://modsgaming.ru/_ld/1604/53750859.jpg", (await backend.PreviewOfAsync(page, default))?.AbsoluteUri);
+            Assert.Eq(page.AbsoluteUri, asked.Single());
+            Assert.True(await backend.PreviewOfAsync(new Uri("https://example.com/x"), default) is null, "чужой сайт");
+            Assert.Eq(1, asked.Count);
+        });
+
         t.Run("ModsGaming: слово только в описании (TAA) — запрос как есть находит, такие моды остаются", async () =>
         {
             var html = Fx("modsgaming/search-real.html");
