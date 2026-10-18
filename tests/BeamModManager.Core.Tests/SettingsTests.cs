@@ -27,6 +27,29 @@ public static class SettingsTests
             Assert.Eq(6, r.Settings.CheckTtlHours);
         });
 
+        t.Run("Modland выключен по умолчанию; у старых настроек — один раз; включённый вручную остаётся включённым", () =>
+        {
+            Assert.False(new AppSettings().IsSourceEnabled("modland"), "новые настройки");
+            Assert.True(new AppSettings().IsSourceEnabled("stmods"), "остальные включены");
+            var dir = Tmp();
+            var p = Path.Combine(dir, "settings.json");
+            Assert.False(new SettingsStore(p).Load().Settings.IsSourceEnabled("modland"), "файла нет");
+
+            File.WriteAllText(p, "{ \"SchemaVersion\": 1, \"DisabledSources\": [\"stmods\"] }");
+            var old = new SettingsStore(p).Load();
+            Assert.False(old.Settings.IsSourceEnabled("modland"), "версия 1 — выключили");
+            Assert.False(old.Settings.IsSourceEnabled("stmods"), "своё выключенное не потеряли");
+            Assert.False(old.HadProblems, "без предупреждений");
+
+            new SettingsStore(p).Save(old.Settings with { DisabledSources = new[] { "stmods" } }); // человек включил Modland
+            var again = new SettingsStore(p).Load().Settings;
+            Assert.True(again.IsSourceEnabled("modland"), "включённый вручную не выключается снова");
+            Assert.Eq(AppSettings.CurrentSchema, again.SchemaVersion);
+
+            File.WriteAllText(p, "{ \"AllowDownloads\": true }");
+            Assert.False(new SettingsStore(p).Load().Settings.IsSourceEnabled("modland"), "без номера версии — как версия 1");
+        });
+
         t.Run("проверка при запуске включена по умолчанию, но загрузка остаётся выключенной; явное false сохраняется", () =>
         {
             var d = new AppSettings();

@@ -356,7 +356,7 @@ public static class SiteChangeTests
         {
             var p = new Pages();
             var f = Polite(p);
-            var s = new AppSettings();
+            var s = new AppSettings { DisabledSources = Array.Empty<string>() };
             var be = new LibraryUpdatesBackend(new InMemoryLibraryStore(), All(f), () => s, () => Now);
             foreach (var link in new[] { StFeed, "https://www.modland.net/beamng.drive-mods/cars", "modsgaming.ru/load/beamng_drive/mashiny/38", "https://beamng.com/resources/" })
                 Assert.Eq("Это раздел сайта, а не страница мода. Откройте сам мод и скопируйте ссылку оттуда", (await be.CheckPageAsync(link)).Problem);
