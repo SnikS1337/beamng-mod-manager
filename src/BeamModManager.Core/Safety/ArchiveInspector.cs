@@ -117,6 +117,12 @@ public static class ArchiveInspector
         }
     }
 
+    /// <summary>Папка верхнего уровня, которую ждёт игра (vehicles, levels, art, lua…).</summary>
+    public static bool IsKnownRoot(string folder) => KnownRoots.Contains(folder);
+
+    /// <summary>Путь внутри архива, который нельзя распаковывать (выход из папки, диск, поток NTFS, управляющие символы).</summary>
+    public static bool IsUnsafeEntryPath(string name) => IsUnsafePath(name.Replace('\\', '/'));
+
     private static bool IsUnsafePath(string name)
     {
         if (name.StartsWith('/')) return true;

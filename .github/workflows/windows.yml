@@ -135,6 +135,14 @@ jobs:
           Shot 'update-ready' @('--update', 'ready', '--width', '1360')
           Shot 'update-failed' @('--update', 'failed', '--width', '1360')
           Shot 'light-update-downloading' @('--mode', 'Light', '--update', 'downloading', '--width', '1360')
+          # установка из архива: окно проверки (обновление; пак из трёх: новый, с кодом, уже стоит; не мод), светлое — новый
+          # из RAR с перепаковкой; плашка «Скачан мод»; подсказка при перетаскивании
+          Shot 'incoming-update' @('--incoming', 'civic_update.zip')
+          Shot 'incoming-several' @('--incoming', 'jdm_several.7z')
+          Shot 'incoming-problem' @('--incoming', 'photos_problem.zip', '--width', '1100', '--height', '760')
+          Shot 'light-incoming-new' @('--mode', 'Light', '--incoming', 'Lancer Evo IX.rar')
+          Shot 'incoming-offer' @('--offer', 'civic_update.zip', '--width', '1360')
+          Shot 'drop-hint' @('--drop-hint')
           # тост «выключен» с «Отменить» и полосой «сколько осталось» (тёмное и светлое)
           Shot 'garage-toast' @('--select', '"Dacia Sandero Stepway"', '--toggle')
           Shot 'light-garage-toast' @('--mode', 'Light', '--select', '"Dacia Sandero Stepway"', '--toggle')

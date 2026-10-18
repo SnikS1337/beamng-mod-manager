@@ -41,4 +41,27 @@ public sealed class SwitchingBackend : IGarageBackend
     public OpResult RestoreDeleted(DeletedGarageMod mod) => Inner.RestoreDeleted(mod);
 
     private IGarageBackend OwnerOf(DeletedTicket t) => _owners.TryGetValue(t, out var b) ? b : Inner;
+
+    // разбор и установка — у папки, где разбирали; «Отменить» — у той, куда поставили (папку могли сменить, пока висел тост)
+    private readonly ConditionalWeakTable<IncomingArchive, IGarageBackend> _incoming = new();
+    private readonly ConditionalWeakTable<IncomingTicket, IGarageBackend> _installed = new();
+
+    public IncomingArchive InspectIncoming(string path, CancellationToken ct)
+    {
+        var inner = Inner;
+        var a = inner.InspectIncoming(path, ct);
+        _incoming.AddOrUpdate(a, inner);
+        return a;
+    }
+
+    public IncomingResult InstallIncoming(IncomingMod mod)
+    {
+        var inner = Inner;
+        var r = inner.InstallIncoming(mod);
+        if (r.Ticket is { } t) _installed.AddOrUpdate(t, inner);
+        return r;
+    }
+
+    public OpResult UndoIncoming(IncomingTicket ticket) => (_installed.TryGetValue(ticket, out var b) ? b : Inner).UndoIncoming(ticket);
+    public void DiscardIncoming(IncomingArchive archive) => (_incoming.TryGetValue(archive, out var b) ? b : Inner).DiscardIncoming(archive);
 }
