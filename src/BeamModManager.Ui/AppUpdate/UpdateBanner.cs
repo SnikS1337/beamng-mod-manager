@@ -29,6 +29,12 @@ public sealed class UpdateBanner : Observable
     /// <summary>Сколько секунд от «готово» до перезапуска: человек успевает увидеть, что программа сейчас закроется.</summary>
     public const int RestartDelay = 3;
 
+    /// <summary>
+    /// Сколько секунд видно сообщение «У вас последняя версия» (и «У вас версия …: …») после «Проверить»: это просто
+    /// ответ, кнопок у него нет, и он уходит сам (решено 2026-10-18 — «Позже» к нему не подходило).
+    /// </summary>
+    public const int NoticeSeconds = 5;
+
     private readonly IAppUpdater? _updater;
     private readonly Action<Action> _ui;
     private readonly Action _restart;
@@ -36,6 +42,8 @@ public sealed class UpdateBanner : Observable
     private readonly Func<TimeSpan, Task> _delay;
     private bool _dismissed, _manual, _restartRequested, _counting;
     private int _left;
+    private int _check; // номер проверки по кнопке: сообщение прошлой проверки не прячет ответ новой
+    private int _noticeFor = -1; // для какой проверки уже идёт отсчёт до скрытия ответа
     private double? _lastProgress;
     private (DateTimeOffset At, double P)? _start;
     private double _speed; // байт в секунду, сглаженная
@@ -95,6 +103,7 @@ public sealed class UpdateBanner : Observable
         if (_updater is null) return Task.CompletedTask;
         _manual = true;
         _dismissed = false;
+        _check++;
         var t = _updater.CheckAsync(manual: true, ct);
         Sync();
         return t;
@@ -107,7 +116,7 @@ public sealed class UpdateBanner : Observable
         switch (_updater.State.Stage)
         {
             case UpdateStage.Available: _lastProgress = null; _start = null; _speed = 0; _ = _updater.InstallAsync(ct); break;
-            case UpdateStage.Failed: _manual = true; _ = _updater.CheckAsync(manual: true, ct); break;
+            case UpdateStage.Failed: _manual = true; _check++; _ = _updater.CheckAsync(manual: true, ct); break;
             case UpdateStage.ReadyToRestart: RequestRestart(); break;
         }
         Sync();
@@ -206,12 +215,14 @@ public sealed class UpdateBanner : Observable
             case UpdateStage.UpToDate when _manual && s.Error is not null:
                 Phase = BannerPhase.Message;
                 Progress = null;
-                Show($"У вас версия {AppVersion.Display(_updater.Current)}: {s.Error}", null, dismiss: true);
+                Show($"У вас версия {AppVersion.Display(_updater.Current)}: {s.Error}", null, dismiss: false);
+                HideNoticeLater();
                 break;
             case UpdateStage.UpToDate when _manual:
                 Phase = BannerPhase.Message;
                 Progress = null;
-                Show($"У вас последняя версия {AppVersion.Display(_updater.Current)}", null, dismiss: true);
+                Show($"У вас последняя версия {AppVersion.Display(_updater.Current)}", null, dismiss: false);
+                HideNoticeLater();
                 break;
             case UpdateStage.Failed when _manual:
                 Phase = BannerPhase.Message;
@@ -222,6 +233,28 @@ public sealed class UpdateBanner : Observable
                 Progress = null;
                 Visible = false; // автопроверка: «нет обновлений» и «нет сети» не показываем
                 break;
+        }
+    }
+
+    /// <summary>Ответ «У вас последняя версия» уходит сам через <see cref="NoticeSeconds"/> с, если за это время не проверили снова.</summary>
+    private void HideNoticeLater()
+    {
+        if (_noticeFor == _check) return;
+        var check = _noticeFor = _check;
+        _ = HideAsync();
+
+        async Task HideAsync()
+        {
+            await _delay(TimeSpan.FromSeconds(NoticeSeconds)).ConfigureAwait(false);
+            _ui(() =>
+            {
+                lock (_syncGate)
+                {
+                    if (check != _check || _updater?.State.Stage != UpdateStage.UpToDate) return;
+                    _manual = false; // дальше как после автопроверки: «нет обновлений» не показываем
+                    SyncCore();
+                }
+            });
         }
     }
 

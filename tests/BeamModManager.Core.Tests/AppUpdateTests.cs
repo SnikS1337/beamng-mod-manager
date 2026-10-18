@@ -675,14 +675,48 @@ public static class AppUpdateTests
             Assert.True(b.Text.StartsWith("Версия 0.1.30 готова"), b.Text);
         });
 
-        t.Run("«Позже» прячет до следующего раза; «Проверить» по кнопке показывает результат", async () =>
+        t.Run("«Проверить» по кнопке: «У вас последняя версия» без кнопок, уходит само через 5 с", async () =>
         {
             using var r = new Rig("0.1.30");
             r.Publish("0.1.30");
-            var b = new UpdateBanner(r.U, a => a(), () => { });
+            var waits = new List<TimeSpan>();
+            var go = new TaskCompletionSource();
+            var b = new UpdateBanner(r.U, a => { lock (r) a(); }, () => { }, delay: async t => { lock (waits) waits.Add(t); await go.Task; });
             await b.CheckNowAsync();
             await Until(() => b.Text.StartsWith("У вас"));
             Assert.Eq("У вас последняя версия 0.1.30", b.Text);
+            Assert.True(b.Visible && b.ActionLabel is null && !b.CanDismiss, "просто сообщение, без «Позже»");
+            await Until(() => { lock (waits) return waits.Count > 0; });
+            lock (waits) Assert.Eq(TimeSpan.FromSeconds(UpdateBanner.NoticeSeconds), waits.Single());
+            go.SetResult();
+            await Until(() => !b.Visible);
+            r.Now = r.Now.AddMinutes(1);
+            await b.CheckOnStartAsync();
+            await Task.Delay(50);
+            Assert.False(b.Visible, "после скрытия автопроверка по-прежнему молчит");
+        });
+
+        t.Run("ответ прошлой проверки не прячет новую; «Позже» прячет до следующего раза", async () =>
+        {
+            using var r = new Rig("0.1.30");
+            r.Publish("0.1.30");
+            var first = new TaskCompletionSource();
+            var calls = 0;
+            var b = new UpdateBanner(r.U, a => { lock (r) a(); }, () => { },
+                delay: t => Interlocked.Increment(ref calls) == 1 ? first.Task : new TaskCompletionSource().Task);
+            await b.CheckNowAsync();
+            await Until(() => b.Text.StartsWith("У вас") && Volatile.Read(ref calls) == 1);
+            r.Now = r.Now.AddMinutes(1);
+            await b.CheckNowAsync();
+            await Until(() => b.Text.StartsWith("У вас") && Volatile.Read(ref calls) == 2);
+            first.SetResult();
+            await Task.Delay(50);
+            Assert.True(b.Visible, "таймер первой проверки не трогает ответ второй");
+            r.Publish("0.1.31");
+            r.Now = r.Now.AddMinutes(1);
+            await b.CheckNowAsync();
+            await Until(() => b.Text.StartsWith("Вышла"));
+            Assert.True(b.CanDismiss, "у новой версии «Позже» есть");
             b.Dismiss();
             Assert.False(b.Visible, "спрятано");
             Assert.False(new UpdateBanner(null, a => a(), () => { }).Supported, "без обновлятора — нечего показывать");
