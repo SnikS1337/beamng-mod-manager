@@ -276,6 +276,35 @@ public static class XamlTests
             Assert.True(sw.Contains("радужная кромка", StringComparison.Ordinal), "у ручки радужная кромка");
         });
 
+        t.Run("что нового (CHANGES.md): у каждой версии раздел по строке на изменение, новые сверху; выпуск берёт его", () =>
+        {
+            var root = Path.GetFullPath(Path.Combine(AppDir()!, "..", ".."));
+            var lines = File.ReadAllLines(Path.Combine(root, "CHANGES.md"));
+            var versions = new List<Version>();
+            var items = 0;
+            foreach (var l in lines)
+            {
+                var h = Regex.Match(l, @"^##\s+v?(\S+)\s*$");
+                if (h.Success)
+                {
+                    if (versions.Count > 0) Assert.True(items > 0, $"раздел {versions[^1]} пустой");
+                    var v = Version.Parse(h.Groups[1].Value.Split('.').Length == 2 ? h.Groups[1].Value + ".0" : h.Groups[1].Value);
+                    if (versions.Count > 0) Assert.True(v < versions[^1], $"{v}: версии сверху вниз от новой к старой");
+                    versions.Add(v);
+                    items = 0;
+                    continue;
+                }
+                if (versions.Count == 0 || l.Trim().Length == 0) continue;
+                Assert.True(l.StartsWith("- ", StringComparison.Ordinal), $"строка изменения начинается с «- »: {l}");
+                Assert.True(l.Length <= 90 && !l.TrimEnd().EndsWith('.'), $"суперкратко и без точки: {l}");
+                items++;
+            }
+            Assert.True(versions.Count > 0 && items > 0, "есть хотя бы одна версия с изменениями");
+            var ci = File.ReadAllText(Path.Combine(root, ".github", "workflows", "windows.yml"));
+            Assert.True(ci.Contains("Get-Content CHANGES.md", StringComparison.Ordinal) && ci.Contains("--notes $notes", StringComparison.Ordinal)
+                && ci.Contains("Get-Content notes.md", StringComparison.Ordinal), "выпуск пишет в описание раздел своей версии");
+        });
+
         t.Run("значок программы: в exe и у окна, в ICO все размеры от 16 до 256 (мелкие нарисованы отдельно)", () =>
         {
             var proj = Read("BeamModManager.App.csproj");
