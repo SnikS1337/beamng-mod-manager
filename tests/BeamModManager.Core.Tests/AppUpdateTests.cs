@@ -90,6 +90,16 @@ public static class AppUpdateTests
 
         t.Group("Самообновление: описание версии");
 
+        t.Run("найдено после 0.3.1: выпуски с нулём третьим номером (0.2, 0.3) тоже обновляются; сборка разработки — нет", () =>
+        {
+            Assert.True(AppVersion.IsRelease(new Version(0, 3, 0, 0)), "0.3");
+            Assert.True(AppVersion.IsRelease(new Version(0, 2, 0, 0)), "0.2");
+            Assert.True(AppVersion.IsRelease(new Version(0, 3, 1, 0)), "0.3.1");
+            Assert.True(AppVersion.IsRelease(new Version(0, 1, 129, 0)), "0.1.129");
+            Assert.False(AppVersion.IsRelease(new Version(1, 0, 0, 0)), "1.0.0.0 — dotnet run");
+            Assert.False(AppVersion.IsRelease(new Version(0, 0, 0, 0)), "0.0.0.0");
+        });
+
         t.Run("правильное описание разбирается; «v0.1.30» и «0.1.30.0» — одна версия", () =>
         {
             var zip = ReleaseZip();

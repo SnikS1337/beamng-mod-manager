@@ -61,6 +61,13 @@ public static class AppVersion
     /// <summary>Строго новее: на ту же или старую версию не «обновляемся».</summary>
     public static bool IsNewer(Version candidate, Version current) => Normalize(candidate) > Normalize(current);
 
+    /// <summary>
+    /// Сборка с машины сборки, которой можно обновляться: 0.x с номером («0.1.129», «0.2», «0.3.1»). 1.0.0.0 — без номера
+    /// (dotnet run, папка разработки). Раньше требовался третий номер больше нуля, и выпуски 0.2 и 0.3 (0.2.0, 0.3.0)
+    /// считали себя сборкой разработки: обновлений не искали вовсе (найдено после 0.3.1, 2026-10-18).
+    /// </summary>
+    public static bool IsRelease(Version v) => v.Major == 0 && (v.Minor > 0 || v.Build > 0);
+
     /// <summary>Как показывать человеку: без хвостовых нулей («0.1.30», «0.2», «0.2.1»; выпуски с 0.2 — две-три части).</summary>
     public static string Display(Version v) => v.Revision > 0 ? v.ToString(4) : v.Build > 0 ? v.ToString(3) : v.ToString(2);
 }

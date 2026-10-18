@@ -186,6 +186,11 @@ jobs:
           Shot 'garage-dusk' @('--theme', 'Dusk')
           Shot 'settings' @('--page', 'settings')
           Shot 'light-garage' @('--mode', 'Light', '--select', '"Dacia Sandero Stepway"')
+          # масштаб 200 % (виртуалка на Mac): края островка и капсулы, кольца фона; узкое окно — островок слева, как на видео
+          Shot 'light-x2' @('--mode', 'Light', '--theme', 'Dusk', '--width', '1215', '--height', '700', '--scale', '2')
+          Shot 'dark-x2' @('--width', '1215', '--height', '700', '--scale', '2')
+          Shot 'light-drops-x2' @('--mode', 'Light', '--theme', 'Dusk', '--width', '1215', '--height', '700', '--scale', '2', '--drop-motion')
+          Shot 'drops' @('--drop-motion')
           Shot 'light-deep' @('--mode', 'Light', '--theme', 'Deep')
           Shot 'light-dusk' @('--mode', 'Light', '--theme', 'Dusk', '--width', '1100', '--height', '760')
           Shot 'light-settings' @('--mode', 'Light', '--page', 'settings')
@@ -249,7 +254,8 @@ jobs:
           git commit -q -m "Снимки для $env:GITHUB_SHA"
           git push -f -q origin HEAD:ci-shots
 
-  # Самообновление целиком на настоящей Windows: две сборки как у выпуска (0.1.1 и 0.1.2); выпуск лежит в папке вместо
+  # Самообновление целиком на настоящей Windows: две сборки как у выпуска (0.3.0 и 0.3.1: у прежней третий номер 0 — так
+  # выглядели 0.2 и 0.3, которые из-за этого обновлений не искали); выпуск лежит в папке вместо
   # GitHub (BMM_TEST_UPDATE_FEED — подменяется только сеть, проверки те же). Программа — на другом диске, чем профиль
   # (D: и C:), в папке с русскими буквами и пробелами. Программа сама пишет в log.txt папки выпуска, что запустилось.
   # Долгая (две self-contained сборки), а меняется самообновление редко: идёт только перед выпуском, по «Run workflow»
@@ -274,7 +280,7 @@ jobs:
       - name: Две сборки как у выпуска
         shell: pwsh
         run: |
-          foreach ($v in '0.1.1', '0.1.2') {
+          foreach ($v in '0.3.0', '0.3.1') {
             dotnet publish src/BeamModManager.App -c Release -r win-x64 --self-contained true `
               -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
               -p:DebugType=none -p:Version=$v -nologo -o "pub-$v"
@@ -282,12 +288,12 @@ jobs:
           }
           $feed = Join-Path $env:RUNNER_TEMP 'feed'
           New-Item -ItemType Directory $feed -Force | Out-Null
-          Copy-Item tools/release/README.txt "pub-0.1.2/Как запустить.txt"
-          Compress-Archive -Path pub-0.1.2/* -DestinationPath "$feed/ModManagerBeamNG.zip" -Force
+          Copy-Item tools/release/README.txt "pub-0.3.1/Как запустить.txt"
+          Compress-Archive -Path pub-0.3.1/* -DestinationPath "$feed/ModManagerBeamNG.zip" -Force
           $zip = Get-Item "$feed/ModManagerBeamNG.zip"
           [ordered]@{
-            version   = '0.1.2'
-            url       = 'https://github.com/SnikS1337/beamng-mod-manager/releases/download/v0.1.2/ModManagerBeamNG.zip'
+            version   = '0.3.1'
+            url       = 'https://github.com/SnikS1337/beamng-mod-manager/releases/download/v0.3.1/ModManagerBeamNG.zip'
             size      = $zip.Length
             sha256    = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
             notes     = 'проверка'
@@ -315,7 +321,7 @@ jobs:
             if (Test-Path $app) { icacls $app /reset /T /Q | Out-Null }
             Remove-Item -Recurse -Force $app, $data, "$feed/log.txt" -ErrorAction SilentlyContinue
             New-Item -ItemType Directory $app -Force | Out-Null
-            Copy-Item pub-0.1.1/BeamModManager.exe $app/
+            Copy-Item pub-0.3.0/BeamModManager.exe $app/
             foreach ($k in 'BMM_TEST_CRASH_VERSION', 'BMM_TEST_CRASH_HARD') { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
             foreach ($k in $envs.Keys) { Set-Item "env:$k" $envs[$k] }
             $env:BMM_TEST_UPDATE_FEED = $feed
@@ -349,15 +355,15 @@ jobs:
             Write-Host "   ок: $fv"
           }
 
-          Scenario 'обычное обновление' @{} '0.1.2' @(
-            'start 0\.1\.1 normal', 'check Available', 'install ReadyToRestart',
-            'start 0\.1\.2 after-update old=False new=False bad=False', 'check UpToDate')
-          Scenario 'новая версия падает при запуске: возвращает прежнюю сама' @{ BMM_TEST_CRASH_VERSION = '0.1.2' } '0.1.1' @(
-            'install ReadyToRestart', 'start 0\.1\.1 rolled-back old=False new=False bad=False skip=0\.1\.2',
-            'check UpToDate версия 0\.1\.2 не запустилась')
-          Scenario 'новая версия умирает сама: прежнюю возвращает прежний процесс' @{ BMM_TEST_CRASH_VERSION = '0.1.2'; BMM_TEST_CRASH_HARD = '1' } '0.1.1' @(
-            'install ReadyToRestart', 'start 0\.1\.1 rolled-back .*skip=0\.1\.2', 'check UpToDate')
-          Scenario 'нет прав на папку программы: ничего не тронуто' @{} '0.1.1' @(
+          Scenario 'обычное обновление' @{} '0.3.1.0' @(
+            'start 0\.3 normal', 'check Available', 'install ReadyToRestart',
+            'start 0\.3\.1 after-update old=False new=False bad=False', 'check UpToDate')
+          Scenario 'новая версия падает при запуске: возвращает прежнюю сама' @{ BMM_TEST_CRASH_VERSION = '0.3.1' } '0.3.0.0' @(
+            'install ReadyToRestart', 'start 0\.3 rolled-back old=False new=False bad=False skip=0\.3\.1',
+            'check UpToDate версия 0\.3\.1 не запустилась')
+          Scenario 'новая версия умирает сама: прежнюю возвращает прежний процесс' @{ BMM_TEST_CRASH_VERSION = '0.3.1'; BMM_TEST_CRASH_HARD = '1' } '0.3.0.0' @(
+            'install ReadyToRestart', 'start 0\.3 rolled-back .*skip=0\.3\.1', 'check UpToDate')
+          Scenario 'нет прав на папку программы: ничего не тронуто' @{} '0.3.0.0' @(
             'check Available', 'install Available нет прав') {
             # только сама папка: нельзя добавлять файлы и удалять из неё (запуск exe при этом разрешён)
             icacls $app /deny "${env:USERNAME}:(WD,AD,DC)" /Q | Out-Null
