@@ -793,11 +793,12 @@ public partial class MainWindow : Window
     /// <summary>
     /// Зерно фона (2026-10-18, «видны градации цветов»): с видеокартой — прибавкой к цвету, одинаково вверх и вниз на любом
     /// фоне (DitherEffect); без неё и на слабой графике — прежний слой поверх (Grain): шейдер на весь фон каждый кадр
-    /// программная отрисовка не потянет. На снимках — всегда в цвете, чтобы его было видно.
+    /// программная отрисовка не потянет. Снимки на сборочной машине (без видеокарты) — тоже со слоем: шейдер на весь фон
+    /// программно растянул снимки с 6 до 17 минут (2026-10-18).
     /// </summary>
     private void UpdateGrain()
     {
-        if (DitherEffect.IsAvailable && !WeakGraphics())
+        if (DitherEffect.IsAvailable && RenderCapability.Tier >> 16 >= 2 && !WeakGraphics())
         {
             _dither ??= new DitherEffect();
             if (!ReferenceEquals(BackdropPaint.Effect, _dither)) BackdropPaint.Effect = _dither;
