@@ -755,6 +755,19 @@
                             </Grid>
                         </Grid>
                     </Border>
+                    <!-- «Интерфейс работает медленно» (DESIGN.md 5.1, 2026-10-18): анимации на жидком стекле теряют кадры — один раз -->
+                    <Border x:Name="SlowBox" CornerRadius="20" MinHeight="44" Margin="0,0,0,12" Padding="18,6,10,6" Visibility="Collapsed" Opacity="0"
+                            Background="{DynamicResource RowFill}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1">
+                        <Border.RenderTransform><TranslateTransform x:Name="SlowBoxMove"/></Border.RenderTransform>
+                        <DockPanel VerticalAlignment="Center" MinHeight="32">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Style="{StaticResource Secondary}" Height="32" Padding="16,0" Content="Включить «Быстро»" Click="SlowAccept_Click"/>
+                                <Button Style="{StaticResource Link}" Content="Оставить" Margin="8,0,0,0" Click="SlowDecline_Click"/>
+                            </StackPanel>
+                            <TextBlock VerticalAlignment="Center" FontSize="13.5" TextWrapping="Wrap"
+                                       Text="Интерфейс работает медленно. Набор «Быстро» уберёт жидкое стекло и анимации — станет плавнее."/>
+                        </DockPanel>
+                    </Border>
                     <!-- «Скачан мод …» (включено «Разрешить загрузку модов»): программа заметила архив в «Загрузках» и проверила его -->
                     <Border x:Name="OfferBox" CornerRadius="20" MinHeight="44" Margin="0,0,0,12" Padding="18,6,10,6" DataContext="{x:Null}"
                             Visibility="Collapsed" Opacity="0">
@@ -1550,7 +1563,8 @@
                     </StackPanel>
                     <TextBlock Text="{Binding Problem}" FontSize="13.5" TextWrapping="Wrap" Margin="2,14,2,2" Foreground="{DynamicResource Ink2}"
                                Visibility="{Binding Problem, Converter={StaticResource NullToCollapsed}}"/>
-                    <ScrollViewer MaxHeight="440" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Margin="0,14,0,0">
+                    <ScrollViewer MaxHeight="440" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Margin="0,14,0,0"
+                                  Visibility="{Binding HasItems, Converter={StaticResource BoolToVis}}">
                         <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type i:IncomingItem}">

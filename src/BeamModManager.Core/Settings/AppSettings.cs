@@ -88,6 +88,9 @@ public sealed record AppSettings
     /// <summary>Подсказка первого запуска уже показана.</summary>
     public bool FirstRunDone { get; init; }
 
+    /// <summary>На «Интерфейс работает медленно. Включить «Быстро»?» ответили «Оставить»: больше не спрашиваем (2026-10-18).</summary>
+    public bool SlowOfferDeclined { get; init; }
+
     /// <summary>Размер окна при закрытии (0 — не сохранён, окно открывается по умолчанию). Меньше минимума окна 1000 × 680
     /// (DESIGN_FLOWS.md 2) не бывает: такое значение считается мусором.</summary>
     public int WindowWidth { get; init; }

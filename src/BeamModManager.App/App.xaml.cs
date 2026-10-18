@@ -175,6 +175,7 @@ public partial class App : Application
                 ShotIncoming = Arg("--incoming"),
                 ShotOffer = Arg("--offer"),
                 ShotDropHint = Array.IndexOf(Environment.GetCommandLineArgs(), "--drop-hint") >= 0,
+                ShotSlowOffer = Array.IndexOf(Environment.GetCommandLineArgs(), "--slow-offer") >= 0,
                 ShotWidth = double.TryParse(Arg("--width"), System.Globalization.CultureInfo.InvariantCulture, out var sw) ? sw : null,
                 ShotHeight = double.TryParse(Arg("--height"), System.Globalization.CultureInfo.InvariantCulture, out var sh) ? sh : null,
                 // настройки в демо живут только в памяти: файл пользователя не трогаем

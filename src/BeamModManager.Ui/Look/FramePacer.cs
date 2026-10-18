@@ -49,8 +49,12 @@ public sealed class FramePolicy
     /// Итог одной анимации: сколько кадров показано, сколько опоздало и на каком экране (интервал кадра экрана, с).
     /// На экране 60 Гц снижать некуда — там ничего не меняется.
     /// </summary>
+    /// <summary>Итог каждой анимации, по которой можно судить (кадров не меньше <see cref="MinFramesToJudge"/>): кадров, опоздавших.</summary>
+    public event Action<int, int>? Judged;
+
     public void Report(int frames, int late, double screenInterval)
     {
+        if (frames >= MinFramesToJudge) Judged?.Invoke(frames, late);
         if (frames < MinFramesToJudge || PowerSaving || Degraded) return;
         if (screenInterval >= 1 / (SafeHz + 15)) return; // экран и так не быстрее ~75 Гц
         if (late > frames * LateShare)

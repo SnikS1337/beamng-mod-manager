@@ -146,6 +146,9 @@ public sealed class SettingsViewModel : Observable
     /// <summary>«Вернуть как в наборе»: движение — как в наборе, чьё стекло сейчас стоит.</summary>
     public void ReapplyPreset() => ApplyPreset(_current.LiquidGlass ? AppearancePreset.Beautiful : AppearancePreset.Fast);
 
+    /// <summary>«Оставить» на «Интерфейс работает медленно…»: больше не спрашиваем (запоминается).</summary>
+    public void DeclineSlowOffer() => Update(s => s with { SlowOfferDeclined = true });
+
     public void ApplyPreset(AppearancePreset p) => Update(s => AppearancePresets.Apply(s, p));
 
     /// <summary>Оформление: тёмное, светлое, как в Windows.</summary>
