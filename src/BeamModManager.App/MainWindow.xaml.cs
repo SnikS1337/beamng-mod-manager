@@ -2439,7 +2439,16 @@ public partial class MainWindow : Window
             case MainAction.Restore:
                 if (_vm.Selected is { } gone) _vm.RestoreDeleted(gone);
                 break;
+            case MainAction.ConfirmPage:
+                if (_vm.Selected is { } found) _upd.ConfirmPage(found);
+                break;
         }
+    }
+
+    /// <summary>Ссылка под главной кнопкой: «Это другой мод» у страницы, которую нашла программа.</summary>
+    private void AltAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm.Details?.Action == MainAction.ConfirmPage && _vm.Selected is { } card) _upd.RejectPage(card);
     }
 
     private void EmptyAction_Click(object sender, RoutedEventArgs e)

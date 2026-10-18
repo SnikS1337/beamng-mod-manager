@@ -1432,6 +1432,8 @@
                                     <TextBlock Text="{Binding Details.ActionHint}" FontSize="12.5" Foreground="{DynamicResource Ink2}" Margin="0,8,0,0"
                                                TextAlignment="Center" TextWrapping="Wrap"
                                                Visibility="{Binding Details.ActionHint, Converter={StaticResource NullToCollapsed}}"/>
+                                    <Button Style="{StaticResource Link}" Content="{Binding Details.AltLabel}" Click="AltAction_Click" HorizontalAlignment="Center" Foreground="{DynamicResource Ink2}" FontSize="12.5"
+                                            Margin="0,2,0,0" Visibility="{Binding Details.AltLabel, Converter={StaticResource NullToCollapsed}}"/>
                                 </StackPanel>
 
                                 <Border CornerRadius="16" Background="{DynamicResource DataBlock}" BorderBrush="{DynamicResource RowRim}" BorderThickness="1" Margin="0,18,0,0">

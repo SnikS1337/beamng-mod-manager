@@ -95,6 +95,7 @@ public sealed class JsonLibraryStore : ILibraryStore
     public string? GetDismissedUpdate(string modId) => _m.GetDismissedUpdate(modId);
     public IReadOnlyList<string> FileHistory(string modId) => _m.FileHistory(modId);
     public bool IsCheckingDeclined(string modId) => _m.IsCheckingDeclined(modId);
+    public PageSearch? GetPageSearch(string modId) => _m.GetPageSearch(modId);
 
     // ---- изменения: в память и на диск
     // сверка с папкой при каждом возврате в окно переписывает те же записи: если ничего не изменилось, файл не трогаем
@@ -115,6 +116,7 @@ public sealed class JsonLibraryStore : ILibraryStore
     public void SetDismissedUpdate(string modId, string? key) { lock (_g) { if (_m.GetDismissedUpdate(modId) == (string.IsNullOrEmpty(key) ? null : key)) return; _m.SetDismissedUpdate(modId, key); Changed(); } }
     public void AddFileHistory(string modId, string fileName) { lock (_g) { _m.AddFileHistory(modId, fileName); Changed(); } }
     public void SetCheckingDeclined(string modId, bool declined) { lock (_g) { _m.SetCheckingDeclined(modId, declined); Changed(); } }
+    public void SetPageSearch(string modId, PageSearch? state) { lock (_g) { if (_m.GetPageSearch(modId) == state) return; _m.SetPageSearch(modId, state); Changed(); } }
 
     // ---- файл
     private sealed record FileModel(
@@ -125,7 +127,9 @@ public sealed class JsonLibraryStore : ILibraryStore
         Dictionary<string, SourceStatus> Sources,
         Dictionary<string, string> Dismissed,
         Dictionary<string, List<string>> History,
-        List<string> Declined);
+        List<string> Declined,
+        // с 0.3.9: подбор страниц; в прежних файлах его нет
+        Dictionary<string, PageSearch>? PageSearches = null);
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -143,7 +147,8 @@ public sealed class JsonLibraryStore : ILibraryStore
             _m.SourceStatuses().ToDictionary(k => k.Key, v => v.Value),
             mods.Select(m => (m.Id, D: _m.GetDismissedUpdate(m.Id))).Where(x => x.D is not null).ToDictionary(x => x.Id, x => x.D!),
             mods.Select(m => (m.Id, H: _m.FileHistory(m.Id))).Where(x => x.H.Count > 0).ToDictionary(x => x.Id, x => x.H.ToList()),
-            mods.Where(m => _m.IsCheckingDeclined(m.Id)).Select(m => m.Id).ToList());
+            mods.Where(m => _m.IsCheckingDeclined(m.Id)).Select(m => m.Id).ToList(),
+            mods.Select(m => (m.Id, P: _m.GetPageSearch(m.Id))).Where(x => x.P is not null).ToDictionary(x => x.Id, x => x.P!));
         if (_saveBlocked)
         {
             _saveError = "файл библиотеки был занят при запуске; чтобы не потерять его, изменения не пишутся до перезапуска";
@@ -208,6 +213,7 @@ public sealed class JsonLibraryStore : ILibraryStore
         foreach (var (k, v) in f.Dismissed ?? new()) _m.SetDismissedUpdate(k, v);
         foreach (var (k, list) in f.History ?? new()) foreach (var n in list ?? new()) _m.AddFileHistory(k, n);
         foreach (var id in f.Declined ?? new()) _m.SetCheckingDeclined(id, true); // после привязок: подтверждённая привязка снимает отказ
+        foreach (var (k, v) in f.PageSearches ?? new()) if (v is not null) _m.SetPageSearch(k, v);
         if (skipped > 0) w.Add($"записей библиотеки пропущено из-за неверных данных: {skipped}");
     }
 

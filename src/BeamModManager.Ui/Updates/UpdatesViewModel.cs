@@ -464,9 +464,24 @@ public sealed class UpdatesViewModel : Observable
             // сбой проверки не роняет окно: найденное раньше остаётся, причина — строкой в панели
             _result = "Проверка не удалась: " + e.Message;
         }
+        // моды без страницы: ищем их на сайтах тем же ходом (кроме остановленной проверки)
+        var pages = 0;
+        if (report is not { Cancelled: true })
+        {
+            var titles = _garage.AllCards.ToDictionary(c => c.Id, c => (string?)c.Data.Title);
+            try { pages = await _backend.FindPagesAsync(id => titles.GetValueOrDefault(id), progress); }
+            catch (Exception e) when (e is not OutOfMemoryException) { pages = 0; } // подбор — подсказка: его сбой проверку не портит
+        }
         Checking = false;
         ProgressText = null;
         if (report is not null) _result = Summarize(report, started, manual);
+        if (pages > 0)
+        {
+            var note = pages == 1 ? "Нашли страницу для 1 мода: подтвердите её в «Моды → Не проверяются»"
+                : $"Нашли страницы для {Ru.Count(pages, "мода", "модов", "модов")}: подтвердите их в «Моды → Не проверяются»";
+            _result = _result is null ? note + "." : _result + " " + note + ".";
+            _garage.Notify(note, null);
+        }
         _garage.Refresh(); // новые версии видны и в гараже (плашки, фильтр «Нужно обновить», бейдж)
         Rebuild();
     }
@@ -474,6 +489,13 @@ public sealed class UpdatesViewModel : Observable
     private void OnProgress(UpdateProgress p)
     {
         if (!Checking || p.Stage == "готово" || p.Source.Length == 0) return;
+        if (p.Stage == LibraryUpdatesBackend.PagesStage)
+        {
+            // проверка закончена, ищем страницы модам без них: свой счёт
+            ProgressText = $"ищем страницы модов: {p.Done} из {p.Total}";
+            ProgressValue = p.Total > 0 ? Math.Clamp(p.Done / (double)p.Total, 0, 1) : 0;
+            return;
+        }
         _progress[p.Source + "|" + p.Stage] = (p.Done, Math.Max(p.Done, p.Total));
         // карточки — основная работа; ленты считаем, пока до карточек не дошли
         var cards = _progress.Where(kv => kv.Key.EndsWith("|карточки", StringComparison.Ordinal)).Select(kv => kv.Value).ToList();
@@ -556,6 +578,28 @@ public sealed class UpdatesViewModel : Observable
                 break;
             }
         }
+    }
+
+    /// <summary>«Следить» у страницы, которую программа нашла сама: тост с «Отменить».</summary>
+    public void ConfirmPage(Garage.ModCard card)
+    {
+        var s = _backend.ConfirmPage(card.Id);
+        if (s is null) return;
+        _garage.Refresh();
+        Rebuild();
+        _garage.Notify($"Следим за «{card.Name}» на {SiteNames.Of(s.Source)}. Новую версию заметим при проверке",
+            () => { _backend.UndoPage(s); _garage.Refresh(); Rebuild(); });
+    }
+
+    /// <summary>«Это другой мод»: страницу больше не предлагаем; указать свою можно как раньше.</summary>
+    public void RejectPage(Garage.ModCard card)
+    {
+        var s = _backend.RejectPage(card.Id);
+        if (s is null) return;
+        _garage.Refresh();
+        Rebuild();
+        _garage.Notify("Эту страницу больше не предлагаем. Свою можно указать в «Указать страницу»",
+            () => { _backend.UndoPage(s); _garage.Refresh(); Rebuild(); });
     }
 
     /// <summary>«Проверить снова»: снимаем паузу, следующая проверка его опросит.</summary>

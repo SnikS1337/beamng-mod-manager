@@ -68,4 +68,5 @@ WindowFitTests.Register(t);
 AuditFixesTests.Register(t);
 ModlandBrowserTests.Register(t);
 SearchQualityTests.Register(t);
+PageGuessTests.Register(t);
 return t.Summary();

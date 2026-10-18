@@ -25,6 +25,9 @@ public sealed record GarageMod(
     public bool Tracked => Binding is { Confirmed: true };
     public bool NeedsUpdate => Update is { IsDismissed: false };
 
+    /// <summary>Страница, которую программа нашла сама и ждёт «Следить» (PageGuesser); null — нет или мод уже отслеживается.</summary>
+    public ModBinding? Suggested { get; init; }
+
     /// <summary>Размер файла на сайте при последней проверке (для «Размер 142 → 151 МБ» в «Обновлениях»).</summary>
     public long? SiteSizeBytes { get; init; }
 
@@ -521,6 +524,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
         var cached = _previews.Snapshot();
         var updates = UpdateCheckService.Pending(_store, includeDismissed: true).ToDictionary(f => f.ModId);
         var bindings = _store.Bindings().Where(b => b.Confirmed).ToLookup(b => b.ModId);
+        var suggested = _store.Bindings().Where(b => !b.Confirmed).ToLookup(b => b.ModId);
         var result = new List<GarageMod>();
         var stamps = new List<ArchiveStamp>();
         DateTimeOffset? lastAll = null;
@@ -561,6 +565,7 @@ public sealed class LibraryGarageBackend : IGarageBackend
                 ArchiveTitle = archiveTitle,
                 ArchiveTitleKnown = titleKnown,
                 SiteTitle = c?.LastTitle,
+                Suggested = b is null ? suggested[m.Id].FirstOrDefault() : null,
             });
         }
         IReadOnlyList<DeletedGarageMod> deleted;

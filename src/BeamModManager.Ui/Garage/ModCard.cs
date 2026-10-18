@@ -153,7 +153,8 @@ public sealed class ModCard : Observable
         {
             var parts = new List<string>();
             if (d.Mod.Version is { Length: > 0 } v) parts.Add(v);
-            if (!d.Tracked) parts.Add("не проверяется");
+            if (d.Suggested is not null) parts.Add("нашли страницу");
+            else if (!d.Tracked) parts.Add("не проверяется");
             else if (d.Mod.SizeBytes is { } s) parts.Add(Text.Ru.Size(s));
             Subtitle = string.Join(" · ", parts);
         }
