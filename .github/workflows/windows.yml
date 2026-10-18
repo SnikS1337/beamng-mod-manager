@@ -94,8 +94,9 @@ jobs:
           BEFORE: ${{ github.event.before }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          # «Run workflow» — это выпуск: без снимков. Push: [shots] или первый push ветки — со снимками, иначе по изменениям
-          $run = $env:GITHUB_EVENT_NAME -eq 'push'
+          # «Run workflow» и [release] — выпуск: без снимков (2026-10-18: «смысл нам от фоток на релизах»).
+          # Push: [shots] или первый push ветки — со снимками, иначе по изменениям
+          $run = $env:GITHUB_EVENT_NAME -eq 'push' -and $env:MSG -notmatch '\[release'
           if ($run -and $env:MSG -notmatch '\[shots\]' -and $env:BEFORE -notmatch '^0+$') {
             $files = git diff --name-only $env:BEFORE $env:GITHUB_SHA 2>$null
             if ($LASTEXITCODE -eq 0) {
