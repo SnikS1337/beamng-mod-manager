@@ -382,7 +382,7 @@ jobs:
           Scenario 'нет прав на файл программы: ничего не тронуто' @{} '0.3.0.0' @(
             'check Available', 'install Available нет прав') {
             # новая версия пишется в тот же файл: запрет записи в него (запуск exe при этом разрешён)
-            icacls (Join-Path $app 'BeamModManager.exe') /deny "${env:USERNAME}:(W)" /Q | Out-Null
+            icacls (Join-Path $app 'BeamModManager.exe') /deny "${env:USERNAME}:(WD,AD)" /Q | Out-Null
           }
           Stop-Transcript | Out-Null
       - name: Журнал в ветку ci-selfupdate
