@@ -252,5 +252,23 @@ public static class IncomingTests
             var m = IncomingAnalyzer.Analyze(src, new[] { repo }, d["w"], null).Mods.Single();
             Assert.True(m.Kind == IncomingKind.Update && m.Locked && m.ReplacesSubFolder == "repo", $"{m.Kind} {m.Locked}");
         });
+    
+        t.Run("найдено перед выпуском: битые и обрезанные архивы не роняют разбор (200 случайных)", () =>
+        {
+            using var d = new Dir();
+            var rnd = new Random(18);
+            var good = ZipBytes("Car/vehicles/car/a.jbeam", "Car/vehicles/car/info.json", "inner/x.zip");
+            for (var i = 0; i < 200; i++)
+            {
+                byte[] data;
+                if (i % 2 == 0) { data = new byte[rnd.Next(0, 400)]; rnd.NextBytes(data); }
+                else { data = good[..rnd.Next(1, good.Length)]; } // обрезанный настоящий
+                if (i % 7 == 0 && data.Length > 4) { data = (byte[])good.Clone(); data[rnd.Next(data.Length)] ^= 0xFF; } // один испорченный байт
+                var p = d[$"f{i}.zip"];
+                File.WriteAllBytes(p, data);
+                var r = IncomingAnalyzer.Analyze(p, Array.Empty<InstalledArchive>(), d[$"w{i}"], null);
+                Assert.True(r.Problem is not null || r.Mods.Count > 0, $"{i}: ни причины, ни модов");
+            }
+        });
     }
 }
