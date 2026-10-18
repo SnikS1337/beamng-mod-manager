@@ -48,6 +48,21 @@ jobs:
             Select-String -Path tests.log -Pattern ' error ' | Select-Object -First 10 | ForEach-Object { "::error::$($_.Line.Trim())" }
             exit 1
           }
+      # Что умеет tar этой Windows: 7z (LZMA) — им программа распаковывает 7z и RAR (TarExtractor). Только сведения: пометка
+      - name: tar и 7z
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $w = Join-Path $env:RUNNER_TEMP 'tar7z'
+          New-Item -ItemType Directory "$w/src/vehicles/car" -Force | Out-Null
+          Set-Content "$w/src/vehicles/car/info.json" '{"Name":"Car"}'
+          $sz = "${env:ProgramFiles}\7-Zip\7z.exe"
+          if (-not (Test-Path $sz)) { "::notice::7-Zip на машине нет — проверка tar пропущена"; exit 0 }
+          & $sz a -t7z "$w/mod.7z" "$w/src/*" | Out-Null
+          New-Item -ItemType Directory "$w/out" -Force | Out-Null
+          $out = & "$env:SystemRoot\System32\tar.exe" -xf "$w/mod.7z" -C "$w/out" 2>&1
+          $ver = (& "$env:SystemRoot\System32\tar.exe" --version) -join ' '
+          if (Test-Path "$w/out/vehicles/car/info.json") { "::notice::tar распаковал 7z (LZMA): $ver" } else { "::warning::tar не распаковал 7z: $out | $ver" }
 
   # Помощник внутри игры (Lua) на подделке API BeamNG: в игре LuaJIT, совместимый с Lua 5.1.
   lua:

@@ -62,12 +62,21 @@ public sealed class TarExtractor : IArchiveExtractor
         p.WaitForExit(); // дочитать вывод
         if (SizeOf(targetDir) > maxBytes) return "Распакованный архив слишком большой";
         if (p.ExitCode == 0) return null;
-        var text = err.ToString();
-        if (Path.GetExtension(archivePath).Equals(".rar", StringComparison.OrdinalIgnoreCase)
-            && (text.Contains("RAR5", StringComparison.OrdinalIgnoreCase) || text.Contains("Unrecognized archive format", StringComparison.OrdinalIgnoreCase)))
-            return "Этот RAR новой версии, а распаковщик Windows его не читает. Перепакуйте архив в zip или 7z";
-        if (text.Contains("encrypt", StringComparison.OrdinalIgnoreCase) || text.Contains("passphrase", StringComparison.OrdinalIgnoreCase))
-            return "Архив под паролем";
+        return Explain(err.ToString(), Path.GetExtension(archivePath));
+    }
+
+    /// <summary>
+    /// Почему tar не распаковал — словами. Встроенный tar старой Windows 10 не умеет ни RAR5, ни 7z со сжатием LZMA (а это
+    /// почти все 7z): тогда честно «Windows не умеет», а не «повреждён» (2026-10-18, найдено перед 0.3).
+    /// </summary>
+    public static string Explain(string stderr, string ext)
+    {
+        bool Has(string s) => stderr.Contains(s, StringComparison.OrdinalIgnoreCase);
+        if (Has("encrypt") || Has("passphrase") || Has("password")) return "Архив под паролем";
+        var unsupported = Has("RAR5") || Has("Unrecognized archive format") || Has("not supported") || Has("unsupported") || Has("lzma") || Has("bzip2") || Has("ppmd");
+        if (unsupported && ext.Equals(".rar", StringComparison.OrdinalIgnoreCase))
+            return "Этот RAR новой версии, а распаковщик Windows его не читает. Перепакуйте архив в zip";
+        if (unsupported) return "Распаковщик Windows этот архив не читает (так бывает на Windows 10). Перепакуйте его в zip";
         return "Архив не распаковался: он повреждён или недокачан";
     }
 
