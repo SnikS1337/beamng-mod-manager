@@ -199,7 +199,9 @@ public static class UpdateRunner
                 var feeds = new Dictionary<string, IReadOnlyDictionary<string, FeedEntry>> { [source] = entries };
                 IReadOnlyDictionary<string, DateTimeOffset>? coverage = !options.Force && FeedCoverage.Compute(ordered) is { } cv
                     ? new Dictionary<string, DateTimeOffset> { [source] = cv } : null;
-                var cardPlan = UpdateCheckPlanner.PlanCards(cardCandidates, feeds, now, options, coverage);
+                var modPages = store.Bindings().Where(x => x.Source == source).GroupBy(x => x.ModId).ToDictionary(g => g.Key, g => g.First().Url);
+                var cardPlan = UpdateCheckPlanner.PlanCards(cardCandidates, feeds, now, options, coverage,
+                    inFeed: b => !modPages.TryGetValue(b.ModId, out var url) || src.FeedCovers(url));
                 o.Postponed.AddRange(cardPlan.Postponed);
                 foreach (var b in cardPlan.ConfirmedUnchanged)
                 {

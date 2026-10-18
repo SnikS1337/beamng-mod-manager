@@ -121,6 +121,9 @@ public abstract class SiteAdapter : IModSource
     /// <summary>Что из найденного сайтом относится к запросу человека. По умолчанию — всё, как ответил сайт.</summary>
     protected virtual IReadOnlyList<Listing> Relevant(string query, IReadOnlyList<Listing> found) => found;
 
+    /// <summary>Лента сайта — все его моды BeamNG (так у всех, кроме ModsGaming).</summary>
+    public virtual bool FeedCovers(Uri page) => true;
+
     public async Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
     {
         var html = await LoadAsync(FeedUrl(Math.Max(1, page)), ct).ConfigureAwait(false);
@@ -238,6 +241,9 @@ public sealed class ModsGamingSource : SiteAdapter
     /// </summary>
     protected override IReadOnlyList<Listing> Relevant(string query, IReadOnlyList<Listing> found) =>
         SearchRelevance.Filter(query, found, ignore: new[] { "beamng", "drive", "beamng.drive" });
+
+    /// <summary>Лента — только раздел «Машины»: улучшалки, карты и прочее в ней не появляются.</summary>
+    public override bool FeedCovers(Uri page) => page.AbsolutePath.StartsWith("/load/beamng_drive/mashiny/", StringComparison.OrdinalIgnoreCase);
     // /load/beamng_drive/mashiny/38-1-0-160435 или …/mod_vaz_2106_…; раздел — /load/beamng_drive/mashiny/38 и 38-2 (страницы)
     protected override bool IsModPath(string[] p) =>
         p.Length >= 4 && p[0].Equals("load", StringComparison.OrdinalIgnoreCase) && p[1].Equals("beamng_drive", StringComparison.OrdinalIgnoreCase) && !Regex.IsMatch(p[^1], @"^\d+(?:-\d+)?$");

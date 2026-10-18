@@ -120,6 +120,58 @@ public sealed class BrowserPages : IPageFetcher
         return new RawResponse(done.HttpStatusCode == 0 ? 200 : done.HttpStatusCode, html);
     }
 
+    /// <summary>
+    /// Картинка с сайта за защитой (карточки поиска Modland): браузер открывает её адрес, байты берутся из ответа.
+    /// Не картинка, ошибка или проверка «вы человек?» — null. По одной, в очереди со страницами.
+    /// </summary>
+    public Task<byte[]?> GetBytesAsync(Uri url, CancellationToken ct) => OnUiAsync(() => LoadBytesAsync(url, ct), ct);
+
+    private async Task<byte[]?> LoadBytesAsync(Uri url, CancellationToken ct)
+    {
+        CoreWebView2 core;
+        try { core = await ViewAsync(); }
+        catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException) { return null; }
+        while (_done!.Reader.TryRead(out _)) { }
+        var body = new TaskCompletionSource<byte[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        async void OnResponse(object? sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
+        {
+            var type = e.Response.Headers.Contains("Content-Type") ? e.Response.Headers.GetHeader("Content-Type") : "";
+            var same = string.Equals(e.Request.Uri, url.AbsoluteUri, StringComparison.Ordinal);
+            if (!same && !type.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) return; // перенаправление или посторонний запрос
+            if (e.Response.StatusCode is < 200 or >= 300 || !type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (same) body.TrySetResult(null);
+                return;
+            }
+            try
+            {
+                using var stream = await e.Response.GetContentAsync();
+                if (stream is null) { body.TrySetResult(null); return; }
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                body.TrySetResult(ms.ToArray());
+            }
+            catch (Exception x) when (x is System.Runtime.InteropServices.COMException or InvalidOperationException or IOException)
+            {
+                body.TrySetResult(null);
+            }
+        }
+        core.WebResourceResponseReceived += OnResponse;
+        try
+        {
+            core.Navigate(url.AbsoluteUri);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            limit.CancelAfter(TimeSpan.FromSeconds(20));
+            return await body.Task.WaitAsync(limit.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
+        finally
+        {
+            core.WebResourceResponseReceived -= OnResponse;
+            try { core.Stop(); } catch (InvalidOperationException) { }
+        }
+    }
+
     private async Task<CoreWebView2NavigationCompletedEventArgs> NextAsync(TimeSpan timeout, CancellationToken ct)
     {
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);

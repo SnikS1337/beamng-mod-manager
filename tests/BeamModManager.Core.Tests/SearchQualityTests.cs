@@ -55,6 +55,26 @@ public static class SearchQualityTests
             Assert.Eq(4, SearchRelevance.Filter("!", found).Count);
         });
 
+        t.Run("ModsGaming: лента — только «Машины»: мод из другого раздела по ленте «не менялся» не считается, его карточку открываем", () =>
+        {
+            var now = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+            var car = new Updates.TrackedBinding("car", "modsgaming", "1", now.AddDays(-2), null, "1.0");
+            var taa = new Updates.TrackedBinding("taa", "modsgaming", "2", now.AddDays(-2), null, "1.0");
+            var feed = new Dictionary<string, IReadOnlyDictionary<string, Updates.FeedEntry>> { ["modsgaming"] = new Dictionary<string, Updates.FeedEntry>() };
+            var cov = new Dictionary<string, DateTimeOffset> { ["modsgaming"] = now.AddDays(-10) }; // лента дошла глубже последней проверки
+            var src = new ModsGamingSource(new PoliteFetcher(new Page("")));
+            var urls = new Dictionary<string, Uri>
+            {
+                ["car"] = new("https://modsgaming.ru/load/beamng_drive/mashiny/bmw/38-1-0-1"),
+                ["taa"] = new("https://modsgaming.ru/load/beamng_drive/drugoe/taa_fix/39-1-0-2"),
+            };
+            var plan = Updates.UpdateCheckPlanner.PlanCards(new[] { car, taa }, feed, now, new Updates.UpdateCheckOptions(), cov,
+                inFeed: b => src.FeedCovers(urls[b.ModId]));
+            Assert.True(plan.ConfirmedUnchanged.Any(b => b.ModId == "car"), "машина: нет в ленте «Машины» — не менялась");
+            Assert.False(plan.ConfirmedUnchanged.Any(b => b.ModId == "taa"), "улучшалка: лента о ней ничего не говорит");
+            Assert.True(new ModlandSource(new PoliteFetcher(new Page(""))).FeedCovers(new Uri("https://www.modland.net/beamng.drive-mods/other/x.html")), "у других сайтов лента — все моды");
+        });
+
         t.Run("ModsGaming: по настоящей выдаче — «sienna» всё оставляет, опечатка без совпадений — пусто, а не всё подряд", async () =>
         {
             var html = Fx("modsgaming/search-real.html");
