@@ -96,16 +96,22 @@ public abstract class SiteAdapter : IModSource
         throw new SourceException(r.Source == SourceStatus.Ok ? SourceStatus.Unavailable : r.Source, r.Note ?? "сайт не ответил");
     }
 
-    public async Task<IReadOnlyList<Listing>> SearchAsync(string query, CancellationToken ct = default)
+    public virtual async Task<IReadOnlyList<Listing>> SearchAsync(string query, CancellationToken ct = default)
     {
         var url = SearchUrl(query);
         if (url is null) return Array.Empty<Listing>();
-        var html = await LoadAsync(url, ct, SearchForm(query)).ConfigureAwait(false);
-        if (html is null) return Array.Empty<Listing>();
+        return Relevant(query, await ReadSearchAsync(url, p => SearchPageUrl(query, p), SearchPages, SearchForm(query), ct).ConfigureAwait(false));
+    }
+
+    /// <summary>Выдача поиска: первая страница (с формой, если есть) и следующие, пока приносят новое.</summary>
+    protected async Task<List<Listing>> ReadSearchAsync(Uri url, Func<int, Uri?> pageUrl, int pages, string? form, CancellationToken ct)
+    {
+        var html = await LoadAsync(url, ct, form).ConfigureAwait(false);
+        if (html is null) return new List<Listing>();
         var found = Safe(() => ParseSearch(html), "поиск").ToList();
-        for (var p = 2; p <= SearchPages && found.Count > 0; p++)
+        for (var p = 2; p <= pages && found.Count > 0; p++)
         {
-            if (SearchPageUrl(query, p) is not { } next) break;
+            if (pageUrl(p) is not { } next) break;
             string? more;
             try { more = await LoadAsync(next, ct).ConfigureAwait(false); }
             catch (SourceException) { break; } // первая страница уже есть: сбой следующей не отменяет найденное
@@ -115,7 +121,7 @@ public abstract class SiteAdapter : IModSource
             if (added.Count == 0) break;
             found.AddRange(added);
         }
-        return Relevant(query, found);
+        return found;
     }
 
     /// <summary>Что из найденного сайтом относится к запросу человека. По умолчанию — всё, как ответил сайт.</summary>
@@ -229,16 +235,35 @@ public sealed class ModsGamingSource : SiteAdapter
     protected override Uri FeedUrl(int page) => new(Root, page <= 1 ? "load/beamng_drive/mashiny/38" : $"load/beamng_drive/mashiny/38-{page}");
     // Поиск сайта идёт по всем играм, 10 на странице, без сортировки по дате: по «bmw» на первой странице — City Car
     // Driving, GTA 5, Farming Simulator, ни одного BeamNG. С «beamng.drive» в запросе — только BeamNG (проверено 2026-10-18).
-    protected override Uri? SearchUrl(string q) => new(Root, "search/?q=" + Uri.EscapeDataString(ForBeamNg(q)) + "&t=0");
+    protected override Uri? SearchUrl(string q) => Page(ForBeamNg(q), 1);
     protected override int SearchPages => 2;
-    protected override Uri? SearchPageUrl(string q, int page) => new(Root, "search/?q=" + Uri.EscapeDataString(ForBeamNg(q)) + "&t=0&p=" + page);
+    protected override Uri? SearchPageUrl(string q, int page) => Page(ForBeamNg(q), page);
     private static string ForBeamNg(string q) => q.Contains("beamng", StringComparison.OrdinalIgnoreCase) ? q : q.Trim() + " beamng.drive";
+    private static Uri Page(string q, int page) => new(Root, "search/?q=" + Uri.EscapeDataString(q) + "&t=0" + (page > 1 ? "&p=" + page : ""));
 
     /// <summary>
-    /// К запросу добавлено «beamng.drive», а сайт ищет слова через «или»: с опечаткой («bmv») подходило всё подряд — «Ford
-    /// Engines», «Human Dummy» (2026-10-18). Оставляем то, где слово человека есть в названии или в адресе (адрес у сайта
-    /// латиницей: русское слово сверяем и в транслите).
+    /// Две выдачи вместе (2026-10-18, после обкатки 0.3.7):
+    /// 1. Запрос как написал человек: сайт ищет только его слова — и в описаниях тоже, поэтому находятся улучшалки вроде
+    ///    TAA, у которых слова нет в названии; игры там все, берём BeamNG (это делает разбор).
+    /// 2. Запрос с «beamng.drive»: на частых словах («bmw») BeamNG там выше и больше, но сайт ищет через «или» — с
+    ///    опечаткой подходило всё подряд («Ford Engines», «Human Dummy»). Из неё — только то, где слово человека есть в
+    ///    названии или в адресе (русское — и в транслите).
+    /// Сначала вторая (по названию — точнее), затем то, что нашлось только в первой.
     /// </summary>
+    public override async Task<IReadOnlyList<Listing>> SearchAsync(string query, CancellationToken ct = default)
+    {
+        var q = query.Trim();
+        if (q.Length == 0) return Array.Empty<Listing>();
+        if (q.Contains("beamng", StringComparison.OrdinalIgnoreCase)) // игру назвал сам человек: запрос как есть
+            return await ReadSearchAsync(Page(q, 1), p => Page(q, p), 2, null, ct).ConfigureAwait(false);
+        var exact = await ReadSearchAsync(Page(q, 1), p => Page(q, p), 1, null, ct).ConfigureAwait(false);
+        List<Listing> wide;
+        try { wide = Relevant(q, await ReadSearchAsync(Page(ForBeamNg(q), 1), p => Page(ForBeamNg(q), p), 2, null, ct).ConfigureAwait(false)).ToList(); }
+        catch (SourceException) when (exact.Count > 0) { wide = new List<Listing>(); } // первая выдача уже есть
+        wide.AddRange(exact.Where(e => wide.All(w => w.SourceId != e.SourceId)));
+        return wide;
+    }
+
     protected override IReadOnlyList<Listing> Relevant(string query, IReadOnlyList<Listing> found) =>
         SearchRelevance.Filter(query, found, ignore: new[] { "beamng", "drive", "beamng.drive" });
 

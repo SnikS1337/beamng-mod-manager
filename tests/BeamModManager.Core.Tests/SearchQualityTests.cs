@@ -19,10 +19,13 @@ public static class SearchQualityTests
 
     private sealed class Page : IPageFetcher
     {
-        private readonly string _html;
-        public Page(string html) => _html = html;
-        public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) => Task.FromResult(new RawResponse(200, _html));
+        private readonly Func<Uri, string> _html;
+        public Page(string html) => _html = _ => html;
+        public Page(Func<Uri, string> html) => _html = html;
+        public Task<RawResponse> GetAsync(Uri url, CancellationToken ct) => Task.FromResult(new RawResponse(200, _html(url)));
     }
+
+    private static bool Wide(Uri u) => Uri.UnescapeDataString(u.Query).Contains("beamng.drive", StringComparison.Ordinal);
 
     private static Listing L(string title, string path) => new("modsgaming", new Uri("https://modsgaming.ru" + path), path, title);
 
@@ -78,13 +81,24 @@ public static class SearchQualityTests
         t.Run("ModsGaming: по настоящей выдаче — «sienna» всё оставляет, опечатка без совпадений — пусто, а не всё подряд", async () =>
         {
             var html = Fx("modsgaming/search-real.html");
-            var f = new PoliteFetcher(new Page(html), new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero },
-                delay: (_, _) => Task.CompletedTask);
             var all = ModsGamingParser.ParseSearch(html).Count;
             Assert.True(all > 0, "выдача разобралась");
-            Assert.Eq(all, (await new ModsGamingSource(f).SearchAsync("sienna")).Count);
-            f.ClearCache();
-            Assert.Eq(0, (await new ModsGamingSource(f).SearchAsync("bmv")).Count);
+            static PoliteFetcher F(Func<Uri, string> page) => new(new Page(page), new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero },
+                delay: (_, _) => Task.CompletedTask);
+            Assert.Eq(all, (await new ModsGamingSource(F(_ => html)).SearchAsync("sienna")).Count);
+            // опечатка: как есть сайт ничего не нашёл, с «beamng.drive» — что угодно по «beamng»: из этого ничего не берём
+            Assert.Eq(0, (await new ModsGamingSource(F(u => Wide(u) ? html : "<html></html>")).SearchAsync("bmv")).Count);
+        });
+
+        t.Run("ModsGaming: слово только в описании (TAA) — запрос как есть находит, такие моды остаются", async () =>
+        {
+            var html = Fx("modsgaming/search-real.html");
+            var all = ModsGamingParser.ParseSearch(html).Count;
+            static PoliteFetcher F(Func<Uri, string> page) => new(new Page(page), new PoliteFetchOptions { MinDelay = TimeSpan.Zero, Jitter = TimeSpan.Zero },
+                delay: (_, _) => Task.CompletedTask);
+            // как есть сайт нашёл моды, в названиях которых «taa» нет (слово в описании); с «beamng.drive» — ничего
+            var found = await new ModsGamingSource(F(u => Wide(u) ? "<html></html>" : html)).SearchAsync("TAA");
+            Assert.Eq(all, found.Count);
         });
     }
 }
