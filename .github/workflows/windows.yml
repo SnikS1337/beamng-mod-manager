@@ -85,27 +85,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # нужна история, чтобы сравнить с прошлым push
-      # Снимки (≈4 мин) — только когда менялось то, что видно: окно (App), логика экранов (Ui), демо-данные; или по пометке
-      # [shots]. Выпуск снимков не делает (решено 2026-10-18): он выходит из уже проверенного коммита. Изменения ядра, тестов,
-      # документов и самой сборки — без снимков (новый снимок в списке — коммит с [shots]).
+      # Снимки (≈4 мин) — только по пометке [shots]: её ставит коммит, который меняет внешний вид. Выпуск и остальные
+      # изменения (логика, ядро, тесты, документы, сборка) — без снимков: сборка и проверки идут как обычно.
       - name: Нужны ли снимки
         id: need
         shell: pwsh
         env:
-          BEFORE: ${{ github.event.before }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          # «Run workflow» и [release] — выпуск: без снимков (2026-10-18: «смысл нам от фоток на релизах»).
-          # Push: [shots] или первый push ветки — со снимками, иначе по изменениям
-          $run = $env:GITHUB_EVENT_NAME -eq 'push' -and $env:MSG -notmatch '\[release'
-          if ($run -and $env:MSG -notmatch '\[shots\]' -and $env:BEFORE -notmatch '^0+$') {
-            $files = git diff --name-only $env:BEFORE $env:GITHUB_SHA 2>$null
-            if ($LASTEXITCODE -eq 0) {
-              $ui = @($files | Where-Object { $_ -match '^(src/BeamModManager\.(App|Ui)/|design/demo/)' })
-              $run = $ui.Count -gt 0
-              Write-Host "изменено файлов: $(@($files).Count), из них видимых: $($ui.Count)"
-            }
-          }
+          # Снимки — только по пометке [shots] в описании коммита: её ставим, когда меняется то, что видно (2026-10-18:
+          # «при релизах и изменениях не про интерфейс снимки не нужны — слишком долго»). Выпуск и «Run workflow» — без них
+          $run = $env:GITHUB_EVENT_NAME -eq 'push' -and $env:MSG -match '\[shots\]' -and $env:MSG -notmatch '\[release'
           $global:LASTEXITCODE = 0
           Write-Host "снимки: $run"
           "run=$($run.ToString().ToLowerInvariant())" | Out-File -Append $env:GITHUB_OUTPUT
