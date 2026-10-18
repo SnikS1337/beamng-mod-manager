@@ -3,8 +3,11 @@ using System.IO.Compression;
 namespace BeamModManager.Core.AppUpdate;
 
 /// <summary>
-/// Файловая часть обновления. Работающий exe в Windows нельзя перезаписать, но можно переименовать: старый уходит
-/// в «*.old», новый встаёт на его место, затем программа перезапускается. Любой сбой — откат к прежнему exe.
+/// Файловая часть обновления. С 0.3.10 новая версия записывается в тот же файл программы (<see cref="WriteInPlace"/>):
+/// это делает сама новая версия, запущенная из папки обновления, когда прежняя уже вышла. Раньше файлы менялись
+/// переименованием («*.old», «*.new»), и программа на рабочем столе после каждого обновления оказывалась другим
+/// значком — Проводник ставил его на другое место (2026-10-18). Переименование (<see cref="Stage"/>, <see cref="Commit"/>,
+/// откаты по «*.old») осталось для версий до 0.3.10: они обновляются ещё по-старому, а новая убирает их следы.
 /// </summary>
 public static class UpdateInstaller
 {
@@ -177,8 +180,12 @@ public static class UpdateInstaller
                 try { File.Delete(leftover); }
                 catch (Exception x) when (x is IOException or UnauthorizedAccessException) { Thread.Sleep(300); }
             }
-        try { if (Directory.Exists(updateDir)) Directory.Delete(updateDir, recursive: true); }
-        catch (Exception x) when (x is IOException or UnauthorizedAccessException) { }
+        // в папке обновления — новая версия, которая только что поставила себя на место и выходит: несколько попыток
+        for (var i = 0; i < 10 && Directory.Exists(updateDir); i++)
+        {
+            try { Directory.Delete(updateDir, recursive: true); }
+            catch (Exception x) when (x is IOException or UnauthorizedAccessException) { Thread.Sleep(300); }
+        }
     }
 
     /// <summary>Версия, которая не запустилась на этом компьютере: её больше не предлагаем (ждём следующую).</summary>
@@ -196,6 +203,104 @@ public static class UpdateInstaller
             File.WriteAllText(path, AppVersion.Display(v));
         }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Можно ли будет записать новую версию в файл программы. Работающий exe открыть на запись нельзя («занят») — это
+    /// нормально: запись будет, когда программа выйдет. Нет прав — видно сразу, на плашке, а не после перезапуска.
+    /// </summary>
+    public static string? CheckWritable(string currentExe)
+    {
+        if (!File.Exists(currentExe)) return "программа не найдена на прежнем месте";
+        try
+        {
+            using var _ = new FileStream(currentExe, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            return null;
+        }
+        catch (UnauthorizedAccessException) { return NoRights; }
+        catch (IOException) { return null; } // занят самой программой: права есть
+    }
+
+    /// <summary>
+    /// Новая версия — в тот же файл программы (зовёт новая версия из папки обновления, когда прежняя вышла). Файл остаётся
+    /// тем же: значок на рабочем столе не переезжает. Прежняя версия сперва копируется в <paramref name="backup"/>; запись
+    /// оборвалась — она возвращается оттуда. null — новая на месте.
+    /// </summary>
+    /// <param name="overwrite">Запись содержимого (для проверок: подставить сбой). По умолчанию <see cref="Overwrite"/>.</param>
+    public static string? WriteInPlace(string newExe, string target, string backup, Action<string, string>? overwrite = null)
+    {
+        overwrite ??= Overwrite;
+        if (!File.Exists(newExe)) return "подготовленное обновление пропало";
+        if (!File.Exists(target)) return "программа не найдена на прежнем месте";
+        var saved = Retry(() =>
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(backup))!);
+            File.Copy(target, backup, overwrite: true);
+        });
+        if (saved is not null) return "не удалось сохранить прежнюю версию: " + saved.Message;
+        // прежний процесс только что вышел: файл ещё может держать антивирус — несколько попыток
+        var failed = Retry(() => overwrite(newExe, target), attempts: 10);
+        if (failed is null)
+        {
+            ForgetDownloadMark(target);
+            return null;
+        }
+        var why = failed is UnauthorizedAccessException ? NoRights : "новая версия не записалась: " + failed.Message;
+        if (SameContent(backup, target)) return why; // файл не открылся на запись: не тронут
+        if (Retry(() => Overwrite(backup, target), attempts: 10) is not null)
+            return $"новая версия не записалась, и прежняя не вернулась: скопируйте {backup} на место {Path.GetFileName(target)}";
+        return why;
+    }
+
+    /// <summary>Вернуть прежнюю версию в файл программы из копии (новая не запустилась и уже вышла). true — вернули.</summary>
+    public static bool RestoreInPlace(string backup, string target)
+    {
+        if (!File.Exists(backup)) return false;
+        if (Retry(() => Overwrite(backup, target), attempts: 10) is not null) return false;
+        ForgetDownloadMark(target);
+        return true;
+    }
+
+    /// <summary>Содержимое <paramref name="src"/> — в существующий файл <paramref name="dst"/>, тот же файл, без переименований.</summary>
+    public static void Overwrite(string src, string dst)
+    {
+        using var from = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var to = new FileStream(dst, FileMode.Open, FileAccess.Write, FileShare.None);
+        from.CopyTo(to);
+        to.SetLength(from.Length); // прежняя версия могла быть длиннее
+        to.Flush(flushToDisk: true);
+    }
+
+    /// <summary>
+    /// Пометка «скачано из интернета» (поток Zone.Identifier) остаётся у файла от первой распаковки. Новая версия в том же
+    /// файле иначе получила бы её и спрашивала SmartScreen при запуске с рабочего стола; раньше новый файл был без неё.
+    /// </summary>
+    private static void ForgetDownloadMark(string target)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try { File.Delete(target + ":Zone.Identifier"); }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException) { }
+    }
+
+    private static bool SameContent(string a, string b)
+    {
+        try
+        {
+            var fa = new FileInfo(a);
+            var fb = new FileInfo(b);
+            if (fa.Length != fb.Length) return false;
+            using var sa = fa.OpenRead();
+            using var sb = fb.OpenRead();
+            Span<byte> x = stackalloc byte[8192], y = stackalloc byte[8192];
+            while (true)
+            {
+                var n = sa.Read(x);
+                if (n == 0) return true;
+                sb.ReadExactly(y[..n]);
+                if (!x[..n].SequenceEqual(y[..n])) return false;
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>Файл начинается с «MZ» — заголовок программы Windows.</summary>

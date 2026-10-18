@@ -69,7 +69,6 @@ public partial class App : Application
     /// <summary>Путь exe на момент запуска: после подмены файл под ним уже другой, а путь тот же.</summary>
     private string? _exePath;
     private string? _restartExe;
-    private Version? _restartVersion;
     private AppUpdater? _updater;
     /// <summary>Окно показалось: запуск удался. До этого любая ошибка — «не запустилась».</summary>
     private bool _healthy;
@@ -92,6 +91,13 @@ public partial class App : Application
         {
             var i = Array.IndexOf(e.Args, name);
             return i >= 0 && i + 1 < e.Args.Length ? e.Args[i + 1] : null;
+        }
+
+        // новая версия, запущенная из папки обновления: записать себя на место программы и запустить её. Без окна
+        if (Arg("--install-update") is { } ip && int.TryParse(ip, out var oldPid) && Arg("--target") is { Length: > 0 } target)
+        {
+            InstallAndHandOver(oldPid, target);
+            return;
         }
 
         var demo = Arg("--demo");
@@ -262,12 +268,20 @@ public partial class App : Application
     private void StartupFailed(Exception x)
     {
         Log(x);
+        // обновила прежняя версия до 0.3.10 (переименованием): «*.old» рядом — возвращаем её сами
         if (_afterUpdate && _exePath is { } exe && UpdateInstaller.RollbackFromRunning(exe))
         {
             ReleaseSingle();
             try { Process.Start(new ProcessStartInfo(exe, $"--rolled-back {AppVersion.Display(ThisVersion)}") { UseShellExecute = false }); }
             catch (Exception y) when (y is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(y); }
             Environment.Exit(RolledBackExitCode);
+        }
+        // иначе прежнюю вернёт процесс, который нас поставил (InstallAndHandOver): выходим сразу, без окна с ошибкой —
+        // прежняя версия сама скажет, что эта не запустилась
+        if (_afterUpdate)
+        {
+            ReleaseSingle();
+            Environment.Exit(1);
         }
         if (_testFeed is null)
             MessageBox.Show($"Программа не смогла запуститься: {x.Message}\n\nПодробности записаны в {LogPath}. Моды и данные программы не тронуты.",
@@ -332,7 +346,6 @@ public partial class App : Application
         // проверка на сборочной машине: записать до закрытия окна (после него процесс может закончиться раньше)
         if (_testFeed is not null) TestNote($"install {_updater?.State.Stage} {_updater?.State.Error}");
         _restartExe = _exePath;
-        _restartVersion = _updater?.State.Manifest?.Version;
         MainWindow?.Close();
     }
 
@@ -342,38 +355,95 @@ public partial class App : Application
         if (_restartExe is { } exe)
         {
             ReleaseSingle();
-            // подмена — только сейчас: окно закрыто, настройки и библиотека записаны. Собранная в один файл программа
-            // догружает свои части из exe по имени, и после подмены прежний процесс уже не смог бы их прочитать
-            if (_updater?.Commit() is { } failed)
+            // окно закрыто, настройки и библиотека записаны. Файл программы меняет новая версия (из папки обновления),
+            // когда этот процесс выйдет: работающий exe не перезаписать, а переименовывать его нельзя — значок на рабочем
+            // столе переезжал бы (2026-10-18)
+            string? why = null;
+            Process? installer = null;
+            if (_updater?.StagedExe is not { } staged || !File.Exists(staged)) why = "подготовленное обновление пропало";
+            else
             {
-                Log("обновление не встало: " + failed);
-                // прежняя версия на месте: запускаем её снова, она скажет, что случилось
                 try
                 {
-                    var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
-                    psi.ArgumentList.Add("--update-failed");
-                    psi.ArgumentList.Add(failed);
-                    Process.Start(psi);
+                    var psi = new ProcessStartInfo(staged) { UseShellExecute = false };
+                    foreach (var a in new[] { "--install-update", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture), "--target", exe })
+                        psi.ArgumentList.Add(a);
+                    installer = Process.Start(psi);
+                    if (installer is null) why = "новая версия не запустилась";
                 }
-                catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
-                base.OnExit(e);
-                return;
+                catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+                {
+                    Log(x);
+                    why = "новая версия не запустилась: " + x.Message;
+                }
             }
-            using var started = new EventWaitHandle(false, EventResetMode.ManualReset, StartedEventName(Environment.ProcessId));
-            Process? child = null;
-            try { child = Process.Start(new ProcessStartInfo(exe, $"--after-update {Environment.ProcessId}") { UseShellExecute = false }); }
-            catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
-            if (child is null) RollbackAndRestart(exe);
-            else using (child) WatchNewVersion(child, started, exe);
+            installer?.Dispose();
+            if (why is not null)
+            {
+                Log("обновление не встало: " + why);
+                StartPlain(exe, "--update-failed", why); // прежняя версия на месте: она скажет, что случилось
+            }
         }
         base.OnExit(e);
     }
 
     /// <summary>
-    /// Окно прежней версии уже закрыто; ждём, пока новая покажет своё (до минуты). Если она умерла раньше (сбой, который
-    /// она сама не поймала: антивирус, повреждённый файл) — возвращаем прежнюю и запускаем её.
+    /// Новая версия, запущенная прежней из папки обновления (--install-update &lt;pid&gt; --target &lt;exe&gt;): ждёт, пока
+    /// прежняя выйдет, записывает себя в тот же файл (прежнюю — в копию), запускает программу и ждёт, пока та покажет окно.
+    /// Не запустилась — возвращает прежнюю из копии и запускает её. Окна у этого процесса нет.
     /// </summary>
-    private void WatchNewVersion(Process child, EventWaitHandle started, string exe)
+    private void InstallAndHandOver(int oldPid, string target)
+    {
+        var feed = IsSelfTestBuild ? Environment.GetEnvironmentVariable("BMM_TEST_UPDATE_FEED") : null;
+        if (feed is { Length: > 0 } && Directory.Exists(feed)) _testFeed = Path.GetFullPath(feed);
+        var backup = Path.Combine(UpdateDir, "previous.exe");
+        try
+        {
+            try { using var old = Process.GetProcessById(oldPid); old.WaitForExit(30_000); }
+            catch (Exception x) when (x is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { } // уже вышла
+            var self = Environment.ProcessPath ?? "";
+            if (UpdateInstaller.WriteInPlace(self, target, backup) is { } failed)
+            {
+                Log("обновление не встало: " + failed);
+                if (_testFeed is not null) TestNote("apply failed " + failed);
+                StartPlain(target, "--update-failed", failed);
+                Environment.Exit(0);
+            }
+            if (_testFeed is not null) TestNote("apply ok");
+            using var started = new EventWaitHandle(false, EventResetMode.ManualReset, StartedEventName(Environment.ProcessId));
+            Process? child = null;
+            try { child = Process.Start(new ProcessStartInfo(target, $"--after-update {Environment.ProcessId}") { UseShellExecute = false }); }
+            catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
+            if (child is null) RollbackInPlace(target, backup);
+            else using (child) WatchNewVersion(child, started, () => RollbackInPlace(target, backup));
+        }
+        catch (Exception x) when (x is not OutOfMemoryException) { Log(x); }
+        Environment.Exit(0);
+    }
+
+    private static void StartPlain(string exe, params string[] args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+            foreach (var a in args) psi.ArgumentList.Add(a);
+            Process.Start(psi)?.Dispose();
+        }
+        catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
+    }
+
+    /// <summary>Новая версия не запустилась: прежняя — из копии в тот же файл, и запускаем её («--rolled-back» эту версию).</summary>
+    private static void RollbackInPlace(string target, string backup)
+    {
+        if (!UpdateInstaller.RestoreInPlace(backup, target)) { Log($"прежняя версия не вернулась: скопируйте {backup} на место {target}"); return; }
+        StartPlain(target, "--rolled-back", AppVersion.Display(ThisVersion));
+    }
+
+    /// <summary>
+    /// Новая версия на месте и запущена; ждём, пока она покажет окно (до минуты). Если она вышла раньше с ошибкой (свой
+    /// сбой при запуске или такой, который она не поймала: антивирус, повреждённый файл) — возвращаем прежнюю.
+    /// </summary>
+    private static void WatchNewVersion(Process child, EventWaitHandle started, Action rollback)
     {
         var clock = Stopwatch.StartNew();
         while (clock.Elapsed < TimeSpan.FromSeconds(60))
@@ -384,17 +454,9 @@ public partial class App : Application
             catch (Exception x) when (x is InvalidOperationException or System.ComponentModel.Win32Exception) { return; }
             if (!exited) continue;
             // 0 — закрылась обычным образом; RolledBackExitCode — уже вернула прежнюю сама
-            if (child.ExitCode is not (0 or RolledBackExitCode)) RollbackAndRestart(exe);
+            if (child.ExitCode is not (0 or RolledBackExitCode)) rollback();
             return;
         }
-    }
-
-    private void RollbackAndRestart(string exe)
-    {
-        if (!UpdateInstaller.Rollback(exe)) return;
-        var args = _restartVersion is { } v ? $"--rolled-back {AppVersion.Display(v)}" : "";
-        try { Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = false }); }
-        catch (Exception x) when (x is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { Log(x); }
     }
 
     /// <summary>

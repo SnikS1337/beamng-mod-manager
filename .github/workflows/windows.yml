@@ -335,6 +335,8 @@ jobs:
             foreach ($k in $envs.Keys) { Set-Item "env:$k" $envs[$k] }
             $env:BMM_TEST_UPDATE_FEED = $feed
             if ($prepare) { & $prepare }
+            # файл программы должен остаться тем же файлом (номер в NTFS): иначе значок на рабочем столе переезжает
+            $exeId0 = (fsutil file queryfileid (Join-Path $app 'BeamModManager.exe')) -join ''
             Start-Process (Join-Path $app 'BeamModManager.exe')
             # обновление перезапускает программу 1–2 раза; ждём, пока не останется ни одного процесса
             $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -361,21 +363,26 @@ jobs:
             }
             $left = @(Get-ChildItem $app | ForEach-Object Name)
             if ($left.Count -ne 1) { throw "${name}: в папке программы лишнее: $($left -join ', ')" }
+            $exeId1 = (fsutil file queryfileid (Join-Path $app 'BeamModManager.exe')) -join ''
+            Write-Host "   файл: $exeId0 → $exeId1"
+            if ($exeId0 -match '0x[0-9a-f]+' -and $exeId0 -ne $exeId1) { throw "${name}: файл программы заменён другим (значок переедет)" }
             Write-Host "   ок: $fv"
           }
 
           Scenario 'обычное обновление' @{} '0.3.1.0' @(
-            'start 0\.3 normal', 'check Available', 'install ReadyToRestart',
+            'start 0\.3 normal', 'check Available', 'install ReadyToRestart', 'apply ok',
             'start 0\.3\.1 after-update old=False new=False bad=False', 'check UpToDate')
-          Scenario 'новая версия падает при запуске: возвращает прежнюю сама' @{ BMM_TEST_CRASH_VERSION = '0.3.1' } '0.3.0.0' @(
-            'install ReadyToRestart', 'start 0\.3 rolled-back old=False new=False bad=False skip=0\.3\.1',
+          # с 0.3.10 новая версия пишет себя в тот же файл (значок на рабочем столе не переезжает) и сама же, из папки
+          # обновления, возвращает прежнюю, если запуск не удался
+          Scenario 'новая версия падает при запуске: прежняя возвращается' @{ BMM_TEST_CRASH_VERSION = '0.3.1' } '0.3.0.0' @(
+            'install ReadyToRestart', 'apply ok', 'start 0\.3 rolled-back old=False new=False bad=False skip=0\.3\.1',
             'check UpToDate версия 0\.3\.1 не запустилась')
-          Scenario 'новая версия умирает сама: прежнюю возвращает прежний процесс' @{ BMM_TEST_CRASH_VERSION = '0.3.1'; BMM_TEST_CRASH_HARD = '1' } '0.3.0.0' @(
+          Scenario 'новая версия умирает сама: прежняя возвращается' @{ BMM_TEST_CRASH_VERSION = '0.3.1'; BMM_TEST_CRASH_HARD = '1' } '0.3.0.0' @(
             'install ReadyToRestart', 'start 0\.3 rolled-back .*skip=0\.3\.1', 'check UpToDate')
-          Scenario 'нет прав на папку программы: ничего не тронуто' @{} '0.3.0.0' @(
+          Scenario 'нет прав на файл программы: ничего не тронуто' @{} '0.3.0.0' @(
             'check Available', 'install Available нет прав') {
-            # только сама папка: нельзя добавлять файлы и удалять из неё (запуск exe при этом разрешён)
-            icacls $app /deny "${env:USERNAME}:(WD,AD,DC)" /Q | Out-Null
+            # новая версия пишется в тот же файл: запрет записи в него (запуск exe при этом разрешён)
+            icacls (Join-Path $app 'BeamModManager.exe') /deny "${env:USERNAME}:(W)" /Q | Out-Null
           }
           Stop-Transcript | Out-Null
       - name: Журнал в ветку ci-selfupdate
