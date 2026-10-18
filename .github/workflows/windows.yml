@@ -59,9 +59,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # нужна история, чтобы сравнить с прошлым push
-      # Снимки (≈4 мин) — только когда менялось то, что видно: окно (App), логика экранов (Ui), демо-данные, сама сборка;
-      # или по пометке [shots], перед выпуском, по «Run workflow». Изменения только ядра, тестов и документов — без снимков:
-      # замеры большой библиотеки в снимках всё равно проходят перед каждым выпуском.
+      # Снимки (≈4 мин) — только когда менялось то, что видно: окно (App), логика экранов (Ui), демо-данные; или по пометке
+      # [shots]. Выпуск снимков не делает (решено 2026-10-18): он выходит из уже проверенного коммита. Изменения ядра, тестов,
+      # документов и самой сборки — без снимков (новый снимок в списке — коммит с [shots]).
       - name: Нужны ли снимки
         id: need
         shell: pwsh
@@ -69,11 +69,12 @@ jobs:
           BEFORE: ${{ github.event.before }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          $run = $true
-          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:MSG -notmatch '\[(shots|release)' -and $env:BEFORE -notmatch '^0+$') {
+          # «Run workflow» — это выпуск: без снимков. Push: [shots] или первый push ветки — со снимками, иначе по изменениям
+          $run = $env:GITHUB_EVENT_NAME -eq 'push'
+          if ($run -and $env:MSG -notmatch '\[shots\]' -and $env:BEFORE -notmatch '^0+$') {
             $files = git diff --name-only $env:BEFORE $env:GITHUB_SHA 2>$null
             if ($LASTEXITCODE -eq 0) {
-              $ui = @($files | Where-Object { $_ -match '^(src/BeamModManager\.(App|Ui)/|design/demo/|\.github/workflows/)' })
+              $ui = @($files | Where-Object { $_ -match '^(src/BeamModManager\.(App|Ui)/|design/demo/)' })
               $run = $ui.Count -gt 0
               Write-Host "изменено файлов: $(@($files).Count), из них видимых: $($ui.Count)"
             }
