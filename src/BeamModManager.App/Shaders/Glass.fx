@@ -18,6 +18,8 @@ float saturation : register(c4);  // насыщенность, 1 — без из
 float brightness : register(c5);  // яркость, 1 — без изменений
 float lift : register(c6);        // подъём тёмного к белому (светлое оформление), 0 — без изменений
 float shade : register(c7);       // тень в толще у края (светлое оформление), уже умноженная на яркость: видно, что край выпуклый
+float2 inset : register(c8);      // отступ выборок от края картинки в долях (одна точка): на самом краю видеокарта подмешивает
+                                  // прозрачное, и у сильной линзы капли были серая «шапка» и оранжевая полоса (2026-10-18)
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
 
@@ -43,9 +45,10 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float2 off = n * (strength * 0.5 * tt) / sz;   // в долях текстуры
 
     float4 c = tex2D(input, uv);
-    float cr = tex2D(input, saturate(uv + off)).r;
-    float cg = tex2D(input, saturate(uv + off * 1.12)).g;
-    float cb = tex2D(input, saturate(uv + off * 1.26)).b;
+    float2 hi = 1.0 - inset;
+    float cr = tex2D(input, clamp(uv + off, inset, hi)).r;
+    float cg = tex2D(input, clamp(uv + off * 1.12, inset, hi)).g;
+    float cb = tex2D(input, clamp(uv + off * 1.26, inset, hi)).b;
 
     // цвета с умноженной прозрачностью: обе операции линейные, остаётся только не выйти за альфу
     float3 col = float3(cr, cg, cb);
