@@ -33,7 +33,10 @@ public sealed class SearchFilterItem : Observable
     public bool IsActive { get => _isActive; internal set => Set(ref _isActive, value); }
 }
 
-/// <summary>Плашка цены: «Бесплатно» (белая), «Платный» (янтарная точка), «Цена не указана» (контурная) — бесплатным не считаем.</summary>
+/// <summary>
+/// Цена: бесплатный, платный или не указана (бесплатным её не считаем). Плашка на карточке — только у платного
+/// (2026-10-18: «Цена не указана» была почти на всех карточках и только мешала).
+/// </summary>
 public enum PriceKind { Free, Paid, Unknown }
 
 /// <summary>Главная кнопка карточки: «Установить» (загрузка разрешена), «Страница», «Купить у автора» (платный).</summary>
@@ -48,7 +51,8 @@ public sealed class FoundCard : Observable
     private Found _data = null!;
     public Found Data { get => _data; private set => Set(ref _data, value); }
 
-    private string _title = "", _subtitle = "", _sites = "", _priceText = "", _primaryLabel = "";
+    private string _title = "", _subtitle = "", _sites = "", _primaryLabel = "";
+    private string? _priceText;
     public string Title { get => _title; private set => Set(ref _title, value); }
     /// <summary>«1.5 · garage47»: версия и автор, что известно.</summary>
     public string Subtitle { get => _subtitle; private set => Set(ref _subtitle, value); }
@@ -57,7 +61,8 @@ public sealed class FoundCard : Observable
 
     private PriceKind _price;
     public PriceKind Price { get => _price; private set => Set(ref _price, value); }
-    public string PriceText { get => _priceText; private set => Set(ref _priceText, value); }
+    /// <summary>«Платный» или null — плашки нет.</summary>
+    public string? PriceText { get => _priceText; private set => Set(ref _priceText, value); }
 
     private FoundAction _primary;
     public FoundAction Primary { get => _primary; private set { if (Set(ref _primary, value)) Raise(nameof(ShowPage)); } }
@@ -103,9 +108,9 @@ public sealed class FoundCard : Observable
         SitesText = string.Join(" · ", f.Listings.Select(l => SiteNames.Of(l.Source)).Distinct());
         (Price, PriceText) = f.Price switch
         {
-            PriceSummary.Free or PriceSummary.Mixed => (PriceKind.Free, "Бесплатно"),
+            PriceSummary.Free or PriceSummary.Mixed => (PriceKind.Free, (string?)null),
             PriceSummary.Paid => (PriceKind.Paid, "Платный"),
-            _ => (PriceKind.Unknown, "Цена не указана"),
+            _ => (PriceKind.Unknown, null),
         };
         // платный только у автора; бесплатный на каком-то из сайтов — туда и ведём
         var free = f.Listings.FirstOrDefault(l => l.Price == PriceStatus.Free);

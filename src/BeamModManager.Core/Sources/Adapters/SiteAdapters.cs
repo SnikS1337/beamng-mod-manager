@@ -7,6 +7,8 @@ using BeamModManager.Core.Sources.ModsGaming;
 using BeamModManager.Core.Sources.BeamNg;
 using BeamModManager.Core.Sources.StMods;
 
+using BeamModManager.Core.Search;
+
 namespace BeamModManager.Core.Sources;
 
 /// <summary>Сайт ответил так, что результата нет: проверка «вы человек?», сбой, перегрузка.</summary>
@@ -113,8 +115,11 @@ public abstract class SiteAdapter : IModSource
             if (added.Count == 0) break;
             found.AddRange(added);
         }
-        return found;
+        return Relevant(query, found);
     }
+
+    /// <summary>Что из найденного сайтом относится к запросу человека. По умолчанию — всё, как ответил сайт.</summary>
+    protected virtual IReadOnlyList<Listing> Relevant(string query, IReadOnlyList<Listing> found) => found;
 
     public async Task<IReadOnlyList<Listing>> FeedPageAsync(int page, CancellationToken ct = default)
     {
@@ -225,6 +230,14 @@ public sealed class ModsGamingSource : SiteAdapter
     protected override int SearchPages => 2;
     protected override Uri? SearchPageUrl(string q, int page) => new(Root, "search/?q=" + Uri.EscapeDataString(ForBeamNg(q)) + "&t=0&p=" + page);
     private static string ForBeamNg(string q) => q.Contains("beamng", StringComparison.OrdinalIgnoreCase) ? q : q.Trim() + " beamng.drive";
+
+    /// <summary>
+    /// К запросу добавлено «beamng.drive», а сайт ищет слова через «или»: с опечаткой («bmv») подходило всё подряд — «Ford
+    /// Engines», «Human Dummy» (2026-10-18). Оставляем то, где слово человека есть в названии или в адресе (адрес у сайта
+    /// латиницей: русское слово сверяем и в транслите).
+    /// </summary>
+    protected override IReadOnlyList<Listing> Relevant(string query, IReadOnlyList<Listing> found) =>
+        SearchRelevance.Filter(query, found, ignore: new[] { "beamng", "drive", "beamng.drive" });
     // /load/beamng_drive/mashiny/38-1-0-160435 или …/mod_vaz_2106_…; раздел — /load/beamng_drive/mashiny/38 и 38-2 (страницы)
     protected override bool IsModPath(string[] p) =>
         p.Length >= 4 && p[0].Equals("load", StringComparison.OrdinalIgnoreCase) && p[1].Equals("beamng_drive", StringComparison.OrdinalIgnoreCase) && !Regex.IsMatch(p[^1], @"^\d+(?:-\d+)?$");
