@@ -77,6 +77,10 @@ public sealed class FoundCard : Observable
     private Uri? _previewUrl;
     public Uri? PreviewUrl { get => _previewUrl; private set => Set(ref _previewUrl, value); }
 
+    private Uri? _previewPage;
+    /// <summary>Страница, с которой окно возьмёт картинку, если в выдаче её не было (ModsGaming); иначе null.</summary>
+    public Uri? PreviewPage { get => _previewPage; private set => Set(ref _previewPage, value); }
+
     private string? _previewPath;
     /// <summary>Картинка, скачанная окном (кэш на диске); null — заглушка.</summary>
     public string? PreviewPath { get => _previewPath; set => Set(ref _previewPath, value); }
@@ -119,6 +123,8 @@ public sealed class FoundCard : Observable
         Primary = f.Price == PriceSummary.Paid ? FoundAction.Buy : downloads ? FoundAction.Install : FoundAction.Page;
         PrimaryLabel = Primary switch { FoundAction.Buy => "Купить у автора", FoundAction.Install => "Установить", _ => "Открыть страницу" };
         PreviewUrl = f.Listings.Select(l => l.PreviewUrl).FirstOrDefault(u => u is not null);
+        // в выдаче ModsGaming картинок нет: окно возьмёт её со страницы мода (ISearchBackend.PreviewOfAsync)
+        PreviewPage = PreviewUrl is null ? f.Listings.FirstOrDefault(l => l.Source == "modsgaming")?.Url : null;
         Placeholder = f.Listings.Any(l => l.Category is { } c && (c.Contains("карт", StringComparison.OrdinalIgnoreCase) || c.Contains("map", StringComparison.OrdinalIgnoreCase)))
             ? PlaceholderKind.Map : PlaceholderKind.Vehicle;
         Installed = installed;

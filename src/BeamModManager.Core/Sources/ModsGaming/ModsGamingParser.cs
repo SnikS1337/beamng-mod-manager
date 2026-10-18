@@ -105,8 +105,18 @@ public static class ModsGamingParser
             Author = a.Success ? WebUtility.HtmlDecode(a.Groups["a"].Value).Trim() : basis.Author,
             SizeBytes = size,
             Offers = offers,
+            PreviewUrl = ImageOf(withoutComments) ?? basis.PreviewUrl,
         };
     }
+
+    // главная картинка мода: <td class="detimg" style="background:url(/_ld/1604/53750859.jpg);">; запасная — первый снимок
+    // (screendiv). Картинки «Похожих модов» (poh-td) — чужие, их не берём
+    private static readonly Regex DetailImage = new(@"class=""(?:detimg|screendiv-1)""[^>]*background:\s*url\(\s*['""]?(?<u>/_ld/[^'""\)]+)", RegexOptions.Compiled);
+
+    /// <summary>Картинка мода на его странице (в выдаче поиска картинок нет — 2026-10-18: карточки ModsGaming были без фото).</summary>
+    public static Uri? ImageOf(string html) =>
+        DetailImage.Match(html) is { Success: true } m && Uri.TryCreate(Base, WebUtility.HtmlDecode(m.Groups["u"].Value.Trim()), out var u)
+        && u.Scheme == Uri.UriSchemeHttps ? u : null;
 
     public static long? ParseSize(string text)
     {

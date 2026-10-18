@@ -125,6 +125,23 @@ public static class SearchScreenTests
             Assert.True(r.Vm.Sites.All(x => x.State == "готов") && r.Vm.SitesNote is null, "сайты снова готовы");
         });
 
+        t.Run("ModsGaming без картинки в выдаче: карточка знает страницу мода; с картинкой из выдачи — страница не нужна", async () =>
+        {
+            var r = new Rig();
+            r.Vm.Query = "sienna";
+            var run = r.Vm.RunAsync();
+            r.WaitCalls(3);
+            r.Modland.Reply(L("modland", "a", "Toyota Sienna 2011-2017") with { PreviewUrl = new Uri("https://modland.test/a.jpg") });
+            r.Gaming.Reply(L("modsgaming", "x", "BMW M3 E30 v1.0"));
+            r.St.Reply();
+            await run;
+            r.Q.Drain();
+            var gaming = r.Vm.Cards.Single(c => c.SitesText == "ModsGaming");
+            Assert.Eq("https://modsgaming.test/x", gaming.PreviewPage?.AbsoluteUri);
+            Assert.True(gaming.PreviewUrl is null, "в выдаче картинки нет");
+            Assert.True(r.Vm.Cards.Single(c => c.SitesText == "Modland").PreviewPage is null, "картинка уже есть");
+        });
+
         t.Run("Modland просит проверку: в его строке «Пройти проверку», подпись зовёт туда; без встроенного окна — как было", async () =>
         {
             foreach (var canPass in new[] { true, false })

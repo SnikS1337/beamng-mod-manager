@@ -1279,6 +1279,7 @@ public partial class MainWindow : Window
         _vm.CommitPending(); // тост «Отменить» уже не нажмут: удалённое забывается до записи библиотеки
         _find.Cancel();
         _findImagesCts?.Cancel();
+        StopPageImages();
         _host.Flush?.Invoke();
     }
 
@@ -1528,6 +1529,9 @@ public partial class MainWindow : Window
             case nameof(SearchViewModel.HeaderNote) or nameof(SearchViewModel.CountText):
                 if (SearchPage) Dispatcher.BeginInvoke(AdaptTopBar, DispatcherPriority.Loaded);
                 break;
+            case nameof(SearchViewModel.Searching) when _find.Searching:
+                StopPageImages(); // новый запрос: страницы прошлых модов не держат очередь сайта
+                break;
         }
     }
 
@@ -1546,7 +1550,10 @@ public partial class MainWindow : Window
         // картинка уже скачана для этого адреса: повторный запрос, карточка пересобралась после «Это один мод»
         foreach (var c in _find.Cards.Where(c => c.PreviewPath is null && c.PreviewUrl is { } u && _findImages.ContainsKey(u.AbsoluteUri)))
             c.PreviewPath = _findImages[c.PreviewUrl!.AbsoluteUri];
+        foreach (var c in _find.Cards.Where(c => c.PreviewPath is null && c.PreviewPage is { } p && _pageImages.ContainsKey(p.AbsoluteUri)))
+            c.PreviewPath = _pageImages[c.PreviewPage!.AbsoluteUri];
         if (_host.SearchImages is not { } fetch) return;
+        QueuePageImages(fetch);
         var todo = _find.Cards.Where(c => c.PreviewPath is null && c.PreviewUrl is not null && _findAsked.Add(c.PreviewUrl.AbsoluteUri)).ToList();
         if (todo.Count == 0) return;
         _findImagesCts ??= new CancellationTokenSource();
@@ -1571,6 +1578,70 @@ public partial class MainWindow : Window
                 }
             }, ct);
         }
+    }
+
+    // ── картинки со страниц модов (ModsGaming: в выдаче их нет, 2026-10-18) ──
+
+    /// <summary>Сколько страниц открываем за один поиск: каждая — запрос к сайту с паузой.</summary>
+    private const int PageImagesPerSearch = 24;
+    private readonly Queue<Uri> _pageQueue = new();
+    private readonly HashSet<string> _pageAsked = new();
+    /// <summary>Страница мода → скачанная картинка.</summary>
+    private readonly Dictionary<string, string> _pageImages = new();
+    private CancellationTokenSource? _pageCts;
+    private bool _pageRunning;
+
+    private void QueuePageImages(Func<Uri, CancellationToken, Task<string?>> fetch)
+    {
+        if (_host.Search is not { } search) return;
+        foreach (var c in _find.Cards)
+        {
+            if (_pageAsked.Count >= PageImagesPerSearch) break;
+            if (c.PreviewPath is null && c.PreviewUrl is null && c.PreviewPage is { } p && _pageAsked.Add(p.AbsoluteUri)) _pageQueue.Enqueue(p);
+        }
+        if (_pageRunning || _pageQueue.Count == 0) return;
+        _pageCts ??= new CancellationTokenSource();
+        _ = RunPageImagesAsync(search, fetch, _pageCts.Token);
+    }
+
+    /// <summary>
+    /// По одной странице: сайт и так пускает запросы по очереди с паузой, параллельно — только забить ему очередь.
+    /// Работает в потоке окна (сеть — в фоне), поэтому очередь и карточки без блокировок.
+    /// </summary>
+    private async Task RunPageImagesAsync(ISearchBackend search, Func<Uri, CancellationToken, Task<string?>> fetch, CancellationToken ct)
+    {
+        _pageRunning = true;
+        try
+        {
+            while (!ct.IsCancellationRequested && _pageQueue.TryDequeue(out var page))
+            {
+                string? path = null;
+                try
+                {
+                    if (await search.PreviewOfAsync(page, ct) is { } img) path = await fetch(img, ct);
+                }
+                catch (OperationCanceledException) { return; }
+                catch (Exception) { } // нет картинки — остаётся заглушка
+                if (ct.IsCancellationRequested) return;
+                if (path is null) continue;
+                _pageImages[page.AbsoluteUri] = path;
+                foreach (var c in _find.Cards.Where(c => c.PreviewPage == page && c.PreviewPath is null)) c.PreviewPath = path;
+            }
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested) _pageRunning = false;
+        }
+    }
+
+    /// <summary>Новый запрос или закрытие окна: очередь страниц сбрасывается, уже скачанное остаётся.</summary>
+    private void StopPageImages()
+    {
+        _pageCts?.Cancel();
+        _pageCts = null;
+        _pageRunning = false;
+        _pageQueue.Clear();
+        _pageAsked.Clear(); // счёт «не больше 24» — на каждый запрос свой
     }
 
     /// <summary>Адреса картинок, которые сейчас качаются (чтобы не просить одну и ту же дважды).</summary>
