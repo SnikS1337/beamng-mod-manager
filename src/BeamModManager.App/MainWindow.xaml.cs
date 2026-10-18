@@ -230,9 +230,8 @@ public partial class MainWindow : Window
         if (host.StartMaximized) WindowState = WindowState.Maximized;
 
         _motion = new BackgroundMotion(this, GradeMove, Lights, Flies, BackgroundPace.Fps(Native.RefreshRate()));
-        // зерно фона: в цвете, точка в точку экрана (DitherEffect), или запасной слой поверх (UpdateGrain, из ApplyLook)
-        DpiChanged += (_, _) => SizeDither();
-        BackdropPaint.SizeChanged += (_, _) => SizeDither();
+        // зерно в цвете пятен (DitherEffect) или запасной слой поверх (UpdateGrain, из ApplyLook); точка шума — точка картинки
+        DpiChanged += (_, _) => _motion.SetDither(_dithered);
         SpringDriver.AnyRunningChanged += _motion.Hold;
         Closed += (_, _) => SpringDriver.AnyRunningChanged -= _motion.Hold;
         _glass = new[] { Nav, TopBar, TitleCapsule, Inspector, Caption, ToastBox, SettingsPanel, PreviewBar, CheckPanel, SitesPanel, BindPanel, IncomingPanel }.Select(g => (G: g, Tint: g.Tint)).ToArray();
@@ -796,37 +795,21 @@ public partial class MainWindow : Window
         LayoutPreviewShapes(time); // фигуры превью настроек — в цветах новой темы, тем же перетеканием
     }
 
-    private DitherEffect? _dither;
-
     /// <summary>
-    /// Зерно фона (2026-10-18, «видны градации цветов»): с видеокартой — прибавкой к цвету, одинаково вверх и вниз на любом
-    /// фоне (DitherEffect); без неё и на слабой графике — прежний слой поверх (Grain): шейдер на весь фон каждый кадр
-    /// программная отрисовка не потянет. Только у жидкого стекла («Красиво»): Windows без драйвера видеокарты называет себя
-    /// видеокартой, и там шейдер на весь фон идёт процессором — на сборочной машине снимки шли 17 минут вместо 6
-    /// (2026-10-18; там же видно, что фон с ним цел). Кому медленно, тому окно предложит «Быстро» — с ним зерно слоем.
-    /// На снимках — слоем.
+    /// Зерно против колец вокруг пятен (2026-10-18, «видны градации цветов»): с видеокартой и жидким стеклом — прибавкой
+    /// к цвету внутри картинки каждого пятна (BackgroundMotion.SetDither: считается только при смене размера и цвета);
+    /// иначе — прежний слой поверх (Grain). Шейдер на всём фоне (0.3.5–0.3.8) считался каждый кадр под каждым стеклом —
+    /// окно лагало и на мощном компьютере.
     /// </summary>
+    private bool _dithered;
+
     private void UpdateGrain(GlassMode mode)
     {
-        if (DitherEffect.IsAvailable && mode == GlassMode.Liquid && RenderCapability.Tier >> 16 >= 2 && !WeakGraphics() && _host.ShotPath is null)
-        {
-            _dither ??= new DitherEffect();
-            if (!ReferenceEquals(BackdropPaint.Effect, _dither)) BackdropPaint.Effect = _dither;
-            GrainLayer.Fill = null;
-            SizeDither();
-        }
-        else
-        {
-            BackdropPaint.Effect = null;
-            GrainLayer.Fill ??= Grain.Brush();
-        }
-    }
-
-    private void SizeDither()
-    {
-        if (_dither is null || BackdropPaint.ActualWidth <= 0) return;
-        var dpi = VisualTreeHelper.GetDpi(this);
-        _dither.SetPixelSize(BackdropPaint.ActualWidth * dpi.DpiScaleX, BackdropPaint.ActualHeight * dpi.DpiScaleY);
+        var dither = DitherEffect.IsAvailable && mode == GlassMode.Liquid && RenderCapability.Tier >> 16 >= 2 && !WeakGraphics();
+        _dithered = dither;
+        _motion.SetDither(dither);
+        if (dither) GrainLayer.Fill = null;
+        else GrainLayer.Fill ??= Grain.Brush();
     }
 
     /// <summary>Пятна на места темы под текущий размер окна; при смене темы — переезд за то же время, что и цвет.</summary>

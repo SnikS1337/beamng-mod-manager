@@ -2,6 +2,7 @@ using BeamModManager.Core.Matching;
 using BeamModManager.Core.Models;
 using BeamModManager.Core.Sources;
 using BeamModManager.Core.Text;
+using BeamModManager.Core.Versioning;
 
 namespace BeamModManager.Core.Search;
 
@@ -142,7 +143,7 @@ public sealed class SearchService
         try
         {
             var found = await s.SearchAsync(query, timeout.Token).ConfigureAwait(false);
-            var list = found.Take(_o.MaxPerSource).ToList();
+            var list = NewestOnly(found).Take(_o.MaxPerSource).ToList();
             return (new SourceReport(s.Id, s.DisplayName, SourceStatus.Ok, list.Count, null), list);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -207,6 +208,42 @@ public sealed class SearchService
 
         return result.OrderByDescending(c => c.Relevance).ThenBy(c => c.Title, StringComparer.OrdinalIgnoreCase).ToList();
     }
+
+    /// <summary>
+    /// Один мод в нескольких версиях на одном сайте (ModsGaming выкладывает каждую версию отдельной страницей: «Temporal
+    /// Anti Aliasing» 1.0…1.7 — шесть карточек, 2026-10-18) — одна запись, самая новая. Тот же мод — то же название без
+    /// версии, тот же автор и версии разные (мода, а при равной — игры); место в выдаче — первой из них. Одинаковая или
+    /// неизвестная версия — оставляем обе: это могут быть разные моды с одним названием.
+    /// </summary>
+    public static IReadOnlyList<Listing> NewestOnly(IReadOnlyList<Listing> found)
+    {
+        var result = new List<Listing>(found.Count);
+        var at = new Dictionary<(string, string, string), int>();
+        foreach (var l in found)
+        {
+            var name = TitleNormalizer.Normalize(TitleParser.Parse(l.Title).Name);
+            if (name.Length < 3) { result.Add(l); continue; } // по такому названию «тот же мод» не скажешь
+            var key = (l.Source.ToLowerInvariant(), name, (l.Author ?? "").Trim().ToLowerInvariant());
+            if (!at.TryGetValue(key, out var i)) { at[key] = result.Count; result.Add(l); continue; }
+            switch (Order(result[i], l))
+            {
+                case VersionOrder.Newer: result[i] = l; break;
+                case VersionOrder.Older: break;
+                default: result.Add(l); break; // не версии одного мода — отдельная запись
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Как <paramref name="l"/> соотносится с <paramref name="kept"/>: по версии мода, при равной — по версии игры.</summary>
+    private static VersionOrder Order(Listing kept, Listing l)
+    {
+        var mod = VersionComparer.Compare(VersionOf(kept), VersionOf(l));
+        return mod == VersionOrder.Same ? VersionComparer.Compare(GameOf(kept), GameOf(l)) : mod;
+    }
+
+    private static string? VersionOf(Listing l) => l.ModVersion ?? TitleParser.Parse(l.Title).ModVersion;
+    private static string? GameOf(Listing l) => l.GameVersion ?? TitleParser.Parse(l.Title).GameVersion;
 
     private static string CardId(List<Listing> c) => string.Join("+", c.Select(l => $"{l.Source}:{l.SourceId}").OrderBy(x => x, StringComparer.Ordinal));
 

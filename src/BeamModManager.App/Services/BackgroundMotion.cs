@@ -16,10 +16,15 @@ public sealed class BackgroundMotion
 {
     private readonly Part _bg, _flies;
     private readonly FrameworkElement _owner;
-    private readonly List<(Ellipse Shape, RadialGradientBrush Brush)> _blobs = new();
+    private readonly List<(FrameworkElement Shape, RadialGradientBrush Brush)> _blobs = new();
+    private readonly List<Grid> _paints = new();
 
     /// <summary>Четыре пятна: фигура (место и размер ставит окно по теме) и её кисть (не заморожена: цвет меняется с темой).</summary>
-    public IReadOnlyList<(Ellipse Shape, RadialGradientBrush Brush)> Blobs => _blobs;
+    public IReadOnlyList<(FrameworkElement Shape, RadialGradientBrush Brush)> Blobs => _blobs;
+
+    /// <summary>Доля разрешения, в которой хранится картинка пятна (пятно размытое — больше не нужно).</summary>
+    private const double BlobCacheScale = 0.5;
+    private const double BlobBlur = 48;
 
     /// <summary>Одна история со своим состоянием: ещё не начата, идёт, на паузе.</summary>
     private sealed class Part
@@ -69,16 +74,23 @@ public sealed class BackgroundMotion
             var brush = new RadialGradientBrush { GradientOrigin = new Point(0.5, 0.5) };
             foreach (var (at, _) in BeamModManager.Ui.Look.BackgroundThemes.Falloff)
                 brush.GradientStops.Add(new GradientStop(Colors.Transparent, at));
-            var e = new Ellipse
+            // размытие поверх мягкого края: пятно — это свет, а не круг. Зерно (SetDither) — внутри той же картинки.
+            // Кэш хранит уже готовую картинку, и сдвиг, масштаб и прозрачность её не перерисовывают
+            var ellipse = new Ellipse
             {
                 Fill = brush,
+                Effect = new System.Windows.Media.Effects.BlurEffect { Radius = BlobBlur, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance },
+            };
+            var paint = new Grid { Children = { ellipse } };
+            var e = new Grid
+            {
                 IsHitTestVisible = false,
                 RenderTransformOrigin = new Point(0.5, 0.5),
-                // размытие поверх мягкого края: пятно — это свет, а не круг. Кэш хранит уже размытую картинку,
-                // и сдвиг, масштаб и прозрачность её не перерисовывают
-                Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 48, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance },
-                CacheMode = new BitmapCache(0.5),
+                CacheMode = new BitmapCache(BlobCacheScale),
+                Children = { paint },
             };
+            e.SizeChanged += (_, _) => SizeDither(e, paint);
+            _paints.Add(paint);
             var move = new TranslateTransform();
             var scale = new ScaleTransform(1, 1);
             e.RenderTransform = new TransformGroup { Children = { scale, move } };
@@ -121,6 +133,32 @@ public sealed class BackgroundMotion
             var tw = 2.5 + rnd.NextDouble() * 4;
             Anim(e, UIElement.OpacityProperty, 0.15, 0.95, tw / 2, delay: rnd.NextDouble() * tw);
         }
+    }
+
+    /// <summary>
+    /// Зерно в цвете пятен (Shaders/Dither.fx; 2026-10-18 — против колец-ступенек вокруг пятен). Раньше шейдер стоял на
+    /// всём фоне — и считался каждый кадр фона, причём заново под каждым стеклом (копия сцены): на мощном компьютере всё
+    /// окно шло рывками и предлагало «Быстро». Теперь зерно — часть картинки пятна в кэше: считается, только когда
+    /// меняются размер или цвет пятна, а движение, дыхание и прозрачность его не трогают.
+    /// </summary>
+    public void SetDither(bool on)
+    {
+        for (var i = 0; i < _paints.Count; i++)
+        {
+            var paint = _paints[i];
+            if (!on) { paint.Effect = null; continue; }
+            if (paint.Effect is not Controls.DitherEffect) paint.Effect = new Controls.DitherEffect();
+            SizeDither(_blobs[i].Shape, paint);
+        }
+    }
+
+    /// <summary>Точка шума — на точку картинки пятна в кэше (вместе с размытием по краям).</summary>
+    private static void SizeDither(FrameworkElement blob, Grid paint)
+    {
+        if (paint.Effect is not Controls.DitherEffect d || blob.ActualWidth <= 0) return;
+        var dpi = VisualTreeHelper.GetDpi(blob);
+        d.SetPixelSize((blob.ActualWidth + 2 * BlobBlur) * dpi.DpiScaleX * BlobCacheScale,
+            (blob.ActualHeight + 2 * BlobBlur) * dpi.DpiScaleY * BlobCacheScale);
     }
 
     private readonly List<(UIElement Fly, double X, double Y)> _flyAt = new();

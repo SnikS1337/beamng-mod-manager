@@ -279,7 +279,13 @@ public static class XamlTests
             Assert.True(pv.Contains("<c:Droplet Corner=\"20\" Margin=\"-3,-5\" Under=\"{DynamicResource SegBack}\"/>", StringComparison.Ordinal)
                 && pv.Contains("Background=\"{DynamicResource SegBack}\"", StringComparison.Ordinal), "в превью капля и дорожка фильтров как в окне");
             Assert.True(Read("BeamModManager.App.csproj").Contains("<GlassShader Include=\"Shaders\\Dither.fx\" Out=\"Shaders\\Dither.ps\"/>", StringComparison.Ordinal)
-                && code.Contains("BackdropPaint.Effect = _dither", StringComparison.Ordinal), "зерно фона прибавкой к цвету");
+                && code.Contains("_motion.SetDither(dither)", StringComparison.Ordinal), "зерно фона прибавкой к цвету");
+            // эффект на весь фон считался каждый кадр под каждым стеклом — окно лагало (2026-10-18): зерно только в кэше пятен
+            var motion = Read("Services/BackgroundMotion.cs");
+            Assert.True(!code.Contains("BackdropPaint.Effect", StringComparison.Ordinal) && !code.Contains("Backdrop.Effect", StringComparison.Ordinal)
+                && !code.Contains("Scene.Effect", StringComparison.Ordinal), "на фоне, который копируют стёкла, эффектов нет");
+            Assert.True(motion.Contains("CacheMode = new BitmapCache(BlobCacheScale)", StringComparison.Ordinal)
+                && motion.Contains("paint.Effect = new Controls.DitherEffect()", StringComparison.Ordinal), "зерно — внутри кэша пятна");
             var xaml = Read("MainWindow.xaml");
             foreach (var (name, labels, front) in new[] { ("FilterDrop", "FilterList", "FilterFront"), ("NavDrop", "NavItems", "NavFront"), ("CapDrop", "CapButtons", "CapFront") })
             {
