@@ -648,9 +648,12 @@ public sealed class GarageViewModel : Observable
     public void ArchiveTitleRead(string id, string? title)
     {
         if (!_cards.TryGetValue(id, out var card)) return;
+        if (card.Data.ArchiveTitleKnown && card.Data.ArchiveTitle == title) return; // уже знали: из кэша при перечитывании
         var before = card.Name;
         card.ApplyArchiveTitle(title);
-        if (ReferenceEquals(Selected, card) && card.Name != before) RaiseDetails();
+        if (card.Name == before) return;
+        if (_search.Length > 0) Rebuild(); // ищут по названию: мод мог только что подойти или перестать
+        if (ReferenceEquals(Selected, card)) RaiseDetails();
     }
 
     // ───────────── тост ─────────────

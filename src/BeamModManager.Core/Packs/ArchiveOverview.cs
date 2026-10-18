@@ -99,8 +99,20 @@ public static class ArchiveOverviewReader
         reads++;
         try
         {
-            using var s = entry.Open();
-            using var doc = JsonDocument.Parse(s, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip, MaxDepth = 32 });
+            // размер в оглавлении архива может врать: читаем не больше предела, что бы там ни было записано
+            var buf = new MemoryStream();
+            using (var s = entry.Open())
+            {
+                var chunk = new byte[16 * 1024];
+                int n;
+                while ((n = s.Read(chunk, 0, chunk.Length)) > 0)
+                {
+                    buf.Write(chunk, 0, n);
+                    if (buf.Length > MaxInfoBytes) return null;
+                }
+            }
+            buf.Position = 0;
+            using var doc = JsonDocument.Parse(buf, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip, MaxDepth = 32 });
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
             var name = Text(doc.RootElement, key);
             if (name is null) return null;
