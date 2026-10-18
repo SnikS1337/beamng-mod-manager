@@ -93,7 +93,9 @@ public static class SiteFixesTests
             var src = new ModsGamingSource(Polite(site));
             var one = await src.SearchAsync("sienna");
             Assert.True(one.Count > 0 && one.Select(l => l.SourceId).Distinct().Count() == one.Count, "без повторов");
-            Assert.Eq(2, site.Log.Count);
+            // запрос как есть (здесь его нет — 404), затем с «beamng.drive» в две страницы (2026-10-18)
+            Assert.Eq("GET https://modsgaming.ru/search/?q=sienna&t=0", site.Log[0]);
+            Assert.Eq(3, site.Log.Count);
             site.Log.Clear();
             await new ModsGamingSource(Polite(site)).SearchAsync("bmw BeamNG");
             Assert.Eq("GET https://modsgaming.ru/search/?q=bmw%20BeamNG&t=0", site.Log[0], "«beamng» уже есть — не добавляем");

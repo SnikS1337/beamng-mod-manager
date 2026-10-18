@@ -1536,9 +1536,16 @@ public partial class MainWindow : Window
 
     private CancellationTokenSource? _findImagesCts;
 
-    /// <summary>Картинки карточек поиска качаются в фоне (не больше четырёх разом), пришедшая встаёт на карточку сразу.</summary>
+    /// <summary>
+    /// Картинки карточек поиска качаются в фоне, пришедшая встаёт на карточку сразу. Уже скачанная ставится до всего
+    /// остального (2026-10-18: при повторном запросе все адреса уже были «спрошены», выход раньше времени — и картинки
+    /// терялись). Не скачалась — адрес снова можно спросить при следующей сборке карточек.
+    /// </summary>
     private void LoadFindImages()
     {
+        // картинка уже скачана для этого адреса: повторный запрос, карточка пересобралась после «Это один мод»
+        foreach (var c in _find.Cards.Where(c => c.PreviewPath is null && c.PreviewUrl is { } u && _findImages.ContainsKey(u.AbsoluteUri)))
+            c.PreviewPath = _findImages[c.PreviewUrl!.AbsoluteUri];
         if (_host.SearchImages is not { } fetch) return;
         var todo = _find.Cards.Where(c => c.PreviewPath is null && c.PreviewUrl is not null && _findAsked.Add(c.PreviewUrl.AbsoluteUri)).ToList();
         if (todo.Count == 0) return;
@@ -1549,20 +1556,23 @@ public partial class MainWindow : Window
             var url = card.PreviewUrl!;
             _ = Task.Run(async () =>
             {
-                var path = await fetch(url, ct).ConfigureAwait(false);
-                if (path is null) return;
-                await Dispatcher.BeginInvoke(() =>
+                string? path = null;
+                try { path = await fetch(url, ct).ConfigureAwait(false); }
+                finally
                 {
-                    _findImages[url.AbsoluteUri] = path;
-                    foreach (var c in _find.Cards.Where(c => c.PreviewUrl == url)) c.PreviewPath = path;
-                });
+                    var got = path;
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (got is null) { _findAsked.Remove(url.AbsoluteUri); return; } // в следующий раз попробуем снова
+                        _findImages[url.AbsoluteUri] = got;
+                        foreach (var c in _find.Cards.Where(c => c.PreviewUrl == url)) c.PreviewPath = got;
+                    });
+                }
             }, ct);
         }
-        // картинка уже скачана для этого адреса (карточка пересобралась после «Это один мод»)
-        foreach (var c in _find.Cards.Where(c => c.PreviewPath is null && c.PreviewUrl is { } u && _findImages.ContainsKey(u.AbsoluteUri)))
-            c.PreviewPath = _findImages[c.PreviewUrl!.AbsoluteUri];
     }
 
+    /// <summary>Адреса картинок, которые сейчас качаются (чтобы не просить одну и ту же дважды).</summary>
     private readonly HashSet<string> _findAsked = new();
     private readonly Dictionary<string, string> _findImages = new();
 
