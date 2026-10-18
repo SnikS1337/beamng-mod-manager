@@ -61,7 +61,10 @@ public static class AdapterTests
                 ["https://www.modland.net/beamng.drive-mods/page/3"] = (200, list),
             });
             var src = new ModlandSource(Polite(pages));
-            Assert.Eq(6, (await src.SearchAsync("sienna")).Count);
+            // в выдаче шестой — Sienna для GTA 5: Modland ищет по всем играм, берём только BeamNG (2026-10-18)
+            var found = await src.SearchAsync("sienna");
+            Assert.Eq(5, found.Count);
+            Assert.True(found.All(l => l.Url.AbsolutePath.StartsWith("/beamng.drive-mods/", StringComparison.Ordinal)), "только BeamNG");
             Assert.Eq(7, (await src.FeedPageAsync(1)).Count);
             Assert.Eq(7, (await src.FeedPageAsync(3)).Count);
         });
