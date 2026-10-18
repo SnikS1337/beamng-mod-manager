@@ -689,7 +689,7 @@ public partial class MainWindow : Window
             };
         }
 
-        UpdateGrain();
+        UpdateGrain(mode);
         Flies.Visibility = s.Fireflies ? Visibility.Visible : Visibility.Collapsed;
         Flies.Opacity = light ? 0.7 : 1; // белые огоньки на светлом фоне тише, иначе рябят
         var palette = BackgroundThemes.Of(s.Theme, light);
@@ -793,12 +793,14 @@ public partial class MainWindow : Window
     /// <summary>
     /// Зерно фона (2026-10-18, «видны градации цветов»): с видеокартой — прибавкой к цвету, одинаково вверх и вниз на любом
     /// фоне (DitherEffect); без неё и на слабой графике — прежний слой поверх (Grain): шейдер на весь фон каждый кадр
-    /// программная отрисовка не потянет. Снимки на сборочной машине (без видеокарты) — тоже со слоем: шейдер на весь фон
-    /// программно растянул снимки с 6 до 17 минут (2026-10-18).
+    /// программная отрисовка не потянет. Только у жидкого стекла («Красиво»): Windows без драйвера видеокарты называет себя
+    /// видеокартой, и там шейдер на весь фон идёт процессором — на сборочной машине снимки шли 17 минут вместо 6
+    /// (2026-10-18; там же видно, что фон с ним цел). Кому медленно, тому окно предложит «Быстро» — с ним зерно слоем.
+    /// На снимках — слоем.
     /// </summary>
-    private void UpdateGrain()
+    private void UpdateGrain(GlassMode mode)
     {
-        if (DitherEffect.IsAvailable && RenderCapability.Tier >> 16 >= 2 && !WeakGraphics())
+        if (DitherEffect.IsAvailable && mode == GlassMode.Liquid && RenderCapability.Tier >> 16 >= 2 && !WeakGraphics() && _host.ShotPath is null)
         {
             _dither ??= new DitherEffect();
             if (!ReferenceEquals(BackdropPaint.Effect, _dither)) BackdropPaint.Effect = _dither;
