@@ -1192,7 +1192,7 @@ public partial class MainWindow : Window
     }
 
     // нажали на пункт — капля сжимается; отпустили или ушли мышью — упруго возвращается и уже потом перетекает
-    // при «Уменьшить анимацию» и выключенных анимациях капля не сжимается (DESIGN_MOTION 3.3)
+    // при выключенных «Анимациях интерфейса» капля не сжимается (DESIGN_MOTION 3.3)
     private void Nav_PreviewMouseDown(object sender, MouseButtonEventArgs e) { if (Squish(e)) _springs.To(_navPress, 0.92); }
     // обработчики XAML должны совпадать с делегатом точно: шаблонные события создаются через Delegate.CreateDelegate
     private void Nav_PreviewMouseUp(object sender, MouseButtonEventArgs e) => _springs.To(_navPress, 1);

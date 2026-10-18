@@ -1198,7 +1198,7 @@
                             </StackPanel>
                             <DockPanel x:Name="AppearanceFoot" Grid.Row="1" Grid.ColumnSpan="2" Margin="4,0,0,0">
                                 <TextBlock Style="{StaticResource Note}" MaxWidth="520" HorizontalAlignment="Left"
-                                           Text="Если в Windows выключены эффекты анимации или прозрачности, программа учтёт это сама, даже когда здесь всё включено."/>
+                                           Text="Если в Windows выключены эффекты прозрачности, стекло будет плоским, даже когда здесь всё включено."/>
                             </DockPanel>
                         </Grid>
 

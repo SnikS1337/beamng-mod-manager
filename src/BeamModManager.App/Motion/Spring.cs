@@ -65,8 +65,14 @@ public sealed class SpringDriver
     /// <summary>Замер кадров на сборочной машине (--frames): анимации идут, даже если в Windows они выключены.</summary>
     public static bool ForceMotion { get; set; }
 
-    /// <summary>Интерфейс не анимируется: капли, панели и карточки встают на место сразу. Фон этим не управляется.</summary>
-    public static bool ReducedMotion => (SystemReduced && !ForceMotion) || AnimationsOff;
+    /// <summary>
+    /// Интерфейс не анимируется: капли, панели и карточки встают на место сразу. Решает только настройка программы
+    /// «Анимации интерфейса» (2026-10-18): раньше её молча перекрывал флажок Windows «Анимация элементов управления внутри
+    /// окон», и у кого он снят (часто — после «Обеспечить наилучшее быстродействие»), программа выглядела как старая:
+    /// капли без линзы и пружин, фон и искры стоят. Его значение — только для диагностики (<see cref="SystemReduced"/>).
+    /// Фон этим не управляется.
+    /// </summary>
+    public static bool ReducedMotion => AnimationsOff;
 
     private static int _running;
 
@@ -93,7 +99,7 @@ public sealed class SpringDriver
         return s;
     }
 
-    /// <summary>Задать цель; при «Уменьшить анимацию» в Windows — сразу на место.</summary>
+    /// <summary>Задать цель; при выключенных «Анимациях интерфейса» — сразу на место.</summary>
     public void To(Spring s, double target, bool instant = false)
     {
         if (instant || ReducedMotion)

@@ -9,7 +9,8 @@ namespace BeamModManager.App.Services;
 /// <summary>
 /// Само движется только фон (DESIGN_MOTION раздел 2): плывущая цветная полоса (36 с), пятна света (плывут по петлям 21–37 с
 /// и дышат 6–9 с) и огоньки.
-/// Останавливается, когда окно не видно, не в фокусе или запущена игра; при «Уменьшить анимацию» в Windows не запускается.
+/// Останавливается, когда окно не видно, не в фокусе или запущена игра. Включают и выключают его настройки программы
+/// («Анимированный фон», «Огоньки»), а не флажки анимации Windows (2026-10-18).
 /// Фон и огоньки — две отдельные истории: в настройках они включаются по отдельности («Анимированный фон», «Огоньки»).
 /// </summary>
 public sealed class BackgroundMotion
@@ -201,9 +202,8 @@ public sealed class BackgroundMotion
 
     private void Apply()
     {
-        var reduced = Motion.SpringDriver.SystemReduced;
-        Run(_bg, _wantBg && !reduced && !_held);
-        Run(_flies, _wantFlies && !reduced && !_held);
+        Run(_bg, _wantBg && !_held);
+        Run(_flies, _wantFlies && !_held);
     }
 
     private void Run(Part p, bool run)
