@@ -1,0 +1,16 @@
+  Determining projects to restore...
+  Restored D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.Core\BeamModManager.Core.csproj (in 157 ms).
+  Restored D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.Ui\BeamModManager.Ui.csproj (in 206 ms).
+  Restored D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.App\BeamModManager.App.csproj (in 2.6 sec).
+  compilation object save succeeded; see D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.App\Shaders\Glass.ps
+  compilation object save succeeded; see D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.App\Shaders\Lens.ps
+  compilation object save succeeded; see D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.App\Shaders\Dither.ps
+  BeamModManager.Core -> D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.Core\bin\Release\net10.0\BeamModManager.Core.dll
+  BeamModManager.Ui -> D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.Ui\bin\Release\net10.0\BeamModManager.Ui.dll
+  BeamModManager.App -> D:\a\beamng-mod-manager\beamng-mod-manager\src\BeamModManager.App\bin\Release\net10.0-windows\BeamModManager.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:18.66
