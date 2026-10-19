@@ -1389,8 +1389,10 @@ public partial class MainWindow : Window
         if (w <= 0) return;
         PreviewBar.Measure(new Size(double.PositiveInfinity, 48));
         PvTitle.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var bar = PreviewBar.DesiredSize.Width;
-        var title = PvTitle.DesiredSize.Width;
+        // DesiredSize включает отступ (Margin), а отступ островка и ставим здесь: с ним «ширина» росла на прежний сдвиг,
+        // и при каждом изменении размера островок прыгал то вправо, то на заголовок (2026-10-19)
+        var bar = Math.Max(0, PreviewBar.DesiredSize.Width - PreviewBar.Margin.Left - PreviewBar.Margin.Right);
+        var title = Math.Max(0, PvTitle.DesiredSize.Width - PvTitle.Margin.Left - PvTitle.Margin.Right);
         const double left = 24, edge = 22;
         var p = IslandLayout.Place(w, left, w - edge, bar, bar, title, title);
         var x = p.Title == TitleFit.Full ? p.X : Math.Max(left, w - edge - bar);
