@@ -1,0 +1,5 @@
+2026-10-19 05:05:34Z 0.3.1
+System.InvalidOperationException: проверка: новая версия падает при запуске
+   at BeamModManager.App.App.Start(String demo, String shot, Func`2 Arg)
+   at BeamModManager.App.App.OnStartup(StartupEventArgs e)
+

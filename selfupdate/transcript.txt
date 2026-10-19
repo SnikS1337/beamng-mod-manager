@@ -1,0 +1,66 @@
+**********************
+PowerShell transcript start
+Start time: 20261019050514
+Username: runnervm0xl3a\runneradmin
+RunAs User: runnervm0xl3a\runneradmin
+Configuration Name: 
+Machine: runnervm0xl3a (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\Program Files\PowerShell\7\pwsh.dll -command . 'D:\a\_temp\582f38a2-eb68-44c9-9ff4-174dea5577c8.ps1'
+Process ID: 10064
+PSVersion: 7.6.6
+PSEdition: Core
+GitCommitId: 7.6.6
+OS: Microsoft Windows 10.0.26100
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+программа: D:\a\beamng-mod-manager\Мои программы (тест)\Mod Manager BeamNG; профиль: C:\Users\runneradmin\AppData\Local\BeamModManager
+── обычное обновление
+   start 0.3 normal old=False new=False bad=False skip=-
+   check Available
+   install ReadyToRestart
+   apply ok
+   start 0.3.1 after-update old=False new=False bad=False skip=-
+   check UpToDate
+   в папке программы: BeamModManager.exe
+   файл: File ID is 0x000000000000000000010000000005b6 → File ID is 0x000000000000000000010000000005b6
+   ок: 0.3.1.0
+── новая версия падает при запуске: прежняя возвращается
+   start 0.3 normal old=False new=False bad=False skip=-
+   check Available
+   install ReadyToRestart
+   apply ok
+   start 0.3 rolled-back old=False new=False bad=False skip=0.3.1
+   check UpToDate версия 0.3.1 не запустилась у вас, ждём следующую
+   errors.log: 2026-10-19 05:05:34Z 0.3.1
+   errors.log: System.InvalidOperationException: проверка: новая версия падает при запуске
+   errors.log:    at BeamModManager.App.App.Start(String demo, String shot, Func`2 Arg)
+   errors.log:    at BeamModManager.App.App.OnStartup(StartupEventArgs e)
+   errors.log:
+   в папке программы: BeamModManager.exe
+   файл: File ID is 0x000000000000000000020000000005b6 → File ID is 0x000000000000000000020000000005b6
+   ок: 0.3.0.0
+── новая версия умирает сама: прежняя возвращается
+   start 0.3 normal old=False new=False bad=False skip=-
+   check Available
+   install ReadyToRestart
+   apply ok
+   start 0.3 rolled-back old=False new=False bad=False skip=0.3.1
+   check UpToDate версия 0.3.1 не запустилась у вас, ждём следующую
+   в папке программы: BeamModManager.exe
+   файл: File ID is 0x000000000000000000030000000005b6 → File ID is 0x000000000000000000030000000005b6
+   ок: 0.3.0.0
+── нет прав на файл программы: ничего не тронуто
+   start 0.3 normal old=False new=False bad=False skip=-
+   check Available
+   install Available нет прав менять файлы в папке программы. Перенесите её, например, на рабочий стол
+   в папке программы: BeamModManager.exe
+   файл: File ID is 0x000000000000000000040000000005b6 → File ID is 0x000000000000000000040000000005b6
+   ок: 0.3.0.0
+**********************
+PowerShell transcript end
+End time: 20261019050553
+**********************

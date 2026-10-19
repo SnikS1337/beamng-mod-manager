@@ -1,0 +1,3 @@
+start 0.3 normal old=False new=False bad=False skip=-
+check Available 
+install Available нет прав менять файлы в папке программы. Перенесите её, например, на рабочий стол
