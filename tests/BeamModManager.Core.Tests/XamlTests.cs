@@ -278,6 +278,9 @@ public static class XamlTests
                 Assert.True(pv.Contains(attr, StringComparison.Ordinal) && bar.Contains(attr, StringComparison.Ordinal), $"превью островка как настоящий: {attr}");
             Assert.True(pv.Contains("<c:Droplet Corner=\"20\" Margin=\"-3,-5\" Under=\"{DynamicResource SegBack}\"/>", StringComparison.Ordinal)
                 && pv.Contains("Background=\"{DynamicResource SegBack}\"", StringComparison.Ordinal), "в превью капля и дорожка фильтров как в окне");
+            // ширина островка превью — без его отступа: отступ ставит само место, иначе островок прыгает при каждом размере
+            Assert.True(code.Contains("PreviewBar.DesiredSize.Width - PreviewBar.Margin.Left - PreviewBar.Margin.Right", StringComparison.Ordinal),
+                "островок превью меряется без своего отступа");
             Assert.True(Read("BeamModManager.App.csproj").Contains("<GlassShader Include=\"Shaders\\Dither.fx\" Out=\"Shaders\\Dither.ps\"/>", StringComparison.Ordinal)
                 && code.Contains("_motion.SetDither(dither)", StringComparison.Ordinal), "зерно фона прибавкой к цвету");
             // эффект на весь фон считался каждый кадр под каждым стеклом — окно лагало (2026-10-18): зерно только в кэше пятен
