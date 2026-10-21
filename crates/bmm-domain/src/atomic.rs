@@ -9,23 +9,26 @@ pub fn temp_path(path: &Path) -> PathBuf {
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_with_temp(path, &temp_path(path), bytes)
+}
+
+pub fn write_atomic_with_temp(path: &Path, tmp: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
         fs::create_dir_all(parent)?;
     }
 
-    let tmp = temp_path(path);
     let result = (|| {
-        let mut file = File::create(&tmp)?;
+        let mut file = File::create(tmp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&tmp, path)
+        fs::rename(tmp, path)
     })();
 
     if result.is_err() {
-        let _ = fs::remove_file(&tmp);
+        let _ = fs::remove_file(tmp);
     }
 
     result

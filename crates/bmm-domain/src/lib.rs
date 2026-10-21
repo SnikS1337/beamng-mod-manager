@@ -3,6 +3,7 @@
 pub mod atomic;
 pub mod clock;
 pub mod hosts;
+pub mod library;
 pub mod matches;
 pub mod matching;
 pub mod models;
