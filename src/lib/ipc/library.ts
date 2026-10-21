@@ -23,6 +23,10 @@ export interface ModCardDto {
   compat: CompatDto;
   update: "none" | "likely" | "possible";
   pending: PendingState;
+  fromGameRepo: boolean;
+  deleted: boolean;
+  copies: number;
+  savedAt: string | null;
 }
 
 export interface FilterCounts {
@@ -41,6 +45,23 @@ export interface LibrarySnapshot {
   gameVersion: string | null;
   gameRunning: boolean;
   warning: string | null;
+  deleted: ModCardDto[];
+}
+
+export interface DeletedTicket {
+  id: string;
+  fileName: string;
+  backupId: string;
+  wasInDisabled: boolean;
+  name: string;
+}
+
+export interface VersionRow {
+  backupId: string;
+  fileName: string;
+  version: string | null;
+  savedAt: string | null;
+  sizeBytes: number;
 }
 
 export interface ArchiveDto {
@@ -100,6 +121,15 @@ const TITLES = [
 
 const KINDS: ModKind[] = ["vehicle", "level", "sound", "script", "unknown"];
 
+let mockLibrary: LibrarySnapshot | null = null;
+const mockDeletedCards = new Map<string, ModCardDto>();
+
+function recount(snapshot: LibrarySnapshot): void {
+  snapshot.counts.all = snapshot.mods.length;
+  snapshot.counts.enabled = snapshot.mods.filter((mod) => mod.enabled).length;
+  snapshot.counts.deleted = snapshot.deleted.length;
+}
+
 function mockSnapshot(count = 5000): LibrarySnapshot {
   const mods: ModCardDto[] = Array.from({ length: count }, (_, index) => {
     const base = TITLES[index % TITLES.length];
@@ -124,6 +154,10 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
       },
       update: index % 17 === 0 ? "likely" : "none",
       pending: "none",
+      fromGameRepo: index % 13 === 0,
+      deleted: false,
+      copies: 0,
+      savedAt: null,
     };
   });
   const enabled = mods.filter((mod) => mod.enabled).length;
@@ -142,6 +176,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
     gameVersion: "0.39.4",
     gameRunning: false,
     warning: null,
+    deleted: [],
   };
 }
 
@@ -149,14 +184,16 @@ export async function libraryLoad(): Promise<LibrarySnapshot> {
   if (isTauri()) {
     return invoke<LibrarySnapshot>("library_load");
   }
-  return mockSnapshot();
+  mockLibrary ??= mockSnapshot();
+  return mockLibrary;
 }
 
 export async function libraryRefresh(): Promise<LibrarySnapshot> {
   if (isTauri()) {
     return invoke<LibrarySnapshot>("library_refresh");
   }
-  return mockSnapshot();
+  mockLibrary ??= mockSnapshot();
+  return mockLibrary;
 }
 
 export async function modToggle(id: string, enabled: boolean): Promise<ToggleResult> {
@@ -206,4 +243,92 @@ export async function modDetails(id: string): Promise<ModDetails> {
 export async function modPreview(id: string): Promise<string | null> {
   if (!isTauri()) return null;
   return invoke<string | null>("mod_preview", { id });
+}
+
+export async function modDelete(id: string): Promise<DeletedTicket> {
+  if (isTauri()) {
+    return invoke<DeletedTicket>("mod_delete", { id });
+  }
+  const snapshot = await libraryLoad();
+  const index = snapshot.mods.findIndex((mod) => mod.id === id);
+  if (index < 0) throw new Error("Мод не найден.");
+  const [card] = snapshot.mods.splice(index, 1);
+  mockDeletedCards.set(id, card);
+  recount(snapshot);
+  return {
+    id,
+    fileName: card.fileName,
+    backupId: `0000000001_20261021-120000-000_${card.fileName}`,
+    wasInDisabled: false,
+    name: card.name,
+  };
+}
+
+export async function modUndelete(id: string): Promise<void> {
+  if (isTauri()) {
+    await invoke("mod_undelete", { id });
+    return;
+  }
+  const snapshot = await libraryLoad();
+  const card = mockDeletedCards.get(id);
+  if (!card) return;
+  mockDeletedCards.delete(id);
+  snapshot.mods.push(card);
+  recount(snapshot);
+}
+
+export async function modForgetDeleted(id: string): Promise<void> {
+  if (isTauri()) {
+    await invoke("mod_forget_deleted", { id });
+    return;
+  }
+  const snapshot = await libraryLoad();
+  const card = mockDeletedCards.get(id);
+  if (!card) return;
+  mockDeletedCards.delete(id);
+  snapshot.deleted.push({
+    ...card,
+    deleted: true,
+    enabled: false,
+    copies: 1,
+    savedAt: new Date().toISOString(),
+  });
+  recount(snapshot);
+}
+
+export async function modRestoreDeleted(fileName: string, backupId?: string): Promise<void> {
+  if (isTauri()) {
+    await invoke("mod_restore_deleted", { fileName, backupId: backupId ?? null });
+    return;
+  }
+  const snapshot = await libraryLoad();
+  const index = snapshot.deleted.findIndex((mod) => mod.fileName === fileName);
+  if (index < 0) return;
+  const [card] = snapshot.deleted.splice(index, 1);
+  snapshot.mods.push({
+    ...card,
+    id: `mock-${Date.now()}`,
+    deleted: false,
+    enabled: true,
+    copies: 0,
+    savedAt: null,
+  });
+  recount(snapshot);
+}
+
+export async function modVersions(id: string): Promise<VersionRow[]> {
+  if (isTauri()) return invoke<VersionRow[]>("mod_versions", { id });
+  return [
+    {
+      backupId: "0000000002_20261020-120000-000_demo.zip",
+      fileName: "demo_v1.zip",
+      version: "1.0",
+      savedAt: "2026-10-20T12:00:00+00:00",
+      sizeBytes: 88 * 1024 * 1024,
+    },
+  ];
+}
+
+export async function modRestoreVersion(id: string, backupId: string): Promise<void> {
+  if (isTauri()) await invoke("mod_restore_version", { id, backupId });
 }

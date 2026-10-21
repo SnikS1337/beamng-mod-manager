@@ -14,6 +14,16 @@ pub struct PreviewTarget {
     pub path: PathBuf,
     pub key: String,
     pub file_name: String,
+    pub sub_folder: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeletedTicket {
+    pub mod_id: String,
+    pub file_name: String,
+    pub backup_id: String,
+    pub was_in_disabled: bool,
+    pub was_enabled: bool,
 }
 
 pub struct AppState {
@@ -25,6 +35,7 @@ pub struct AppState {
     pub previews_by_id: Mutex<HashMap<String, PreviewTarget>>,
     pub pending: Mutex<HashMap<String, bool>>,
     pub preview_gate: Arc<Semaphore>,
+    pub deleted: Mutex<HashMap<String, DeletedTicket>>,
 }
 
 impl AppState {

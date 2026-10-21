@@ -54,6 +54,18 @@ export function formatDate(iso: string): string {
   }).format(date);
 }
 
+export function formatDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export function normalizeText(value: string): string {
   return value.toLocaleLowerCase("ru").replaceAll("ё", "е");
 }
