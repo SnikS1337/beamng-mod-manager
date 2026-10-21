@@ -29,6 +29,7 @@ bmm-app-release = { path = "../crates/bmm-app-release" }
 
 [dev-dependencies]
 tempfile.workspace = true
+zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

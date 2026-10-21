@@ -46,6 +46,7 @@ pub fn run() {
         previews_by_id: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
         preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
+        deleted: Mutex::new(HashMap::new()),
     });
     state.load_pending();
 
@@ -76,7 +77,13 @@ pub fn run() {
             commands::library::library_refresh,
             commands::library::mod_toggle,
             commands::library::mod_details,
-            commands::library::mod_preview
+            commands::library::mod_preview,
+            commands::versions::mod_delete,
+            commands::versions::mod_undelete,
+            commands::versions::mod_forget_deleted,
+            commands::versions::mod_restore_deleted,
+            commands::versions::mod_versions,
+            commands::versions::mod_restore_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

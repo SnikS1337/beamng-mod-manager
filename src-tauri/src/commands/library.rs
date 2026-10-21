@@ -6,6 +6,8 @@ use chrono::Utc;
 use serde::Serialize;
 use url::Url;
 
+use bmm_domain::clock::system_clock;
+use bmm_domain::filename;
 use bmm_domain::library::{CheckState, DiskMod, LibraryStore, ModBinding};
 use bmm_domain::settings::AppSettings;
 use bmm_domain::text::ModTitles;
@@ -13,9 +15,11 @@ use bmm_game::db::{GameModDb, SetActiveOutcome};
 use bmm_game::folders::{self, FolderProblem};
 use bmm_game::{info, process};
 use bmm_packs::cache::{CachedPreview, PreviewCache};
+use bmm_packs::install::ModInstaller;
 use bmm_packs::overview::{self, ArchiveOverview};
 use bmm_packs::preview;
 use bmm_packs::scan::{self, ModLayout};
+use bmm_packs::versions;
 
 use crate::error::AppError;
 use crate::state::{AppState, PreviewTarget};
@@ -44,6 +48,10 @@ pub struct ModCardDto {
     pub compat: CompatDto,
     pub update: String,
     pub pending: String,
+    pub from_game_repo: bool,
+    pub deleted: bool,
+    pub copies: usize,
+    pub saved_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +74,27 @@ pub struct LibrarySnapshot {
     pub game_version: Option<String>,
     pub game_running: bool,
     pub warning: Option<String>,
+    pub deleted: Vec<ModCardDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedTicketDto {
+    pub id: String,
+    pub file_name: String,
+    pub backup_id: String,
+    pub was_in_disabled: bool,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionRowDto {
+    pub backup_id: String,
+    pub file_name: String,
+    pub version: Option<String>,
+    pub saved_at: Option<String>,
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -180,7 +209,7 @@ pub fn preview_url(key: &str, extension: &str) -> String {
     format!("http://bmm.localhost/preview/{key}.{extension}")
 }
 
-fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
+pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
     let _guard = state
         .load_lock
         .lock()
@@ -201,6 +230,8 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
 
     let layout = ModLayout::in_app_folder(&mods_dir, state.paths.root());
     let db = GameModDb::new(&mods_dir);
+    let keep = settings.keep_backups.max(1) as usize;
+    let installer = ModInstaller::new(layout.clone(), system_clock(), Arc::new(move || keep));
 
     if !game_running {
         apply_pending(state, &db);
@@ -217,6 +248,31 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
                 disk.enabled = false;
             }
         }
+    }
+
+    // Пока тост удаления жив, запись библиотеки должна пережить сверку: подставляем фиктивный файл,
+    // как старый GarageBackend, но саму карточку не показываем.
+    let tickets_before = state.deleted.lock().unwrap().clone();
+    for ticket in tickets_before.values() {
+        if scan_result
+            .mods
+            .iter()
+            .any(|disk| disk.file_name.eq_ignore_ascii_case(&ticket.file_name))
+        {
+            continue;
+        }
+        let size = state
+            .library
+            .get_mod(&ticket.mod_id)
+            .and_then(|installed| installed.size_bytes)
+            .unwrap_or(0);
+        scan_result.mods.push(DiskMod {
+            file_name: ticket.file_name.clone(),
+            enabled: ticket.was_enabled,
+            size_bytes: size,
+            sub_folder: None,
+            modified_utc: None,
+        });
     }
 
     let scan_warnings = std::mem::take(&mut scan_result.warnings);
@@ -275,6 +331,7 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
                 path,
                 key,
                 file_name: installed.file_name.clone(),
+                sub_folder: disk.sub_folder.clone(),
             },
         );
     }
@@ -283,6 +340,7 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
     let game_version = mods_dir.parent().and_then(info::detect_version);
     let mods: Vec<ModCardDto> = installed_list
         .into_iter()
+        .filter(|installed| !tickets_before.contains_key(&installed.id))
         .map(|installed| {
             let disk = disks_by_file
                 .get(&installed.file_name.to_lowercase())
@@ -331,6 +389,48 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
                 compat,
                 update: "none".to_string(),
                 pending: if pending { "queued" } else { "none" }.to_string(),
+                from_game_repo: disk.and_then(|disk| disk.sub_folder.as_ref()).is_some(),
+                deleted: false,
+                copies: 0,
+                saved_at: None,
+            }
+        })
+        .collect();
+
+    let ticket_files: HashSet<String> = tickets_before
+        .values()
+        .map(|ticket| ticket.file_name.to_lowercase())
+        .collect();
+    let deleted_cards: Vec<ModCardDto> = versions::deleted(&installer, &state.library)
+        .into_iter()
+        .filter(|item| !ticket_files.contains(&item.file_name.to_lowercase()))
+        .map(|item| {
+            let guessed = filename::from_file_name(&item.file_name);
+            let name = if guessed.name.trim().is_empty() {
+                item.file_name
+                    .strip_suffix(".zip")
+                    .unwrap_or(&item.file_name)
+                    .to_string()
+            } else {
+                guessed.name
+            };
+            ModCardDto {
+                id: format!("deleted:{}", item.file_name),
+                name,
+                file_name: item.file_name,
+                version: guessed.version,
+                size_bytes: i64::try_from(item.last_size_bytes).unwrap_or(i64::MAX),
+                enabled: false,
+                sub_folder: None,
+                kind: "unknown".to_string(),
+                preview_url: None,
+                compat: compat_of(None, game_version.as_deref()),
+                update: "none".to_string(),
+                pending: "none".to_string(),
+                from_game_repo: false,
+                deleted: true,
+                copies: item.copies,
+                saved_at: item.last_saved_at.map(|date| date.to_rfc3339()),
             }
         })
         .collect();
@@ -354,7 +454,7 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
             enabled,
             updates: 0,
             unchecked,
-            deleted: 0,
+            deleted: deleted_cards.len(),
         },
         mods,
         folder: Some(mods_dir.display().to_string()),
@@ -362,10 +462,11 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
         game_version,
         game_running,
         warning,
+        deleted: deleted_cards,
     })
 }
 
-fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option<String>) {
+pub(crate) fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option<String>) {
     if settings.mods_folder.is_some() || settings.user_folder.is_some() {
         let check = folders::from_settings(settings, false);
         if let Some(path) = check.mods_dir.clone() {
@@ -706,6 +807,7 @@ fn empty_snapshot(
         } else {
             Some(settings_warnings.join(" · "))
         },
+        deleted: Vec::new(),
     }
 }
 
@@ -753,6 +855,7 @@ mod tests {
             previews_by_id: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
+            deleted: Mutex::new(HashMap::new()),
         };
 
         let snapshot = load_snapshot(&state).unwrap();

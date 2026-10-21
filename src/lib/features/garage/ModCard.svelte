@@ -62,7 +62,8 @@
 <div
   class="card"
   class:selected
-  class:sleeping={!mod.enabled}
+  class:sleeping={!mod.enabled && !mod.deleted}
+  class:deleted={mod.deleted}
   class:pending={mod.pending === "queued"}
   role="button"
   tabindex="0"
@@ -78,7 +79,9 @@
       <span class="glyph">{kindLabel(mod.kind)}</span>
     {/if}
     <span class="source">{kindLabel(mod.kind)}</span>
-    {#if mod.update !== "none"}
+    {#if mod.deleted}
+      <span class="off">Удалён</span>
+    {:else if mod.update !== "none"}
       <span class="update">Есть обновление</span>
     {:else if !mod.enabled}
       <span class="off">Выключен</span>
@@ -96,7 +99,9 @@
         <span class="version">{mod.version}</span>
       {/if}
       <span>{formatSize(mod.sizeBytes)}</span>
-      {#if mod.compat.differs}
+      {#if mod.deleted}
+        <span>{mod.copies > 1 ? `${mod.copies} копии` : "копия"}</span>
+      {:else if mod.compat.differs}
         <span class="compat">{mod.compat.modFor}</span>
       {/if}
     </div>
@@ -106,14 +111,16 @@
     <p class="pending-note">Применится после игры</p>
   {/if}
 
-  <div class="toggle">
-    <Switch
-      checked={mod.enabled}
-      onCheckedChange={() => ontoggle(mod)}
-      onclick={(event: MouseEvent) => event.stopPropagation()}
-      aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
-    />
-  </div>
+  {#if !mod.deleted}
+    <div class="toggle">
+      <Switch
+        checked={mod.enabled}
+        onCheckedChange={() => ontoggle(mod)}
+        onclick={(event: MouseEvent) => event.stopPropagation()}
+        aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -186,6 +193,14 @@
 
   .sleeping .thumb {
     filter: grayscale(0.9) brightness(0.72);
+  }
+
+  .deleted .thumb {
+    filter: grayscale(0.7) brightness(0.6);
+  }
+
+  .deleted {
+    border-color: color-mix(in oklab, var(--foreground) 14%, transparent);
   }
 
   .source,

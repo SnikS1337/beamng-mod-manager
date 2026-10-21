@@ -1,20 +1,33 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { RefreshCw } from "@lucide/svelte";
   import {
     libraryLoad,
+    modDelete,
     modDetails,
+    modForgetDeleted,
+    modRestoreDeleted,
+    modRestoreVersion,
     modToggle,
+    modVersions,
+    modUndelete,
     type LibrarySnapshot,
     type ModCardDto,
     type ModDetails,
+    type VersionRow,
   } from "$lib/ipc/library";
+  import DeletedInspector from "./DeletedInspector.svelte";
   import Inspector from "./Inspector.svelte";
   import ModGrid from "./ModGrid.svelte";
   import { headerNote, matchesQuery } from "./format";
 
-  type Filter = "all" | "enabled" | "updates" | "unchecked";
-  type Toast = { message: string; undo?: () => void; timer?: ReturnType<typeof setTimeout> };
+  type Filter = "all" | "enabled" | "updates" | "unchecked" | "deleted";
+  type Toast = {
+    message: string;
+    undo?: () => void | Promise<void>;
+    commit?: () => void | Promise<void>;
+    timer?: ReturnType<typeof setTimeout>;
+  };
 
   let snapshot = $state<LibrarySnapshot | null>(null);
   let loading = $state(true);
@@ -30,7 +43,7 @@
   let searchEl = $state<HTMLInputElement | null>(null);
   let detailsToken = 0;
 
-  const filters: { id: Filter; label: string }[] = [
+  const baseFilters: { id: Filter; label: string }[] = [
     { id: "all", label: "Все" },
     { id: "enabled", label: "Включённые" },
     { id: "updates", label: "Нужно обновить" },
@@ -40,22 +53,36 @@
   let counts = $derived(
     snapshot?.counts ?? { all: 0, enabled: 0, updates: 0, unchecked: 0, deleted: 0 },
   );
+  let visibleFilters = $derived(
+    counts.deleted > 0
+      ? [...baseFilters, { id: "deleted" as const, label: "Удалённые" }]
+      : baseFilters,
+  );
+  let allCards = $derived(
+    snapshot ? [...snapshot.mods, ...snapshot.deleted] : [],
+  );
   let filtered = $derived.by(() => {
     if (!snapshot) return [];
-    return snapshot.mods.filter((mod) => {
+    const source = filter === "deleted" ? snapshot.deleted : snapshot.mods;
+    return source.filter((mod) => {
       if (filter === "enabled" && !mod.enabled) return false;
       if (filter === "updates" && mod.update === "none") return false;
       if (filter === "unchecked") return false;
       return matchesQuery(mod, query);
     });
   });
-  let selected = $derived(snapshot?.mods.find((mod) => mod.id === selectedId) ?? null);
+  let selected = $derived(allCards.find((mod) => mod.id === selectedId) ?? null);
   let note = $derived(
     snapshot ? headerNote(snapshot.mods.length, snapshot.counts.updates) : "загружаем…",
   );
 
   onMount(() => {
     void load();
+  });
+
+  onDestroy(() => {
+    void toast?.commit?.();
+    if (toast?.timer) clearTimeout(toast.timer);
   });
 
   $effect(() => {
@@ -65,7 +92,19 @@
   });
 
   $effect(() => {
+    if (filter === "deleted" && counts.deleted === 0) {
+      filter = "all";
+    }
+  });
+
+  $effect(() => {
     if (!selectedId) {
+      details = null;
+      detailsLoading = false;
+      return;
+    }
+    const card = allCards.find((mod) => mod.id === selectedId);
+    if (!card || card.deleted) {
       details = null;
       detailsLoading = false;
       return;
@@ -90,7 +129,11 @@
     error = null;
     try {
       snapshot = await libraryLoad();
-      if (selectedId && !snapshot.mods.some((mod) => mod.id === selectedId)) {
+      if (
+        selectedId &&
+        !snapshot.mods.some((mod) => mod.id === selectedId) &&
+        !snapshot.deleted.some((mod) => mod.id === selectedId)
+      ) {
         selectedId = null;
       }
     } catch (reason) {
@@ -125,32 +168,120 @@
         details = { ...details, enabled: target };
       }
       if (announce) {
-        const message = target ? `Включён «${mod.name}»` : `Выключен «${mod.name}»`;
-        showToast(
-          result.message ?? message,
-          result.outcome === "queued"
-            ? undefined
-            : () => {
-                void applyToggle(mod, !target, false);
-              },
-        );
+        const message = target ? `Включён «${trimName(mod.name)}»` : `Выключен «${trimName(mod.name)}»`;
+        showToast(result.message ?? message, {
+          undo:
+            result.outcome === "queued"
+              ? undefined
+              : () => {
+                  void applyToggle(mod, !target, false);
+                },
+        });
       }
     } catch (reason) {
       showToast(errorText(reason));
     }
   }
 
-  function showToast(message: string, undo?: () => void) {
-    if (toast?.timer) clearTimeout(toast.timer);
-    const timer = setTimeout(() => {
-      toast = null;
-    }, undo ? 6000 : 3000);
-    toast = { message, undo, timer };
+  async function deleteSelected() {
+    const card = selected;
+    if (!card || card.deleted || card.fromGameRepo) return;
+    try {
+      selectedId = null;
+      const ticket = await modDelete(card.id);
+      await load(true);
+      showToast(`Удалён «${trimName(ticket.name)}»`, {
+        undo: async () => {
+          await modUndelete(card.id);
+          await load(true);
+        },
+        commit: async () => {
+          await modForgetDeleted(card.id);
+          await load(true);
+        },
+      });
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
   }
 
-  function hideToast() {
-    if (toast?.timer) clearTimeout(toast.timer);
+  async function restoreDeleted(card: ModCardDto) {
+    try {
+      await modRestoreDeleted(card.fileName);
+      selectedId = null;
+      await load(true);
+      showToast(`Возвращён «${trimName(card.name)}»`);
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
+  }
+
+  async function restoreVersion(version: VersionRow) {
+    const card = selected;
+    if (!card || card.deleted) return;
+    const previousFile = card.fileName;
+    try {
+      await modRestoreVersion(card.id, version.backupId);
+      await load(true);
+      showToast(
+        version.version
+          ? `Возвращена версия ${version.version}`
+          : "Возвращена прошлая копия",
+        {
+          undo: async () => {
+            const rows = await modVersions(card.id);
+            const previous = rows.find((row) => row.fileName === previousFile);
+            if (previous) {
+              await modRestoreVersion(card.id, previous.backupId);
+              await load(true);
+            }
+          },
+        },
+      );
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
+  }
+
+  function showToast(
+    message: string,
+    options: {
+      undo?: () => void | Promise<void>;
+      commit?: () => void | Promise<void>;
+      duration?: number;
+    } = {},
+  ) {
+    const previous = toast;
+    if (previous?.timer) clearTimeout(previous.timer);
+    if (previous?.commit) void Promise.resolve(previous.commit()).catch(() => {});
+    const duration =
+      options.duration ??
+      (options.undo ? 6000 : message.length > 48 ? 5000 : 3000);
+    const timer = setTimeout(() => {
+      const current = toast;
+      if (current?.timer !== timer) return;
+      toast = null;
+      if (current.commit) void Promise.resolve(current.commit()).catch(() => {});
+    }, duration);
+    toast = { message, undo: options.undo, commit: options.commit, timer };
+  }
+
+  async function undoToast() {
+    const current = toast;
+    if (!current) return;
+    if (current.timer) clearTimeout(current.timer);
     toast = null;
+    if (current.undo) {
+      try {
+        await current.undo();
+      } catch (reason) {
+        showToast(errorText(reason));
+      }
+    }
+  }
+
+  function trimName(name: string): string {
+    return name.length > 34 ? `${name.slice(0, 33)}…` : name;
   }
 
   function isTyping(event: KeyboardEvent): boolean {
@@ -168,8 +299,7 @@
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
-      toast?.undo?.();
-      hideToast();
+      void undoToast();
       return;
     }
     if (event.key === "Escape") {
@@ -181,7 +311,12 @@
       return;
     }
     if (isTyping(event)) return;
-    if (event.key === " " && selected) {
+    if (event.key === "Delete" && selected && !selected.deleted && !selected.fromGameRepo) {
+      event.preventDefault();
+      void deleteSelected();
+      return;
+    }
+    if (event.key === " " && selected && !selected.deleted) {
       event.preventDefault();
       void toggle(selected);
       return;
@@ -218,6 +353,7 @@
     if (filter === "updates") return "Всё свежее";
     if (filter === "unchecked") return "Все моды проверяются";
     if (filter === "enabled") return "Все моды выключены";
+    if (filter === "deleted") return "Удалённых модов нет";
     return "Модов пока нет";
   }
 
@@ -229,6 +365,7 @@
     if (filter === "updates") return "Проверка обновлений появится на следующем этапе.";
     if (filter === "unchecked") return "У всех модов есть страница.";
     if (filter === "enabled") return "Включите нужные в общем списке.";
+    if (filter === "deleted") return "Удалённые моды появятся здесь после подтверждения.";
     return "Найдите мод в поиске или перетащите архив на окно.";
   }
 </script>
@@ -278,7 +415,7 @@
         </div>
 
         <div class="filters">
-          {#each filters as item (item.id)}
+          {#each visibleFilters as item (item.id)}
             <button
               class="filter"
               class:active={filter === item.id}
@@ -295,6 +432,8 @@
                 <span>{counts.updates.toLocaleString("ru-RU")}</span>
               {:else if item.id === "unchecked" && counts.unchecked > 0}
                 <span>{counts.unchecked.toLocaleString("ru-RU")}</span>
+              {:else if item.id === "deleted"}
+                <span>{counts.deleted.toLocaleString("ru-RU")}</span>
               {/if}
             </button>
           {/each}
@@ -310,7 +449,7 @@
             <span>{error}</span>
             <button type="button" onclick={() => void load(true)}>Попробовать снова</button>
           </div>
-        {:else if snapshot && (snapshot.folderError || snapshot.mods.length === 0 || filtered.length === 0)}
+        {:else if snapshot && (snapshot.folderError || (snapshot.mods.length === 0 && snapshot.deleted.length === 0) || filtered.length === 0)}
           <div class="state">
             <p>{emptyTitle()}</p>
             <span>{emptyText()}</span>
@@ -327,7 +466,9 @@
             items={filtered}
             {selectedId}
             onselect={select}
-            ontoggle={(mod) => void toggle(mod)}
+            ontoggle={(mod) => {
+              if (!mod.deleted) void toggle(mod);
+            }}
             resetKey={`${filter}|${query}`}
             bind:renderedCount
           />
@@ -335,13 +476,22 @@
       </div>
     </section>
 
-    {#if selectedId !== null}
+    {#if selected?.deleted}
+      <DeletedInspector
+        card={selected}
+        onRestore={(card) => void restoreDeleted(card)}
+        onClose={() => (selectedId = null)}
+      />
+    {:else if selectedId !== null}
       <Inspector
         {details}
         loading={detailsLoading}
+        canDelete={selected ? !selected.fromGameRepo : false}
         onToggle={() => {
           if (selected) void toggle(selected);
         }}
+        onDelete={() => void deleteSelected()}
+        onRestoreVersion={(version) => void restoreVersion(version)}
         onClose={() => (selectedId = null)}
       />
     {/if}
@@ -351,7 +501,7 @@
     <div class="toast glass liquid-edge" role="status">
       <span>{toast.message}</span>
       {#if toast.undo}
-        <button type="button" onclick={() => { toast?.undo?.(); hideToast(); }}>Отменить</button>
+        <button type="button" onclick={() => void undoToast()}>Отменить</button>
       {/if}
     </div>
   {/if}

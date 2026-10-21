@@ -1,18 +1,25 @@
 <script lang="ts">
   import { openPath } from "@tauri-apps/plugin-opener";
   import { Button } from "$lib/components/ui/button";
-  import { modPreview, type ModDetails } from "$lib/ipc/library";
+  import { modPreview, type ModDetails, type VersionRow } from "$lib/ipc/library";
   import { formatDate, formatSize, kindLabel } from "./format";
+  import VersionsBlock from "./VersionsBlock.svelte";
 
   let {
     details,
     loading,
+    canDelete,
     onToggle,
+    onDelete,
+    onRestoreVersion,
     onClose,
   }: {
     details: ModDetails | null;
     loading: boolean;
+    canDelete: boolean;
     onToggle: () => void;
+    onDelete: () => void;
+    onRestoreVersion: (version: VersionRow) => void;
     onClose: () => void;
   } = $props();
 
@@ -109,6 +116,10 @@
       </section>
     {/if}
 
+    {#if canDelete}
+      <VersionsBlock modId={details.id} onRestore={onRestoreVersion} />
+    {/if}
+
     <div class="actions">
       <Button class="primary" onclick={onToggle}>
         {details.enabled ? "Выключить" : "Включить"}
@@ -116,6 +127,10 @@
       <Button variant="outline" onclick={() => void openFolder()} disabled={!details.folder}>
         Открыть папку
       </Button>
+      {#if canDelete}
+        <Button variant="destructive" onclick={onDelete}>Удалить</Button>
+        <p class="hint">Можно вернуть в течение нескольких секунд.</p>
+      {/if}
     </div>
   {:else}
     <p class="muted">Выберите мод слева.</p>
@@ -272,6 +287,13 @@
     flex-direction: column;
     gap: 8px;
     padding-top: 14px;
+  }
+
+  .hint {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 9.5px;
+    text-align: center;
   }
 
   .skeleton {
