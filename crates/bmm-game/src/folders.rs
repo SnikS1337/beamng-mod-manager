@@ -52,11 +52,7 @@ pub fn find_mods_folders(user_root: &Path) -> Vec<PathBuf> {
     }
     let mut result: Vec<PathBuf> = Vec::new();
     let mut add = |path: PathBuf| {
-        if path.is_dir()
-            && !result
-                .iter()
-                .any(|existing| same_path(existing, &path))
-        {
+        if path.is_dir() && !result.iter().any(|existing| same_path(existing, &path)) {
             result.push(path);
         }
     };
@@ -270,7 +266,11 @@ fn can_write(dir: &Path) -> bool {
 }
 
 fn version_key(name: &str) -> Option<String> {
-    if name.is_empty() || !name.split('.').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())) {
+    if name.is_empty()
+        || !name
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    {
         return None;
     }
     let mut parts: Vec<i32> = name
@@ -281,11 +281,15 @@ fn version_key(name: &str) -> Option<String> {
     while parts.len() < 4 {
         parts.push(0);
     }
-    Some(format!("{:06}.{:06}.{:06}.{:06}", parts[0], parts[1], parts[2], parts[3]))
+    Some(format!(
+        "{:06}.{:06}.{:06}.{:06}",
+        parts[0], parts[1], parts[2], parts[3]
+    ))
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
-    a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+    a.to_string_lossy()
+        .eq_ignore_ascii_case(&b.to_string_lossy())
 }
 
 #[cfg(test)]
@@ -363,13 +367,11 @@ mod tests {
     fn clean_path_removes_quotes_and_expands_variables() {
         assert_eq!(clean_path(" \"C:\\Games\\BeamNG\" "), "C:\\Games\\BeamNG");
         assert_eq!(
-            expand_env_vars("%ROOT%\\mods", |name| (name == "ROOT").then(|| "C:\\Game".to_string())),
+            expand_env_vars("%ROOT%\\mods", |name| (name == "ROOT")
+                .then(|| "C:\\Game".to_string())),
             "C:\\Game\\mods"
         );
-        assert_eq!(
-            expand_env_vars("100%\\mods", |_| None),
-            "100%\\mods"
-        );
+        assert_eq!(expand_env_vars("100%\\mods", |_| None), "100%\\mods");
     }
 
     #[test]
@@ -397,6 +399,9 @@ mod tests {
         };
         let check = from_settings(&settings, true);
         assert!(check.ok(), "{:?}", check);
-        assert_eq!(from_settings(&AppSettings::default(), true).problem, FolderProblem::Empty);
+        assert_eq!(
+            from_settings(&AppSettings::default(), true).problem,
+            FolderProblem::Empty
+        );
     }
 }
