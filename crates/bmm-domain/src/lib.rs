@@ -4,6 +4,7 @@ pub mod atomic;
 pub mod clock;
 pub mod hosts;
 pub mod matches;
+pub mod matching;
 pub mod models;
 pub mod pricing;
 pub mod settings;
