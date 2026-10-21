@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,7 +6,7 @@ use chrono::Utc;
 use serde::Serialize;
 use url::Url;
 
-use bmm_domain::library::{DiskMod, LibraryStore};
+use bmm_domain::library::{CheckState, DiskMod, LibraryStore, ModBinding};
 use bmm_domain::settings::AppSettings;
 use bmm_domain::text::ModTitles;
 use bmm_game::db::{GameModDb, SetActiveOutcome};
@@ -165,7 +165,13 @@ pub async fn mod_preview(
     id: String,
 ) -> Result<Option<String>, AppError> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ensure_preview(&state, &id))
+    let gate = state.preview_gate.clone();
+    let _permit = gate
+        .acquire()
+        .await
+        .map_err(|error| AppError::new("busy", error.to_string()))?;
+    let task_state = state.clone();
+    tauri::async_runtime::spawn_blocking(move || ensure_preview(&task_state, &id))
         .await
         .map_err(|error| AppError::new("task", error.to_string()))
 }
@@ -213,6 +219,15 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
         }
     }
 
+    let scan_warnings = std::mem::take(&mut scan_result.warnings);
+    let disks_by_file: HashMap<String, &DiskMod> = scan_result
+        .mods
+        .iter()
+        .map(|disk| (disk.file_name.to_lowercase(), disk))
+        .collect();
+
+    // Первый скан 5000 модов не должен переписывать library.json 5000 раз.
+    let _batch = state.library.batch();
     let sync_report = bmm_domain::library::reconcile(
         &state.library,
         &scan_result.mods,
@@ -222,18 +237,38 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
 
     apply_repo_info(state, &db_read, &mods_dir);
 
+    let installed_list = state.library.mods();
+    let bindings = state.library.bindings();
+    let bindings_by_mod: HashMap<String, &ModBinding> = bindings
+        .iter()
+        .map(|binding| (binding.mod_id.clone(), binding))
+        .collect();
+    let confirmed_ids: HashSet<String> = bindings
+        .iter()
+        .filter(|binding| binding.confirmed)
+        .map(|binding| binding.mod_id.clone())
+        .collect();
+    let checks_by_key: HashMap<(String, String), CheckState> = state
+        .library
+        .checks()
+        .into_iter()
+        .map(|check| ((check.mod_id.clone(), check.source.clone()), check))
+        .collect();
+    let pending_snapshot = state.pending.lock().unwrap().clone();
+
     state.previews_by_id.lock().unwrap().clear();
     let mut targets: HashMap<String, PreviewTarget> = HashMap::new();
-    for installed in state.library.mods() {
-        let Some(disk) = scan_result
-            .mods
-            .iter()
-            .find(|disk| disk.file_name.eq_ignore_ascii_case(&installed.file_name))
+    let mut preview_keys: HashMap<String, String> = HashMap::new();
+    for installed in &installed_list {
+        let Some(disk) = disks_by_file
+            .get(&installed.file_name.to_lowercase())
+            .copied()
         else {
             continue;
         };
         let path = path_of(&layout, disk);
         let key = PreviewCache::key(&installed.file_name, disk.size_bytes, disk.modified_utc);
+        preview_keys.insert(installed.id.clone(), key.clone());
         targets.insert(
             installed.id.clone(),
             PreviewTarget {
@@ -246,24 +281,18 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
     *state.previews_by_id.lock().unwrap() = targets;
 
     let game_version = mods_dir.parent().and_then(info::detect_version);
-    let bindings = state.library.bindings();
-    let mods: Vec<ModCardDto> = state
-        .library
-        .mods()
+    let mods: Vec<ModCardDto> = installed_list
         .into_iter()
         .map(|installed| {
-            let disk = scan_result
-                .mods
-                .iter()
-                .find(|disk| disk.file_name.eq_ignore_ascii_case(&installed.file_name))
-                .cloned();
+            let disk = disks_by_file
+                .get(&installed.file_name.to_lowercase())
+                .copied();
             let entry = db_read.find(&installed.file_name);
             let repo = entry.and_then(|entry| entry.repo.as_ref());
-            let binding = bindings
-                .iter()
-                .find(|binding| binding.mod_id == installed.id);
-            let check =
-                binding.and_then(|binding| state.library.get_check(&installed.id, &binding.source));
+            let binding = bindings_by_mod.get(&installed.id).copied();
+            let check = binding.and_then(|binding| {
+                checks_by_key.get(&(installed.id.clone(), binding.source.clone()))
+            });
             let site_title = check.as_ref().and_then(|check| check.last_title.as_deref());
             let repo_title = repo.and_then(|repo| repo.title.as_deref());
             let name = ModTitles::choose(repo_title, None, site_title, &installed.name);
@@ -276,21 +305,16 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
                     .and_then(|check| check.last_game_version.as_deref()),
                 game_version.as_deref(),
             );
-            let preview_url = disk.as_ref().and_then(|disk| {
-                let key =
-                    PreviewCache::key(&installed.file_name, disk.size_bytes, disk.modified_utc);
-                match state.previews.get(&key) {
-                    Some(CachedPreview::Image { extension, .. }) => {
-                        Some(preview_url(&key, &extension))
-                    }
-                    _ => None,
-                }
-            });
-            let pending = state
-                .pending
-                .lock()
-                .unwrap()
-                .contains_key(&installed.file_name);
+            let preview_url =
+                preview_keys
+                    .get(&installed.id)
+                    .and_then(|key| match state.previews.get(key) {
+                        Some(CachedPreview::Image { extension, .. }) => {
+                            Some(preview_url(key, &extension))
+                        }
+                        _ => None,
+                    });
+            let pending = pending_snapshot.contains_key(&installed.file_name);
             let kind = entry
                 .map(|entry| kind_of(&entry.mod_type))
                 .unwrap_or("unknown");
@@ -301,7 +325,7 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
                 version,
                 size_bytes: installed.size_bytes.unwrap_or(0),
                 enabled: installed.enabled,
-                sub_folder: disk.and_then(|disk| disk.sub_folder),
+                sub_folder: disk.and_then(|disk| disk.sub_folder.clone()),
                 kind: kind.to_string(),
                 preview_url,
                 compat,
@@ -314,17 +338,11 @@ fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
     let enabled = mods.iter().filter(|item| item.enabled).count();
     let unchecked = mods
         .iter()
-        .filter(|item| {
-            !state
-                .library
-                .bindings()
-                .iter()
-                .any(|binding| binding.mod_id == item.id && binding.confirmed)
-        })
+        .filter(|item| !confirmed_ids.contains(&item.id))
         .count();
     let warning = join_warnings(
         settings_load.warnings,
-        scan_result.warnings,
+        scan_warnings,
         db_read.warnings,
         sync_report.warning,
         state.library.load_warnings().to_vec(),
@@ -734,6 +752,7 @@ mod tests {
             load_lock: Mutex::new(()),
             previews_by_id: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
+            preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
         };
 
         let snapshot = load_snapshot(&state).unwrap();

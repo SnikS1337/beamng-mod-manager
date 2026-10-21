@@ -339,6 +339,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-window-state",
  "tempfile",
+ "tokio",
  "url",
  "windows-sys 0.59.0",
 ]

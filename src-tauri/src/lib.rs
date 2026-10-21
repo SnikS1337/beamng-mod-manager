@@ -45,6 +45,7 @@ pub fn run() {
         load_lock: Mutex::new(()),
         previews_by_id: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
+        preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
     });
     state.load_pending();
 
