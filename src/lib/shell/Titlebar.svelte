@@ -7,7 +7,7 @@
   <div class="brand" data-tauri-drag-region>
     <span class="cube" aria-hidden="true"></span>
     <span class="name" data-tauri-drag-region>ModManager BeamNG</span>
-    <span class="tag">PoC</span>
+    <span class="tag">0.4</span>
   </div>
 
   <div class="stack" data-tauri-drag-region>Tauri 2 · Svelte 5 · Tailwind 4 · shadcn-svelte</div>
