@@ -1,20 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use chrono::{DateTime, FixedOffset, Utc};
 use serde_json::{Map, Value};
 
 use crate::atomic;
+use crate::clock::{Clock, system_clock};
 use crate::settings::{AppSettings, BackgroundTheme, UiMode};
 
 const MAX_BYTES: u64 = 1024 * 1024;
-
-pub type Clock = Arc<dyn Fn() -> DateTime<FixedOffset> + Send + Sync>;
-
-pub fn system_clock() -> Clock {
-    Arc::new(|| Utc::now().fixed_offset())
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsLoadResult {
@@ -287,7 +280,8 @@ fn strs_field(root: &Map<String, Value>, name: &str, warnings: &mut Vec<String>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Utc};
+    use std::sync::Arc;
 
     fn fixed_clock() -> Clock {
         let moment = Utc
