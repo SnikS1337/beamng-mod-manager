@@ -23,3 +23,11 @@ bmm-packs = { path = "../crates/bmm-packs" }
 bmm-sources = { path = "../crates/bmm-sources" }
 bmm-checks = { path = "../crates/bmm-checks" }
 bmm-app-release = { path = "../crates/bmm-app-release" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }

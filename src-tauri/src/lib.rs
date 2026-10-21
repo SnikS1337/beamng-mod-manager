@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod named_mutex;
 mod state;
 
 use bmm_domain::paths::AppPaths;
@@ -7,6 +8,14 @@ use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _instance = match named_mutex::acquire() {
+        Some(guard) => guard,
+        None => {
+            named_mutex::show_already_running();
+            return;
+        }
+    };
+
     let paths = match AppPaths::resolve() {
         Ok(paths) => paths,
         Err(error) => {
