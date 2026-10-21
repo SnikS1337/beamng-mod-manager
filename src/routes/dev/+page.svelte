@@ -13,9 +13,9 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Switch } from "$lib/components/ui/switch";
-  import Background from "$lib/poc/Background.svelte";
+  import Background from "$lib/shell/Background.svelte";
   import ModGrid from "$lib/poc/ModGrid.svelte";
-  import Titlebar from "$lib/poc/Titlebar.svelte";
+  import Titlebar from "$lib/shell/Titlebar.svelte";
   import { getEnvInfo, loadLibrary, openModlandProbe } from "$lib/poc/api";
   import type { EnvInfo, ModEntry, ModSource } from "$lib/poc/api";
 
@@ -162,7 +162,7 @@
 </script>
 
 <svelte:head>
-  <title>ModManager BeamNG — PoC</title>
+  <title>ModManager BeamNG — стенд</title>
 </svelte:head>
 
 <div class="app" class:no-glass={!glass} class:no-motion={!motion}>
@@ -189,7 +189,7 @@
         {/each}
       </div>
       <div class="rail-foot">
-        <Badge variant="outline">PoC</Badge>
+        <Badge variant="outline">стенд</Badge>
       </div>
     </aside>
 
