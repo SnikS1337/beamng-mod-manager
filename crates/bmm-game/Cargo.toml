@@ -12,6 +12,7 @@ thiserror.workspace = true
 chrono.workspace = true
 fancy-regex.workspace = true
 sysinfo.workspace = true
+json5 = "0.4"
 
 [dev-dependencies]
 tempfile.workspace = true

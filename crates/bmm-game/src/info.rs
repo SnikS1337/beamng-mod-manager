@@ -12,16 +12,12 @@ fn log_version_re() -> &'static Regex {
 
 fn any_version_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?<!\d)(0\.\d+(?:\.\d+){0,2})(?!\d)").unwrap()
-    })
+    RE.get_or_init(|| Regex::new(r"(?<!\d)(0\.\d+(?:\.\d+){0,2})(?!\d)").unwrap())
 }
 
 fn compat_version_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?<![\d.])(\d{1,3})\.(\d{1,3})(?:\.\d+)*(?![\d])").unwrap()
-    })
+    RE.get_or_init(|| Regex::new(r"(?<![\d.])(\d{1,3})\.(\d{1,3})(?:\.\d+)*(?![\d])").unwrap())
 }
 
 pub fn version_from_log(log_text: &str) -> Option<String> {
@@ -39,7 +35,9 @@ pub fn detect_version(user_folder: &Path) -> Option<String> {
     if let Some(root) = user_folder.parent().and_then(Path::parent) {
         let ini = root.join("BeamNG.drive.ini");
         if ini.is_file()
-            && fs::metadata(&ini).map(|meta| meta.len() < 64 * 1024).unwrap_or(false)
+            && fs::metadata(&ini)
+                .map(|meta| meta.len() < 64 * 1024)
+                .unwrap_or(false)
             && let Ok(text) = fs::read_to_string(&ini)
             && let Some(version) = version_from_ini(&text)
         {
@@ -143,7 +141,8 @@ pub fn parse_compat_version(text: Option<&str>) -> Option<(i32, i32)> {
 }
 
 pub fn compare_compat(mod_for: Option<&str>, game: Option<&str>) -> CompatLevel {
-    let (Some(mod_for), Some(game)) = (parse_compat_version(mod_for), parse_compat_version(game)) else {
+    let (Some(mod_for), Some(game)) = (parse_compat_version(mod_for), parse_compat_version(game))
+    else {
         return CompatLevel::Unknown;
     };
     if mod_for == game {
@@ -166,13 +165,11 @@ pub fn describe_compat(mod_for: Option<&str>, game: Option<&str>) -> Option<Stri
         CompatLevel::Same => Some(format!("{}, как у вас", short_mod?)),
         CompatLevel::ModOlder => Some(format!(
             "{} — у вас {}, может не работать",
-            short_mod?,
-            short_game?
+            short_mod?, short_game?
         )),
         CompatLevel::ModNewer => Some(format!(
             "{} — у вас {}, нужна игра новее",
-            short_mod?,
-            short_game?
+            short_mod?, short_game?
         )),
         CompatLevel::Unknown => None,
     }
@@ -251,11 +248,26 @@ mod tests {
 
     #[test]
     fn compatibility_uses_first_two_numbers() {
-        assert_eq!(compare_compat(Some("0.38"), Some("0.39")), CompatLevel::ModOlder);
-        assert_eq!(compare_compat(Some("0.38.3"), Some("0.38.5")), CompatLevel::Same);
-        assert_eq!(compare_compat(Some("0.40"), Some("0.39")), CompatLevel::ModNewer);
-        assert_eq!(compare_compat(Some("0.36–0.38"), Some("0.38")), CompatLevel::Same);
-        assert_eq!(compare_compat(Some("мусор"), Some("0.39")), CompatLevel::Unknown);
+        assert_eq!(
+            compare_compat(Some("0.38"), Some("0.39")),
+            CompatLevel::ModOlder
+        );
+        assert_eq!(
+            compare_compat(Some("0.38.3"), Some("0.38.5")),
+            CompatLevel::Same
+        );
+        assert_eq!(
+            compare_compat(Some("0.40"), Some("0.39")),
+            CompatLevel::ModNewer
+        );
+        assert_eq!(
+            compare_compat(Some("0.36–0.38"), Some("0.38")),
+            CompatLevel::Same
+        );
+        assert_eq!(
+            compare_compat(Some("мусор"), Some("0.39")),
+            CompatLevel::Unknown
+        );
         assert_eq!(
             describe_compat(Some("0.38"), Some("0.39")).as_deref(),
             Some("0.38 — у вас 0.39, может не работать")
