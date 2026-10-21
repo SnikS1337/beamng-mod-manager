@@ -11,7 +11,7 @@
   } from "$lib/ipc/library";
   import Inspector from "./Inspector.svelte";
   import ModGrid from "./ModGrid.svelte";
-  import { headerNote, matchesQuery, modsLabel } from "./format";
+  import { headerNote, matchesQuery } from "./format";
 
   type Filter = "all" | "enabled" | "updates" | "unchecked";
   type Toast = { message: string; undo?: () => void; timer?: ReturnType<typeof setTimeout> };
@@ -355,8 +355,6 @@
       {/if}
     </div>
   {/if}
-
-  <p class="debug" aria-hidden="true">{modsLabel(filtered.length)} · в DOM {renderedCount}</p>
 </div>
 
 <style>
@@ -594,16 +592,6 @@
     font-size: 10.5px;
     font-weight: 600;
     cursor: default;
-  }
-
-  .debug {
-    position: absolute;
-    right: 8px;
-    bottom: 2px;
-    margin: 0;
-    color: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
-    font-size: 8px;
-    pointer-events: none;
   }
 
   @media (max-width: 900px) {

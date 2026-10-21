@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use tokio::sync::Semaphore;
 
 use bmm_domain::library::JsonLibraryStore;
 use bmm_domain::paths::AppPaths;
@@ -22,6 +24,7 @@ pub struct AppState {
     pub load_lock: Mutex<()>,
     pub previews_by_id: Mutex<HashMap<String, PreviewTarget>>,
     pub pending: Mutex<HashMap<String, bool>>,
+    pub preview_gate: Arc<Semaphore>,
 }
 
 impl AppState {
