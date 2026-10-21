@@ -2,6 +2,7 @@
 
 pub mod atomic;
 pub mod clock;
+pub mod filename;
 pub mod hosts;
 pub mod library;
 pub mod matches;

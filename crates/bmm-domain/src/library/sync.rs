@@ -1,0 +1,339 @@
+use std::collections::{HashMap, HashSet};
+
+use chrono::{DateTime, FixedOffset};
+
+use crate::filename;
+use crate::text::TitleNormalizer;
+use crate::versioning::SizeComparer;
+
+use super::{DiskMod, InstalledMod, LibraryStore};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncReport {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub changed: Vec<String>,
+    pub renamed: Vec<(String, String)>,
+    pub warning: Option<String>,
+}
+
+pub fn reconcile(
+    store: &dyn LibraryStore,
+    disk: &[DiskMod],
+    folder_available: bool,
+    now: DateTime<FixedOffset>,
+) -> SyncReport {
+    let known = store.mods();
+    if !folder_available {
+        return SyncReport {
+            warning: Some("Папка модов недоступна.".to_string()),
+            ..SyncReport::default()
+        };
+    }
+    if disk.is_empty() && !known.is_empty() {
+        return SyncReport {
+            warning: Some(
+                "Папка модов пуста, а в библиотеке есть моды: изменения не применены.".to_string(),
+            ),
+            ..SyncReport::default()
+        };
+    }
+
+    let mut sorted = disk.to_vec();
+    sorted.sort_by_key(|item| std::cmp::Reverse(item.enabled));
+    let mut on_disk: HashMap<String, DiskMod> = HashMap::new();
+    for item in sorted {
+        on_disk.entry(key_of(&item.file_name)).or_insert(item);
+    }
+
+    let mut by_file: HashMap<String, InstalledMod> = HashMap::new();
+    for item in &known {
+        by_file
+            .entry(key_of(&item.file_name))
+            .or_insert_with(|| item.clone());
+    }
+
+    let mut report = SyncReport::default();
+
+    for (key, disk_item) in &on_disk {
+        let Some(existing) = by_file.get(key) else {
+            continue;
+        };
+        let mut updated = existing.clone();
+        if updated.enabled != disk_item.enabled {
+            updated.enabled = disk_item.enabled;
+        }
+        if updated.size_bytes != Some(disk_item.size_bytes) {
+            updated.size_bytes = Some(disk_item.size_bytes);
+            updated.version = version_after_external_change(store, existing, disk_item);
+        }
+        if updated != *existing {
+            store.upsert_mod(updated);
+            report.changed.push(disk_item.file_name.clone());
+        }
+    }
+
+    let vanished: Vec<InstalledMod> = known
+        .iter()
+        .filter(|item| {
+            let key = key_of(&item.file_name);
+            if !on_disk.contains_key(&key) {
+                return true;
+            }
+            match by_file.get(&key) {
+                Some(first) => first.id != item.id,
+                None => true,
+            }
+        })
+        .cloned()
+        .collect();
+    let mut fresh: Vec<DiskMod> = on_disk
+        .iter()
+        .filter(|(key, _)| !by_file.contains_key(*key))
+        .map(|(_, item)| item.clone())
+        .collect();
+    fresh.sort_by_key(|item| item.file_name.to_lowercase());
+
+    let mut vanished_by_name: HashMap<String, Vec<InstalledMod>> = HashMap::new();
+    for item in &vanished {
+        vanished_by_name
+            .entry(name_key(&item.file_name))
+            .or_default()
+            .push(item.clone());
+    }
+    let mut fresh_by_name: HashMap<String, Vec<DiskMod>> = HashMap::new();
+    for item in &fresh {
+        fresh_by_name
+            .entry(name_key(&item.file_name))
+            .or_default()
+            .push(item.clone());
+    }
+
+    let mut handled_vanished: HashSet<String> = HashSet::new();
+    let mut handled_fresh: HashSet<String> = HashSet::new();
+
+    for (name, old_items) in &vanished_by_name {
+        if name.is_empty() || old_items.len() != 1 {
+            continue;
+        }
+        let Some(new_items) = fresh_by_name.get(name) else {
+            continue;
+        };
+        if new_items.len() != 1 {
+            continue;
+        }
+        let old = &old_items[0];
+        let new = &new_items[0];
+        migrate_mod(store, old, new);
+        report
+            .renamed
+            .push((old.file_name.clone(), new.file_name.clone()));
+        handled_vanished.insert(old.id.clone());
+        handled_fresh.insert(key_of(&new.file_name));
+    }
+
+    for item in &vanished {
+        if handled_vanished.contains(&item.id) {
+            continue;
+        }
+        store.remove_mod(&item.id);
+        report.removed.push(item.file_name.clone());
+    }
+
+    for item in &fresh {
+        if handled_fresh.contains(&key_of(&item.file_name)) {
+            continue;
+        }
+        store.upsert_mod(new_mod(store, item, now));
+        report.added.push(item.file_name.clone());
+    }
+
+    report
+}
+
+fn version_after_external_change(
+    store: &dyn LibraryStore,
+    installed: &InstalledMod,
+    disk: &DiskMod,
+) -> Option<String> {
+    if let Some(version) = filename::from_file_name(&disk.file_name).version {
+        return Some(version);
+    }
+    for binding in store.bindings() {
+        if binding.mod_id != installed.id || !binding.confirmed {
+            continue;
+        }
+        let Some(check) = store.get_check(&installed.id, &binding.source) else {
+            continue;
+        };
+        if let (Some(version), Some(size)) = (check.last_version, check.last_size)
+            && !SizeComparer::differs(Some(disk.size_bytes), Some(size))
+        {
+            return Some(version);
+        }
+    }
+    None
+}
+
+fn migrate_mod(store: &dyn LibraryStore, old: &InstalledMod, new: &DiskMod) {
+    let guessed = filename::from_file_name(&new.file_name);
+    let updated = InstalledMod {
+        file_name: new.file_name.clone(),
+        version: guessed.version,
+        size_bytes: Some(new.size_bytes),
+        enabled: new.enabled,
+        ..old.clone()
+    };
+    store.upsert_mod(updated);
+    store.add_file_history(&old.id, &old.file_name);
+}
+
+fn new_mod(store: &dyn LibraryStore, disk: &DiskMod, now: DateTime<FixedOffset>) -> InstalledMod {
+    let guessed = filename::from_file_name(&disk.file_name);
+    let base_id = key_of(&disk.file_name);
+    let mut id = base_id.clone();
+    let mut suffix = 2;
+    while store.get_mod(&id).is_some() {
+        id = format!("{base_id}#{suffix}");
+        suffix += 1;
+    }
+    let name = if guessed.name.trim().is_empty() {
+        disk.file_name
+            .strip_suffix(".zip")
+            .or_else(|| disk.file_name.strip_suffix(".ZIP"))
+            .unwrap_or(&disk.file_name)
+            .to_string()
+    } else {
+        guessed.name
+    };
+    InstalledMod {
+        id,
+        name,
+        file_name: disk.file_name.clone(),
+        version: guessed.version,
+        size_bytes: Some(disk.size_bytes),
+        installed_at_utc: now,
+        enabled: disk.enabled,
+    }
+}
+
+fn key_of(file_name: &str) -> String {
+    file_name.to_lowercase()
+}
+
+fn name_key(file_name: &str) -> String {
+    TitleNormalizer::normalize(&filename::from_file_name(file_name).name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::InMemoryLibraryStore;
+    use chrono::{TimeZone, Utc};
+
+    fn now() -> DateTime<FixedOffset> {
+        Utc.with_ymd_and_hms(2026, 10, 21, 12, 0, 0)
+            .unwrap()
+            .fixed_offset()
+    }
+
+    fn disk(file_name: &str, enabled: bool, size: i64) -> DiskMod {
+        DiskMod {
+            file_name: file_name.to_string(),
+            enabled,
+            size_bytes: size,
+            sub_folder: None,
+            modified_utc: None,
+        }
+    }
+
+    fn installed(id: &str, file_name: &str, name: &str, size: i64) -> InstalledMod {
+        InstalledMod {
+            id: id.to_string(),
+            name: name.to_string(),
+            file_name: file_name.to_string(),
+            version: Some("1.0".to_string()),
+            size_bytes: Some(size),
+            installed_at_utc: now(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn adds_new_mods_and_reports_nothing_on_repeat() {
+        let store = InMemoryLibraryStore::new();
+        let disk = vec![disk("bmw_m3.zip", true, 10)];
+        let report = reconcile(&store, &disk, true, now());
+        assert_eq!(report.added, vec!["bmw_m3.zip"]);
+        assert_eq!(store.mods().len(), 1);
+        assert_eq!(store.mods()[0].name, "bmw m3");
+
+        let report = reconcile(&store, &disk, true, now());
+        assert!(report.added.is_empty());
+        assert!(report.changed.is_empty());
+    }
+
+    #[test]
+    fn removes_vanished_mods() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a.zip", "a.zip", "A", 10));
+        let report = reconcile(&store, &[], true, now());
+        assert!(report.warning.is_some());
+        assert!(store.mods().len() == 1); // пустая папка — сбой, не удаление
+
+        let report = reconcile(&store, &[disk("b.zip", true, 20)], true, now());
+        assert_eq!(report.removed, vec!["a.zip"]);
+        assert_eq!(store.mods().len(), 1);
+        assert_eq!(store.mods()[0].id, "b.zip");
+    }
+
+    #[test]
+    fn detects_rename_by_normalized_name() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("bmw_m3_v1.zip", "bmw_m3_v1.zip", "BMW M3", 10));
+        let report = reconcile(&store, &[disk("bmw_m3_v2.zip", true, 20)], true, now());
+        assert_eq!(
+            report.renamed,
+            vec![("bmw_m3_v1.zip".to_string(), "bmw_m3_v2.zip".to_string())]
+        );
+        assert_eq!(store.mods().len(), 1);
+        assert_eq!(store.mods()[0].file_name, "bmw_m3_v2.zip");
+        assert_eq!(store.mods()[0].name, "BMW M3");
+        assert_eq!(store.file_history("bmw_m3_v1.zip"), vec!["bmw_m3_v1.zip"]);
+    }
+
+    #[test]
+    fn ambiguous_rename_is_not_guessed() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a1.zip", "a1.zip", "Same", 10));
+        store.upsert_mod(installed("a2.zip", "a2.zip", "Same", 10));
+        let report = reconcile(
+            &store,
+            &[disk("b.zip", true, 20), disk("c.zip", true, 20)],
+            true,
+            now(),
+        );
+        assert!(report.renamed.is_empty());
+        assert_eq!(report.removed.len(), 2);
+        assert_eq!(report.added.len(), 2);
+    }
+
+    #[test]
+    fn disabled_copy_wins_by_enabled_flag() {
+        let store = InMemoryLibraryStore::new();
+        let disk = vec![disk("same.zip", false, 10), disk("same.zip", true, 10)];
+        reconcile(&store, &disk, true, now());
+        assert_eq!(store.mods().len(), 1);
+        assert!(store.mods()[0].enabled);
+    }
+
+    #[test]
+    fn case_only_name_change_is_not_a_change() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("bmw.zip", "bmw.zip", "BMW", 10));
+        let report = reconcile(&store, &[disk("BMW.zip", true, 10)], true, now());
+        assert!(report.changed.is_empty());
+        assert!(report.removed.is_empty());
+        assert_eq!(store.mods().len(), 1);
+    }
+}

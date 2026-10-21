@@ -1,8 +1,12 @@
+pub mod disk;
 pub mod json;
 pub mod memory;
+pub mod sync;
 
+pub use disk::DiskMod;
 pub use json::JsonLibraryStore;
 pub use memory::InMemoryLibraryStore;
+pub use sync::{SyncReport, reconcile};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

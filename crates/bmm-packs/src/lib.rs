@@ -1,4 +1,7 @@
 //! Архивы, превью и установка модов.
-//!
-//! Имя крейта не содержит «install»: Windows UAC принимает такой exe за
-//! установщик и требует повышение, из-за чего не запускаются тесты.
+
+pub mod cache;
+pub mod overview;
+pub mod preview;
+pub mod scan;
+pub mod zip_index;
