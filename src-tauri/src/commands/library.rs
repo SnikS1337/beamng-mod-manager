@@ -1,0 +1,753 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use chrono::Utc;
+use serde::Serialize;
+use url::Url;
+
+use bmm_domain::library::{DiskMod, LibraryStore};
+use bmm_domain::settings::AppSettings;
+use bmm_domain::text::ModTitles;
+use bmm_game::db::{GameModDb, SetActiveOutcome};
+use bmm_game::folders::{self, FolderProblem};
+use bmm_game::{info, process};
+use bmm_packs::cache::{CachedPreview, PreviewCache};
+use bmm_packs::overview::{self, ArchiveOverview};
+use bmm_packs::preview;
+use bmm_packs::scan::{self, ModLayout};
+
+use crate::error::AppError;
+use crate::state::{AppState, PreviewTarget};
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompatDto {
+    pub mod_for: Option<String>,
+    pub game: Option<String>,
+    pub text: Option<String>,
+    pub differs: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModCardDto {
+    pub id: String,
+    pub name: String,
+    pub file_name: String,
+    pub version: Option<String>,
+    pub size_bytes: i64,
+    pub enabled: bool,
+    pub sub_folder: Option<String>,
+    pub kind: String,
+    pub preview_url: Option<String>,
+    pub compat: CompatDto,
+    pub update: String,
+    pub pending: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterCounts {
+    pub all: usize,
+    pub enabled: usize,
+    pub updates: usize,
+    pub unchecked: usize,
+    pub deleted: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySnapshot {
+    pub mods: Vec<ModCardDto>,
+    pub counts: FilterCounts,
+    pub folder: Option<String>,
+    pub folder_error: Option<String>,
+    pub game_version: Option<String>,
+    pub game_running: bool,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleResult {
+    pub outcome: String,
+    pub enabled: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveDto {
+    pub vehicles: Vec<String>,
+    pub levels: Vec<String>,
+    pub has_scripts: bool,
+    pub lua_files: usize,
+    pub files: usize,
+    pub unpacked_bytes: u64,
+    pub warnings: Vec<String>,
+    pub unreadable: bool,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingDto {
+    pub source: String,
+    pub url: String,
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModDetails {
+    pub id: String,
+    pub name: String,
+    pub file_name: String,
+    pub version: Option<String>,
+    pub size_bytes: i64,
+    pub enabled: bool,
+    pub installed_at: String,
+    pub folder: Option<String>,
+    pub kind: String,
+    pub compat: CompatDto,
+    pub archive: Option<ArchiveDto>,
+    pub preview_url: Option<String>,
+    pub binding: Option<BindingDto>,
+}
+
+#[tauri::command]
+pub async fn library_load(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<LibrarySnapshot, AppError> {
+    let state = state.inner().clone();
+    let _ = app;
+    tauri::async_runtime::spawn_blocking(move || load_snapshot(&state))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn library_refresh(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<LibrarySnapshot, AppError> {
+    library_load(app, state).await
+}
+
+#[tauri::command]
+pub async fn mod_toggle(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+    enabled: bool,
+) -> Result<ToggleResult, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || toggle_mod(&state, &id, enabled))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn mod_details(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<ModDetails, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || details(&state, &id))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn mod_preview(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<Option<String>, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ensure_preview(&state, &id))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))
+}
+
+pub fn preview_url(key: &str, extension: &str) -> String {
+    format!("http://bmm.localhost/preview/{key}.{extension}")
+}
+
+fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
+    let _guard = state
+        .load_lock
+        .lock()
+        .map_err(|_| AppError::new("lock", "не удалось заблокировать загрузку"))?;
+
+    let settings_load = state.settings.load();
+    let settings = settings_load.settings;
+    let game_running = process::is_running();
+
+    let (mods_dir, folder_error) = resolve_folder(&settings);
+    let Some(mods_dir) = mods_dir else {
+        return Ok(empty_snapshot(
+            folder_error.or(Some("Папка модов не найдена.".to_string())),
+            game_running,
+            settings_load.warnings,
+        ));
+    };
+
+    let layout = ModLayout::in_app_folder(&mods_dir, state.paths.root());
+    let db = GameModDb::new(&mods_dir);
+
+    if !game_running {
+        apply_pending(state, &db);
+    }
+
+    let mut scan_result = scan::scan_mods(&layout);
+    let db_read = db.read_stable();
+    if !db_read.unreadable {
+        for disk in &mut scan_result.mods {
+            if let Some(entry) = db_read.find(&disk.file_name)
+                && entry.is_at(disk.sub_folder.as_deref())
+                && !entry.active
+            {
+                disk.enabled = false;
+            }
+        }
+    }
+
+    let sync_report = bmm_domain::library::reconcile(
+        &state.library,
+        &scan_result.mods,
+        scan_result.folder_available,
+        Utc::now().fixed_offset(),
+    );
+
+    apply_repo_info(state, &db_read, &mods_dir);
+
+    state.previews_by_id.lock().unwrap().clear();
+    let mut targets: HashMap<String, PreviewTarget> = HashMap::new();
+    for installed in state.library.mods() {
+        let Some(disk) = scan_result
+            .mods
+            .iter()
+            .find(|disk| disk.file_name.eq_ignore_ascii_case(&installed.file_name))
+        else {
+            continue;
+        };
+        let path = path_of(&layout, disk);
+        let key = PreviewCache::key(&installed.file_name, disk.size_bytes, disk.modified_utc);
+        targets.insert(
+            installed.id.clone(),
+            PreviewTarget {
+                path,
+                key,
+                file_name: installed.file_name.clone(),
+            },
+        );
+    }
+    *state.previews_by_id.lock().unwrap() = targets;
+
+    let game_version = mods_dir.parent().and_then(info::detect_version);
+    let bindings = state.library.bindings();
+    let mods: Vec<ModCardDto> = state
+        .library
+        .mods()
+        .into_iter()
+        .map(|installed| {
+            let disk = scan_result
+                .mods
+                .iter()
+                .find(|disk| disk.file_name.eq_ignore_ascii_case(&installed.file_name))
+                .cloned();
+            let entry = db_read.find(&installed.file_name);
+            let repo = entry.and_then(|entry| entry.repo.as_ref());
+            let binding = bindings
+                .iter()
+                .find(|binding| binding.mod_id == installed.id);
+            let check =
+                binding.and_then(|binding| state.library.get_check(&installed.id, &binding.source));
+            let site_title = check.as_ref().and_then(|check| check.last_title.as_deref());
+            let repo_title = repo.and_then(|repo| repo.title.as_deref());
+            let name = ModTitles::choose(repo_title, None, site_title, &installed.name);
+            let version = repo
+                .and_then(|repo| repo.version.clone())
+                .or_else(|| installed.version.clone());
+            let compat = compat_of(
+                check
+                    .as_ref()
+                    .and_then(|check| check.last_game_version.as_deref()),
+                game_version.as_deref(),
+            );
+            let preview_url = disk.as_ref().and_then(|disk| {
+                let key =
+                    PreviewCache::key(&installed.file_name, disk.size_bytes, disk.modified_utc);
+                match state.previews.get(&key) {
+                    Some(CachedPreview::Image { extension, .. }) => {
+                        Some(preview_url(&key, &extension))
+                    }
+                    _ => None,
+                }
+            });
+            let pending = state
+                .pending
+                .lock()
+                .unwrap()
+                .contains_key(&installed.file_name);
+            let kind = entry
+                .map(|entry| kind_of(&entry.mod_type))
+                .unwrap_or("unknown");
+            ModCardDto {
+                id: installed.id.clone(),
+                name,
+                file_name: installed.file_name.clone(),
+                version,
+                size_bytes: installed.size_bytes.unwrap_or(0),
+                enabled: installed.enabled,
+                sub_folder: disk.and_then(|disk| disk.sub_folder),
+                kind: kind.to_string(),
+                preview_url,
+                compat,
+                update: "none".to_string(),
+                pending: if pending { "queued" } else { "none" }.to_string(),
+            }
+        })
+        .collect();
+
+    let enabled = mods.iter().filter(|item| item.enabled).count();
+    let unchecked = mods
+        .iter()
+        .filter(|item| {
+            !state
+                .library
+                .bindings()
+                .iter()
+                .any(|binding| binding.mod_id == item.id && binding.confirmed)
+        })
+        .count();
+    let warning = join_warnings(
+        settings_load.warnings,
+        scan_result.warnings,
+        db_read.warnings,
+        sync_report.warning,
+        state.library.load_warnings().to_vec(),
+    );
+
+    Ok(LibrarySnapshot {
+        counts: FilterCounts {
+            all: mods.len(),
+            enabled,
+            updates: 0,
+            unchecked,
+            deleted: 0,
+        },
+        mods,
+        folder: Some(mods_dir.display().to_string()),
+        folder_error,
+        game_version,
+        game_running,
+        warning,
+    })
+}
+
+fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option<String>) {
+    if settings.mods_folder.is_some() || settings.user_folder.is_some() {
+        let check = folders::from_settings(settings, false);
+        if let Some(path) = check.mods_dir.clone() {
+            let error = if check.problem == FolderProblem::None {
+                None
+            } else {
+                Some(check.message.clone())
+            };
+            return (Some(path), error);
+        }
+        return (None, Some(check.message));
+    }
+
+    let roots = folders::default_user_roots();
+    if let Some(found) = folders::auto_detect(&[], &roots) {
+        return (Some(found), None);
+    }
+    (None, Some("Папка игры не выбрана.".to_string()))
+}
+
+fn apply_pending(state: &AppState, db: &GameModDb) {
+    let pending = state.pending.lock().unwrap().clone();
+    if pending.is_empty() {
+        return;
+    }
+    let changes: Vec<(&str, bool)> = pending
+        .iter()
+        .map(|(file, enabled)| (file.as_str(), *enabled))
+        .collect();
+    let outcome = db.set_active(&changes, || false);
+    if outcome.success() {
+        state.pending.lock().unwrap().clear();
+        let _ = state.save_pending();
+    }
+}
+
+fn apply_repo_info(
+    state: &AppState,
+    db: &bmm_game::db::GameDbReadResult,
+    _mods_dir: &std::path::Path,
+) {
+    if db.unreadable {
+        return;
+    }
+    let _batch = state.library.batch();
+    for installed in state.library.mods() {
+        let Some(entry) = db.find(&installed.file_name) else {
+            continue;
+        };
+        let Some(repo) = &entry.repo else {
+            continue;
+        };
+        let mut updated = installed.clone();
+        if let Some(version) = &repo.version {
+            updated.version = Some(version.clone());
+        }
+        if let Some(title) = &repo.title {
+            let guessed = bmm_domain::filename::from_file_name(&installed.file_name);
+            if installed.name == guessed.name || installed.name == installed.file_name {
+                updated.name = title.clone();
+            }
+        }
+        state.library.upsert_mod(updated);
+        if let Some(url) = repo.page_url().and_then(|url| Url::parse(&url).ok()) {
+            let _ = state
+                .library
+                .upsert_binding(bmm_domain::library::ModBinding {
+                    mod_id: installed.id.clone(),
+                    source: "beamng".to_string(),
+                    source_id: repo.unique_id.clone(),
+                    url,
+                    confirmed: true,
+                });
+        }
+    }
+}
+
+fn path_of(layout: &ModLayout, disk: &DiskMod) -> PathBuf {
+    match &disk.sub_folder {
+        Some(sub_folder) => layout.mods_dir.join(sub_folder).join(&disk.file_name),
+        None if disk.enabled => layout.mods_dir.join(&disk.file_name),
+        None => layout.disabled_dir.join(&disk.file_name),
+    }
+}
+
+fn toggle_mod(state: &AppState, id: &str, enabled: bool) -> Result<ToggleResult, AppError> {
+    let _guard = state
+        .load_lock
+        .lock()
+        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let settings = state.settings.load().settings;
+    let (mods_dir, error) = resolve_folder(&settings);
+    let Some(mods_dir) = mods_dir else {
+        return Err(AppError::new(
+            "folder",
+            error.unwrap_or_else(|| "Папка модов не найдена.".to_string()),
+        ));
+    };
+    let Some(installed) = state.library.get_mod(id) else {
+        return Err(AppError::new("not_found", "Мод не найден."));
+    };
+
+    if process::is_running() {
+        state
+            .pending
+            .lock()
+            .unwrap()
+            .insert(installed.file_name.clone(), enabled);
+        let _ = state.save_pending();
+        return Ok(ToggleResult {
+            outcome: "queued".to_string(),
+            enabled,
+            message: Some("Изменение применится, когда закроете игру.".to_string()),
+        });
+    }
+
+    let db = GameModDb::new(&mods_dir);
+    let result = db.set_active(&[(&installed.file_name, enabled)], || false);
+    match result.outcome {
+        SetActiveOutcome::Done | SetActiveOutcome::Unchanged => {
+            let mut updated = installed;
+            updated.enabled = enabled;
+            state.library.upsert_mod(updated);
+            Ok(ToggleResult {
+                outcome: if result.outcome == SetActiveOutcome::Done {
+                    "done"
+                } else {
+                    "unchanged"
+                }
+                .to_string(),
+                enabled,
+                message: None,
+            })
+        }
+        SetActiveOutcome::GameRunning => {
+            state
+                .pending
+                .lock()
+                .unwrap()
+                .insert(installed.file_name.clone(), enabled);
+            let _ = state.save_pending();
+            Ok(ToggleResult {
+                outcome: "queued".to_string(),
+                enabled,
+                message: Some("Изменение применится, когда закроете игру.".to_string()),
+            })
+        }
+        SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb => Err(AppError::new(
+            "not_in_db",
+            "Игра ещё не видела этот мод. Переключение файла появится на следующем этапе.",
+        )),
+        other => Err(AppError::new(
+            "game_db",
+            format!("Не удалось изменить db.json: {other:?}"),
+        )),
+    }
+}
+
+fn details(state: &AppState, id: &str) -> Result<ModDetails, AppError> {
+    let installed = state
+        .library
+        .get_mod(id)
+        .ok_or_else(|| AppError::new("not_found", "Мод не найден."))?;
+    let target = state.previews_by_id.lock().unwrap().get(id).cloned();
+    let settings = state.settings.load().settings;
+    let (mods_dir, _) = resolve_folder(&settings);
+    let game_version = mods_dir
+        .as_ref()
+        .and_then(|folder| folder.parent().map(|parent| parent.to_path_buf()))
+        .and_then(|folder| info::detect_version(&folder));
+    let db = mods_dir.map(GameModDb::new);
+    let db_read = db.as_ref().map(|db| db.read_stable());
+    let entry = db_read
+        .as_ref()
+        .and_then(|read| read.find(&installed.file_name));
+    let repo = entry.and_then(|entry| entry.repo.as_ref());
+    let binding = state
+        .library
+        .bindings()
+        .into_iter()
+        .find(|binding| binding.mod_id == installed.id);
+    let check = binding
+        .as_ref()
+        .and_then(|binding| state.library.get_check(&installed.id, &binding.source));
+    let compat = compat_of(
+        check
+            .as_ref()
+            .and_then(|check| check.last_game_version.as_deref()),
+        game_version.as_deref(),
+    );
+    let archive = target
+        .as_ref()
+        .map(|target| overview::read_overview(&target.path))
+        .map(archive_dto);
+    let preview_url = target
+        .as_ref()
+        .and_then(|target| match state.previews.get(&target.key) {
+            Some(CachedPreview::Image { extension, .. }) => {
+                Some(preview_url(&target.key, &extension))
+            }
+            _ => None,
+        });
+    let site_title = check.as_ref().and_then(|check| check.last_title.as_deref());
+    let name = ModTitles::choose(
+        repo.and_then(|repo| repo.title.as_deref()),
+        None,
+        site_title,
+        &installed.name,
+    );
+    let version = repo
+        .and_then(|repo| repo.version.clone())
+        .or_else(|| installed.version.clone());
+    let kind = entry
+        .map(|entry| kind_of(&entry.mod_type))
+        .unwrap_or("unknown");
+
+    Ok(ModDetails {
+        id: installed.id.clone(),
+        name,
+        file_name: installed.file_name.clone(),
+        version,
+        size_bytes: installed.size_bytes.unwrap_or(0),
+        enabled: installed.enabled,
+        installed_at: installed.installed_at_utc.to_rfc3339(),
+        folder: target
+            .as_ref()
+            .map(|target| target.path.display().to_string()),
+        kind: kind.to_string(),
+        compat,
+        archive,
+        preview_url,
+        binding: binding.map(|binding| BindingDto {
+            source: binding.source,
+            url: binding.url.to_string(),
+            confirmed: binding.confirmed,
+        }),
+    })
+}
+
+fn ensure_preview(state: &AppState, id: &str) -> Option<String> {
+    let target = state.previews_by_id.lock().unwrap().get(id).cloned()?;
+    if let Some(cached) = state.previews.get(&target.key) {
+        return match cached {
+            CachedPreview::Image { extension, .. } => Some(preview_url(&target.key, &extension)),
+            CachedPreview::NoImage => None,
+        };
+    }
+    let pick = preview::pick(&target.path).ok().flatten();
+    let Some(pick) = pick else {
+        let _ = state.previews.put_no_image(&target.key, &target.file_name);
+        return None;
+    };
+    let bytes = preview::extract(&target.path, &pick.raw_name).ok()?;
+    if bytes.len() > 30 * 1024 * 1024 {
+        return None;
+    }
+    state
+        .previews
+        .put_image(&target.key, &pick.extension, &bytes)
+        .ok()?;
+    Some(preview_url(&target.key, &pick.extension))
+}
+
+fn archive_dto(overview: ArchiveOverview) -> ArchiveDto {
+    ArchiveDto {
+        vehicles: overview.vehicles,
+        levels: overview.levels,
+        has_scripts: overview.has_scripts,
+        lua_files: overview.lua_files,
+        files: overview.files,
+        unpacked_bytes: overview.unpacked_bytes,
+        warnings: overview.warnings,
+        unreadable: overview.unreadable,
+        title: overview.title,
+    }
+}
+
+fn compat_of(mod_for: Option<&str>, game: Option<&str>) -> CompatDto {
+    let level = info::compare_compat(mod_for, game);
+    CompatDto {
+        mod_for: info::short_version(mod_for),
+        game: info::short_version(game),
+        text: info::describe_compat(mod_for, game),
+        differs: !matches!(level, info::CompatLevel::Same | info::CompatLevel::Unknown),
+    }
+}
+
+fn kind_of(mod_type: &str) -> &'static str {
+    match mod_type.to_lowercase().as_str() {
+        "vehicle" => "vehicle",
+        "terrain" | "level" => "level",
+        "sound" => "sound",
+        "scenario" | "app" | "script" => "script",
+        _ => "unknown",
+    }
+}
+
+fn join_warnings(
+    settings: Vec<String>,
+    scan: Vec<String>,
+    db: Vec<String>,
+    sync: Option<String>,
+    library: Vec<String>,
+) -> Option<String> {
+    let mut all = Vec::new();
+    all.extend(settings);
+    all.extend(scan);
+    all.extend(db);
+    all.extend(sync);
+    all.extend(library);
+    if all.is_empty() {
+        None
+    } else {
+        Some(all.join(" · "))
+    }
+}
+
+fn empty_snapshot(
+    folder_error: Option<String>,
+    game_running: bool,
+    settings_warnings: Vec<String>,
+) -> LibrarySnapshot {
+    LibrarySnapshot {
+        mods: Vec::new(),
+        counts: FilterCounts {
+            all: 0,
+            enabled: 0,
+            updates: 0,
+            unchecked: 0,
+            deleted: 0,
+        },
+        folder: None,
+        folder_error,
+        game_version: None,
+        game_running,
+        warning: if settings_warnings.is_empty() {
+            None
+        } else {
+            Some(settings_warnings.join(" · "))
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use bmm_domain::clock::system_clock;
+    use bmm_domain::library::JsonLibraryStore;
+    use bmm_domain::paths::AppPaths;
+    use bmm_domain::settings::AppSettings;
+    use bmm_domain::settings_store::SettingsStore;
+    use bmm_packs::cache::PreviewCache;
+
+    #[test]
+    fn loads_real_folder_and_toggles_active() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("data");
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("mod.zip"), b"zip").unwrap();
+        std::fs::write(
+            mods.join("db.json"),
+            r#"{"header":{"version":1.1},"mods":{"mod":{"filename":"mod.zip","active":true,"modType":"vehicle"}}}"#,
+        )
+        .unwrap();
+
+        let paths = AppPaths::at(&data);
+        paths.ensure_dirs().unwrap();
+        let settings = SettingsStore::with_system_clock(paths.settings());
+        settings
+            .save(&AppSettings {
+                mods_folder: Some(mods.display().to_string()),
+                ..AppSettings::default()
+            })
+            .unwrap();
+        let state = AppState {
+            paths,
+            settings,
+            library: JsonLibraryStore::new(temp.path().join("data/library.json"), system_clock()),
+            previews: PreviewCache::new(temp.path().join("data/previews")),
+            load_lock: Mutex::new(()),
+            previews_by_id: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+        };
+
+        let snapshot = load_snapshot(&state).unwrap();
+        assert_eq!(snapshot.mods.len(), 1);
+        assert_eq!(snapshot.mods[0].name, "mod");
+        assert!(snapshot.mods[0].enabled);
+
+        let result = toggle_mod(&state, &snapshot.mods[0].id, false).unwrap();
+        assert_eq!(result.outcome, "done");
+        assert!(!state.library.get_mod(&snapshot.mods[0].id).unwrap().enabled);
+
+        let db = GameModDb::new(&mods);
+        let read = db.read();
+        assert!(!read.find("mod.zip").unwrap().active);
+        assert!(db.backup_path().exists());
+    }
+}

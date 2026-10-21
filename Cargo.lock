@@ -331,12 +331,15 @@ dependencies = [
  "bmm-game",
  "bmm-packs",
  "bmm-sources",
+ "chrono",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "tauri-plugin-window-state",
+ "tempfile",
+ "url",
  "windows-sys 0.59.0",
 ]
 
