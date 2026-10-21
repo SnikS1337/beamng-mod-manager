@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ModManager BeamNG PoC",
-  "version": "0.0.1",
-  "identifier": "com.sniks1337.beammodmanager.poc",
+  "productName": "ModManager BeamNG",
+  "version": "0.4.0",
+  "identifier": "com.sniks1337.beammodmanager",
+  "mainBinaryName": "BeamModManager",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +13,8 @@
   "app": {
     "windows": [
       {
-        "title": "ModManager BeamNG — PoC",
+        "label": "main",
+        "title": "ModManager BeamNG",
         "width": 1280,
         "height": 820,
         "minWidth": 1000,
@@ -24,12 +26,12 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:1420 ws://127.0.0.1:1420; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {
-    "active": true,
-    "targets": "all",
+    "active": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

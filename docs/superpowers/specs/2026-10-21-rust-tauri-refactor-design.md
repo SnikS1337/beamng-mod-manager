@@ -35,10 +35,10 @@ Tauri 2 (src-tauri): состояние, команды, окна, WebView2, о�
         │
 bmm-domain    модели, настройки, библиотека, matching, версии, текст, атомарная запись
 bmm-game      поиск игры, db.json, bmm_bridge (Lua), процесс игры, GameDbSync
-bmm-install   zip/rar/7z, безопасная распаковка, превью, установка/откат, входящие
+bmm-packs   zip/rar/7z, безопасная распаковка, превью, установка/откат, входящие
 bmm-sources   HTTP с вежливостью, 4 адаптера сайтов, поиск, кэш страниц
-bmm-updates   планировщик, координатор, проверка обновлений модов
-bmm-appupdate latest.json, загрузка, SHA-256, подмена exe, откат
+bmm-checks   планировщик, координатор, проверка обновлений модов
+bmm-app-release latest.json, загрузка, SHA-256, подмена exe, откат
         │
 файлы игры, %LOCALAPPDATA%\BeamModManager, HTTPS, WebView2
 ```
@@ -53,10 +53,10 @@ bmm-appupdate latest.json, загрузка, SHA-256, подмена exe, отк
   crates/
     bmm-domain/
     bmm-game/
-    bmm-install/
+    bmm-packs/
     bmm-sources/
-    bmm-updates/
-    bmm-appupdate/
+    bmm-checks/
+    bmm-app-release/
   fixtures/                    HTML-страницы сайтов, db.json, ini, latest.json, Lua
   design/                      макеты и демо-картинки (как раньше)
   docs/                        документы проекта и эта спека
@@ -74,15 +74,15 @@ bmm-appupdate latest.json, загрузка, SHA-256, подмена exe, отк
 | --- | --- | --- |
 | `bmm-domain` | `Core/Settings`, `Core/Library` (модели и `JsonLibraryStore`), `Core/Matching`, `Core/Text`, `Core/Versioning`, `Core/Safety/DurableFile`, `Core/Pricing` | настройки, библиотека, решения по дублям, названия, сравнение версий, атомарная запись |
 | `bmm-game` | `Core/Game`, `Core/Library/GameDbSync` | поиск папки игры, `db.json`, версия игры, процесс, мост Lua, сверка `active` |
-| `bmm-install` | `Core/Install`, `Core/Packs`, `Core/Previews`, `Core/Safety/ArchiveInspector`, `Core/Safety/CloudFiles` | установка, копии, удаление/возврат, разбор архивов, превью, безопасность |
+| `bmm-packs` | `Core/Install`, `Core/Packs`, `Core/Previews`, `Core/Safety/ArchiveInspector`, `Core/Safety/CloudFiles` | установка, копии, удаление/возврат, разбор архивов, превью, безопасность |
 | `bmm-sources` | `Core/Net`, `Core/Sources`, `Core/Search`, `Core/Hosts` | HTTP, вежливость, адаптеры Modland / ModsGaming / STMods / BeamNG, поиск |
-| `bmm-updates` | `Core/Updates`, `Core/Library/UpdateCheckService`, `UpdateRunner`, `UpdateCoordinator`, `PageGuesser`, `BindingActions`, `BindingSuggester` | планировщик, проверка, панель сайтов, привязки |
-| `bmm-appupdate` | `Core/AppUpdate` | манифест, загрузка, проверка, staged-обновление, откат |
+| `bmm-checks` | `Core/Updates`, `Core/Library/UpdateCheckService`, `UpdateRunner`, `UpdateCoordinator`, `PageGuesser`, `BindingActions`, `BindingSuggester` | планировщик, проверка, панель сайтов, привязки |
+| `bmm-app-release` | `Core/AppUpdate` | манифест, загрузка, проверка, staged-обновление, откат |
 | `src-tauri` | `App/App.xaml.cs`, `App/Services`, `Ui/*` (связка) | состояние, команды, окна, drag-drop, уведомления, demo-режим |
 | `src/` | `Ui/*` (представление), `App/MainWindow.xaml` | экраны, карточки, панели, настройки, анимации |
 
-Правила зависимостей: `bmm-domain` не знает про сеть, окно и игру. `bmm-game`, `bmm-install`,
-`bmm-sources`, `bmm-updates` зависят от `bmm-domain`. `src-tauri` — единственное место, где
+Правила зависимостей: `bmm-domain` не знает про сеть, окно и игру. `bmm-game`, `bmm-packs`,
+`bmm-sources`, `bmm-checks` зависят от `bmm-domain`. `src-tauri` — единственное место, где
 собираются все крейты и Tauri. Циклов нет.
 
 ### 2.3. Почему не иначе
@@ -166,7 +166,7 @@ bmm-appupdate latest.json, загрузка, SHA-256, подмена exe, отк
 - `GameDbSync`: наложение `db.json` на библиотеку, сохранение выключенных, поведение для
   архивов, которых игра ещё не видела.
 
-### 4.3. `bmm-install`
+### 4.3. `bmm-packs`
 
 - `zip` через crate `zip`, 7z и RAR — через `sevenz-rust2` и `unrar`; если крейт не подходит,
   допустим запасной путь через `tar.exe` Windows, как в старом приложении. Решение фиксируется
@@ -195,7 +195,7 @@ bmm-appupdate latest.json, загрузка, SHA-256, подмена exe, отк
   ручные решения, цены, превью.
 - Modland: страницы, которые не пускает Cloudflare, грузятся скрытым окном WebView2.
 
-### 4.5. `bmm-updates`
+### 4.5. `bmm-checks`
 
 - Планировщик: TTL 6 ч (1–168), 3–10 страниц ленты, 150 карточек на сайт, бюджет 5 минут.
 - Координатор: один запуск, отмена, повтор не чаще раза в минуту, пауза после сбоя 5 минут,
@@ -204,7 +204,7 @@ bmm-appupdate latest.json, загрузка, SHA-256, подмена exe, отк
   «Найти замену», подбор страницы раз в 14 дней, не больше 20 за проверку.
 - Никаких скачиваний модов: «Обновить» ведёт на страницу мода.
 
-### 4.6. `bmm-appupdate`
+### 4.6. `bmm-app-release`
 
 - `latest.json`: только GitHub HTTPS, версия/URL/размер/SHA-256/заметки/дата, 1–400 МБ.
 - Проверка версии, загрузка во временный файл, сверка размера и хеша, распаковка zip.
@@ -314,6 +314,8 @@ mock-режим с фикстурами — на нём же гоняются Pl
   выбранные пользователем папки. Канонизация, запрет выхода за корень, проверка архивов.
 - Сеть: только HTTPS, ограничение размера, таймауты, никаких секретов в клиенте.
 - Самообновление: только GitHub HTTPS, проверка размера/SHA-256, без понижения версии.
+- Имена крейтов и exe не содержат `update`, `install`, `setup`: Windows UAC принимает такой
+  файл за установщик и требует повышение (тестовый exe с `appupdate` в имени не запускается).
 - Ошибки не роняют окно: журнал + понятное сообщение, как в старой версии.
 
 ## 8. Производительность

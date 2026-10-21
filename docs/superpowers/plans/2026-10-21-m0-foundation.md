@@ -44,10 +44,10 @@ crates/
   bmm-domain/src/paths.rs          AppPaths + тесты
   bmm-domain/src/lib.rs
   bmm-game/src/lib.rs
-  bmm-install/src/lib.rs
+  bmm-packs/src/lib.rs
   bmm-sources/src/lib.rs
-  bmm-updates/src/lib.rs
-  bmm-appupdate/src/lib.rs
+  bmm-checks/src/lib.rs
+  bmm-app-release/src/lib.rs
 src/
   routes/+layout.svelte            общий импорт CSS и children
   routes/+layout.ts                ssr = false
@@ -353,7 +353,7 @@ git -c user.name="Lev" -c user.email="mrvandal94@mail.ru" commit -m "Переи�
 ### Задача 3: Cargo workspace, крейты и `AppPaths`
 
 **Файлы:**
-- Создать: `Cargo.toml`, `crates/bmm-domain/Cargo.toml`, `crates/bmm-domain/src/lib.rs`, `crates/bmm-domain/src/paths.rs`, `crates/bmm-game/…`, `crates/bmm-install/…`, `crates/bmm-sources/…`, `crates/bmm-updates/…`, `crates/bmm-appupdate/…`.
+- Создать: `Cargo.toml`, `crates/bmm-domain/Cargo.toml`, `crates/bmm-domain/src/lib.rs`, `crates/bmm-domain/src/paths.rs`, `crates/bmm-game/…`, `crates/bmm-packs/…`, `crates/bmm-sources/…`, `crates/bmm-checks/…`, `crates/bmm-app-release/…`.
 - Изменить: `src-tauri/Cargo.toml`.
 
 **Интерфейсы:**
@@ -371,10 +371,10 @@ members = [
   "src-tauri",
   "crates/bmm-domain",
   "crates/bmm-game",
-  "crates/bmm-install",
+  "crates/bmm-packs",
   "crates/bmm-sources",
-  "crates/bmm-updates",
-  "crates/bmm-appupdate",
+  "crates/bmm-checks",
+  "crates/bmm-app-release",
 ]
 
 [workspace.package]
@@ -395,10 +395,10 @@ tempfile = "3"
 mkdir -p crates
 cargo new --lib crates/bmm-domain --vcs none
 cargo new --lib crates/bmm-game --vcs none
-cargo new --lib crates/bmm-install --vcs none
+cargo new --lib crates/bmm-packs --vcs none
 cargo new --lib crates/bmm-sources --vcs none
-cargo new --lib crates/bmm-updates --vcs none
-cargo new --lib crates/bmm-appupdate --vcs none
+cargo new --lib crates/bmm-checks --vcs none
+cargo new --lib crates/bmm-app-release --vcs none
 ```
 
 В каждом `crates/*/Cargo.toml` заменить версию/edition на workspace:
@@ -413,7 +413,7 @@ rust-version.workspace = true
 [dependencies]
 ```
 
-Для остальных — имя соответствующее (`bmm-game`, `bmm-install`, `bmm-sources`, `bmm-updates`, `bmm-appupdate`).
+Для остальных — имя соответствующее (`bmm-game`, `bmm-packs`, `bmm-sources`, `bmm-checks`, `bmm-app-release`).
 
 - [ ] **Шаг 2: Подключить крейты к Tauri**
 
@@ -434,10 +434,10 @@ serde.workspace = true
 serde_json.workspace = true
 bmm-domain = { path = "../crates/bmm-domain" }
 bmm-game = { path = "../crates/bmm-game" }
-bmm-install = { path = "../crates/bmm-install" }
+bmm-packs = { path = "../crates/bmm-packs" }
 bmm-sources = { path = "../crates/bmm-sources" }
-bmm-updates = { path = "../crates/bmm-updates" }
-bmm-appupdate = { path = "../crates/bmm-appupdate" }
+bmm-checks = { path = "../crates/bmm-checks" }
+bmm-app-release = { path = "../crates/bmm-app-release" }
 ```
 
 - [ ] **Шаг 3: Написать падающий тест `AppPaths`**
