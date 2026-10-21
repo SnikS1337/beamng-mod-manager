@@ -1,5 +1,4 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type ModSource = "repo" | "modland" | "stmods" | "modsgaming";
 
@@ -61,7 +60,7 @@ export async function loadLibrary(
   const started = performance.now();
 
   if (isTauri()) {
-    const items = await invoke<ModEntry[]>("poc_library", { count });
+    const items = await invoke<ModEntry[]>("dev_library", { count });
     return { items, ms: performance.now() - started, backend: "tauri" };
   }
 
@@ -73,7 +72,7 @@ export async function loadLibrary(
 
 export async function getEnvInfo(): Promise<EnvInfo> {
   if (isTauri()) {
-    return invoke<EnvInfo>("poc_environment");
+    return invoke<EnvInfo>("dev_environment");
   }
 
   return {
@@ -93,11 +92,3 @@ export async function openModlandProbe(): Promise<void> {
   window.open("https://www.modland.net/beamng-drive-mods.html", "_blank", "noopener");
 }
 
-export async function windowAction(action: "minimize" | "maximize" | "close"): Promise<void> {
-  if (!isTauri()) return;
-
-  const win = getCurrentWindow();
-  if (action === "minimize") await win.minimize();
-  else if (action === "maximize") await win.toggleMaximize();
-  else await win.close();
-}

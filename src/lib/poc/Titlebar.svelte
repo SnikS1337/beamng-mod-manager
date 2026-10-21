@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Minus, Square, X } from "@lucide/svelte";
-  import { windowAction } from "./api";
+  import { windowAction } from "$lib/ipc/window";
 </script>
 
 <header class="titlebar" data-tauri-drag-region>

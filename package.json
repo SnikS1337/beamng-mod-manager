@@ -1,7 +1,7 @@
 {
-  "name": "bmm-poc",
-  "version": "0.0.1",
-  "description": "PoC ModManager BeamNG: Tauri 2, Svelte 5, Tailwind CSS 4, shadcn-svelte",
+  "name": "beamng-mod-manager",
+  "version": "0.4.0",
+  "description": "ModManager BeamNG: Rust + Tauri 2 + Svelte 5",
   "private": true,
   "type": "module",
   "scripts": {

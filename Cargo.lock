@@ -293,6 +293,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmm-app-release"
+version = "0.4.0"
+
+[[package]]
+name = "bmm-checks"
+version = "0.4.0"
+
+[[package]]
+name = "bmm-desktop"
+version = "0.4.0"
+dependencies = [
+ "bmm-app-release",
+ "bmm-checks",
+ "bmm-domain",
+ "bmm-game",
+ "bmm-packs",
+ "bmm-sources",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tauri-plugin-window-state",
+]
+
+[[package]]
+name = "bmm-domain"
+version = "0.4.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "bmm-game"
+version = "0.4.0"
+
+[[package]]
+name = "bmm-packs"
+version = "0.4.0"
+
+[[package]]
+name = "bmm-sources"
+version = "0.4.0"
+
+[[package]]
 name = "brotli"
 version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2541,17 +2587,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "poc"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
-]
-
-[[package]]
 name = "polling"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3524,6 +3559,21 @@ dependencies = [
  "url",
  "windows",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-window-state"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d6815cab7b212f9cfe16a9d79d8d22f9e14159e4a9460f7dec1467167a008e3"
+dependencies = [
+ "bitflags 2.13.2",
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
