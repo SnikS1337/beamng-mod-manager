@@ -7,3 +7,4 @@ pub mod matches;
 pub mod models;
 pub mod settings;
 pub mod settings_store;
+pub mod text;
