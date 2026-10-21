@@ -4,6 +4,20 @@ obj/
 out/
 publish/
 
+# SvelteKit / Vite
+node_modules
+/build
+/.svelte-kit
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+.env
+.env.*
+!.env.example
+
+# Rust / Tauri
+/target
+/src-tauri/target
+
 # Visual Studio / Rider / VS Code
 .vs/
 .idea/
