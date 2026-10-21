@@ -7,6 +7,7 @@ pub mod library;
 pub mod matches;
 pub mod matching;
 pub mod models;
+pub mod paths;
 pub mod pricing;
 pub mod settings;
 pub mod settings_store;

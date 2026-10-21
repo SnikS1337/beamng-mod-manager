@@ -3,7 +3,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::atomic;
@@ -402,7 +401,7 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
                 text = Some(value);
                 break;
             }
-            Err(error) if attempt < 3 => {
+            Err(_error) if attempt < 3 => {
                 std::thread::sleep(std::time::Duration::from_millis(150 * (attempt + 1)));
             }
             Err(error) => {
@@ -528,7 +527,7 @@ fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
 mod tests {
     use super::*;
     use crate::clock::system_clock;
-    use chrono::{TimeZone, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
     use filetime::{FileTime, set_file_mtime};
     use url::Url;
 
