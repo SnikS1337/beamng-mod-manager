@@ -3,6 +3,7 @@
 > **Ветка `refactor-rust-poc`.** Идёт переезд на Rust + Tauri 2 + Svelte 5. Спека —
 > [docs/superpowers/specs/2026-10-21-rust-tauri-refactor-design.md](docs/superpowers/specs/2026-10-21-rust-tauri-refactor-design.md).
 > Старое приложение на C#/WPF лежит в `legacy/` как эталон до паритета.
+> Как собрать новый стек — [docs/BUILD.md](docs/BUILD.md).
 
 Программа для Windows, которая держит в порядке моды [BeamNG.drive](https://www.beamng.com/): показывает, что
 установлено, включает и выключает моды как сама игра, ставит новые из архива, следит за обновлениями и ищет моды сразу
