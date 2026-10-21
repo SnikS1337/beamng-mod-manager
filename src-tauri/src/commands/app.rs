@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use tauri::State;
 
@@ -18,7 +20,7 @@ pub struct BootstrapDto {
 #[tauri::command]
 pub fn app_bootstrap(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<BootstrapDto, AppError> {
     let paths = &state.paths;
     Ok(BootstrapDto {

@@ -17,12 +17,17 @@ tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
+url.workspace = true
 bmm-domain = { path = "../crates/bmm-domain" }
 bmm-game = { path = "../crates/bmm-game" }
 bmm-packs = { path = "../crates/bmm-packs" }
 bmm-sources = { path = "../crates/bmm-sources" }
 bmm-checks = { path = "../crates/bmm-checks" }
 bmm-app-release = { path = "../crates/bmm-app-release" }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

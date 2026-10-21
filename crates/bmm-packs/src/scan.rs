@@ -79,7 +79,9 @@ pub fn scan_mods(layout: &ModLayout) -> ScanResult {
         &mut result,
     );
 
-    result.mods.sort_by_key(|item| item.file_name.to_lowercase());
+    result
+        .mods
+        .sort_by_key(|item| item.file_name.to_lowercase());
     result
 }
 
