@@ -52,9 +52,7 @@ pub fn show_already_running() {
     {
         use std::ffi::OsStr;
         use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            MB_ICONINFORMATION, MB_OK, MessageBoxW,
-        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW};
 
         let text: Vec<u16> = OsStr::new("ModManager BeamNG уже запущен.")
             .encode_wide()
