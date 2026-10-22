@@ -308,18 +308,15 @@ fn load(
 }
 
 fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
-    let stamp = (now)().format("%Y%m%d-%H%M%S");
-    let target = PathBuf::from(format!("{}.bad-{stamp}", path.display()));
-    let _ = fs::remove_file(&target);
-    let moved = fs::rename(path, &target).is_ok();
-    let warning = if moved {
-        let name = target
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        format!("{why}: сохранён как {name}, решения начаты заново")
-    } else {
-        format!("{why}, решения начаты заново")
+    let warning = match atomic::quarantine_file(path, (now)()) {
+        Some(target) => {
+            let name = target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("{why}: сохранён как {name}, решения начаты заново")
+        }
+        None => format!("{why}, решения начаты заново"),
     };
     warnings.push(warning);
 }
@@ -468,6 +465,28 @@ mod tests {
                 .filter_map(Result::ok)
                 .any(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
         );
+    }
+
+    #[test]
+    fn second_quarantine_keeps_first_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("matches.json");
+        fs::write(&path, "{ первый").unwrap();
+        let first = MatchDecisionStore::new(Some(path.clone()), fixed_clock());
+        assert_eq!(first.load_warnings().len(), 1);
+        fs::write(&path, "{ второй").unwrap();
+        let second = MatchDecisionStore::new(Some(path.clone()), fixed_clock());
+        assert_eq!(second.load_warnings().len(), 1);
+
+        let backups: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect();
+        assert_eq!(backups.len(), 2, "{backups:?}");
+        assert!(backups.contains(&"{ первый".to_string()), "{backups:?}");
+        assert!(backups.contains(&"{ второй".to_string()), "{backups:?}");
     }
 
     #[test]

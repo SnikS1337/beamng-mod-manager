@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use chrono::{DateTime, FixedOffset};
 
@@ -17,12 +18,15 @@ pub struct SyncReport {
     pub warning: Option<String>,
 }
 
+static GATE: Mutex<()> = Mutex::new(());
+
 pub fn reconcile(
     store: &dyn LibraryStore,
     disk: &[DiskMod],
     folder_available: bool,
     now: DateTime<FixedOffset>,
 ) -> SyncReport {
+    let _gate = GATE.lock().unwrap_or_else(|error| error.into_inner());
     let known = store.mods();
     if !folder_available {
         return SyncReport {
@@ -228,13 +232,37 @@ fn name_key(file_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::InMemoryLibraryStore;
+    use crate::library::{CheckState, InMemoryLibraryStore, ModBinding};
     use chrono::{TimeZone, Utc};
+    use url::Url;
 
     fn now() -> DateTime<FixedOffset> {
         Utc.with_ymd_and_hms(2026, 10, 21, 12, 0, 0)
             .unwrap()
             .fixed_offset()
+    }
+
+    fn bind(store: &InMemoryLibraryStore, item: &InstalledMod, version: &str, size: i64) {
+        store
+            .upsert_binding(ModBinding {
+                mod_id: item.id.clone(),
+                source: "modland".to_string(),
+                source_id: "x".to_string(),
+                url: Url::parse("https://modland.net/x").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        store.save_check(CheckState {
+            mod_id: item.id.clone(),
+            source: "modland".to_string(),
+            last_checked_utc: now(),
+            last_changed_utc: None,
+            last_version: Some(version.to_string()),
+            last_size: Some(size),
+            miss_count: 0,
+            last_game_version: None,
+            last_title: None,
+        });
     }
 
     fn disk(file_name: &str, enabled: bool, size: i64) -> DiskMod {
@@ -335,5 +363,117 @@ mod tests {
         assert!(report.changed.is_empty());
         assert!(report.removed.is_empty());
         assert_eq!(store.mods().len(), 1);
+    }
+
+    #[test]
+    fn enabled_follows_disk_both_ways() {
+        let store = InMemoryLibraryStore::new();
+        reconcile(&store, &[disk("a.zip", true, 10)], true, now());
+        assert!(store.mods()[0].enabled);
+        reconcile(&store, &[disk("a.zip", false, 10)], true, now());
+        assert!(!store.mods()[0].enabled);
+        reconcile(&store, &[disk("a.zip", true, 10)], true, now());
+        assert!(store.mods()[0].enabled);
+    }
+
+    #[test]
+    fn removed_file_drops_bindings_and_checks() {
+        let store = InMemoryLibraryStore::new();
+        reconcile(
+            &store,
+            &[disk("a.zip", true, 10), disk("b.zip", true, 20)],
+            true,
+            now(),
+        );
+        let a = store
+            .mods()
+            .into_iter()
+            .find(|item| item.file_name == "a.zip")
+            .unwrap();
+        bind(&store, &a, "1.0", 10);
+        assert_eq!(store.bindings().len(), 1);
+        assert_eq!(store.checks().len(), 1);
+
+        let report = reconcile(&store, &[disk("b.zip", true, 20)], true, now());
+        assert_eq!(report.removed, vec!["a.zip"]);
+        assert_eq!(store.mods().len(), 1);
+        assert!(store.bindings().is_empty());
+        assert!(store.checks().is_empty());
+    }
+
+    #[test]
+    fn replaced_file_with_site_size_takes_site_version() {
+        let store = InMemoryLibraryStore::new();
+        reconcile(&store, &[disk("audi.zip", true, 1000)], true, now());
+        let original = store.mods().into_iter().next().unwrap();
+        store.upsert_mod(InstalledMod {
+            version: Some("1.0".to_string()),
+            ..original.clone()
+        });
+        bind(&store, &original, "1.5", 1300);
+
+        let report = reconcile(&store, &[disk("audi.zip", true, 1300)], true, now());
+        assert_eq!(report.changed, vec!["audi.zip"]);
+        let updated = store.mods().into_iter().next().unwrap();
+        assert_eq!(updated.version.as_deref(), Some("1.5"));
+        assert_eq!(updated.installed_at_utc, original.installed_at_utc);
+    }
+
+    #[test]
+    fn replaced_file_with_other_size_loses_stale_version() {
+        let store = InMemoryLibraryStore::new();
+        reconcile(&store, &[disk("audi.zip", true, 1000)], true, now());
+        let original = store.mods().into_iter().next().unwrap();
+        store.upsert_mod(InstalledMod {
+            version: Some("9.9".to_string()),
+            ..original.clone()
+        });
+        bind(&store, &original, "1.5", 5000);
+
+        let report = reconcile(&store, &[disk("audi.zip", true, 2000)], true, now());
+        assert_eq!(report.changed, vec!["audi.zip"]);
+        let updated = store.mods().into_iter().next().unwrap();
+        assert_eq!(updated.version, None);
+        assert_eq!(updated.installed_at_utc, original.installed_at_utc);
+    }
+
+    #[test]
+    fn id_collision_keeps_both_mods() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("b.zip", "other.zip", "Other", 1));
+        let report = reconcile(
+            &store,
+            &[disk("other.zip", true, 1), disk("b.zip", true, 1)],
+            true,
+            now(),
+        );
+        assert!(report.added.contains(&"b.zip".to_string()));
+        assert_eq!(store.mods().len(), 2);
+        let ids: HashSet<String> = store.mods().into_iter().map(|item| item.id).collect();
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn parallel_reconcile_does_not_duplicate_entries() {
+        let store = InMemoryLibraryStore::new();
+        let disk: Vec<DiskMod> = (0..50)
+            .map(|index| disk(&format!("m{index}_v1.{index}.zip"), true, 100 + index))
+            .collect();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..5 {
+                        reconcile(&store, &disk, true, now());
+                    }
+                });
+            }
+        });
+        assert_eq!(store.mods().len(), 50);
+        let keys: HashSet<String> = store
+            .mods()
+            .into_iter()
+            .map(|item| item.file_name.to_lowercase())
+            .collect();
+        assert_eq!(keys.len(), 50);
     }
 }

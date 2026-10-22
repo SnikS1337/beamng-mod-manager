@@ -610,6 +610,15 @@ mod tests {
     }
 
     #[test]
+    fn dot_slash_prefix_is_not_a_structure_warning() {
+        let result = inspect(&[("./vehicles/car/a.jbeam", b"x")]);
+
+        assert!(!result.is_blocked());
+        assert!(result.findings.is_empty());
+        assert_eq!(result.entry_count, 1);
+    }
+
+    #[test]
     fn unsafe_paths_allow_single_dot_and_block_dot_dot_segments() {
         assert!(!is_unsafe_entry_path("./"));
         assert!(!is_unsafe_entry_path("./vehicles/a.jbeam"));

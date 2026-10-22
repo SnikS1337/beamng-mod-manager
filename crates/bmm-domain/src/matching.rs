@@ -296,6 +296,38 @@ mod tests {
     }
 
     #[test]
+    fn score_is_symmetric_and_within_range() {
+        let titles = [
+            "Toyota Sienna 2017 v1.0 (0.31.x)",
+            "МОД Toyota Sienna 2011-2017 v2.2 ДЛЯ BEAMNG.DRIVE",
+            "BMW E34",
+            "[PAID] Duskport",
+            "German Cars Pack",
+            "x",
+        ];
+        for left in titles {
+            for right in titles {
+                let a = listing("modland", left);
+                let b = listing("stmods", right);
+                let direct = DuplicateMatcher::compare(&a, &b, None);
+                let reverse = DuplicateMatcher::compare(&b, &a, None);
+                assert!(
+                    (0.0..=1.0).contains(&direct.score),
+                    "{left} / {right}: {}",
+                    direct.score
+                );
+                assert!(
+                    (direct.score - reverse.score).abs() < 1e-9,
+                    "{left} / {right}: {} и {}",
+                    direct.score,
+                    reverse.score
+                );
+                assert_eq!(direct.verdict, reverse.verdict);
+            }
+        }
+    }
+
+    #[test]
     fn manual_decision_beats_signals() {
         let store = MatchDecisionStore::new(None, system_clock());
         let mut a = listing("modland", "Gavril D-Series");

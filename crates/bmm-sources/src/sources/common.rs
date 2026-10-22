@@ -123,16 +123,25 @@ pub fn page_title(html: &str) -> String {
     BEAMNG_SUFFIX.replace(&text, "").trim().to_string()
 }
 
+/// На странице есть хоть что-то, по чему видно обновление: версия, размер или файл.
+/// Ничего нет — это лента/заглушка, а не карточка мода (как `SiteAdapter.Readable` в legacy).
+pub fn readable(listing: &Listing) -> bool {
+    listing.mod_version.is_some() || listing.size_bytes.is_some() || !listing.offers.is_empty()
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn read_listing(
     fetcher: &PoliteFetcher,
     source: &str,
     url: &Url,
     owns: &dyn Fn(&Url) -> bool,
+    is_mod_page: &dyn Fn(&Url) -> bool,
     slug: &dyn Fn(&Url) -> String,
     parse_detail: &dyn Fn(&str, &Listing) -> Listing,
     cancel: &AtomicBool,
 ) -> Result<Option<Listing>, SourceError> {
-    if !owns(url) {
+    // Раздел, лента, поиск или чужой сайт — не карточка; по таким адресам даже не ходим.
+    if !owns(url) || !is_mod_page(url) {
         return Ok(None);
     }
     let Some(html) = load(fetcher, source, url, None, cancel)? else {
@@ -143,7 +152,13 @@ pub fn read_listing(
     let mut basis = Listing::new(source, url.clone(), slug(url), title);
     basis.mod_version = parsed.mod_version;
     basis.game_version = parsed.game_version;
-    Ok(Some(parse_detail(&html, &basis)))
+    let listing = parse_detail(&html, &basis);
+    // Лента или страница «сайт на обслуживании», открытая как карточка, не даёт
+    // ни версии, ни размера, ни файла: это «не прочитали», а не мод без обновлений.
+    if !readable(&listing) {
+        return Ok(None);
+    }
+    Ok(Some(listing))
 }
 
 pub fn belongs_to(root: &Url, url: &Url) -> bool {

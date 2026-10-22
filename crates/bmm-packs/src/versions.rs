@@ -255,6 +255,42 @@ mod tests {
     }
 
     #[test]
+    fn restores_version_into_disabled_state() {
+        let (temp, installer) = setup();
+        let source = temp.path().join("source.zip");
+        zip(&source);
+        installer.install_from_path(&source, "car_v1.zip", InstallOptions::default());
+        installer.update_from_path(
+            "car_v1.zip",
+            &source,
+            "car_v2.zip",
+            InstallOptions::default(),
+        );
+        assert!(installer.disable("car_v2.zip").success);
+        let store = InMemoryLibraryStore::new();
+        let installed = InstalledMod {
+            id: "car_v2.zip".to_string(),
+            name: "Car".to_string(),
+            file_name: "car_v2.zip".to_string(),
+            version: Some("2".to_string()),
+            size_bytes: Some(1),
+            installed_at_utc: now(),
+            enabled: false,
+        };
+        store.upsert_mod(installed.clone());
+        let versions = versions_for(&installer, &store, &installed);
+        assert!(!versions.is_empty());
+        let restored = restore_version(&installer, &store, &installed, &versions[0], now());
+        assert!(restored.success, "{}", restored.message);
+
+        assert!(installer.layout().disabled_dir.join("car_v1.zip").is_file());
+        assert!(!installer.layout().mods_dir.join("car_v1.zip").exists());
+        let updated = store.get_mod("car_v2.zip").unwrap();
+        assert_eq!(updated.file_name, "car_v1.zip");
+        assert!(!updated.enabled, "выключенное состояние сохранено");
+    }
+
+    #[test]
     fn deleted_excludes_names_known_to_library() {
         let (temp, installer) = setup();
         let source = temp.path().join("source.zip");

@@ -282,4 +282,58 @@ mod tests {
         );
         assert!(list.iter().any(|item| item.published_at.is_some()));
     }
+
+    #[test]
+    fn real_list_has_ten_cards_with_game_version() {
+        let list = parse_list(&fixture("list-real.html"));
+        assert_eq!(list.len(), 10);
+        assert_eq!(list[0].source_id, "160435");
+        assert_eq!(list[0].mod_version.as_deref(), Some("5.1"));
+        assert!(
+            list.iter()
+                .all(|item| item.game_version.as_deref() == Some("0.39.x")),
+            "{:?}",
+            list.iter()
+                .map(|item| item.game_version.as_deref())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn real_search_has_ids_versions_and_dates() {
+        let list = parse_search(&fixture("search-real.html"));
+        assert_eq!(list.len(), 9);
+        let ids: HashSet<&str> = list.iter().map(|item| item.source_id.as_str()).collect();
+        for id in [
+            "133899", "141677", "160200", "142469", "134101", "128066", "148563", "118383",
+            "130575",
+        ] {
+            assert!(ids.contains(id), "{id}");
+        }
+        assert!(
+            list.iter()
+                .all(|item| !item.title.contains('<')
+                    && item.title.to_lowercase().contains("sienna")),
+            "подсветка снята"
+        );
+        let newest = list.iter().find(|item| item.source_id == "160200").unwrap();
+        assert_eq!(newest.mod_version.as_deref(), Some("2.2"));
+        assert_eq!(newest.game_version.as_deref(), Some("0.39.x"));
+        assert_eq!(
+            newest
+                .published_at
+                .map(|date| date.format("%Y").to_string()),
+            Some("2026".to_string())
+        );
+    }
+
+    #[test]
+    fn real_detail_reads_size_and_internal_offer() {
+        let basis = parse_list(&fixture("list-real.html")).remove(0);
+        let detail = parse_detail(&fixture("mod-real.html"), &basis);
+        assert_eq!(detail.author.as_deref(), Some("Infiniti"));
+        assert_eq!(detail.size_bytes, Some(331_769_446));
+        assert_eq!(detail.offers.len(), 1);
+        assert_eq!(detail.offers[0].url.path(), "/load/0-0-1-160435-20");
+    }
 }

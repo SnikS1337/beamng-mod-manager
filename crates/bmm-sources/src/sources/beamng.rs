@@ -55,6 +55,9 @@ impl ModSource for BeamNgRepoSource {
     }
 
     fn is_mod_page(&self, url: &Url) -> bool {
+        if !self.owns(url) {
+            return false;
+        }
         let parts = common::segments(url);
         parts.len() >= 2 && parts[0].eq_ignore_ascii_case("resources") && is_resource_slug(parts[1])
     }
@@ -81,6 +84,7 @@ impl ModSource for BeamNgRepoSource {
             self.id(),
             url,
             &|url| self.owns(url),
+            &|url| self.is_mod_page(url),
             &parser::slug_of,
             &parser::parse_detail,
             cancel,

@@ -105,12 +105,7 @@ impl JsonLibraryStore {
                 return;
             }
         };
-        let temp = PathBuf::from(format!(
-            "{}.{}.tmp",
-            self.path.display(),
-            std::process::id()
-        ));
-        match atomic::write_atomic_with_temp(&self.path, &temp, json.as_bytes()) {
+        match atomic::write_atomic(&self.path, json.as_bytes()) {
             Ok(()) => {
                 state.dirty = false;
                 state.save_error = None;
@@ -303,19 +298,19 @@ struct FileModel {
     schema: i32,
     mods: Option<Vec<InstalledMod>>,
     #[serde(default)]
-    bindings: Vec<ModBinding>,
+    bindings: Option<Vec<ModBinding>>,
     #[serde(default)]
-    checks: Vec<CheckState>,
+    checks: Option<Vec<CheckState>>,
     #[serde(default)]
-    sources: BTreeMap<String, SourceStatus>,
+    sources: Option<BTreeMap<String, SourceStatus>>,
     #[serde(default)]
-    dismissed: BTreeMap<String, String>,
+    dismissed: Option<BTreeMap<String, String>>,
     #[serde(default)]
-    history: BTreeMap<String, Vec<String>>,
+    history: Option<BTreeMap<String, Vec<String>>>,
     #[serde(default)]
-    declined: Vec<String>,
+    declined: Option<Vec<String>>,
     #[serde(default)]
-    page_searches: BTreeMap<String, PageSearch>,
+    page_searches: Option<BTreeMap<String, PageSearch>>,
 }
 
 fn model_of(inner: &Inner) -> FileModel {
@@ -360,23 +355,27 @@ fn model_of(inner: &Inner) -> FileModel {
     FileModel {
         schema: SCHEMA,
         mods: Some(mods),
-        bindings: inner
-            .bindings
-            .values()
-            .filter(|binding| existing.contains(&binding.mod_id))
-            .cloned()
-            .collect(),
-        checks: inner
-            .checks
-            .values()
-            .filter(|check| existing.contains(&check.mod_id))
-            .cloned()
-            .collect(),
-        sources: inner.statuses.clone(),
-        dismissed,
-        history,
-        declined,
-        page_searches,
+        bindings: Some(
+            inner
+                .bindings
+                .values()
+                .filter(|binding| existing.contains(&binding.mod_id))
+                .cloned()
+                .collect(),
+        ),
+        checks: Some(
+            inner
+                .checks
+                .values()
+                .filter(|check| existing.contains(&check.mod_id))
+                .cloned()
+                .collect(),
+        ),
+        sources: Some(inner.statuses.clone()),
+        dismissed: Some(dismissed),
+        history: Some(history),
+        declined: Some(declined),
+        page_searches: Some(page_searches),
     }
 }
 
@@ -465,35 +464,35 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
         inner.upsert_mod(installed);
     }
 
-    for binding in model.bindings {
+    for binding in model.bindings.unwrap_or_default() {
         if inner.upsert_binding(binding).is_err() {
             skipped += 1;
         }
     }
 
-    for check in model.checks {
+    for check in model.checks.unwrap_or_default() {
         inner.save_check(check);
     }
 
-    for (source, status) in model.sources {
+    for (source, status) in model.sources.unwrap_or_default() {
         inner.statuses.insert(source, status);
     }
 
-    for (mod_id, key) in model.dismissed {
+    for (mod_id, key) in model.dismissed.unwrap_or_default() {
         inner.set_dismissed_update(&mod_id, Some(&key));
     }
 
-    for (mod_id, names) in model.history {
+    for (mod_id, names) in model.history.unwrap_or_default() {
         for name in names {
             inner.add_file_history(&mod_id, &name);
         }
     }
 
-    for mod_id in model.declined {
+    for mod_id in model.declined.unwrap_or_default() {
         inner.set_checking_declined(&mod_id, true);
     }
 
-    for (mod_id, search) in model.page_searches {
+    for (mod_id, search) in model.page_searches.unwrap_or_default() {
         inner.set_page_search(&mod_id, Some(search));
     }
 
@@ -507,18 +506,15 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
 }
 
 fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
-    let stamp = (now)().format("%Y%m%d-%H%M%S");
-    let target = PathBuf::from(format!("{}.bad-{stamp}", path.display()));
-    let _ = fs::remove_file(&target);
-    let moved = fs::rename(path, &target).is_ok();
-    let warning = if moved {
-        let name = target
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        format!("{why}: сохранён как {name}, библиотека начата заново")
-    } else {
-        format!("{why}, библиотека начата заново")
+    let warning = match atomic::quarantine_file(path, (now)()) {
+        Some(target) => {
+            let name = target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("{why}: сохранён как {name}, библиотека начата заново")
+        }
+        None => format!("{why}, библиотека начата заново"),
     };
     warnings.push(warning);
 }
@@ -526,7 +522,7 @@ fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clock::system_clock;
+    use crate::clock::{Clock, system_clock};
     use chrono::{DateTime, TimeZone, Utc};
     use filetime::{FileTime, set_file_mtime};
     use url::Url;
@@ -535,6 +531,20 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 10, 21, 12, 0, 0)
             .unwrap()
             .fixed_offset()
+    }
+
+    fn fixed_clock() -> Clock {
+        let moment = moment();
+        std::sync::Arc::new(move || moment)
+    }
+
+    fn temp_names(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect()
     }
 
     fn installed(id: &str, name: &str, version: &str) -> InstalledMod {
@@ -593,11 +603,7 @@ mod tests {
                     rejected: true,
                 }),
             );
-            assert!(
-                !dir.path()
-                    .join(format!("library.json.{}.tmp", std::process::id()))
-                    .exists()
-            );
+            assert!(temp_names(dir.path()).is_empty());
         }
 
         let loaded = JsonLibraryStore::new(&path, system_clock());
@@ -637,6 +643,50 @@ mod tests {
     }
 
     #[test]
+    fn nested_batch_writes_only_after_outer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let store = JsonLibraryStore::new(&path, system_clock());
+        {
+            let _outer = store.batch();
+            store.upsert_mod(installed("a", "A", "1.0"));
+            {
+                let _inner = store.batch();
+                store.upsert_mod(installed("b", "B", "1.0"));
+                assert!(!path.exists());
+            }
+            store.upsert_mod(installed("c", "C", "1.0"));
+            assert!(!path.exists());
+        }
+        assert!(path.exists());
+        let loaded = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(loaded.mods().len(), 3);
+    }
+
+    #[test]
+    fn remove_mod_cleans_bindings_and_checks_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        {
+            let store = JsonLibraryStore::new(&path, system_clock());
+            store.upsert_mod(installed("a", "A", "1.0"));
+            store.upsert_mod(installed("b", "B", "1.0"));
+            store.upsert_binding(binding("a")).unwrap();
+            store.upsert_binding(binding("b")).unwrap();
+            store.save_check(check("a"));
+            store.save_check(check("b"));
+            store.remove_mod("a");
+        }
+        let loaded = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(loaded.mods().len(), 1);
+        assert_eq!(loaded.bindings().len(), 1);
+        assert_eq!(loaded.checks().len(), 1);
+        assert!(loaded.get_check("a", "modland").is_none());
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("\"ModId\": \"a\""), "{text}");
+    }
+
+    #[test]
     fn corrupted_file_is_quarantined() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.json");
@@ -647,6 +697,89 @@ mod tests {
         assert!(!path.exists());
         store.upsert_mod(installed("a", "A", "1.0"));
         assert!(path.exists());
+    }
+
+    #[test]
+    fn second_quarantine_keeps_first_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(&path, "{ первый").unwrap();
+        let first = JsonLibraryStore::new(&path, fixed_clock());
+        assert_eq!(first.load_warnings().len(), 1);
+        fs::write(&path, "{ второй").unwrap();
+        let second = JsonLibraryStore::new(&path, fixed_clock());
+        assert_eq!(second.load_warnings().len(), 1);
+
+        let backups: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect();
+        assert_eq!(backups.len(), 2, "{backups:?}");
+        assert!(backups.contains(&"{ первый".to_string()), "{backups:?}");
+        assert!(backups.contains(&"{ второй".to_string()), "{backups:?}");
+    }
+
+    #[test]
+    fn null_collections_load_without_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(
+            &path,
+            r#"{
+                "Schema": 1,
+                "Mods": [{"Id":"a","Name":"A","FileName":"a.zip","InstalledAtUtc":"2026-10-15T12:00:00+00:00","Enabled":true}],
+                "Bindings": null,
+                "Checks": null,
+                "Sources": null,
+                "Dismissed": null,
+                "History": null,
+                "Declined": null,
+                "PageSearches": null
+            }"#,
+        )
+        .unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
+        assert!(
+            store.load_warnings().is_empty(),
+            "{:?}",
+            store.load_warnings()
+        );
+        assert_eq!(store.mods().len(), 1);
+        assert!(store.bindings().is_empty());
+        assert!(store.checks().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_library_at_start_is_not_overwritten() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        {
+            let store = JsonLibraryStore::new(&path, system_clock());
+            store.upsert_mod(installed("a", "A", "1.0"));
+            store.upsert_binding(binding("a")).unwrap();
+        }
+        let before = fs::read_to_string(&path).unwrap();
+        let store = {
+            let _lock = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .share_mode(0)
+                .open(&path)
+                .unwrap();
+            JsonLibraryStore::new(&path, system_clock())
+        };
+
+        assert_eq!(store.load_warnings().len(), 1);
+        assert!(store.mods().is_empty());
+        store.upsert_mod(installed("b", "B", "1.0"));
+        assert!(store.save_error().is_some());
+        assert!(!store.flush());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
     }
 
     #[test]
@@ -708,11 +841,7 @@ mod tests {
         fs::remove_dir(&path).unwrap();
         assert!(store.flush());
         assert!(store.save_error().is_none());
-        assert!(
-            !dir.path()
-                .join(format!("library.json.{}.tmp", std::process::id()))
-                .exists()
-        );
+        assert!(temp_names(dir.path()).is_empty());
     }
 
     #[test]

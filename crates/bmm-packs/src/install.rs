@@ -606,7 +606,10 @@ impl ModInstaller {
         let Ok(entries) = fs::read_dir(&self.layout.mods_dir) else {
             return 0;
         };
-        let now = SystemTime::now();
+        // Возраст считается по тем же часам, что и метки копий: так поведение проверяется подменяемыми
+        // часами и не зависит от системного времени (в legacy было ровно так же).
+        let now = (self.now)();
+        let threshold = chrono::Duration::from_std(older_than).unwrap_or(chrono::Duration::MAX);
         let mut removed = 0;
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -619,10 +622,8 @@ impl ModInstaller {
             let Ok(modified) = metadata.modified() else {
                 continue;
             };
-            if now
-                .duration_since(modified)
-                .map(|age| age >= older_than)
-                .unwrap_or(false)
+            let modified = DateTime::<Utc>::from(modified);
+            if now.signed_duration_since(modified) >= threshold
                 && fs::remove_file(entry.path()).is_ok()
             {
                 removed += 1;
@@ -868,11 +869,11 @@ mod tests {
     }
 
     fn installer(temp: &tempfile::TempDir) -> ModInstaller {
-        ModInstaller::new(
-            layout(temp),
-            Arc::new(|| Utc::now().fixed_offset()),
-            Arc::new(|| 3),
-        )
+        installer_with(temp, Arc::new(|| Utc::now().fixed_offset()), 3)
+    }
+
+    fn installer_with(temp: &tempfile::TempDir, now: Clock, keep: usize) -> ModInstaller {
+        ModInstaller::new(layout(temp), now, Arc::new(move || keep))
     }
 
     fn zip(path: &Path, entries: &[(&str, &[u8])]) {
@@ -886,16 +887,47 @@ mod tests {
         writer.finish().unwrap();
     }
 
+    fn zip_stored(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, bytes) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
     fn source_zip(temp: &tempfile::TempDir) -> PathBuf {
-        let path = temp.path().join("source.zip");
-        zip(
+        source_zip_sized(temp, "source", 1)
+    }
+
+    fn source_zip_sized(temp: &tempfile::TempDir, tag: &str, size: usize) -> PathBuf {
+        let path = temp.path().join(format!("{tag}.zip"));
+        let data = vec![b'x'; size];
+        zip_stored(
             &path,
             &[
                 ("vehicles/car/info.json", b"{}"),
-                ("vehicles/car/main.jbeam", b"x"),
+                ("vehicles/car/main.jbeam", data.as_slice()),
             ],
         );
         path
+    }
+
+    fn part_files(installer: &ModInstaller) -> Vec<String> {
+        fs::read_dir(&installer.layout().mods_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".part"))
+            .collect()
+    }
+
+    fn set_modified(path: &Path, at: DateTime<FixedOffset>) {
+        let file = File::options().write(true).open(path).unwrap();
+        file.set_modified(SystemTime::from(at)).unwrap();
     }
 
     #[test]
@@ -910,6 +942,8 @@ mod tests {
             Some(installer.layout().mods_dir.join("car.zip"))
         );
         assert_eq!(result.sha256.as_ref().unwrap().len(), 64);
+        let expected = hex_lower(&Sha256::digest(fs::read(&source).unwrap()));
+        assert_eq!(result.sha256.as_deref(), Some(expected.as_str()));
         assert!(installer.layout().mods_dir.join("car.zip").is_file());
         assert!(
             !fs::read_dir(&installer.layout().mods_dir)
@@ -1046,5 +1080,447 @@ mod tests {
 
         let deleted = installer.deleted_mods();
         assert!(deleted.iter().any(|item| item.file_name == "car_v2.zip"));
+    }
+
+    #[test]
+    fn update_to_taken_name_refuses_and_keeps_old() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let v1 = source_zip_sized(&temp, "v1", 40);
+        let v2 = source_zip_sized(&temp, "v2", 80);
+        assert!(
+            installer
+                .install_from_path(&v1, "car_v1.zip", InstallOptions::default())
+                .success
+        );
+        assert!(
+            installer
+                .install_from_path(&v2, "car_v2.zip", InstallOptions::default())
+                .success
+        );
+        let old_path = installer.layout().mods_dir.join("car_v1.zip");
+        let taken_path = installer.layout().mods_dir.join("car_v2.zip");
+        let old_bytes = fs::read(&old_path).unwrap();
+        let taken_bytes = fs::read(&taken_path).unwrap();
+
+        let update =
+            installer.update_from_path("car_v1.zip", &v2, "car_v2.zip", InstallOptions::default());
+        assert!(!update.install.success);
+        assert_eq!(update.install.error, Some(InstallError::AlreadyExists));
+        assert_eq!(
+            update.install.message.as_deref(),
+            Some("Файл с именем новой версии уже есть в папке.")
+        );
+        assert!(!update.old_removed);
+        assert_eq!(fs::read(&old_path).unwrap(), old_bytes, "старый файл цел");
+        assert_eq!(fs::read(&taken_path).unwrap(), taken_bytes);
+        assert!(installer.backups("car_v1.zip").is_empty());
+        assert!(part_files(&installer).is_empty());
+
+        // Занятое имя может лежать и среди выключенных — отказ тот же.
+        assert!(installer.disable("car_v2.zip").success);
+        let update =
+            installer.update_from_path("car_v1.zip", &v2, "car_v2.zip", InstallOptions::default());
+        assert_eq!(update.install.error, Some(InstallError::AlreadyExists));
+        assert!(!update.old_removed);
+        assert!(old_path.is_file());
+        assert!(installer.layout().disabled_dir.join("car_v2.zip").is_file());
+        assert!(installer.backups("car_v1.zip").is_empty());
+    }
+
+    #[test]
+    fn install_replaces_disabled_copy_without_duplicating() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let small = source_zip_sized(&temp, "small", 10);
+        let large = source_zip_sized(&temp, "large", 300);
+        assert!(
+            installer
+                .install_from_path(&small, "car.zip", InstallOptions::default())
+                .success
+        );
+        assert!(installer.disable("car.zip").success);
+
+        let denied = installer.install_from_path(&small, "car.zip", InstallOptions::default());
+        assert_eq!(denied.error, Some(InstallError::AlreadyExists));
+        assert!(!installer.layout().mods_dir.join("car.zip").exists());
+
+        let replaced = installer.install_from_path(
+            &large,
+            "car.zip",
+            InstallOptions {
+                replace_existing: true,
+                ..InstallOptions::default()
+            },
+        );
+        assert!(replaced.success, "{:?}", replaced.message);
+        assert_eq!(
+            replaced.path,
+            Some(installer.layout().disabled_dir.join("car.zip"))
+        );
+        assert!(!installer.layout().mods_dir.join("car.zip").exists());
+        assert_eq!(
+            fs::metadata(installer.layout().disabled_dir.join("car.zip"))
+                .unwrap()
+                .len(),
+            fs::metadata(&large).unwrap().len()
+        );
+        assert_eq!(installer.backups("car.zip").len(), 1);
+        assert!(installer.enable("car.zip").success);
+    }
+
+    #[test]
+    fn install_refuses_when_name_is_in_mods_and_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let source = source_zip(&temp);
+        assert!(
+            installer
+                .install_from_path(&source, "car.zip", InstallOptions::default())
+                .success
+        );
+        let enabled = installer.layout().mods_dir.join("car.zip");
+        let disabled = installer.layout().disabled_dir.join("car.zip");
+        fs::copy(&enabled, &disabled).unwrap();
+        let before = fs::read(&enabled).unwrap();
+
+        let result = installer.install_from_path(
+            &source,
+            "car.zip",
+            InstallOptions {
+                replace_existing: true,
+                ..InstallOptions::default()
+            },
+        );
+        assert_eq!(result.error, Some(InstallError::AlreadyExists));
+        assert!(
+            result
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("и среди включённых, и среди выключенных")
+        );
+        assert_eq!(fs::read(&enabled).unwrap(), before);
+        assert!(disabled.is_file());
+        assert!(installer.backups("car.zip").is_empty());
+
+        // Включение тоже отказывает и ничего не удаляет.
+        assert!(!installer.enable("car.zip").success);
+        assert!(enabled.is_file());
+        assert!(disabled.is_file());
+        assert!(part_files(&installer).is_empty());
+    }
+
+    #[test]
+    fn restore_backup_keeps_disabled_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let small = source_zip_sized(&temp, "small", 10);
+        let large = source_zip_sized(&temp, "large", 300);
+        assert!(
+            installer
+                .install_from_path(&small, "car.zip", InstallOptions::default())
+                .success
+        );
+        assert!(
+            installer
+                .install_from_path(
+                    &large,
+                    "car.zip",
+                    InstallOptions {
+                        replace_existing: true,
+                        ..InstallOptions::default()
+                    },
+                )
+                .success
+        );
+        assert!(installer.disable("car.zip").success);
+
+        let backup = installer.list_backups("car.zip").first().cloned().unwrap();
+        assert_eq!(backup.size_bytes, fs::metadata(&small).unwrap().len());
+        let restored = installer.restore_backup("car.zip", &backup.id);
+        assert!(restored.success, "{}", restored.message);
+
+        assert!(!installer.layout().mods_dir.join("car.zip").exists());
+        assert_eq!(
+            fs::metadata(installer.layout().disabled_dir.join("car.zip"))
+                .unwrap()
+                .len(),
+            fs::metadata(&small).unwrap().len(),
+            "вернулась именно выключенная копия"
+        );
+        let remaining = installer.list_backups("car.zip");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            remaining[0].size_bytes,
+            fs::metadata(&large).unwrap().len(),
+            "текущая версия ушла в копии"
+        );
+    }
+
+    #[test]
+    fn backup_rotation_keeps_at_least_one_for_zero_and_one() {
+        for keep in [0usize, 1] {
+            let temp = tempfile::tempdir().unwrap();
+            let installer = installer_with(&temp, Arc::new(|| Utc::now().fixed_offset()), keep);
+            let source = source_zip_sized(&temp, "car", 20);
+            assert!(
+                installer
+                    .install_from_path(&source, "car.zip", InstallOptions::default())
+                    .success
+            );
+            for _ in 0..4 {
+                assert!(
+                    installer
+                        .install_from_path(
+                            &source,
+                            "car.zip",
+                            InstallOptions {
+                                replace_existing: true,
+                                ..InstallOptions::default()
+                            },
+                        )
+                        .success
+                );
+            }
+            assert_eq!(installer.backups("car.zip").len(), 1, "keep={keep}");
+            let removed = installer.remove("car.zip");
+            assert!(removed.success, "{}", removed.message);
+            assert_eq!(
+                installer.backups("car.zip").len(),
+                1,
+                "удаление не стирает единственную копию: keep={keep}"
+            );
+            assert!(installer.restore_latest_backup("car.zip").success);
+            assert!(installer.layout().mods_dir.join("car.zip").is_file());
+
+            // Восстановление при лимите 1 тоже не теряет ни файл, ни единственную копию.
+            assert!(
+                installer
+                    .install_from_path(
+                        &source,
+                        "car.zip",
+                        InstallOptions {
+                            replace_existing: true,
+                            ..InstallOptions::default()
+                        },
+                    )
+                    .success
+            );
+            let restored = installer.restore_latest_backup("car.zip");
+            assert!(restored.success, "{}", restored.message);
+            assert!(installer.layout().mods_dir.join("car.zip").is_file());
+            assert_eq!(installer.backups("car.zip").len(), 1, "keep={keep}");
+            assert!(part_files(&installer).is_empty());
+        }
+    }
+
+    #[test]
+    fn rotation_with_frozen_clock_orders_backups_by_sequence() {
+        let temp = tempfile::tempdir().unwrap();
+        let frozen = Utc
+            .with_ymd_and_hms(2026, 10, 13, 12, 0, 0)
+            .unwrap()
+            .fixed_offset();
+        let installer = installer_with(&temp, Arc::new(move || frozen), 2);
+        for size in [10usize, 11, 12, 13] {
+            let source = source_zip_sized(&temp, &format!("car-{size}"), size);
+            let options = if size == 10 {
+                InstallOptions::default()
+            } else {
+                InstallOptions {
+                    replace_existing: true,
+                    ..InstallOptions::default()
+                }
+            };
+            assert!(
+                installer
+                    .install_from_path(&source, "car.zip", options)
+                    .success,
+                "установка версии {size}"
+            );
+        }
+
+        let backups = installer.list_backups("car.zip");
+        assert_eq!(backups.len(), 2);
+        assert!(
+            backups.iter().all(|entry| entry.saved_at == Some(frozen)),
+            "часы стояли, время в именах одинаковое"
+        );
+        // list_backups отдаёт новые первыми: старая копия меньше новой.
+        assert!(backups[1].size_bytes < backups[0].size_bytes);
+        let newest_backup_size = backups[0].size_bytes;
+        let restored = installer.restore_latest_backup("car.zip");
+        assert!(restored.success, "{}", restored.message);
+        assert_eq!(
+            fs::metadata(installer.layout().mods_dir.join("car.zip"))
+                .unwrap()
+                .len(),
+            newest_backup_size,
+            "вернулась самая новая копия, а не предыдущая"
+        );
+    }
+
+    #[test]
+    fn cleanup_stale_temp_removes_only_old_part_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let clock_value = Utc
+            .with_ymd_and_hms(2026, 10, 13, 12, 0, 0)
+            .unwrap()
+            .fixed_offset();
+        let installer = installer_with(&temp, Arc::new(move || clock_value), 3);
+        let mods = installer.layout().mods_dir.clone();
+        let old_part = mods.join(".old.part");
+        let fresh_part = mods.join(".fresh.part");
+        let old_mod = mods.join("old.zip");
+        let old_other = mods.join("notes.txt");
+        for path in [&old_part, &fresh_part, &old_mod, &old_other] {
+            fs::write(path, b"x").unwrap();
+        }
+        set_modified(&old_part, clock_value - chrono::Duration::hours(5));
+        set_modified(&fresh_part, clock_value);
+        set_modified(&old_mod, clock_value - chrono::Duration::hours(5));
+        set_modified(&old_other, clock_value - chrono::Duration::hours(5));
+
+        let removed = installer.cleanup_stale_temp(std::time::Duration::from_secs(60 * 60));
+        assert_eq!(removed, 1);
+        assert!(!old_part.exists(), "старый .part убран");
+        assert!(fresh_part.exists(), "свежий .part не тронут");
+        assert!(old_mod.exists(), "обычный архив не тронут");
+        assert!(old_other.exists(), "обычный файл не тронут");
+    }
+
+    #[test]
+    fn failed_install_leaves_no_part_and_keeps_installed_mod() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let source = source_zip(&temp);
+        assert!(
+            installer
+                .install_from_path(&source, "car.zip", InstallOptions::default())
+                .success
+        );
+        let target = installer.layout().mods_dir.join("car.zip");
+        let before = fs::read(&target).unwrap();
+        let replace = || InstallOptions {
+            replace_existing: true,
+            ..InstallOptions::default()
+        };
+
+        let broken = temp.path().join("broken.zip");
+        fs::write(&broken, [0x50, 0x4B, 0x03, 0x04, 1, 2, 3]).unwrap();
+        let blocked = installer.install_from_path(&broken, "car.zip", replace());
+        assert_eq!(blocked.error, Some(InstallError::Blocked));
+        assert_eq!(fs::read(&target).unwrap(), before);
+        assert!(installer.backups("car.zip").is_empty());
+        assert!(part_files(&installer).is_empty());
+
+        let empty = temp.path().join("empty.zip");
+        zip(&empty, &[] as &[(&str, &[u8])]);
+        let warned = installer.install_from_path(&empty, "car.zip", replace());
+        assert_eq!(warned.error, Some(InstallError::HasWarnings));
+        assert_eq!(fs::read(&target).unwrap(), before);
+        assert!(installer.backups("car.zip").is_empty());
+        assert!(part_files(&installer).is_empty());
+
+        let update =
+            installer.update_from_path("car.zip", &broken, "car_v2.zip", InstallOptions::default());
+        assert!(!update.install.success);
+        assert_eq!(fs::read(&target).unwrap(), before);
+        assert!(!installer.layout().mods_dir.join("car_v2.zip").exists());
+        assert!(installer.backups("car.zip").is_empty());
+        assert!(part_files(&installer).is_empty());
+
+        // Пользователь может разрешить предупреждения: пустой архив тогда заменяет мод.
+        let allowed = installer.install_from_path(
+            &empty,
+            "car.zip",
+            InstallOptions {
+                allow_warnings: true,
+                replace_existing: true,
+                ..InstallOptions::default()
+            },
+        );
+        assert!(allowed.success, "{:?}", allowed.message);
+        assert_eq!(
+            fs::metadata(&target).unwrap().len(),
+            fs::metadata(&empty).unwrap().len()
+        );
+        assert_eq!(installer.backups("car.zip").len(), 1);
+        assert!(part_files(&installer).is_empty());
+    }
+
+    #[test]
+    fn update_rolls_back_new_version_when_old_cannot_be_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let v1 = source_zip_sized(&temp, "v1", 30);
+        let v2 = source_zip_sized(&temp, "v2", 90);
+        assert!(
+            installer
+                .install_from_path(&v1, "audi_v1.0.zip", InstallOptions::default())
+                .success
+        );
+        // Папка копий занята файлом: убрать старую версию в копии нельзя (на Windows то же даёт
+        // файл, занятый игрой).
+        fs::remove_dir_all(&installer.layout().backup_dir).unwrap();
+        fs::write(&installer.layout().backup_dir, b"not a folder").unwrap();
+
+        let update = installer.update_from_path(
+            "audi_v1.0.zip",
+            &v2,
+            "audi_v1.5.zip",
+            InstallOptions::default(),
+        );
+        assert!(!update.install.success);
+        assert_eq!(update.install.error, Some(InstallError::InUse));
+        assert!(!update.old_removed);
+        assert!(installer.layout().mods_dir.join("audi_v1.0.zip").is_file());
+        assert!(!installer.layout().mods_dir.join("audi_v1.5.zip").exists());
+    }
+
+    #[test]
+    fn update_rejects_bad_names_and_installs_when_old_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let source = source_zip(&temp);
+
+        let bad_old = installer.update_from_path(
+            "bad:name.zip",
+            &source,
+            "ok.zip",
+            InstallOptions::default(),
+        );
+        assert_eq!(bad_old.install.error, Some(InstallError::BadName));
+        assert!(!bad_old.old_removed);
+        let bad_new =
+            installer.update_from_path("ok.zip", &source, "readme.txt", InstallOptions::default());
+        assert_eq!(bad_new.install.error, Some(InstallError::BadName));
+        assert!(!installer.layout().mods_dir.join("ok.zip").exists());
+
+        let missing =
+            installer.update_from_path("gone.zip", &source, "new.zip", InstallOptions::default());
+        assert!(missing.install.success, "{:?}", missing.install.message);
+        assert!(!missing.old_removed);
+        assert!(installer.layout().mods_dir.join("new.zip").is_file());
+    }
+
+    #[test]
+    fn disable_reports_error_and_keeps_mod_when_target_is_blocked() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let source = source_zip(&temp);
+        assert!(
+            installer
+                .install_from_path(&source, "car.zip", InstallOptions::default())
+                .success
+        );
+        let disabled = installer.layout().disabled_dir.clone();
+        fs::remove_dir_all(&disabled).unwrap();
+        fs::write(&disabled, b"not a folder").unwrap();
+
+        let result = installer.disable("car.zip");
+        assert!(!result.success);
+        assert!(installer.layout().mods_dir.join("car.zip").is_file());
     }
 }

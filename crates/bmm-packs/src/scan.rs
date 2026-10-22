@@ -106,7 +106,10 @@ fn scan_flat(dir: &Path, enabled: bool, seen: &mut HashSet<String>, result: &mut
         if !is_zip(&file_name) {
             continue;
         }
-        if enabled && file_name.eq_ignore_ascii_case(BRIDGE_FILE) {
+        // Помощник менеджера внутри игры — служебный: в гараже его нет ни среди включённых,
+        // ни среди выключенных (этот обход тоже заходит в корень mods). В подпапках его оставляем:
+        // там он не наш.
+        if file_name.eq_ignore_ascii_case(BRIDGE_FILE) {
             continue;
         }
         add_mod(&file_name, enabled, None, &metadata, seen, result);
@@ -152,6 +155,11 @@ fn scan_subfolders(
             continue;
         };
         if !is_zip(&file_name) {
+            continue;
+        }
+        // Корневой помощник менеджера игра видит как мод, но в гараже его быть не должно
+        // (этот обход тоже заходит в корень mods). В подпапках игры он остаётся: там он не наш.
+        if file_name.eq_ignore_ascii_case(BRIDGE_FILE) && path.parent() == Some(root) {
             continue;
         }
         let Ok(relative) = path.strip_prefix(root) else {
@@ -281,6 +289,38 @@ mod tests {
         let result = scan_mods(&layout);
         assert!(!result.folder_available);
         assert_eq!(result.warnings.len(), 1);
+    }
+
+    #[test]
+    fn skips_temp_service_and_lookalike_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        let layout = ModLayout {
+            mods_dir: mods.clone(),
+            disabled_dir: temp.path().join("disabled"),
+            backup_dir: temp.path().join("backups"),
+        };
+        write_file(&mods.join("a.zip"), b"x");
+        write_file(&mods.join(".abc.part"), b"x");
+        write_file(&mods.join(".older.part"), b"x");
+        write_file(&mods.join("b.zipx"), b"x");
+        write_file(&mods.join("c.zip.bak"), b"x");
+        write_file(&mods.join("d.part"), b"x");
+        write_file(&mods.join("bmm_bridge.zip"), b"x");
+        write_file(&mods.join("readme.txt"), b"x");
+        write_file(&mods.join("sub").join("nested.zip"), b"x");
+        write_file(&mods.join("sub").join(".nested.part"), b"x");
+        write_file(&layout.disabled_dir.join("off.zip"), b"x");
+        write_file(&layout.disabled_dir.join(".off.part"), b"x");
+        write_file(&layout.disabled_dir.join("bmm_bridge.zip"), b"x");
+
+        let result = scan_mods(&layout);
+        let names: Vec<&str> = result
+            .mods
+            .iter()
+            .map(|item| item.file_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["a.zip", "nested.zip", "off.zip"]);
     }
 
     #[test]

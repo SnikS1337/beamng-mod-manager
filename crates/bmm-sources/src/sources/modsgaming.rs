@@ -100,6 +100,9 @@ impl ModSource for ModsGamingSource {
     }
 
     fn is_mod_page(&self, url: &Url) -> bool {
+        if !self.owns(url) {
+            return false;
+        }
         let parts = common::segments(url);
         if parts.len() < 4
             || !parts[0].eq_ignore_ascii_case("load")
@@ -156,6 +159,7 @@ impl ModSource for ModsGamingSource {
             self.id(),
             url,
             &|url| self.owns(url),
+            &|url| self.is_mod_page(url),
             &slug_of,
             &parser::parse_detail,
             cancel,

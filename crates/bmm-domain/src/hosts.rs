@@ -153,6 +153,17 @@ mod tests {
     }
 
     #[test]
+    fn modsfire_d_and_install_mod_links_have_download_id() {
+        let plain = parse("https://modsfire.com/9nDwN00BJ04Ef55").unwrap();
+        let short = parse("https://modsfire.com/d/9nDwN00BJ04Ef55").unwrap();
+        let install =
+            parse("https://modsfire.com/install_mod/9nDwN00BJ04Ef55/?manager=ava").unwrap();
+        assert_eq!(short.file_id, "9nDwN00BJ04Ef55");
+        assert_eq!(install.file_id, "9nDwN00BJ04Ef55");
+        assert_eq!(plain.file_id, short.file_id);
+    }
+
+    #[test]
     fn modsfire_service_pages_are_not_files() {
         for url in [
             "https://modsfire.com/login",

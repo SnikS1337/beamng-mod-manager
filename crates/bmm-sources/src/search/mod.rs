@@ -2,10 +2,12 @@
 
 pub mod relevance;
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicBool;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bmm_domain::matches::{ManualMatch, MatchDecisions};
 use bmm_domain::matching::{DuplicateMatcher, MatchVerdict};
@@ -163,34 +165,147 @@ impl SearchService {
             };
         }
 
-        let (sender, receiver) = mpsc::channel::<(usize, SourceRun)>();
-        let mut slots: Vec<Option<SourceRun>> = (0..self.sources.len()).map(|_| None).collect();
-        std::thread::scope(|scope| {
+        let runner = Runner {
+            status_of: Arc::clone(&self.status_of),
+            options: self.options.clone(),
+        };
+        let total = self.sources.len();
+        let mut slots: Vec<Option<SourceRun>> = (0..total).map(|_| None).collect();
+        // Копия флага для рабочих потоков: `&AtomicBool` нельзя увезти в `'static`-поток,
+        // а внешний флаг координатор опрашивает сам и переводит эту копию.
+        let shared_cancel = Arc::new(AtomicBool::new(cancel.load(Ordering::Relaxed)));
+        if shared_cancel.load(Ordering::Relaxed) {
             for (index, source) in self.sources.iter().enumerate() {
-                let sender = sender.clone();
-                let source = Arc::clone(source);
-                let query = query.clone();
-                scope.spawn(move || {
-                    let run = self.run_one(source.as_ref(), &query, cancel);
+                slots[index] = Some(runner.stopped(
+                    source.as_ref(),
+                    SourceStatus::Unavailable,
+                    "поиск отменён",
+                ));
+            }
+            return self.finish(slots, &query);
+        }
+
+        let (sender, receiver) = mpsc::channel::<(usize, SourceRun)>();
+        let deadline = Instant::now() + self.options.per_source_timeout;
+        let mut done = 0usize;
+        for (index, source) in self.sources.iter().enumerate() {
+            let sender = sender.clone();
+            let worker_source = Arc::clone(source);
+            let query = query.clone();
+            let cancel = Arc::clone(&shared_cancel);
+            let worker_runner = runner.clone();
+            let thread_name = format!("bmm-search-{}", source.id());
+            let spawned = std::thread::Builder::new()
+                .name(thread_name)
+                .spawn(move || {
+                    // Паника одного сайта (кривая разметка, ошибка в адаптере) не должна
+                    // ронять весь поиск: остальные источники и их результаты остаются.
+                    let run = match catch_unwind(AssertUnwindSafe(|| {
+                        worker_runner.run_one(worker_source.as_ref(), &query, &cancel)
+                    })) {
+                        Ok(run) => run,
+                        Err(payload) => {
+                            worker_runner.panicked(worker_source.as_ref(), payload.as_ref())
+                        }
+                    };
                     let _ = sender.send((index, run));
                 });
-            }
-            drop(sender);
-            let mut done = 0;
-            while done < self.sources.len() {
-                let Ok((index, run)) = receiver.recv() else {
-                    break;
-                };
-                slots[index] = Some(run);
+            if spawned.is_err() {
+                slots[index] = Some(runner.stopped(
+                    source.as_ref(),
+                    SourceStatus::Unavailable,
+                    "не удалось запустить поиск",
+                ));
                 done += 1;
-                if done < self.sources.len()
-                    && let Some(callback) = progress.as_mut()
-                {
-                    (**callback)(&self.partial(&slots, &query));
+            }
+        }
+        drop(sender);
+
+        let mut cancelled = false;
+        while done < total {
+            if cancel.load(Ordering::Relaxed) {
+                shared_cancel.store(true, Ordering::Relaxed);
+                cancelled = true;
+                break;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                // Сначала забираем ответы, которые уже лежат в канале: быстрый сайт
+                // не должен считаться опоздавшим из-за планировщика.
+                while let Ok((index, run)) = receiver.try_recv() {
+                    if slots[index].is_none() {
+                        slots[index] = Some(run);
+                        done += 1;
+                    }
+                }
+                if done < total {
+                    for (index, slot) in slots.iter_mut().enumerate() {
+                        if slot.is_none() {
+                            *slot = Some(runner.stopped(
+                                self.sources[index].as_ref(),
+                                SourceStatus::Unavailable,
+                                "сайт не ответил вовремя",
+                            ));
+                        }
+                    }
+                }
+                // Как связанный CancellationToken в legacy: зависший сайт должен
+                // по возможности свернуть работу, а не висеть после возврата поиска.
+                shared_cancel.store(true, Ordering::Relaxed);
+                break;
+            }
+            let wait = deadline
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(25));
+            match receiver.recv_timeout(wait) {
+                Ok((index, run)) => {
+                    if slots[index].is_none() {
+                        slots[index] = Some(run);
+                        done += 1;
+                        if done < total
+                            && let Some(callback) = progress.as_mut()
+                        {
+                            (**callback)(&self.partial(&slots, &query));
+                        }
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        if cancelled {
+            while let Ok((index, run)) = receiver.try_recv() {
+                if slots[index].is_none() {
+                    slots[index] = Some(run);
                 }
             }
-        });
+            for (index, slot) in slots.iter_mut().enumerate() {
+                if slot.is_none() {
+                    *slot = Some(runner.stopped(
+                        self.sources[index].as_ref(),
+                        SourceStatus::Unavailable,
+                        "поиск отменён",
+                    ));
+                }
+            }
+        } else if slots.iter().any(Option::is_none) {
+            // Канал закрылся, а результат так и не пришёл (например, поток не смог
+            // отправить его). Не оставляем источник вечно «в поиске».
+            for (index, slot) in slots.iter_mut().enumerate() {
+                if slot.is_none() {
+                    *slot = Some(runner.stopped(
+                        self.sources[index].as_ref(),
+                        SourceStatus::Unavailable,
+                        "источник не ответил",
+                    ));
+                }
+            }
+        }
+        self.finish(slots, &query)
+    }
 
+    fn finish(&self, slots: Vec<Option<SourceRun>>, query: &str) -> SearchResponse {
         let reports = slots
             .iter()
             .flatten()
@@ -202,7 +317,7 @@ impl SearchService {
             .flat_map(|run| run.listings.clone())
             .collect();
         SearchResponse {
-            cards: self.group(&listings, &query),
+            cards: self.group(&listings, query),
             sources: reports,
             listings,
         }
@@ -234,70 +349,6 @@ impl SearchService {
             cards: self.group(&listings, query),
             sources: reports,
             listings,
-        }
-    }
-
-    fn run_one(&self, source: &dyn ModSource, query: &str, cancel: &AtomicBool) -> SourceRun {
-        if !source.supports_search() {
-            return SourceRun {
-                report: SourceReport {
-                    source_id: source.id().to_string(),
-                    display_name: source.display_name().to_string(),
-                    status: SourceStatus::Ok,
-                    count: 0,
-                    note: Some("поиск на этом сайте пока не поддерживается".to_string()),
-                    pending: false,
-                },
-                listings: Vec::new(),
-            };
-        }
-        let status = (self.status_of)(source.id());
-        if status != SourceStatus::Ok {
-            return SourceRun {
-                report: SourceReport {
-                    source_id: source.id().to_string(),
-                    display_name: source.display_name().to_string(),
-                    status,
-                    count: 0,
-                    note: Some(if status == SourceStatus::NeedsHumanCheck {
-                        "нужно пройти проверку на сайте".to_string()
-                    } else {
-                        "сайт недоступен".to_string()
-                    }),
-                    pending: false,
-                },
-                listings: Vec::new(),
-            };
-        }
-        match source.search(query, cancel) {
-            Ok(found) => {
-                let listings: Vec<Listing> = newest_only(found)
-                    .into_iter()
-                    .take(self.options.max_per_source)
-                    .collect();
-                SourceRun {
-                    report: SourceReport {
-                        source_id: source.id().to_string(),
-                        display_name: source.display_name().to_string(),
-                        status: SourceStatus::Ok,
-                        count: listings.len(),
-                        note: None,
-                        pending: false,
-                    },
-                    listings,
-                }
-            }
-            Err(error) => SourceRun {
-                report: SourceReport {
-                    source_id: source.id().to_string(),
-                    display_name: source.display_name().to_string(),
-                    status: error.status,
-                    count: 0,
-                    note: Some(error.message),
-                    pending: false,
-                },
-                listings: Vec::new(),
-            },
         }
     }
 
@@ -419,6 +470,110 @@ impl SearchService {
     }
 }
 
+/// Всё, что нужно одному рабочему потоку поиска. `SearchService` целиком в поток
+/// не уезжает: его поля клонируются, чтобы поиск можно было бросить по таймауту.
+#[derive(Clone)]
+struct Runner {
+    status_of: StatusFn,
+    options: SearchOptions,
+}
+
+impl Runner {
+    fn run_one(&self, source: &dyn ModSource, query: &str, cancel: &AtomicBool) -> SourceRun {
+        if !source.supports_search() {
+            return self.stopped_with_note(
+                source,
+                SourceStatus::Ok,
+                "поиск на этом сайте пока не поддерживается",
+            );
+        }
+        let status = (self.status_of)(source.id());
+        if status != SourceStatus::Ok {
+            return self.stopped_with_note(
+                source,
+                status,
+                if status == SourceStatus::NeedsHumanCheck {
+                    "нужно пройти проверку на сайте"
+                } else {
+                    "сайт недоступен"
+                },
+            );
+        }
+        match source.search(query, cancel) {
+            Ok(found) => {
+                let listings: Vec<Listing> = newest_only(found)
+                    .into_iter()
+                    .take(self.options.max_per_source)
+                    .collect();
+                SourceRun {
+                    report: SourceReport {
+                        source_id: source.id().to_string(),
+                        display_name: source.display_name().to_string(),
+                        status: SourceStatus::Ok,
+                        count: listings.len(),
+                        note: None,
+                        pending: false,
+                    },
+                    listings,
+                }
+            }
+            Err(error) => SourceRun {
+                report: SourceReport {
+                    source_id: source.id().to_string(),
+                    display_name: source.display_name().to_string(),
+                    status: error.status,
+                    count: 0,
+                    note: Some(error.message),
+                    pending: false,
+                },
+                listings: Vec::new(),
+            },
+        }
+    }
+
+    fn stopped(&self, source: &dyn ModSource, status: SourceStatus, note: &str) -> SourceRun {
+        self.stopped_with_note(source, status, note)
+    }
+
+    fn stopped_with_note(
+        &self,
+        source: &dyn ModSource,
+        status: SourceStatus,
+        note: &str,
+    ) -> SourceRun {
+        SourceRun {
+            report: SourceReport {
+                source_id: source.id().to_string(),
+                display_name: source.display_name().to_string(),
+                status,
+                count: 0,
+                note: Some(note.to_string()),
+                pending: false,
+            },
+            listings: Vec::new(),
+        }
+    }
+
+    fn panicked(&self, source: &dyn ModSource, payload: &(dyn Any + Send)) -> SourceRun {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "внутренняя ошибка".to_string());
+        SourceRun {
+            report: SourceReport {
+                source_id: source.id().to_string(),
+                display_name: source.display_name().to_string(),
+                status: SourceStatus::Unavailable,
+                count: 0,
+                note: Some(format!("источник упал: {message}")),
+                pending: false,
+            },
+            listings: Vec::new(),
+        }
+    }
+}
+
 pub fn newest_only(found: Vec<Listing>) -> Vec<Listing> {
     let mut result: Vec<Listing> = Vec::with_capacity(found.len());
     let mut at: HashMap<(String, String, String), usize> = HashMap::new();
@@ -506,7 +661,7 @@ fn card_id(cluster: &[usize], listings: &[Listing]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use url::Url;
 
     use crate::sources::{ModSource, SourceError};
@@ -670,5 +825,338 @@ mod tests {
         assert_eq!(response.cards.len(), 1);
         assert_eq!(response.cards[0].listings.len(), 2);
         assert_eq!(response.cards[0].price, PriceSummary::Unknown);
+    }
+
+    type Action = Box<dyn Fn(&str, &AtomicBool) -> Result<Vec<Listing>, SourceError> + Send + Sync>;
+
+    struct ScriptedSource {
+        id: &'static str,
+        action: Action,
+    }
+
+    impl ScriptedSource {
+        fn new<F>(id: &'static str, action: F) -> Arc<Self>
+        where
+            F: Fn(&str, &AtomicBool) -> Result<Vec<Listing>, SourceError> + Send + Sync + 'static,
+        {
+            Arc::new(Self {
+                id,
+                action: Box::new(action),
+            })
+        }
+    }
+
+    impl ModSource for ScriptedSource {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn display_name(&self) -> &'static str {
+            self.id
+        }
+
+        fn supports_search(&self) -> bool {
+            true
+        }
+
+        fn home(&self) -> Url {
+            Url::parse(&format!("https://{}.example.org/", self.id)).unwrap()
+        }
+
+        fn owns(&self, _url: &Url) -> bool {
+            true
+        }
+
+        fn is_mod_page(&self, _url: &Url) -> bool {
+            true
+        }
+
+        fn feed_covers(&self, _url: &Url) -> bool {
+            true
+        }
+
+        fn search(&self, query: &str, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            (self.action)(query, cancel)
+        }
+
+        fn feed_page(&self, _page: u32, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+
+        fn listing(
+            &self,
+            _url: &Url,
+            _cancel: &AtomicBool,
+        ) -> Result<Option<Listing>, SourceError> {
+            Ok(None)
+        }
+    }
+
+    fn service_with(sources: Vec<Arc<dyn ModSource>>, options: SearchOptions) -> SearchService {
+        SearchService::new(sources, Arc::new(|_| SourceStatus::Ok), options, None)
+    }
+
+    fn file_offer(id: &str) -> bmm_domain::models::Offer {
+        bmm_domain::models::Offer {
+            kind: bmm_domain::models::OfferKind::ExternalHost,
+            host: "modsfire".to_string(),
+            url: Url::parse(&format!("https://modsfire.com/{id}")).unwrap(),
+            host_file_id: Some(id.to_string()),
+            size_bytes: None,
+        }
+    }
+
+    #[test]
+    fn maybe_cards_point_at_each_other_without_merging() {
+        let first = listing("modland", "a", "Toyota Sienna 2011-2017 2.2", None);
+        let second = listing(
+            "stmods",
+            "b",
+            "МОД Toyota Sienna 2011-2017 v2.2 (0.39.x) ДЛЯ BEAMNG.DRIVE",
+            None,
+        );
+        let cards = service().group(&[first, second], "sienna");
+        assert_eq!(cards.len(), 2);
+        for card in &cards {
+            assert_eq!(card.possible_same_as.len(), 1);
+            assert!(card.possible_same_as[0] != card.id);
+        }
+        assert_eq!(cards[0].possible_same_as[0], cards[1].id);
+        assert_eq!(cards[1].possible_same_as[0], cards[0].id);
+    }
+
+    #[test]
+    fn same_links_do_not_chain_three_sites_into_one_card() {
+        // A~B делят файл, B~C делят другой, A и C — разные моды.
+        let mut a = listing("s1", "a", "Alpha Roadster", None);
+        a.offers = vec![file_offer("AAAAAAAAAA111")];
+        let mut b = listing("s2", "b", "Beta Hauler", None);
+        b.offers = vec![file_offer("AAAAAAAAAA111"), file_offer("BBBBBBBBBB222")];
+        let mut c = listing("s3", "c", "Gamma Sedan", None);
+        c.offers = vec![file_offer("BBBBBBBBBB222")];
+        let cards = service().group(&[a, b, c], "car");
+        assert!(cards.len() >= 2, "{cards:?}");
+        assert!(cards.iter().all(|card| card.listings.len() <= 2));
+    }
+
+    #[test]
+    fn search_keeps_one_card_for_repeated_record() {
+        let source = ScriptedSource::new("stmods", |_query, _cancel| {
+            let item = listing("stmods", "a", "Car X", None);
+            Ok(vec![item.clone(), item])
+        });
+        let response = service_with(vec![source], SearchOptions::default()).search(
+            "car",
+            &AtomicBool::new(false),
+            None,
+        );
+        assert_eq!(response.cards.len(), 1);
+        assert_eq!(response.cards[0].listings.len(), 1);
+    }
+
+    #[test]
+    fn search_limits_results_per_source() {
+        let source = ScriptedSource::new("many", |_query, _cancel| {
+            Ok(vec![
+                listing("many", "1", "Car One", None),
+                listing("many", "2", "Car Two", None),
+                listing("many", "3", "Car Three", None),
+            ])
+        });
+        let options = SearchOptions {
+            max_per_source: 2,
+            ..SearchOptions::default()
+        };
+        let response =
+            service_with(vec![source], options).search("car", &AtomicBool::new(false), None);
+        assert_eq!(response.listings.len(), 2);
+        assert_eq!(response.sources[0].count, 2);
+    }
+
+    #[test]
+    fn search_sorts_exact_title_first() {
+        let source = ScriptedSource::new("modland", |_query, _cancel| {
+            Ok(vec![
+                listing("modland", "a", "Honda Civic Type R Pack Deluxe", None),
+                listing("modland", "b", "Civic", None),
+            ])
+        });
+        let response = service_with(vec![source], SearchOptions::default()).search(
+            "civic",
+            &AtomicBool::new(false),
+            None,
+        );
+        assert_eq!(response.cards[0].title, "Civic");
+    }
+
+    #[test]
+    fn search_reports_partial_source_failure() {
+        let broken = ScriptedSource::new("modland", |_query, _cancel| {
+            Err(SourceError::unavailable("разметка изменилась"))
+        });
+        let good = Arc::new(FakeSource {
+            id: "stmods",
+            title: "Car X",
+        });
+        let response = service_with(vec![broken, good], SearchOptions::default()).search(
+            "car",
+            &AtomicBool::new(false),
+            None,
+        );
+        assert_eq!(response.cards.len(), 1);
+        let report = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "modland")
+            .unwrap();
+        assert_eq!(report.status, SourceStatus::Unavailable);
+        assert!(report.note.as_deref().unwrap_or("").contains("разметка"));
+    }
+
+    #[test]
+    fn search_times_out_hung_source_without_waiting() {
+        let slow = ScriptedSource::new("slow", |_query, cancel| {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(2) && !cancel.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(SourceError::cancelled())
+        });
+        let good = Arc::new(FakeSource {
+            id: "stmods",
+            title: "Car X",
+        });
+        let options = SearchOptions {
+            per_source_timeout: Duration::from_millis(100),
+            ..SearchOptions::default()
+        };
+        let started = Instant::now();
+        let response =
+            service_with(vec![slow, good], options).search("car", &AtomicBool::new(false), None);
+        let elapsed = started.elapsed();
+        assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+        assert_eq!(response.cards.len(), 1);
+        let report = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "slow")
+            .unwrap();
+        assert_eq!(report.status, SourceStatus::Unavailable);
+        assert!(report.note.as_deref().unwrap_or("").contains("вовремя"));
+    }
+
+    #[test]
+    fn search_cancellation_returns_control() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let slow = ScriptedSource::new("slow", |_query, _cancel| {
+            std::thread::sleep(Duration::from_secs(1));
+            Ok(vec![listing("slow", "1", "Car X", None)])
+        });
+        let service = service_with(
+            vec![slow],
+            SearchOptions {
+                per_source_timeout: Duration::from_secs(5),
+                ..SearchOptions::default()
+            },
+        );
+        let flag = Arc::clone(&cancel);
+        let flip = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        let response = service.search("car", &cancel, None);
+        let elapsed = started.elapsed();
+        flip.join().unwrap();
+        assert!(elapsed < Duration::from_millis(700), "{elapsed:?}");
+        assert_eq!(response.sources[0].status, SourceStatus::Unavailable);
+        assert!(
+            response.sources[0]
+                .note
+                .as_deref()
+                .unwrap_or("")
+                .contains("отменён")
+        );
+    }
+
+    #[test]
+    fn search_cancelled_before_start_does_not_call_sources() {
+        let called = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&called);
+        let source = ScriptedSource::new("slow", move |_query, _cancel| {
+            flag.store(true, Ordering::Relaxed);
+            Ok(Vec::new())
+        });
+        let cancel = AtomicBool::new(true);
+        let response =
+            service_with(vec![source], SearchOptions::default()).search("car", &cancel, None);
+        assert!(!called.load(Ordering::Relaxed));
+        assert_eq!(response.sources[0].status, SourceStatus::Unavailable);
+        assert!(
+            response.sources[0]
+                .note
+                .as_deref()
+                .unwrap_or("")
+                .contains("отменён")
+        );
+    }
+
+    #[test]
+    fn search_isolates_source_panic() {
+        let panicking = ScriptedSource::new("broken", |_query, _cancel| {
+            panic!("boom in source");
+        });
+        let good = Arc::new(FakeSource {
+            id: "stmods",
+            title: "Car X",
+        });
+        let response = service_with(vec![panicking, good], SearchOptions::default()).search(
+            "car",
+            &AtomicBool::new(false),
+            None,
+        );
+        assert_eq!(response.cards.len(), 1);
+        let report = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "broken")
+            .unwrap();
+        assert_eq!(report.status, SourceStatus::Unavailable);
+        assert!(report.note.as_deref().unwrap_or("").contains("boom"));
+    }
+
+    #[test]
+    fn search_skips_source_waiting_for_human_check() {
+        let called = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&called);
+        let source = ScriptedSource::new("modland", move |_query, _cancel| {
+            flag.store(true, Ordering::Relaxed);
+            Ok(Vec::new())
+        });
+        let good = Arc::new(FakeSource {
+            id: "stmods",
+            title: "Car X",
+        });
+        let service = SearchService::new(
+            vec![source, good],
+            Arc::new(|id| {
+                if id == "modland" {
+                    SourceStatus::NeedsHumanCheck
+                } else {
+                    SourceStatus::Ok
+                }
+            }),
+            SearchOptions::default(),
+            None,
+        );
+        let response = service.search("car", &AtomicBool::new(false), None);
+        assert!(!called.load(Ordering::Relaxed));
+        assert_eq!(response.cards.len(), 1);
+        let report = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "modland")
+            .unwrap();
+        assert_eq!(report.status, SourceStatus::NeedsHumanCheck);
     }
 }

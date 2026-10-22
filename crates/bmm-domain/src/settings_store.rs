@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde_json::{Map, Value};
 
@@ -24,6 +25,7 @@ impl SettingsLoadResult {
 pub struct SettingsStore {
     path: PathBuf,
     now: Clock,
+    gate: Mutex<()>,
 }
 
 impl SettingsStore {
@@ -31,6 +33,7 @@ impl SettingsStore {
         Self {
             path: path.into(),
             now,
+            gate: Mutex::new(()),
         }
     }
 
@@ -43,6 +46,7 @@ impl SettingsStore {
     }
 
     pub fn load(&self) -> SettingsLoadResult {
+        let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         if !self.path.exists() {
             return SettingsLoadResult {
                 settings: AppSettings::default(),
@@ -172,25 +176,22 @@ impl SettingsStore {
     }
 
     pub fn save(&self, settings: &AppSettings) -> std::io::Result<()> {
+        let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         let json =
             serde_json::to_string_pretty(&settings.normalize()).map_err(std::io::Error::other)?;
         atomic::write_atomic(&self.path, json.as_bytes())
     }
 
     fn quarantine(&self, why: &str) -> SettingsLoadResult {
-        let stamp = (self.now)().format("%Y%m%d-%H%M%S");
-        let target = PathBuf::from(format!("{}.bad-{stamp}", self.path.display()));
-        let _ = fs::remove_file(&target);
-        let moved = fs::rename(&self.path, &target).is_ok();
-
-        let warning = if moved {
-            let name = target
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            format!("{why}: сохранён как {name}, использованы настройки по умолчанию")
-        } else {
-            format!("{why}, использованы настройки по умолчанию")
+        let warning = match atomic::quarantine_file(&self.path, (self.now)()) {
+            Some(target) => {
+                let name = target
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                format!("{why}: сохранён как {name}, использованы настройки по умолчанию")
+            }
+            None => format!("{why}, использованы настройки по умолчанию"),
         };
 
         SettingsLoadResult {
@@ -403,6 +404,99 @@ mod tests {
             .collect();
         assert_eq!(bad.len(), 1);
         assert!(!result.settings.allow_downloads);
+    }
+
+    #[test]
+    fn second_quarantine_keeps_first_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, r#"{ "KeepBackups": tr"#).unwrap();
+        let store = SettingsStore::new(path.clone(), fixed_clock());
+        assert!(store.load().had_problems());
+        fs::write(&path, r#"{ "KeepBackups": 5"#).unwrap();
+        assert!(store.load().had_problems());
+
+        let backups: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect();
+        assert_eq!(backups.len(), 2, "{backups:?}");
+        assert!(
+            backups.contains(&r#"{ "KeepBackups": tr"#.to_string()),
+            "{backups:?}"
+        );
+        assert!(
+            backups.contains(&r#"{ "KeepBackups": 5"#.to_string()),
+            "{backups:?}"
+        );
+    }
+
+    #[test]
+    fn oversized_file_is_quarantined() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, vec![b' '; MAX_BYTES as usize + 1]).unwrap();
+        let result = SettingsStore::new(path.clone(), fixed_clock()).load();
+        assert!(result.had_problems());
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn parallel_saves_leave_readable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SettingsStore::new(
+            dir.path().join("settings.json"),
+            fixed_clock(),
+        ));
+        let threads: Vec<_> = (0..8)
+            .map(|index| {
+                let store = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    for step in 0..20 {
+                        let loaded = store.load();
+                        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+                        let settings = AppSettings {
+                            keep_backups: 1 + (index * 20 + step) % 20,
+                            check_ttl_hours: 1 + (index % 24),
+                            ..AppSettings::default()
+                        };
+                        store.save(&settings).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let loaded = store.load();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(
+            (1..=20).contains(&loaded.settings.keep_backups),
+            "{}",
+            loaded.settings.keep_backups
+        );
+        for entry in fs::read_dir(dir.path()).unwrap().filter_map(Result::ok) {
+            assert!(
+                !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .ends_with(".tmp"),
+                "{:?}",
+                entry.file_name()
+            );
+        }
     }
 
     #[test]
