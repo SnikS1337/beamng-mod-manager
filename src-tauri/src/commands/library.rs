@@ -1040,6 +1040,7 @@ mod tests {
             content_cache: Mutex::new(HashMap::new()),
             search: None,
             update: None,
+            app_update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         };
@@ -1086,6 +1087,7 @@ mod tests {
             content_cache: Mutex::new(HashMap::new()),
             search: None,
             update: None,
+            app_update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         }

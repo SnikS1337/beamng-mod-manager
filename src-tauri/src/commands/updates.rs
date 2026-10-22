@@ -483,6 +483,9 @@ pub fn spawn_auto_check(state: Arc<AppState>) {
         loop {
             let runtime = state.update.clone();
             let settings = state.settings.load().settings;
+            if started && settings.check_app_updates {
+                crate::commands::app_update::auto_check(&state);
+            }
             let due = if started {
                 settings.auto_check_on_start
             } else if settings.auto_check_every_hours > 0 {
@@ -553,6 +556,7 @@ mod tests {
             content_cache: Mutex::new(HashMap::new()),
             search: None,
             update: None,
+            app_update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         };

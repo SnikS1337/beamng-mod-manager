@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use tokio::sync::Semaphore;
 
+use bmm_app_release::{CancelToken, PreparedUpdate, UpdateDownloader, UpdateState};
 use bmm_checks::coordinator::UpdateCoordinator;
 use bmm_domain::library::JsonLibraryStore;
 use bmm_domain::matches::MatchDecisionStore;
@@ -54,6 +55,16 @@ pub struct UpdateRuntime {
     pub sources: Arc<Vec<Arc<dyn ModSource>>>,
 }
 
+pub struct AppUpdateRuntime {
+    pub downloader: UpdateDownloader,
+    pub state: UpdateState,
+    pub prepared: Option<PreparedUpdate>,
+    pub cancel: CancelToken,
+    pub update_dir: PathBuf,
+    pub skipped_path: PathBuf,
+    pub manifest_url: url::Url,
+}
+
 pub struct AppState {
     pub paths: AppPaths,
     pub settings: SettingsStore,
@@ -67,6 +78,7 @@ pub struct AppState {
     pub content_cache: Mutex<HashMap<PathBuf, CachedContent>>,
     pub search: Option<Arc<SearchRuntime>>,
     pub update: Option<Arc<UpdateRuntime>>,
+    pub app_update: Option<Arc<Mutex<AppUpdateRuntime>>>,
     pub search_cancel: Mutex<Option<(u64, Arc<AtomicBool>)>>,
     pub last_search: Mutex<Option<SearchResponse>>,
 }

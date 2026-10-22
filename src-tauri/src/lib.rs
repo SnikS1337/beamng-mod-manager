@@ -17,11 +17,15 @@ use bmm_packs::cache::PreviewCache;
 use bmm_sources::net::{PoliteFetcher, PoliteOptions, default_fetcher};
 use bmm_sources::search::{SearchOptions, SearchService};
 use bmm_sources::sources::{ModSource, all_sources};
-use state::{AppState, SearchRuntime, UpdateRuntime};
+use state::{AppState, AppUpdateRuntime, SearchRuntime, UpdateRuntime};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(arguments) = commands::app_update::installer_args() {
+        commands::app_update::run_installer(arguments);
+        return;
+    }
     let _instance = match named_mutex::acquire() {
         Some(guard) => guard,
         None => {
@@ -106,6 +110,21 @@ pub fn run() {
         enabled: enabled_sources,
         sources: source_list,
     }));
+    let app_update = bmm_app_release::UpdateDownloader::reqwest("ModManagerBeamNG/0.4.0")
+        .ok()
+        .map(|downloader| {
+            Arc::new(Mutex::new(AppUpdateRuntime {
+                downloader,
+                state: bmm_app_release::UpdateState::idle(),
+                prepared: None,
+                cancel: bmm_app_release::CancelToken::new(),
+                update_dir: paths.update_dir(),
+                skipped_path: paths.update_dir().join("skipped-version.txt"),
+                manifest_url: "https://github.com/SnikS1337/beamng-mod-manager/releases/latest/download/latest.json"
+                    .parse()
+                    .expect("статический адрес обновлений"),
+            }))
+        });
 
     let state = Arc::new(AppState {
         settings: settings_store,
@@ -120,6 +139,7 @@ pub fn run() {
         content_cache: Mutex::new(HashMap::new()),
         search,
         update,
+        app_update,
         search_cancel: Mutex::new(None),
         last_search: Mutex::new(None),
     });
@@ -183,7 +203,12 @@ pub fn run() {
             commands::updates::updates_resolve_human,
             commands::updates::updates_open_modland,
             commands::settings::settings_load,
-            commands::settings::settings_save
+            commands::settings::settings_save,
+            commands::app_update::app_update_state,
+            commands::app_update::app_update_check,
+            commands::app_update::app_update_download,
+            commands::app_update::app_update_cancel,
+            commands::app_update::app_update_restart
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
