@@ -134,6 +134,9 @@ pub fn run() {
             preview_protocol(context.app_handle(), request)
         })
         .setup(|app| {
+            let state = app.state::<Arc<AppState>>().inner().clone();
+            commands::downloads::spawn(app.handle().clone(), state.clone());
+            commands::updates::spawn_auto_check(state);
             if std::env::args().any(|arg| arg == "--probe") {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -177,7 +180,10 @@ pub fn run() {
             commands::updates::updates_confirm_page,
             commands::updates::updates_reject_page,
             commands::updates::updates_undo_page,
-            commands::updates::updates_resolve_human
+            commands::updates::updates_resolve_human,
+            commands::updates::updates_open_modland,
+            commands::settings::settings_load,
+            commands::settings::settings_save
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
