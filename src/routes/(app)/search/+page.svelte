@@ -7,6 +7,7 @@
     listenSearch,
     searchCancel,
     searchDecide,
+    searchOpenModland,
     searchPreview,
     searchStart,
     sourceName,
@@ -131,6 +132,14 @@
       await openUrl(url);
     } catch {
       window.open(url, "_blank", "noopener");
+    }
+  }
+
+  async function openModland() {
+    try {
+      await searchOpenModland(submitted || query);
+    } catch (reason) {
+      error = errorText(reason);
     }
   }
 
@@ -313,6 +322,9 @@
               {source.count}
             {/if}
           </span>
+          {#if source.id === "modland" && submitted}
+            <button type="button" onclick={() => void openModland()}>На сайте</button>
+          {/if}
         </div>
       {/each}
     </div>
@@ -597,6 +609,17 @@
 
   .site.pending .dot {
     animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  .site button {
+    height: 19px;
+    padding: 0 7px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--foreground);
+    font-size: 9px;
+    cursor: default;
   }
 
   .grid {

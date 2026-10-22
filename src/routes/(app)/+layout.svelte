@@ -5,13 +5,29 @@
   import NavRail from "$lib/shell/NavRail.svelte";
   import Titlebar from "$lib/shell/Titlebar.svelte";
   import ToastHost from "$lib/shell/ToastHost.svelte";
+  import WelcomeTour from "$lib/shell/WelcomeTour.svelte";
   import { appearance } from "$lib/shell/appearance.svelte";
 
   let { children } = $props();
+  let welcome = $state(false);
 
   onMount(() => {
-    void appearance.load();
+    void (async () => {
+      const loaded = appearance.settings ?? (await appearance.load());
+      welcome = loaded ? !loaded.firstRunDone : false;
+    })();
   });
+
+  async function closeWelcome() {
+    welcome = false;
+    const current = appearance.settings;
+    if (!current) return;
+    try {
+      await appearance.save({ ...current, firstRunDone: true });
+    } catch {
+      // Настройки не сохранились — окно просто закроется до следующего запуска.
+    }
+  }
 </script>
 
 <div class="app">
@@ -28,6 +44,7 @@
 
   <IncomingHost />
   <ToastHost />
+  <WelcomeTour open={welcome} onClose={() => void closeWelcome()} />
 </div>
 
 <style>

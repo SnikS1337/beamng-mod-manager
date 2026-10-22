@@ -56,7 +56,7 @@ pub struct UpdateCoordinator {
     store: Arc<dyn LibraryStore + Send + Sync>,
     sources: SourcesFactory,
     clock: Clock,
-    options: UpdateCoordinatorOptions,
+    options: Mutex<UpdateCoordinatorOptions>,
     clear_cache: Option<Callback>,
     reset_source: Option<SourceCallback>,
     state: Mutex<State>,
@@ -91,7 +91,7 @@ impl UpdateCoordinator {
             store,
             sources,
             clock,
-            options: UpdateCoordinatorOptions::default(),
+            options: Mutex::new(UpdateCoordinatorOptions::default()),
             clear_cache: None,
             reset_source: None,
             state: Mutex::new(State::default()),
@@ -99,9 +99,15 @@ impl UpdateCoordinator {
         }
     }
 
-    pub fn with_options(mut self, options: UpdateCoordinatorOptions) -> Self {
-        self.options = options;
+    pub fn with_options(self, options: UpdateCoordinatorOptions) -> Self {
+        *self.options.lock().unwrap() = options;
         self
+    }
+
+    /// Настройки проверки применяются к следующему запуску без перезапуска.
+    /// Интервалы координатора при этом не сбрасываются.
+    pub fn update_check_options(&self, check: UpdateCheckOptions) {
+        self.options.lock().unwrap().check = check;
     }
 
     /// Сброс кэша страниц перед принудительной проверкой.
@@ -168,7 +174,9 @@ impl UpdateCoordinator {
                 && let Some(finished) = state.last_finished
             {
                 let since = self.now() - finished;
-                if since >= TimeDelta::zero() && since < self.options.min_force_interval {
+                if since >= TimeDelta::zero()
+                    && since < self.options.lock().unwrap().min_force_interval
+                {
                     let mut report = last.clone();
                     report.reused = true;
                     return report;
@@ -257,6 +265,7 @@ impl UpdateCoordinator {
         cancel: &AtomicBool,
         progress: Option<&mut dyn FnMut(&UpdateProgress)>,
     ) -> UpdateRunReport {
+        let options_snapshot = self.options.lock().unwrap().clone();
         if force && let Some(callback) = &self.clear_cache {
             callback();
         }
@@ -272,10 +281,10 @@ impl UpdateCoordinator {
         let mut requests = 0u32;
         let mut up_to_date = 0usize;
 
-        for batch in 0..self.options.max_batches.max(1) {
+        for batch in 0..options_snapshot.max_batches.max(1) {
             let now = self.now();
             let batch_force = force && batch == 0;
-            let options = self.options.check.clone().with_force(batch_force);
+            let options = options_snapshot.check.clone().with_force(batch_force);
             let due_before = UpdateCheckPlanner::plan_feeds(
                 &UpdateCheckService::tracked(&*self.store),
                 &UpdateCheckService::source_statuses(&*self.store),
@@ -296,7 +305,7 @@ impl UpdateCoordinator {
                     .retry_after
                     .iter()
                     .filter(|(_, until)| {
-                        **until > now && **until - now <= self.options.failure_backoff
+                        **until > now && **until - now <= options_snapshot.failure_backoff
                     })
                     .map(|(source, until)| {
                         (
@@ -336,7 +345,7 @@ impl UpdateCoordinator {
                     {
                         state
                             .retry_after
-                            .insert(item.source.clone(), now + self.options.failure_backoff);
+                            .insert(item.source.clone(), now + options_snapshot.failure_backoff);
                     } else if item.status == SourceStatus::Ok && item.note.is_none() {
                         state.retry_after.remove(&item.source);
                     }
@@ -345,7 +354,7 @@ impl UpdateCoordinator {
 
             let unfinished =
                 report.stopped_by_time || report.sources.iter().any(|source| source.postponed > 0);
-            let final_batch = batch + 1 >= self.options.max_batches.max(1);
+            let final_batch = batch + 1 >= options_snapshot.max_batches.max(1);
             last = Some(report);
             if last.as_ref().is_some_and(|report| report.cancelled) || !unfinished || final_batch {
                 break;
@@ -354,7 +363,7 @@ impl UpdateCoordinator {
                 &UpdateCheckService::tracked(&*self.store),
                 &UpdateCheckService::source_statuses(&*self.store),
                 self.now(),
-                &self.options.check.clone().with_force(false),
+                &options_snapshot.check.clone().with_force(false),
             )
             .due
             .len();

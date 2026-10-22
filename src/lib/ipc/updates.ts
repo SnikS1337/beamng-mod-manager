@@ -260,6 +260,21 @@ export async function updatesRejectPage(modId: string): Promise<UpdatesSnapshot>
   return clone(mockSnapshot);
 }
 
+export async function updatesUndoPage(suggestion: PageSuggestion): Promise<UpdatesSnapshot> {
+  if (isTauri()) {
+    return invoke<UpdatesSnapshot>("updates_undo_page", {
+      modId: suggestion.modId,
+      source: suggestion.source,
+      sourceId: suggestion.sourceId,
+      url: suggestion.url,
+    });
+  }
+  if (!mockSnapshot.suggestions.some((item) => item.modId === suggestion.modId)) {
+    mockSnapshot.suggestions = [...mockSnapshot.suggestions, suggestion];
+  }
+  return clone(mockSnapshot);
+}
+
 export async function updatesResolveHuman(source: string): Promise<UpdatesSnapshot> {
   if (isTauri()) return invoke<UpdatesSnapshot>("updates_resolve_human", { source });
   mockSources = mockSources.map((item) =>

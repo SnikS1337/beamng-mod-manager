@@ -20,6 +20,7 @@ struct DownloadReady {
 struct Scanner {
     seen: HashSet<PathBuf>,
     pending: HashMap<PathBuf, (u64, Instant)>,
+    watched: HashSet<PathBuf>,
     stable_after: Duration,
 }
 
@@ -28,6 +29,7 @@ impl Scanner {
         Self {
             seen: HashSet::new(),
             pending: HashMap::new(),
+            watched: HashSet::new(),
             stable_after,
         }
     }
@@ -35,6 +37,9 @@ impl Scanner {
     fn scan(&mut self, folders: &[PathBuf], now: Instant) -> Vec<PathBuf> {
         let mut ready = Vec::new();
         for folder in folders {
+            if self.watched.insert(folder.clone()) {
+                self.remember_existing(folder);
+            }
             let Ok(entries) = std::fs::read_dir(folder) else {
                 continue;
             };
@@ -64,9 +69,22 @@ impl Scanner {
                 }
             }
         }
+        self.watched.retain(|folder| folders.contains(folder));
         self.pending.retain(|path, _| path.is_file());
         self.seen.retain(|path| path.is_file());
         ready
+    }
+
+    fn remember_existing(&mut self, folder: &Path) {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if is_candidate(&path) {
+                self.seen.insert(path);
+            }
+        }
     }
 }
 
@@ -161,11 +179,10 @@ mod tests {
     fn reports_only_stable_new_archives() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("car.zip");
-        std::fs::write(&path, b"one").unwrap();
         let mut scanner = Scanner::new(Duration::from_millis(5));
         let start = Instant::now();
         assert!(scanner.scan(&[temp.path().to_path_buf()], start).is_empty());
-        std::fs::write(&path, b"one plus").unwrap();
+        std::fs::write(&path, b"one").unwrap();
         assert!(
             scanner
                 .scan(
@@ -173,12 +190,22 @@ mod tests {
                     start + Duration::from_millis(10)
                 )
                 .is_empty(),
+            "новый файл: ждём стабильности"
+        );
+        std::fs::write(&path, b"one plus").unwrap();
+        assert!(
+            scanner
+                .scan(
+                    &[temp.path().to_path_buf()],
+                    start + Duration::from_millis(20)
+                )
+                .is_empty(),
             "файл изменился — ждём ещё"
         );
         assert_eq!(
             scanner.scan(
                 &[temp.path().to_path_buf()],
-                start + Duration::from_millis(20)
+                start + Duration::from_millis(30)
             ),
             vec![path.clone()]
         );
@@ -187,6 +214,26 @@ mod tests {
                 .scan(&[temp.path().to_path_buf()], start + Duration::from_secs(1))
                 .is_empty(),
             "второй раз не предлагаем"
+        );
+    }
+
+    #[test]
+    fn existing_archives_are_not_offered_on_start() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("old.zip"), b"old").unwrap();
+        let mut scanner = Scanner::new(Duration::ZERO);
+        assert!(
+            scanner
+                .scan(&[temp.path().to_path_buf()], Instant::now())
+                .is_empty()
+        );
+        assert!(
+            scanner
+                .scan(
+                    &[temp.path().to_path_buf()],
+                    Instant::now() + Duration::from_secs(5)
+                )
+                .is_empty()
         );
     }
 
