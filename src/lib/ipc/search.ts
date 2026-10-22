@@ -86,6 +86,11 @@ export async function searchCancel(requestId?: number): Promise<void> {
   }
 }
 
+export async function searchPreview(url: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  return invoke<string | null>("search_preview", { url });
+}
+
 export async function searchDecide(
   query: string,
   a: { source: string; sourceId: string },

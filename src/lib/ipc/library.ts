@@ -22,6 +22,8 @@ export interface ModCardDto {
   previewUrl: string | null;
   compat: CompatDto;
   update: "none" | "likely" | "possible";
+  updateVersion: string | null;
+  unchecked: boolean;
   pending: PendingState;
   fromGameRepo: boolean;
   deleted: boolean;
@@ -127,6 +129,8 @@ const mockDeletedCards = new Map<string, ModCardDto>();
 function recount(snapshot: LibrarySnapshot): void {
   snapshot.counts.all = snapshot.mods.length;
   snapshot.counts.enabled = snapshot.mods.filter((mod) => mod.enabled).length;
+  snapshot.counts.updates = snapshot.mods.filter((mod) => mod.update !== "none").length;
+  snapshot.counts.unchecked = snapshot.mods.filter((mod) => mod.unchecked).length;
   snapshot.counts.deleted = snapshot.deleted.length;
 }
 
@@ -165,6 +169,8 @@ export function mockAddInstalled(
       previewUrl: null,
       compat: { modFor: null, game: null, text: null, differs: false },
       update: "none",
+      updateVersion: null,
+      unchecked: false,
       pending: "none",
       fromGameRepo: false,
       deleted: false,
@@ -198,6 +204,8 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
         differs: index % 7 === 0,
       },
       update: index % 17 === 0 ? "likely" : "none",
+      updateVersion: index % 17 === 0 ? `2.${index % 5}` : null,
+      unchecked: index % 11 === 0,
       pending: "none",
       fromGameRepo: index % 13 === 0,
       deleted: false,
@@ -207,13 +215,14 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
   });
   const enabled = mods.filter((mod) => mod.enabled).length;
   const updates = mods.filter((mod) => mod.update !== "none").length;
+  const unchecked = mods.filter((mod) => mod.unchecked).length;
   return {
     mods,
     counts: {
       all: mods.length,
       enabled,
       updates,
-      unchecked: 0,
+      unchecked,
       deleted: 0,
     },
     folder: "C:\\Users\\Player\\AppData\\Local\\BeamNG\\BeamNG.drive\\current\\mods",

@@ -1,5 +1,6 @@
 //! Связь с BeamNG.drive: папки игры, db.json, мост Lua.
 
+pub mod bridge;
 pub mod db;
 pub mod folders;
 pub mod info;

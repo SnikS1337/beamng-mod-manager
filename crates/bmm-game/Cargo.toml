@@ -13,6 +13,7 @@ chrono.workspace = true
 fancy-regex.workspace = true
 sysinfo.workspace = true
 json5 = "0.4"
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

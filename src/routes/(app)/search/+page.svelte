@@ -7,6 +7,7 @@
     listenSearch,
     searchCancel,
     searchDecide,
+    searchPreview,
     searchStart,
     sourceName,
     type SearchCard,
@@ -24,6 +25,8 @@
   let sources = $state<SearchSource[]>([]);
   let error = $state<string | null>(null);
   let deciding = $state<string | null>(null);
+  let previews = $state<Record<string, string>>({});
+  const requestedPreviews = new Set<string>();
   let requestId = 0;
   let input = $state<HTMLInputElement | null>(null);
   let unlisten: (() => void) | undefined;
@@ -31,6 +34,18 @@
   const totalListings = $derived(
     cards.reduce((sum, card) => sum + card.listings.length, 0),
   );
+
+  $effect(() => {
+    for (const card of cards) {
+      if (previews[card.id] || requestedPreviews.has(card.id)) continue;
+      const url = card.listings.find((listing) => listing.previewUrl)?.previewUrl;
+      if (!url) continue;
+      requestedPreviews.add(card.id);
+      void searchPreview(url).then((value) => {
+        if (value) previews[card.id] = value;
+      });
+    }
+  });
 
   onMount(() => {
     input?.focus();
@@ -80,6 +95,8 @@
     error = null;
     cards = [];
     sources = [];
+    previews = {};
+    requestedPreviews.clear();
     try {
       await searchStart(text, current);
     } catch (reason) {
@@ -103,6 +120,8 @@
     searched = false;
     cards = [];
     sources = [];
+    previews = {};
+    requestedPreviews.clear();
     error = null;
     input?.focus();
   }
@@ -181,8 +200,10 @@
 
   function previewOf(card: SearchCard): string | null {
     return (
+      previews[card.id] ??
       card.listings.find((listing) => listing.previewUrl?.startsWith("data:"))
-        ?.previewUrl ?? null
+        ?.previewUrl ??
+      null
     );
   }
 
