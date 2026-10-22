@@ -53,3 +53,4 @@ appsettings.Local.json
 .DS_Store
 Thumbs.db
 .claude/
+.codegraph/
