@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import { RefreshCw } from "@lucide/svelte";
+  import { onMount } from "svelte";
+  import { isTauri } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
+  import { RefreshCw, Upload } from "@lucide/svelte";
   import {
     libraryLoad,
     modDelete,
@@ -16,18 +18,15 @@
     type ModDetails,
     type VersionRow,
   } from "$lib/ipc/library";
+  import { isArchivePath } from "$lib/ipc/incoming";
+  import { incomingQueue } from "$lib/features/incoming/queue.svelte";
+  import { toasts } from "$lib/shell/toasts.svelte";
   import DeletedInspector from "./DeletedInspector.svelte";
   import Inspector from "./Inspector.svelte";
   import ModGrid from "./ModGrid.svelte";
   import { headerNote, matchesQuery } from "./format";
 
   type Filter = "all" | "enabled" | "updates" | "unchecked" | "deleted";
-  type Toast = {
-    message: string;
-    undo?: () => void | Promise<void>;
-    commit?: () => void | Promise<void>;
-    timer?: ReturnType<typeof setTimeout>;
-  };
 
   let snapshot = $state<LibrarySnapshot | null>(null);
   let loading = $state(true);
@@ -38,9 +37,9 @@
   let selectedId = $state<string | null>(null);
   let details = $state<ModDetails | null>(null);
   let detailsLoading = $state(false);
-  let toast = $state<Toast | null>(null);
   let renderedCount = $state(0);
   let searchEl = $state<HTMLInputElement | null>(null);
+  let archiveInput = $state<HTMLInputElement | null>(null);
   let detailsToken = 0;
 
   const baseFilters: { id: Filter; label: string }[] = [
@@ -78,11 +77,12 @@
 
   onMount(() => {
     void load();
-  });
-
-  onDestroy(() => {
-    void toast?.commit?.();
-    if (toast?.timer) clearTimeout(toast.timer);
+    const onLibraryChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ fileNames?: string[] }>).detail;
+      void refreshAndSelect(detail?.fileNames ?? []);
+    };
+    window.addEventListener("bmm:library-changed", onLibraryChanged);
+    return () => window.removeEventListener("bmm:library-changed", onLibraryChanged);
   });
 
   $effect(() => {
@@ -251,33 +251,56 @@
       duration?: number;
     } = {},
   ) {
-    const previous = toast;
-    if (previous?.timer) clearTimeout(previous.timer);
-    if (previous?.commit) void Promise.resolve(previous.commit()).catch(() => {});
-    const duration =
-      options.duration ??
-      (options.undo ? 6000 : message.length > 48 ? 5000 : 3000);
-    const timer = setTimeout(() => {
-      const current = toast;
-      if (current?.timer !== timer) return;
-      toast = null;
-      if (current.commit) void Promise.resolve(current.commit()).catch(() => {});
-    }, duration);
-    toast = { message, undo: options.undo, commit: options.commit, timer };
+    toasts.show(message, options);
   }
 
   async function undoToast() {
-    const current = toast;
-    if (!current) return;
-    if (current.timer) clearTimeout(current.timer);
-    toast = null;
-    if (current.undo) {
-      try {
-        await current.undo();
-      } catch (reason) {
-        showToast(errorText(reason));
-      }
+    await toasts.undo();
+  }
+
+  async function refreshAndSelect(fileNames: string[]) {
+    await load(true);
+    if (!snapshot) return;
+    const last = fileNames.at(-1);
+    if (!last) return;
+    const card = snapshot.mods.find(
+      (mod) => mod.fileName.toLowerCase() === last.toLowerCase(),
+    );
+    if (!card) return;
+    filter = "all";
+    query = "";
+    selectedId = card.id;
+  }
+
+  async function pickArchive() {
+    if (!isTauri()) {
+      archiveInput?.click();
+      return;
     }
+    try {
+      const picked = await open({
+        multiple: true,
+        directory: false,
+        title: "Установить моды из архива",
+        filters: [{ name: "Архивы модов", extensions: ["zip", "rar", "7z"] }],
+      });
+      const paths = (Array.isArray(picked) ? picked : picked ? [picked] : [])
+        .filter(isArchivePath)
+        .slice(0, 8);
+      if (paths.length > 0) incomingQueue.add(paths);
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
+  }
+
+  function onArchiveInput(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const names = Array.from(input.files ?? [])
+      .map((file) => file.name)
+      .filter(isArchivePath)
+      .slice(0, 8);
+    input.value = "";
+    if (names.length > 0) incomingQueue.add(names);
   }
 
   function trimName(name: string): string {
@@ -379,6 +402,16 @@
       <p>{note}{snapshot?.gameVersion ? ` · игра ${snapshot.gameVersion}` : ""}</p>
     </div>
     <div class="head-actions">
+      <button
+        class="refresh glass liquid-edge"
+        type="button"
+        onclick={() => void pickArchive()}
+        disabled={refreshing}
+        aria-label="Установить моды из архива"
+      >
+        <Upload size={14} />
+        Из архива
+      </button>
       <button
         class="refresh glass liquid-edge"
         type="button"
@@ -497,17 +530,23 @@
     {/if}
   </div>
 
-  {#if toast}
-    <div class="toast glass liquid-edge" role="status">
-      <span>{toast.message}</span>
-      {#if toast.undo}
-        <button type="button" onclick={() => void undoToast()}>Отменить</button>
-      {/if}
-    </div>
-  {/if}
+  <input
+    class="archive-input"
+    type="file"
+    accept=".zip,.rar,.7z"
+    multiple
+    bind:this={archiveInput}
+    onchange={onArchiveInput}
+    tabindex="-1"
+    aria-hidden="true"
+  />
 </div>
 
 <style>
+  .archive-input {
+    display: none;
+  }
+
   .garage {
     position: relative;
     display: flex;
@@ -718,30 +757,6 @@
 
   .state.error p {
     color: oklch(0.85 0.12 25);
-  }
-
-  .toast {
-    position: absolute;
-    left: 50%;
-    bottom: 14px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 10px 14px;
-    border-radius: 999px;
-    color: var(--foreground);
-    font-size: 11px;
-    transform: translateX(-50%);
-    z-index: 20;
-  }
-
-  .toast button {
-    border: 0;
-    background: transparent;
-    color: var(--primary);
-    font-size: 10.5px;
-    font-weight: 600;
-    cursor: default;
   }
 
   @media (max-width: 900px) {

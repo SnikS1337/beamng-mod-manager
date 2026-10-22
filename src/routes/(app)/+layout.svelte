@@ -1,7 +1,9 @@
 <script lang="ts">
+  import IncomingHost from "$lib/features/incoming/IncomingHost.svelte";
   import Background from "$lib/shell/Background.svelte";
   import NavRail from "$lib/shell/NavRail.svelte";
   import Titlebar from "$lib/shell/Titlebar.svelte";
+  import ToastHost from "$lib/shell/ToastHost.svelte";
 
   let { children } = $props();
 </script>
@@ -17,6 +19,9 @@
       {@render children()}
     </main>
   </div>
+
+  <IncomingHost />
+  <ToastHost />
 </div>
 
 <style>
