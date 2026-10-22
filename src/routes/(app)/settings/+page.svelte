@@ -1,11 +1,20 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { FolderOpen, Plus, Save, X } from "@lucide/svelte";
+  import { Download, FolderOpen, Plus, RotateCcw, Save, X } from "@lucide/svelte";
   import { isTauri } from "@tauri-apps/api/core";
   import { appearance } from "$lib/shell/appearance.svelte";
   import { type SettingsDto } from "$lib/ipc/settings";
+  import {
+    appUpdateCancel,
+    appUpdateCheck,
+    appUpdateDownload,
+    appUpdateRestart,
+    appUpdateState,
+    listenAppUpdateProgress,
+    type AppUpdateSnapshot,
+  } from "$lib/ipc/appUpdate";
 
   type Theme = SettingsDto["theme"];
   type Mode = SettingsDto["mode"];
@@ -35,10 +44,105 @@
   let dirty = $state(false);
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
+  let appUpdate = $state<AppUpdateSnapshot | null>(null);
+  let updateBusy = $state(false);
+  let updateError = $state<string | null>(null);
+  let updateProgress = $state(0);
+  let unlistenUpdate: (() => void) | undefined;
 
   onMount(() => {
     void boot();
+    void loadAppUpdate();
+    void listenAppUpdateProgress((value) => {
+      updateProgress = value;
+    }).then((stop) => {
+      unlistenUpdate = stop;
+    });
+    return () => unlistenUpdate?.();
   });
+
+  onDestroy(() => unlistenUpdate?.());
+
+  async function loadAppUpdate() {
+    try {
+      appUpdate = await appUpdateState();
+      updateProgress = appUpdate.state.progress;
+    } catch (reason) {
+      updateError = errorText(reason);
+    }
+  }
+
+  async function checkAppUpdate() {
+    if (updateBusy) return;
+    updateBusy = true;
+    updateError = null;
+    try {
+      appUpdate = await appUpdateCheck();
+      updateProgress = appUpdate.state.progress;
+    } catch (reason) {
+      updateError = errorText(reason);
+    } finally {
+      updateBusy = false;
+    }
+  }
+
+  async function downloadAppUpdate() {
+    if (updateBusy) return;
+    updateBusy = true;
+    updateError = null;
+    if (appUpdate) {
+      appUpdate = {
+        ...appUpdate,
+        state: { ...appUpdate.state, stage: "downloading", progress: 0, error: null },
+      };
+      updateProgress = 0;
+    }
+    try {
+      appUpdate = await appUpdateDownload();
+      updateProgress = appUpdate.state.progress;
+    } catch (reason) {
+      updateError = errorText(reason);
+    } finally {
+      updateBusy = false;
+    }
+  }
+
+  async function cancelAppUpdate() {
+    try {
+      appUpdate = await appUpdateCancel();
+      updateProgress = 0;
+    } catch (reason) {
+      updateError = errorText(reason);
+    }
+  }
+
+  async function restartAppUpdate() {
+    try {
+      await appUpdateRestart();
+    } catch (reason) {
+      updateError = errorText(reason);
+    }
+  }
+
+  function updateStageText(): string {
+    const stage = appUpdate?.state.stage;
+    switch (stage) {
+      case "available":
+        return `Доступна версия ${appUpdate?.state.manifest?.version ?? ""}`;
+      case "upToDate":
+        return "Установлена последняя версия";
+      case "downloading":
+        return `Скачиваем ${Math.round(updateProgress * 100)}%`;
+      case "readyToRestart":
+        return `Версия ${appUpdate?.state.manifest?.version ?? ""} готова`;
+      case "failed":
+        return appUpdate?.state.error ?? "Не удалось проверить обновление";
+      case "checking":
+        return "Проверяем обновление…";
+      default:
+        return "Проверить обновления программы";
+    }
+  }
 
   async function boot() {
     loading = true;
@@ -458,6 +562,48 @@
       </div>
       <p class="hint">Поиск и проверка обновлений используют только включённые сайты.</p>
     </section>
+
+    <section class="block glass liquid-edge">
+      <div class="block-head">
+        <h2>Программа</h2>
+        <span>версия {appUpdate?.currentVersion ?? "0.4.0"}</span>
+      </div>
+      <div class="update-row">
+        <div class="update-main">
+          <p>{updateStageText()}</p>
+          {#if appUpdate?.state.manifest?.notes}
+            <span>{appUpdate.state.manifest.notes}</span>
+          {/if}
+          {#if updateError}
+            <span class="update-error">{updateError}</span>
+          {/if}
+          {#if appUpdate?.state.stage === "downloading"}
+            <div class="update-track">
+              <span style={`width:${Math.max(2, Math.round(updateProgress * 100))}%`}></span>
+            </div>
+          {/if}
+        </div>
+        <div class="update-actions">
+          {#if appUpdate?.state.stage === "available"}
+            <button class="primary-small" type="button" disabled={updateBusy} onclick={() => void downloadAppUpdate()}>
+              <Download size={13} />
+              Скачать
+            </button>
+          {:else if appUpdate?.state.stage === "downloading"}
+            <button type="button" onclick={() => void cancelAppUpdate()}>Отменить</button>
+          {:else if appUpdate?.state.stage === "readyToRestart"}
+            <button class="primary-small" type="button" onclick={() => void restartAppUpdate()}>
+              <RotateCcw size={13} />
+              Перезапустить
+            </button>
+          {:else}
+            <button type="button" disabled={updateBusy} onclick={() => void checkAppUpdate()}>
+              {updateBusy ? "Проверяем…" : "Проверить обновление"}
+            </button>
+          {/if}
+        </div>
+      </div>
+    </section>
   {/if}
 </div>
 
@@ -755,6 +901,80 @@
     margin: 0;
     color: var(--muted-foreground);
     font-size: 9.5px;
+  }
+
+  .update-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .update-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .update-main p {
+    margin: 0;
+    color: var(--foreground);
+    font-size: 11px;
+  }
+
+  .update-main span {
+    color: var(--muted-foreground);
+    font-size: 9.5px;
+    line-height: 1.4;
+  }
+
+  .update-error {
+    color: oklch(0.82 0.12 25);
+  }
+
+  .update-track {
+    width: min(320px, 100%);
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--foreground) 8%, transparent);
+  }
+
+  .update-track span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary);
+    transition: width 0.2s ease-out;
+  }
+
+  .update-actions {
+    flex: none;
+  }
+
+  .update-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--foreground);
+    font-size: 9.5px;
+    cursor: default;
+  }
+
+  .update-actions .primary-small {
+    border-color: transparent;
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+
+  .update-actions button:disabled {
+    opacity: 0.5;
   }
 
   .state {

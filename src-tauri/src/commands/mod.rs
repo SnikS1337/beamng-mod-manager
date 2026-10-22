@@ -1,4 +1,5 @@
 pub mod app;
+pub mod app_update;
 pub mod dev;
 pub mod downloads;
 pub mod incoming;
