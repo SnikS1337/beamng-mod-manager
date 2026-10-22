@@ -1,14 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use tokio::sync::Semaphore;
 
 use bmm_domain::library::JsonLibraryStore;
+use bmm_domain::matches::MatchDecisionStore;
 use bmm_domain::paths::AppPaths;
 use bmm_domain::settings_store::SettingsStore;
 use bmm_packs::cache::PreviewCache;
+use bmm_sources::net::PoliteFetcher;
+use bmm_sources::search::{SearchResponse, SearchService};
 
 #[derive(Debug, Clone)]
 pub struct PreviewTarget {
@@ -34,6 +38,12 @@ pub struct CachedContent {
     pub content: HashSet<String>,
 }
 
+pub struct SearchRuntime {
+    pub fetcher: Arc<PoliteFetcher>,
+    pub service: Arc<SearchService>,
+    pub matches: Arc<MatchDecisionStore>,
+}
+
 pub struct AppState {
     pub paths: AppPaths,
     pub settings: SettingsStore,
@@ -45,6 +55,9 @@ pub struct AppState {
     pub preview_gate: Arc<Semaphore>,
     pub deleted: Mutex<HashMap<String, DeletedTicket>>,
     pub content_cache: Mutex<HashMap<PathBuf, CachedContent>>,
+    pub search: Option<Arc<SearchRuntime>>,
+    pub search_cancel: Mutex<Option<(u64, Arc<AtomicBool>)>>,
+    pub last_search: Mutex<Option<SearchResponse>>,
 }
 
 impl AppState {

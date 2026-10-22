@@ -24,6 +24,9 @@ chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2", features = ["serde"] }
 regex = "1"
 fancy-regex = "0.14"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls", "charset", "cookies", "gzip", "brotli", "deflate"] }
+encoding_rs = "0.8"
+html-escape = "0.2"
 sysinfo = "0.39"
 zip = "9"
 sha2 = "0.10"
