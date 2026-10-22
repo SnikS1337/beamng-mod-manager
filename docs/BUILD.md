@@ -65,6 +65,15 @@ Windows UAC считает exe с таким словом в имени уста
 типов и сборка фронтенда, сборка окна. Старый workflow лежит в `legacy/.github/workflows/` и
 GitHub его не запускает.
 
+## Релиз и обновление программы
+
+`.github/workflows/release.yml` запускается на тег `v*`. Перед тегом версия должна совпадать в
+`Cargo.toml`, `package.json` и `src-tauri/tauri.conf.json` — workflow это проверяет и падает,
+если версии разошлись. Сборка делает портативный `BeamModManager-<версия>.zip`, считает
+SHA-256, пишет `latest.json` и публикует GitHub Release. Установленное приложение проверяет
+`releases/latest/download/latest.json`, скачивает архив, проверяет хеш/размер и после
+подтверждения перезапускается через отдельный процесс `--install-update` с откатом.
+
 ## Данные при проверках
 
 Приложение использует `%LOCALAPPDATA%\BeamModManager` (тот же каталог, что старая версия).
