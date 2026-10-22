@@ -856,6 +856,7 @@ mod tests {
             pending: Mutex::new(HashMap::new()),
             preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
             deleted: Mutex::new(HashMap::new()),
+            content_cache: Mutex::new(HashMap::new()),
         };
 
         let snapshot = load_snapshot(&state).unwrap();
