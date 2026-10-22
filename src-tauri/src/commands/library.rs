@@ -234,7 +234,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     let installer = ModInstaller::new(layout.clone(), system_clock(), Arc::new(move || keep));
 
     if !game_running {
-        apply_pending(state, &db);
+        apply_pending(state, &db, &layout);
     }
 
     let mut scan_result = scan::scan_mods(&layout);
@@ -487,10 +487,28 @@ pub(crate) fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option
     (None, Some("Папка игры не выбрана.".to_string()))
 }
 
-fn apply_pending(state: &AppState, db: &GameModDb) {
+fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
     let pending = state.pending.lock().unwrap().clone();
     if pending.is_empty() {
         return;
+    }
+    let installer = ModInstaller::new(layout.clone(), system_clock(), Arc::new(|| 3));
+    let disk = scan::scan_mods(layout).mods;
+    for (file_name, enabled) in &pending {
+        let Some(item) = disk
+            .iter()
+            .find(|item| item.file_name.eq_ignore_ascii_case(file_name))
+        else {
+            continue;
+        };
+        if item.sub_folder.is_some() {
+            continue;
+        }
+        if *enabled && !item.enabled {
+            let _ = installer.enable(&item.file_name);
+        } else if !*enabled && item.enabled {
+            let _ = installer.disable(&item.file_name);
+        }
     }
     let changes: Vec<(&str, bool)> = pending
         .iter()
@@ -568,23 +586,40 @@ fn toggle_mod(state: &AppState, id: &str, enabled: bool) -> Result<ToggleResult,
     let Some(installed) = state.library.get_mod(id) else {
         return Err(AppError::new("not_found", "Мод не найден."));
     };
+    let layout = ModLayout::in_app_folder(&mods_dir, state.paths.root());
+    let disk = scan::scan_mods(&layout)
+        .mods
+        .into_iter()
+        .find(|item| item.file_name.eq_ignore_ascii_case(&installed.file_name))
+        .ok_or_else(|| AppError::new("missing", "Файл мода не найден."))?;
 
     if process::is_running() {
-        state
-            .pending
-            .lock()
-            .unwrap()
-            .insert(installed.file_name.clone(), enabled);
-        let _ = state.save_pending();
+        return Ok(queue_toggle(state, &installed.file_name, enabled));
+    }
+
+    let keep = settings.keep_backups.max(1) as usize;
+    let installer = ModInstaller::new(layout, system_clock(), Arc::new(move || keep));
+
+    // Выключенный раньше переносом файл возвращаем на место; db.json правим, только если игра его помнит.
+    if enabled && !disk.enabled && disk.sub_folder.is_none() {
+        let moved = installer.enable(&disk.file_name);
+        if !moved.success {
+            return Err(AppError::new("move", moved.message));
+        }
+        let db = GameModDb::new(&mods_dir);
+        let _ = db.set_active(&[(&disk.file_name, true)], || false);
+        let mut updated = installed;
+        updated.enabled = true;
+        state.library.upsert_mod(updated);
         return Ok(ToggleResult {
-            outcome: "queued".to_string(),
-            enabled,
-            message: Some("Изменение применится, когда закроете игру.".to_string()),
+            outcome: "done".to_string(),
+            enabled: true,
+            message: Some("Включён.".to_string()),
         });
     }
 
     let db = GameModDb::new(&mods_dir);
-    let result = db.set_active(&[(&installed.file_name, enabled)], || false);
+    let result = db.set_active(&[(&disk.file_name, enabled)], || false);
     match result.outcome {
         SetActiveOutcome::Done | SetActiveOutcome::Unchanged => {
             let mut updated = installed;
@@ -601,27 +636,60 @@ fn toggle_mod(state: &AppState, id: &str, enabled: bool) -> Result<ToggleResult,
                 message: None,
             })
         }
-        SetActiveOutcome::GameRunning => {
-            state
-                .pending
-                .lock()
-                .unwrap()
-                .insert(installed.file_name.clone(), enabled);
-            let _ = state.save_pending();
+        SetActiveOutcome::GameRunning => Ok(queue_toggle(state, &installed.file_name, enabled)),
+        SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb if enabled => {
+            let mut updated = installed;
+            updated.enabled = true;
+            state.library.upsert_mod(updated);
             Ok(ToggleResult {
-                outcome: "queued".to_string(),
-                enabled,
-                message: Some("Изменение применится, когда закроете игру.".to_string()),
+                outcome: "done".to_string(),
+                enabled: true,
+                message: Some("Включён: игра подхватит его при запуске.".to_string()),
             })
         }
-        SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb => Err(AppError::new(
-            "not_in_db",
-            "Игра ещё не видела этот мод. Переключение файла появится на следующем этапе.",
-        )),
+        SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb => {
+            if disk.from_game_repo() {
+                return Err(AppError::new(
+                    "game_repo",
+                    "Игра ещё не знает этот мод. Запустите игру один раз, потом выключите.",
+                ));
+            }
+            if disk.enabled {
+                let moved = installer.disable(&disk.file_name);
+                if !moved.success {
+                    return Err(AppError::new("move", moved.message));
+                }
+            }
+            let mut updated = installed;
+            updated.enabled = false;
+            state.library.upsert_mod(updated);
+            Ok(ToggleResult {
+                outcome: "done".to_string(),
+                enabled: false,
+                message: Some(
+                    "Выключен. Игра ещё не видела этот мод, поэтому файл убран в папку программы."
+                        .to_string(),
+                ),
+            })
+        }
         other => Err(AppError::new(
             "game_db",
             format!("Не удалось изменить db.json: {other:?}"),
         )),
+    }
+}
+
+fn queue_toggle(state: &AppState, file_name: &str, enabled: bool) -> ToggleResult {
+    state
+        .pending
+        .lock()
+        .unwrap()
+        .insert(file_name.to_string(), enabled);
+    let _ = state.save_pending();
+    ToggleResult {
+        outcome: "queued".to_string(),
+        enabled,
+        message: Some("Изменение применится, когда закроете игру.".to_string()),
     }
 }
 
@@ -872,5 +940,80 @@ mod tests {
         let read = db.read();
         assert!(!read.find("mod.zip").unwrap().active);
         assert!(db.backup_path().exists());
+    }
+
+    fn test_state(temp: &tempfile::TempDir, mods: &std::path::Path) -> AppState {
+        let data = temp.path().join("data");
+        let paths = AppPaths::at(&data);
+        paths.ensure_dirs().unwrap();
+        let settings = SettingsStore::with_system_clock(paths.settings());
+        settings
+            .save(&AppSettings {
+                mods_folder: Some(mods.display().to_string()),
+                ..AppSettings::default()
+            })
+            .unwrap();
+        AppState {
+            paths,
+            settings,
+            library: JsonLibraryStore::new(temp.path().join("data/library.json"), system_clock()),
+            previews: PreviewCache::new(temp.path().join("data/previews")),
+            load_lock: Mutex::new(()),
+            previews_by_id: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+            preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
+            deleted: Mutex::new(HashMap::new()),
+            content_cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn toggle_moves_files_the_game_has_not_seen() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("fresh.zip"), b"zip").unwrap();
+        let state = test_state(&temp, &mods);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+
+        let snapshot = load_snapshot(&state).unwrap();
+        let id = snapshot.mods[0].id.clone();
+        let off = toggle_mod(&state, &id, false).unwrap();
+        assert_eq!(off.outcome, "done");
+        assert!(layout.disabled_dir.join("fresh.zip").is_file());
+        assert!(!mods.join("fresh.zip").exists());
+        assert!(!state.library.get_mod(&id).unwrap().enabled);
+
+        let on = toggle_mod(&state, &id, true).unwrap();
+        assert_eq!(on.outcome, "done");
+        assert!(mods.join("fresh.zip").is_file());
+        assert!(state.library.get_mod(&id).unwrap().enabled);
+    }
+
+    #[test]
+    fn apply_pending_moves_file_and_clears_queue() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(
+            mods.join("db.json"),
+            r#"{"header":{"version":1.1},"mods":{"mod":{"filename":"mod.zip","active":false,"modType":"vehicle"}}}"#,
+        )
+        .unwrap();
+        let state = test_state(&temp, &mods);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        std::fs::create_dir_all(&layout.disabled_dir).unwrap();
+        std::fs::write(layout.disabled_dir.join("mod.zip"), b"zip").unwrap();
+        state
+            .pending
+            .lock()
+            .unwrap()
+            .insert("mod.zip".to_string(), true);
+
+        apply_pending(&state, &GameModDb::new(&mods), &layout);
+
+        assert!(mods.join("mod.zip").is_file());
+        assert!(!layout.disabled_dir.join("mod.zip").exists());
+        assert!(state.pending.lock().unwrap().is_empty());
     }
 }

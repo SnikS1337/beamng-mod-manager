@@ -130,6 +130,51 @@ function recount(snapshot: LibrarySnapshot): void {
   snapshot.counts.deleted = snapshot.deleted.length;
 }
 
+export function mockAddInstalled(
+  entries: { fileName: string; name: string; replaces?: string | null }[],
+): void {
+  const snapshot = mockLibrary;
+  if (!snapshot) return;
+  for (const entry of entries) {
+    const replaced = entry.replaces
+      ? snapshot.mods.find(
+          (mod) => mod.fileName.toLowerCase() === entry.replaces?.toLowerCase(),
+        )
+      : undefined;
+    if (replaced) {
+      replaced.fileName = entry.fileName;
+      replaced.name = entry.name;
+      continue;
+    }
+    const existing = snapshot.mods.find(
+      (mod) => mod.fileName.toLowerCase() === entry.fileName.toLowerCase(),
+    );
+    if (existing) {
+      existing.name = entry.name;
+      continue;
+    }
+    snapshot.mods.unshift({
+      id: `mock-${Date.now() + snapshot.mods.length}`,
+      name: entry.name,
+      fileName: entry.fileName,
+      version: null,
+      sizeBytes: 88 * 1024 * 1024,
+      enabled: true,
+      subFolder: null,
+      kind: "vehicle",
+      previewUrl: null,
+      compat: { modFor: null, game: null, text: null, differs: false },
+      update: "none",
+      pending: "none",
+      fromGameRepo: false,
+      deleted: false,
+      copies: 0,
+      savedAt: null,
+    });
+  }
+  recount(snapshot);
+}
+
 function mockSnapshot(count = 5000): LibrarySnapshot {
   const mods: ModCardDto[] = Array.from({ length: count }, (_, index) => {
     const base = TITLES[index % TITLES.length];

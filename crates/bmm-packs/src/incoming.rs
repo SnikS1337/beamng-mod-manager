@@ -99,7 +99,16 @@ pub fn analyze(
     }
     let mut budget = ExtractBudget::new(options.budget_bytes);
     let result = match archive_kind(source) {
-        Some("zip") => analyze_zip(source, installed, work_dir, options, &mut budget, cancel, 0),
+        Some("zip") => analyze_zip(
+            source,
+            installed,
+            work_dir,
+            options,
+            &mut budget,
+            cancel,
+            0,
+            None,
+        ),
         Some(_) => {
             let unpacked = work_dir.join("unpacked");
             match extract_archive(source, &unpacked, &mut budget, cancel) {
@@ -118,12 +127,15 @@ pub fn analyze(
         None => Err("RAR и 7z здесь не открываются.".to_string()),
     };
     match result {
-        Ok(items) if !items.is_empty() => IncomingAnalysis {
-            source: source.to_path_buf(),
-            items,
-            problem: None,
-            work_dir: work_dir.to_path_buf(),
-        },
+        Ok(mut items) if !items.is_empty() => {
+            dedupe_new_names(&mut items, installed);
+            IncomingAnalysis {
+                source: source.to_path_buf(),
+                items,
+                problem: None,
+                work_dir: work_dir.to_path_buf(),
+            }
+        }
         Ok(_) => fail(
             source,
             work_dir,
@@ -142,6 +154,7 @@ fn fail(source: &Path, work_dir: &Path, message: &str) -> IncomingAnalysis {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn analyze_zip(
     source: &Path,
     installed: &[InstalledArchive],
@@ -150,20 +163,48 @@ fn analyze_zip(
     budget: &mut ExtractBudget,
     cancel: &AtomicBool,
     depth: usize,
+    name: Option<&str>,
 ) -> Result<Vec<IncomingItem>, String> {
     if cancel.load(Ordering::Relaxed) {
         return Err("отменено".to_string());
     }
     let inspection = inspect_zip(source, &ArchiveLimits::default());
-    let index = read_index(source).map_err(|_| "Архив повреждён и не читается.".to_string())?;
+    let index = match read_index(source) {
+        Ok(index) => index,
+        Err(_) if inspection.is_blocked() => {
+            return Ok(vec![blocked_item(
+                source,
+                "Архив повреждён и не читается.",
+                inspection,
+                name,
+            )]);
+        }
+        Err(_) => return Err("Архив повреждён и не читается.".to_string()),
+    };
     let overview = read_overview(source);
     let blocked = inspection.is_blocked();
+    let file_name = display_name(name, source);
+
+    // Запрещённый архив не распаковываем и не перепаковываем: окно покажет причину на исходном файле.
+    if blocked {
+        return Ok(vec![build_item(
+            source,
+            file_name,
+            &index,
+            overview.title.clone(),
+            inspection,
+            installed,
+            work_dir,
+            &[],
+            false,
+        )]);
+    }
 
     let shape = shape_of(&index);
     if matches!(shape, Shape::Mod) {
         return Ok(vec![build_item(
             source,
-            clean_name(source),
+            file_name,
             &index,
             overview.title.clone(),
             inspection,
@@ -180,7 +221,7 @@ fn analyze_zip(
         let nested_overview = read_overview(&repacked);
         return Ok(vec![build_item(
             &repacked,
-            clean_name(source),
+            file_name,
             &nested_index,
             nested_overview.title,
             inspection,
@@ -209,7 +250,11 @@ fn analyze_zip(
             continue;
         }
         let target = inner_dir.join(format!("{nested_count}.zip"));
-        if copy_entry(source, entry, &target, budget, cancel).is_err() {
+        if let Err(error) = copy_entry(source, entry, &target, budget, cancel) {
+            if error.contains("слишком большой") || error.contains("отменено")
+            {
+                return Err(error);
+            }
             continue;
         }
         nested_count += 1;
@@ -221,28 +266,26 @@ fn analyze_zip(
             budget,
             cancel,
             depth + 1,
+            Some(&entry.name),
         ) {
             Ok(mut nested) => items.append(&mut nested),
             Err(message) if !message.starts_with("В архиве нет мода") => {
-                items.push(blocked_item(&target, &message, inspection.clone()));
+                items.push(blocked_item(
+                    &target,
+                    &message,
+                    inspection.clone(),
+                    Some(&entry.name),
+                ));
             }
             Err(_) => {}
         }
     }
 
     if items.is_empty() {
-        if blocked {
-            items.push(blocked_item(
-                source,
-                "Архив не прошёл проверку безопасности.",
-                inspection,
-            ));
-        } else {
-            return Err(
-                "В архиве нет мода BeamNG: нет папок vehicles, levels и других, которые ждёт игра."
-                    .to_string(),
-            );
-        }
+        return Err(
+            "В архиве нет мода BeamNG: нет папок vehicles, levels и других, которые ждёт игра."
+                .to_string(),
+        );
     }
     Ok(items)
 }
@@ -262,8 +305,11 @@ fn from_folder(
     if !zips.is_empty() {
         let mut items = Vec::new();
         for zip in zips.into_iter().take(options.max_mods) {
-            let mut nested = analyze_zip(&zip, installed, work_dir, options, budget, cancel, 1)?;
-            items.append(&mut nested);
+            match analyze_zip(&zip, installed, work_dir, options, budget, cancel, 1, None) {
+                Ok(mut nested) => items.append(&mut nested),
+                Err(message) if message.starts_with("В архиве нет мода") => continue,
+                Err(message) => return Err(message),
+            }
         }
         return Ok(items);
     }
@@ -350,15 +396,18 @@ fn blocked_item(
     source: &Path,
     message: &str,
     inspection: crate::inspect::InspectionResult,
+    name: Option<&str>,
 ) -> IncomingItem {
+    let file_name = display_name(name, source);
+    let title = Path::new(&file_name)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Архив".to_string());
     IncomingItem {
         zip_path: source.to_path_buf(),
-        file_name: clean_name(source),
+        file_name,
         size: fs::metadata(source).map(|meta| meta.len()).unwrap_or(0),
-        title: Path::new(&clean_name(source))
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Архив".to_string()),
+        title,
         kind: IncomingKind::New,
         replaces: None,
         replaces_enabled: false,
@@ -558,6 +607,35 @@ fn clean_name(source: &Path) -> String {
     let stem = raw.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&raw);
     let stem = strip_copy_suffix(stem);
     format!("{}.zip", clean_stem(&stem))
+}
+
+fn display_name(name: Option<&str>, source: &Path) -> String {
+    name.map(|value| clean_name(Path::new(value)))
+        .unwrap_or_else(|| clean_name(source))
+}
+
+fn dedupe_new_names(items: &mut [IncomingItem], installed: &[InstalledArchive]) {
+    let mut used: HashSet<String> = HashSet::new();
+    for item in items {
+        let mut candidate = item.file_name.clone();
+        if item.kind == IncomingKind::New {
+            let stem = candidate
+                .strip_suffix(".zip")
+                .unwrap_or(&candidate)
+                .to_string();
+            let mut index = 2;
+            while used.contains(&candidate.to_lowercase())
+                || installed
+                    .iter()
+                    .any(|entry| entry.file_name.eq_ignore_ascii_case(&candidate))
+            {
+                candidate = format!("{stem}_{index}.zip");
+                index += 1;
+            }
+        }
+        used.insert(candidate.to_lowercase());
+        item.file_name = candidate;
+    }
 }
 
 fn clean_stem(raw: &str) -> String {
@@ -1007,5 +1085,96 @@ mod tests {
         assert_eq!(clean_stem("a:b"), "a_b");
         assert_eq!(clean_stem("mod (1)"), "mod");
         assert_eq!(clean_stem(".hidden"), "mod");
+    }
+
+    fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut cursor);
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, bytes) in entries {
+                zip.start_file(*name, options).unwrap();
+                zip.write_all(bytes).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn pack_keeps_inner_names_and_dedupes() {
+        let temp = tempfile::tempdir().unwrap();
+        let audi = zip_bytes(&[("vehicles/audi/a.jbeam", b"a")]);
+        let bmw = zip_bytes(&[("vehicles/bmw/b.jbeam", b"b")]);
+        let source = temp.path().join("cars.zip");
+        build_zip(
+            &source,
+            &[
+                ("cars/audi_r8.zip", &audi),
+                ("cars/bmw_m3.zip", &bmw),
+                ("other/audi_r8.zip", &audi),
+            ],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        let names: Vec<&str> = analysis
+            .items
+            .iter()
+            .map(|item| item.file_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["audi_r8.zip", "bmw_m3.zip", "audi_r8_2.zip"]);
+    }
+
+    #[test]
+    fn corrupt_archive_is_a_blocked_item() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("broken.zip");
+        fs::write(&source, [0x50, 0x4B, 3, 4, 1, 2, 3]).unwrap();
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        assert_eq!(analysis.items.len(), 1);
+        assert!(analysis.items[0].blocked);
+        assert!(
+            analysis.items[0]
+                .findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Block)
+        );
+    }
+
+    #[test]
+    fn blocked_wrapper_is_not_repacked() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("evil.zip");
+        build_zip(
+            &source,
+            &[
+                ("Wrapper/vehicles/car/a.jbeam", b"x"),
+                ("Wrapper/setup.exe", b"x"),
+            ],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let item = &analysis.items[0];
+        assert!(item.blocked);
+        assert!(!item.repacked);
+        assert_eq!(item.zip_path, source);
     }
 }

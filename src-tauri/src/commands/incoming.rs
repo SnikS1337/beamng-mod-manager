@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -121,7 +121,12 @@ pub async fn incoming_undo(
 pub async fn incoming_discard(work_dir: String) -> Result<(), AppError> {
     let root = incoming_root();
     let path = PathBuf::from(&work_dir);
-    if !path.starts_with(&root) {
+    let safe = path.starts_with(&root)
+        && path != root
+        && !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir));
+    if !safe {
         return Err(AppError::new("path", "Недопустимая временная папка."));
     }
     let _ = fs::remove_dir_all(path);
@@ -149,6 +154,7 @@ fn inspect_paths(state: &AppState, paths: &[String]) -> Result<Vec<IncomingArchi
     let installed = installed_archives(state, &installer);
     let root = incoming_root();
     let _ = fs::create_dir_all(&root);
+    cleanup_incoming(&root);
     let cancel = AtomicBool::new(false);
     let mut result = Vec::new();
     for raw in paths.iter().take(8) {
@@ -172,6 +178,7 @@ fn installed_archives(
 ) -> Vec<InstalledArchive> {
     let scan = scan::scan_mods(installer.layout());
     let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for disk in scan.mods {
         let path = match &disk.sub_folder {
             Some(folder) => installer
@@ -185,6 +192,7 @@ fn installed_archives(
         let Ok(metadata) = fs::metadata(&path) else {
             continue;
         };
+        seen.insert(path.clone());
         let stamp = (metadata.len(), metadata.modified().ok());
         let content = {
             let mut cache = state.content_cache.lock().unwrap();
@@ -217,7 +225,34 @@ fn installed_archives(
             sub_folder: disk.sub_folder,
         });
     }
+    state
+        .content_cache
+        .lock()
+        .unwrap()
+        .retain(|path, _| seen.contains(path));
     result
+}
+
+fn cleanup_incoming(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if now
+            .duration_since(modified)
+            .map(|age| age.as_secs() > 24 * 60 * 60)
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 fn to_dto(analysis: IncomingAnalysis) -> IncomingArchiveDto {
@@ -357,6 +392,9 @@ fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppE
             if !result.success {
                 return Err(AppError::new("undo", result.message));
             }
+            if ticket.was_disabled {
+                let _ = installer.disable(replaced);
+            }
         }
         Ok(())
     } else {
@@ -385,4 +423,163 @@ fn unique_suffix() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos().to_string())
         .unwrap_or_else(|_| "0".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::io::Write;
+    use std::sync::Mutex;
+
+    use bmm_domain::clock::system_clock;
+    use bmm_domain::library::JsonLibraryStore;
+    use bmm_domain::paths::AppPaths;
+    use bmm_domain::settings::AppSettings;
+    use bmm_domain::settings_store::SettingsStore;
+    use bmm_packs::cache::PreviewCache;
+    use bmm_packs::install::{InstallOptions, ModInstaller};
+
+    fn setup() -> (tempfile::TempDir, Arc<AppState>) {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("data");
+        let mods = temp.path().join("mods");
+        fs::create_dir_all(&mods).unwrap();
+        let paths = AppPaths::at(&data);
+        paths.ensure_dirs().unwrap();
+        let settings = SettingsStore::with_system_clock(paths.settings());
+        settings
+            .save(&AppSettings {
+                mods_folder: Some(mods.display().to_string()),
+                ..AppSettings::default()
+            })
+            .unwrap();
+        let state = Arc::new(AppState {
+            paths,
+            settings,
+            library: JsonLibraryStore::new(data.join("library.json"), system_clock()),
+            previews: PreviewCache::new(data.join("previews")),
+            load_lock: Mutex::new(()),
+            previews_by_id: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+            preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
+            deleted: Mutex::new(HashMap::new()),
+            content_cache: Mutex::new(HashMap::new()),
+        });
+        (temp, state)
+    }
+
+    fn installer_for_test(state: &AppState) -> ModInstaller {
+        let settings = state.settings.load().settings;
+        let (mods_dir, error) = resolve_folder(&settings);
+        let mods_dir = mods_dir.unwrap_or_else(|| panic!("{error:?}"));
+        ModInstaller::new(
+            scan::ModLayout::in_app_folder(&mods_dir, state.paths.root()),
+            system_clock(),
+            Arc::new(|| 3),
+        )
+    }
+
+    fn make_zip(path: &std::path::Path, body: &[u8]) {
+        let file = fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(
+                "vehicles/car/a.jbeam",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(body).unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn install_update_and_undo_keeps_disabled_state() {
+        let (temp, state) = setup();
+        let v1 = temp.path().join("v1.zip");
+        let v2 = temp.path().join("v2.zip");
+        make_zip(&v1, b"one");
+        make_zip(&v2, b"two");
+        let installer = installer_for_test(&state);
+        assert!(
+            installer
+                .install_from_path(&v1, "car_v1.zip", InstallOptions::default())
+                .success
+        );
+        assert!(installer.disable("car_v1.zip").success);
+
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: v2.display().to_string(),
+                file_name: "car_v2.zip".to_string(),
+                replaces: Some("car_v1.zip".to_string()),
+                allow_warnings: true,
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+        assert!(results[0].was_disabled);
+        let backup_id = results[0].backup_id.clone().expect("backup");
+        assert!(installer.layout().disabled_dir.join("car_v2.zip").is_file());
+
+        undo_install(
+            &state,
+            &IncomingTicketDto {
+                file_name: "car_v2.zip".to_string(),
+                replaces: Some("car_v1.zip".to_string()),
+                backup_id: Some(backup_id),
+                was_disabled: true,
+                same_name: false,
+            },
+        )
+        .unwrap();
+        assert!(installer.layout().disabled_dir.join("car_v1.zip").is_file());
+        assert!(!installer.layout().mods_dir.join("car_v1.zip").exists());
+        assert!(!installer.layout().disabled_dir.join("car_v2.zip").exists());
+    }
+
+    #[test]
+    fn install_new_mod_appears_in_library() {
+        let (temp, state) = setup();
+        let source = temp.path().join("new.zip");
+        make_zip(&source, b"body");
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: source.display().to_string(),
+                file_name: "new_mod.zip".to_string(),
+                replaces: None,
+                allow_warnings: true,
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+        let snapshot = crate::commands::library::load_snapshot(&state).expect("snapshot");
+        assert!(
+            snapshot
+                .mods
+                .iter()
+                .any(|item| item.file_name == "new_mod.zip")
+        );
+
+        undo_install(
+            &state,
+            &IncomingTicketDto {
+                file_name: "new_mod.zip".to_string(),
+                replaces: None,
+                backup_id: None,
+                was_disabled: false,
+                same_name: false,
+            },
+        )
+        .unwrap();
+        assert!(
+            !installer_for_test(&state)
+                .layout()
+                .mods_dir
+                .join("new_mod.zip")
+                .exists()
+        );
+    }
 }
