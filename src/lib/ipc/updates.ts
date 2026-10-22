@@ -268,6 +268,10 @@ export async function updatesResolveHuman(source: string): Promise<UpdatesSnapsh
   return clone(mockSnapshot);
 }
 
+export async function updatesOpenModland(): Promise<void> {
+  if (isTauri()) await invoke("updates_open_modland");
+}
+
 function mockStart(requestId: number): void {
   window.setTimeout(() => {
     emit({

@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicBool;
 
 use chrono::Utc;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use bmm_checks::runner::SourceRunReport;
 use bmm_checks::{UpdateCheckService, UpdateFinding, UpdateProgress, UpdateRunReport};
@@ -328,6 +328,24 @@ pub async fn updates_undo_page(
 }
 
 #[tauri::command]
+pub async fn updates_open_modland(app: AppHandle) -> Result<(), AppError> {
+    let url: url::Url = "https://www.modland.net/"
+        .parse()
+        .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?;
+    if let Some(window) = app.get_webview_window("modland-check") {
+        let _ = window.set_focus();
+        let _ = window.navigate(url);
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "modland-check", WebviewUrl::External(url))
+        .title("Modland — проверка Cloudflare")
+        .inner_size(1000.0, 800.0)
+        .build()
+        .map_err(|error| AppError::new("window", error.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn updates_resolve_human(
     state: tauri::State<'_, Arc<AppState>>,
     source: String,
@@ -455,6 +473,45 @@ fn source_dto(report: &SourceRunReport, names: &HashMap<String, String>) -> Upda
         layout_changed: report.layout_changed,
         note: report.note.clone(),
     }
+}
+
+pub fn spawn_auto_check(state: Arc<AppState>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(8));
+        let mut started = true;
+        let mut last = std::time::Instant::now();
+        loop {
+            let runtime = state.update.clone();
+            let settings = state.settings.load().settings;
+            let due = if started {
+                settings.auto_check_on_start
+            } else if settings.auto_check_every_hours > 0 {
+                last.elapsed()
+                    >= std::time::Duration::from_secs(settings.auto_check_every_hours as u64 * 3600)
+            } else {
+                false
+            };
+            started = false;
+            if due && let Some(runtime) = runtime {
+                {
+                    let mut enabled = runtime.enabled.lock().unwrap();
+                    enabled.clear();
+                    for source in runtime.sources.iter() {
+                        if !settings
+                            .disabled_sources
+                            .iter()
+                            .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
+                        {
+                            enabled.insert(source.id().to_string());
+                        }
+                    }
+                }
+                runtime.coordinator.check(false, None);
+                last = std::time::Instant::now();
+            }
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    });
 }
 
 #[cfg(test)]

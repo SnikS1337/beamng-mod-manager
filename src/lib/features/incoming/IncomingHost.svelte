@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { isTauri } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
     archiveBaseName,
@@ -87,7 +88,15 @@
     }
 
     let unlisten: (() => void) | undefined;
+    let unlistenDownload: (() => void) | undefined;
     let disposed = false;
+    void listen<{ path: string }>("incoming://download", (event) => {
+      const path = event.payload.path;
+      if (isArchivePath(path)) incomingQueue.add([path], true);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlistenDownload = stop;
+    });
     void getCurrentWebview()
       .onDragDropEvent((event) => {
         const payload = event.payload;
@@ -110,13 +119,15 @@
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenDownload?.();
     };
   });
 
   async function pump(): Promise<void> {
     if (pumping) return;
-    const path = incomingQueue.shift();
-    if (!path) return;
+    const item = incomingQueue.shift();
+    if (!item) return;
+    const path = item.path;
     pumping = true;
     const token = ++session;
     busy = true;
@@ -128,6 +139,15 @@
         return;
       }
       if (!archive) throw new Error("Не удалось проверить архив.");
+      if (
+        item.downloaded &&
+        (archive.problem !== null || !archive.items.some(installable))
+      ) {
+        if (archive.workDir) {
+          void incomingDiscard(archive.workDir).catch(() => {});
+        }
+        return;
+      }
       openArchive(archive);
     } catch (reason) {
       if (token === session) {

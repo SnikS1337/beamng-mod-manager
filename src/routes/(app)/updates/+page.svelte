@@ -9,6 +9,7 @@
     updatesConfirmPage,
     updatesDismiss,
     updatesFindPages,
+    updatesOpenModland,
     updatesRejectPage,
     updatesResolveHuman,
     updatesRestore,
@@ -167,6 +168,14 @@
     }
   }
 
+  async function openModland() {
+    try {
+      await updatesOpenModland();
+    } catch (reason) {
+      error = errorText(reason);
+    }
+  }
+
   async function openLink(url: string) {
     try {
       await openUrl(url);
@@ -275,6 +284,9 @@
             {/if}
           </span>
           {#if source.status === "needsHumanCheck"}
+            {#if source.id === "modland"}
+              <button type="button" onclick={() => void openModland()}>Открыть Modland</button>
+            {/if}
             <button type="button" onclick={() => void resolveHuman(source)}>Я прошёл</button>
           {/if}
         </div>

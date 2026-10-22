@@ -73,6 +73,66 @@
   --blob-d: oklch(0.55 0.14 160);
 }
 
+.theme-deep {
+  --blob-a: oklch(0.62 0.18 250);
+  --blob-b: oklch(0.66 0.14 205);
+  --blob-c: oklch(0.64 0.16 290);
+  --blob-d: oklch(0.68 0.12 180);
+}
+
+.dark.theme-deep {
+  --blob-a: oklch(0.45 0.19 252);
+  --blob-b: oklch(0.47 0.14 205);
+  --blob-c: oklch(0.43 0.18 292);
+  --blob-d: oklch(0.48 0.12 180);
+}
+
+.theme-dusk {
+  --blob-a: oklch(0.75 0.16 330);
+  --blob-b: oklch(0.78 0.14 35);
+  --blob-c: oklch(0.72 0.16 300);
+  --blob-d: oklch(0.8 0.12 70);
+}
+
+.dark.theme-dusk {
+  --blob-a: oklch(0.52 0.18 330);
+  --blob-b: oklch(0.55 0.16 35);
+  --blob-c: oklch(0.48 0.16 300);
+  --blob-d: oklch(0.56 0.13 70);
+}
+
+.theme-forest {
+  --blob-a: oklch(0.7 0.14 150);
+  --blob-b: oklch(0.74 0.12 185);
+  --blob-c: oklch(0.68 0.13 120);
+  --blob-d: oklch(0.78 0.1 90);
+}
+
+.dark.theme-forest {
+  --blob-a: oklch(0.45 0.14 150);
+  --blob-b: oklch(0.48 0.12 185);
+  --blob-c: oklch(0.42 0.12 120);
+  --blob-d: oklch(0.5 0.1 90);
+}
+
+.theme-graphite {
+  --blob-a: oklch(0.72 0.02 260);
+  --blob-b: oklch(0.76 0.015 240);
+  --blob-c: oklch(0.68 0.02 280);
+  --blob-d: oklch(0.8 0.01 220);
+}
+
+.dark.theme-graphite {
+  --blob-a: oklch(0.42 0.015 260);
+  --blob-b: oklch(0.46 0.012 240);
+  --blob-c: oklch(0.38 0.015 280);
+  --blob-d: oklch(0.5 0.01 220);
+}
+
+.no-background .bg-blob {
+  animation: none !important;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
