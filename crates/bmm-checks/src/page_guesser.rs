@@ -1,0 +1,518 @@
+//! Подбор страницы для мода, который положили в папку сами.
+//!
+//! Мод ищется на сайтах по названию; предлагается одна страница, только если
+//! она явно та: название совпадает почти целиком, автор и размер не спорят,
+//! версия на сайте не старше установленной, и на том же сайте нет второй такой
+//! же похожей. Привязка ставится неподтверждённой — следить начинаем, только
+//! когда человек нажмёт «Следить».
+
+use std::collections::HashSet;
+
+use chrono::{DateTime, FixedOffset, TimeDelta};
+
+use bmm_domain::filename::from_file_name;
+use bmm_domain::library::{InstalledMod, LibraryStore};
+use bmm_domain::models::{Listing, PriceStatus};
+use bmm_domain::text::{TitleNormalizer, TitleParser};
+use bmm_domain::versioning::{VersionComparer, VersionOrder};
+
+use crate::bindings::BindingSuggester;
+
+/// Ничего не нашли — следующий поиск для этого мода не раньше.
+pub const RETRY_AFTER: TimeDelta = TimeDelta::days(14);
+/// Сколько модов искать за одну проверку: каждый — несколько запросов к каждому сайту.
+pub const PER_RUN: usize = 20;
+/// Доля совпавших слов названия (Жаккар), с которой страница считается «тем же модом».
+pub const MIN_NAME: f64 = 0.8;
+/// Вторая страница того же сайта ближе этого к лучшей — непонятно, какая из них.
+pub const AMBIGUOUS: f64 = 0.05;
+/// Минимальное отношение размеров установленного мода и страницы.
+pub const SIZE_MIN_RATIO: f64 = 0.85;
+
+/// Предложенная страница: запись на сайте и насколько она похожа.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageGuess {
+    pub listing: Listing,
+    pub score: f64,
+}
+
+/// Подбор страницы по названию.
+pub struct PageGuesser;
+
+impl PageGuesser {
+    /// Моды, для которых пора искать страницу: без привязок, без отказа
+    /// «Не проверять», не искали недавно; новые первыми, не больше [`PER_RUN`].
+    pub fn due(store: &dyn LibraryStore, now: DateTime<FixedOffset>) -> Vec<InstalledMod> {
+        let bound: HashSet<String> = store
+            .bindings()
+            .into_iter()
+            .map(|binding| binding.mod_id)
+            .collect();
+        let retry_after = RETRY_AFTER;
+        let mut due: Vec<InstalledMod> = store
+            .mods()
+            .into_iter()
+            .filter(|installed| !bound.contains(&installed.id))
+            .filter(|installed| !store.is_checking_declined(&installed.id))
+            .filter(|installed| match store.get_page_search(&installed.id) {
+                None => true,
+                Some(search) => {
+                    !search.rejected && (now - search.at >= retry_after || search.at > now)
+                }
+            })
+            .collect();
+        // `sort_by_key` устойчива: при одинаковом времени установки порядок остаётся
+        // прежним (по названию из хранилища), как и в legacy.
+        due.sort_by_key(|installed| std::cmp::Reverse(installed.installed_at_utc));
+        due.truncate(PER_RUN);
+        due
+    }
+
+    /// Чем искать мод на сайтах: лучшее известное название, иначе угаданное из имени файла.
+    pub fn query_for(installed: &InstalledMod, title: Option<&str>) -> String {
+        match title.map(str::trim) {
+            Some(title) if !title.is_empty() => title.to_string(),
+            _ => BindingSuggester::query_for(installed),
+        }
+    }
+
+    /// Выбирает одну страницу или ничего, если лучшая неоднозначна.
+    ///
+    /// `title` — название из окна (репозиторий, info.json, сайт); `None` — только
+    /// имя файла и запись библиотеки.
+    pub fn pick(
+        installed: &InstalledMod,
+        title: Option<&str>,
+        found: &[Listing],
+    ) -> Option<PageGuess> {
+        let guess = from_file_name(&installed.file_name);
+        let candidates = [
+            title,
+            Some(installed.name.as_str()),
+            Some(guess.name.as_str()),
+        ];
+        let mut names: Vec<&str> = Vec::new();
+        for name in candidates.into_iter().flatten() {
+            let name = name.trim();
+            if name.is_empty() || TitleNormalizer::tokens(name).is_empty() {
+                continue;
+            }
+            if names
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(name))
+            {
+                continue;
+            }
+            names.push(name);
+        }
+        if names.is_empty() {
+            return None;
+        }
+
+        let installed_version = installed.version.clone().or_else(|| guess.version.clone());
+        let author = author_key(guess.author.as_deref());
+
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut fits: Vec<PageGuess> = Vec::new();
+        for listing in found {
+            if !seen.insert((listing.source.clone(), listing.source_id.clone()))
+                || listing.price == PriceStatus::Paid
+            {
+                continue;
+            }
+
+            // Одно слово («police») совпадает со слишком многим: только целиком.
+            let mut similarity = 0.0f64;
+            let mut tokens = 0usize;
+            for name in &names {
+                let candidate = TitleNormalizer::similarity(name, &listing.title);
+                if similarity == 0.0 || candidate > similarity {
+                    similarity = candidate;
+                    tokens = TitleNormalizer::tokens(name).len();
+                }
+            }
+            if similarity < MIN_NAME || (tokens < 2 && similarity < 1.0) {
+                continue;
+            }
+            if !author.is_empty()
+                && let Some(listing_author) = listing.author.as_deref()
+            {
+                let listing_author = author_key(Some(listing_author));
+                if !listing_author.is_empty() && listing_author != author {
+                    continue;
+                }
+            }
+            if let Some(installed_size) = installed.size_bytes
+                && installed_size > 0
+                && let Some(listing_size) = listing.size_bytes
+                && listing_size > 0
+            {
+                let smaller = installed_size.min(listing_size) as f64;
+                let larger = installed_size.max(listing_size) as f64;
+                if smaller / larger < SIZE_MIN_RATIO {
+                    continue;
+                }
+            }
+
+            let site_version = listing
+                .mod_version
+                .clone()
+                .or_else(|| TitleParser::parse(&listing.title).mod_version);
+            let mut score = similarity;
+            match VersionComparer::compare(installed_version.as_deref(), site_version.as_deref()) {
+                VersionOrder::Older => continue, // на сайте старее установленного — это не его страница
+                VersionOrder::Same => score += 0.1,
+                VersionOrder::Newer => score += 0.02,
+                VersionOrder::Unknown => {}
+            }
+            fits.push(PageGuess {
+                listing: listing.clone(),
+                score,
+            });
+        }
+        if fits.is_empty() {
+            return None;
+        }
+
+        // Первый максимум, как `OrderByDescending(...).First()` в legacy.
+        let mut best = 0usize;
+        for index in 1..fits.len() {
+            if fits[index].score > fits[best].score {
+                best = index;
+            }
+        }
+        let rival = fits.iter().enumerate().any(|(index, other)| {
+            index != best
+                && other.listing.source == fits[best].listing.source
+                && other.listing.source_id != fits[best].listing.source_id
+                && fits[best].score - other.score < AMBIGUOUS
+        });
+        if rival {
+            None
+        } else {
+            Some(fits[best].clone())
+        }
+    }
+}
+
+fn author_key(author: Option<&str>) -> String {
+    let Some(author) = author else {
+        return String::new();
+    };
+    if author.trim().is_empty() {
+        return String::new();
+    }
+    author
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeDelta;
+    use url::Url;
+
+    use bmm_domain::library::{InMemoryLibraryStore, ModBinding, PageSearch};
+
+    fn now() -> DateTime<FixedOffset> {
+        DateTime::parse_from_rfc3339("2026-10-18T12:00:00+00:00").unwrap()
+    }
+
+    fn installed(id: &str, file: &str, version: Option<&str>, size: Option<i64>) -> InstalledMod {
+        InstalledMod {
+            id: id.to_string(),
+            name: from_file_name(file).name,
+            file_name: file.to_string(),
+            version: version.map(str::to_string),
+            size_bytes: size,
+            installed_at_utc: now() - TimeDelta::days(1),
+            enabled: true,
+        }
+    }
+
+    fn listing(
+        source: &str,
+        id: &str,
+        title: &str,
+        author: Option<&str>,
+        size: Option<i64>,
+        price: PriceStatus,
+    ) -> Listing {
+        let mut listing = Listing::new(
+            source,
+            Url::parse(&format!("https://{source}.test/{id}")).unwrap(),
+            id,
+            title,
+        );
+        listing.author = author.map(str::to_string);
+        listing.size_bytes = size;
+        listing.price = price;
+        listing
+    }
+
+    fn l(source: &str, id: &str, title: &str) -> Listing {
+        listing(source, id, title, None, None, PriceStatus::Unknown)
+    }
+
+    #[test]
+    fn real_modsgaming_search_finds_sienna_and_rejects_ambiguous() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/modsgaming/search-real.html");
+        let html = std::fs::read_to_string(path).unwrap();
+        let found =
+            bmm_sources::search::newest_only(bmm_sources::parsers::modsgaming::parse_search(&html));
+
+        let guess = PageGuesser::pick(
+            &installed("a", "toyota_sienna_2017_v1.0.zip", Some("1.0"), None),
+            None,
+            &found,
+        )
+        .expect("страница v2.0 находится");
+        assert!(guess.listing.title.contains("Sienna 2017 v2.0"));
+
+        assert!(
+            PageGuesser::pick(
+                &installed("b", "2023_toyota_sienna.zip", None, None),
+                None,
+                &found
+            )
+            .is_none(),
+            "две похожие страницы на одном сайте — какая, непонятно"
+        );
+    }
+
+    #[test]
+    fn rejects_other_name_author_size_older_paid_and_single_word() {
+        let bmw = installed(
+            "a",
+            "bmw_e34_by_matissator_for_beamng_v3.3.zip",
+            Some("3.3"),
+            Some(100_000_000),
+        );
+        let good = PageGuesser::pick(
+            &bmw,
+            None,
+            &[listing(
+                "stmods",
+                "1",
+                "BMW E34 версия 3.3",
+                Some("matissator"),
+                Some(101_000_000),
+                PriceStatus::Unknown,
+            )],
+        )
+        .expect("та же страница");
+        assert_eq!(TitleNormalizer::normalize(&good.listing.title), "bmw e34");
+
+        assert!(
+            PageGuesser::pick(&bmw, None, &[l("stmods", "2", "BMW E30 версия 3.3")]).is_none(),
+            "другое название"
+        );
+        assert!(
+            PageGuesser::pick(
+                &bmw,
+                None,
+                &[listing(
+                    "stmods",
+                    "3",
+                    "BMW E34 версия 3.3",
+                    Some("someone"),
+                    None,
+                    PriceStatus::Unknown
+                )]
+            )
+            .is_none(),
+            "другой автор"
+        );
+        assert!(
+            PageGuesser::pick(
+                &bmw,
+                None,
+                &[listing(
+                    "stmods",
+                    "4",
+                    "BMW E34 версия 3.3",
+                    None,
+                    Some(40_000_000),
+                    PriceStatus::Unknown
+                )]
+            )
+            .is_none(),
+            "размер"
+        );
+        assert!(
+            PageGuesser::pick(&bmw, None, &[l("stmods", "5", "BMW E34 версия 2.0")]).is_none(),
+            "на сайте старее установленного"
+        );
+        assert!(
+            PageGuesser::pick(
+                &bmw,
+                None,
+                &[listing(
+                    "modland",
+                    "6",
+                    "BMW E34 v3.3",
+                    None,
+                    None,
+                    PriceStatus::Paid
+                )]
+            )
+            .is_none(),
+            "платный"
+        );
+        assert!(
+            PageGuesser::pick(
+                &installed("p", "police.zip", None, None),
+                None,
+                &[l("stmods", "7", "Police Pack")]
+            )
+            .is_none(),
+            "одно слово — только целиком"
+        );
+        assert!(
+            PageGuesser::pick(
+                &installed("p", "police.zip", None, None),
+                None,
+                &[l("stmods", "8", "Police")]
+            )
+            .is_some(),
+            "одно слово целиком — да"
+        );
+    }
+
+    #[test]
+    fn window_title_beats_file_name_and_first_site_wins() {
+        let mod_without_title = installed("a", "taa_final.zip", None, None);
+        let found = [
+            l("modsgaming", "1", "Temporal Anti Aliasing v1.7"),
+            l("stmods", "2", "Temporal Anti Aliasing 1.7"),
+        ];
+        assert!(
+            PageGuesser::pick(&mod_without_title, None, &found).is_none(),
+            "по имени файла не узнать"
+        );
+        assert_eq!(
+            PageGuesser::pick(&mod_without_title, Some("Temporal Anti Aliasing"), &found)
+                .unwrap()
+                .listing
+                .source,
+            "modsgaming"
+        );
+        assert_eq!(
+            PageGuesser::query_for(&mod_without_title, Some("Temporal Anti Aliasing")),
+            "Temporal Anti Aliasing"
+        );
+        assert_eq!(
+            PageGuesser::query_for(&mod_without_title, None),
+            "taa final"
+        );
+    }
+
+    #[test]
+    fn version_bonuses_and_thresholds() {
+        let mod_without_version = installed("a", "some_car.zip", None, None);
+        let same = PageGuesser::pick(
+            &mod_without_version,
+            None,
+            &[l("stmods", "1", "Some Car v2.0")],
+        )
+        .unwrap();
+        assert!(
+            same.score >= 1.0,
+            "бонус за совпадение версии: {}",
+            same.score
+        );
+
+        let one_word_too_short = installed("b", "german_cars_pack.zip", None, None);
+        assert!(
+            PageGuesser::pick(
+                &one_word_too_short,
+                None,
+                &[l("stmods", "2", "German Cars Pack Deluxe")]
+            )
+            .is_none(),
+            "0.75 < 0.8"
+        );
+    }
+
+    #[test]
+    fn due_skips_bound_declined_and_fresh_and_takes_newest() {
+        let store = InMemoryLibraryStore::new();
+        for index in 0..25 {
+            let mut installed = installed(
+                &format!("m{index}"),
+                &format!("mod_{index}.zip"),
+                None,
+                None,
+            );
+            installed.installed_at_utc = now() - TimeDelta::days(index);
+            store.upsert_mod(installed);
+        }
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "m0".to_string(),
+                source: "stmods".to_string(),
+                source_id: "1".to_string(),
+                url: Url::parse("https://stmods.test/1").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "m1".to_string(),
+                source: "stmods".to_string(),
+                source_id: "2".to_string(),
+                url: Url::parse("https://stmods.test/2").unwrap(),
+                confirmed: false,
+            })
+            .unwrap();
+        store.set_checking_declined("m2", true);
+        store.set_page_search(
+            "m3",
+            Some(PageSearch {
+                at: now() - TimeDelta::days(3),
+                rejected: false,
+            }),
+        );
+        store.set_page_search(
+            "m4",
+            Some(PageSearch {
+                at: now() - TimeDelta::days(15),
+                rejected: false,
+            }),
+        );
+        store.set_page_search(
+            "m5",
+            Some(PageSearch {
+                at: now() - TimeDelta::days(30),
+                rejected: true,
+            }),
+        );
+
+        let due = PageGuesser::due(&store, now());
+        let ids: Vec<&str> = due.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids.len(), PER_RUN);
+        assert_eq!(&ids[..3], &["m4", "m6", "m7"]);
+        assert!(
+            ids.iter()
+                .all(|id| !["m0", "m1", "m2", "m3", "m5"].contains(id))
+        );
+    }
+
+    #[test]
+    fn future_page_search_is_retried() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "car.zip", None, None));
+        store.set_page_search(
+            "a",
+            Some(PageSearch {
+                at: now() + TimeDelta::days(2),
+                rejected: false,
+            }),
+        );
+        assert_eq!(PageGuesser::due(&store, now()).len(), 1);
+    }
+}

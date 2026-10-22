@@ -332,6 +332,12 @@ version = "0.4.0"
 [[package]]
 name = "bmm-checks"
 version = "0.4.0"
+dependencies = [
+ "bmm-domain",
+ "bmm-sources",
+ "chrono",
+ "url",
+]
 
 [[package]]
 name = "bmm-desktop"
@@ -386,6 +392,7 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror 2.0.21",
+ "zip",
 ]
 
 [[package]]
@@ -416,6 +423,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
  "url",

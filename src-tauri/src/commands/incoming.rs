@@ -457,7 +457,10 @@ mod tests {
         let state = Arc::new(AppState {
             paths,
             settings,
-            library: JsonLibraryStore::new(data.join("library.json"), system_clock()),
+            library: Arc::new(JsonLibraryStore::new(
+                data.join("library.json"),
+                system_clock(),
+            )),
             previews: PreviewCache::new(data.join("previews")),
             load_lock: Mutex::new(()),
             previews_by_id: Mutex::new(HashMap::new()),
@@ -466,6 +469,7 @@ mod tests {
             deleted: Mutex::new(HashMap::new()),
             content_cache: Mutex::new(HashMap::new()),
             search: None,
+            update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         });

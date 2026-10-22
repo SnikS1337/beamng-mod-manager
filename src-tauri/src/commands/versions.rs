@@ -229,7 +229,7 @@ fn restore_deleted(
         .ok_or_else(|| AppError::new("not_found", "Копий нет."))?;
     let result = versions::restore_deleted(
         &installer,
-        &state.library,
+        state.library.as_ref(),
         &item,
         backup_id,
         Utc::now().fixed_offset(),
@@ -262,7 +262,7 @@ fn versions_of(state: &AppState, id: &str) -> Result<Vec<VersionRowDto>, AppErro
     }
     let installer = installer_for(state)?;
     Ok(
-        versions::versions_for(&installer, &state.library, &installed)
+        versions::versions_for(&installer, state.library.as_ref(), &installed)
             .into_iter()
             .map(|version| VersionRowDto {
                 backup_id: version.backup.id,
@@ -285,14 +285,14 @@ fn restore_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), Ap
         .get_mod(id)
         .ok_or_else(|| AppError::new("not_found", "Мод не найден."))?;
     let installer = installer_for(state)?;
-    let versions = versions::versions_for(&installer, &state.library, &installed);
+    let versions = versions::versions_for(&installer, state.library.as_ref(), &installed);
     let version = versions
         .into_iter()
         .find(|version| version.backup.id == backup_id)
         .ok_or_else(|| AppError::new("not_found", "Такой копии нет."))?;
     let result = versions::restore_version(
         &installer,
-        &state.library,
+        state.library.as_ref(),
         &installed,
         &version,
         Utc::now().fixed_offset(),
@@ -338,7 +338,10 @@ mod tests {
         let state = Arc::new(AppState {
             paths,
             settings,
-            library: JsonLibraryStore::new(data.join("library.json"), system_clock()),
+            library: Arc::new(JsonLibraryStore::new(
+                data.join("library.json"),
+                system_clock(),
+            )),
             previews: PreviewCache::new(data.join("previews")),
             load_lock: Mutex::new(()),
             previews_by_id: Mutex::new(HashMap::new()),
@@ -347,6 +350,7 @@ mod tests {
             deleted: Mutex::new(HashMap::new()),
             content_cache: Mutex::new(HashMap::new()),
             search: None,
+            update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         });

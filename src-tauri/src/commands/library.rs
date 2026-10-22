@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::Serialize;
@@ -47,6 +48,8 @@ pub struct ModCardDto {
     pub preview_url: Option<String>,
     pub compat: CompatDto,
     pub update: String,
+    pub update_version: Option<String>,
+    pub unchecked: bool,
     pub pending: String,
     pub from_game_repo: bool,
     pub deleted: bool,
@@ -232,6 +235,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     let db = GameModDb::new(&mods_dir);
     let keep = settings.keep_backups.max(1) as usize;
     let installer = ModInstaller::new(layout.clone(), system_clock(), Arc::new(move || keep));
+    let _ = bmm_game::bridge::GameBridge::ensure_installed(&mods_dir);
 
     if !game_running {
         apply_pending(state, &db, &layout);
@@ -285,7 +289,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     // Первый скан 5000 модов не должен переписывать library.json 5000 раз.
     let _batch = state.library.batch();
     let sync_report = bmm_domain::library::reconcile(
-        &state.library,
+        state.library.as_ref(),
         &scan_result.mods,
         scan_result.folder_available,
         Utc::now().fixed_offset(),
@@ -334,6 +338,24 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         .map(|check| ((check.mod_id.clone(), check.source.clone()), check))
         .collect();
     let pending_snapshot = state.pending.lock().unwrap().clone();
+    let update_findings: HashMap<String, (String, Option<String>)> =
+        bmm_checks::UpdateCheckService::pending(state.library.as_ref(), false)
+            .into_iter()
+            .map(|finding| {
+                (
+                    finding.mod_id,
+                    (
+                        match finding.status {
+                            bmm_domain::versioning::UpdateStatus::Likely => "likely",
+                            bmm_domain::versioning::UpdateStatus::Possible => "possible",
+                            bmm_domain::versioning::UpdateStatus::None => "none",
+                        }
+                        .to_string(),
+                        finding.latest_version,
+                    ),
+                )
+            })
+            .collect();
 
     state.previews_by_id.lock().unwrap().clear();
     let mut targets: HashMap<String, PreviewTarget> = HashMap::new();
@@ -399,6 +421,10 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
             let kind = entry
                 .map(|entry| kind_of(&entry.mod_type))
                 .unwrap_or("unknown");
+            let (update, update_version) = update_findings
+                .get(&installed.id)
+                .cloned()
+                .unwrap_or_else(|| ("none".to_string(), None));
             ModCardDto {
                 id: installed.id.clone(),
                 name,
@@ -410,7 +436,9 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 kind: kind.to_string(),
                 preview_url,
                 compat,
-                update: "none".to_string(),
+                update,
+                update_version,
+                unchecked: !confirmed_ids.contains(&installed.id),
                 pending: if pending { "queued" } else { "none" }.to_string(),
                 from_game_repo: disk.and_then(|disk| disk.sub_folder.as_ref()).is_some(),
                 deleted: false,
@@ -424,7 +452,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         .values()
         .map(|ticket| ticket.file_name.to_lowercase())
         .collect();
-    let deleted_cards: Vec<ModCardDto> = versions::deleted(&installer, &state.library)
+    let deleted_cards: Vec<ModCardDto> = versions::deleted(&installer, state.library.as_ref())
         .into_iter()
         .filter(|item| !ticket_files.contains(&item.file_name.to_lowercase()))
         .map(|item| {
@@ -449,6 +477,8 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 preview_url: None,
                 compat: compat_of(None, game_version.as_deref()),
                 update: "none".to_string(),
+                update_version: None,
+                unchecked: false,
                 pending: "none".to_string(),
                 from_game_repo: false,
                 deleted: true,
@@ -459,10 +489,8 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         .collect();
 
     let enabled = mods.iter().filter(|item| item.enabled).count();
-    let unchecked = mods
-        .iter()
-        .filter(|item| !confirmed_ids.contains(&item.id))
-        .count();
+    let unchecked = mods.iter().filter(|item| item.unchecked).count();
+    let updates = mods.iter().filter(|item| item.update != "none").count();
     let warning = join_warnings(
         settings_load.warnings,
         scan_warnings,
@@ -475,7 +503,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         counts: FilterCounts {
             all: mods.len(),
             enabled,
-            updates: 0,
+            updates,
             unchecked,
             deleted: deleted_cards.len(),
         },
@@ -538,7 +566,12 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
         .map(|(file, enabled)| (file.as_str(), *enabled))
         .collect();
     let outcome = db.set_active(&changes, || false);
-    if outcome.success() {
+    if outcome.success()
+        || matches!(
+            outcome.outcome,
+            SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb
+        )
+    {
         state.pending.lock().unwrap().clear();
         let _ = state.save_pending();
     }
@@ -620,6 +653,9 @@ fn toggle_mod(state: &AppState, id: &str, enabled: bool) -> Result<ToggleResult,
         .ok_or_else(|| AppError::new("missing", "Файл мода не найден."))?;
 
     if process::is_running() {
+        if let Some(result) = try_live_toggle(state, &mods_dir, &installed, &disk, enabled) {
+            return Ok(result);
+        }
         return Ok(queue_toggle(state, &installed.file_name, enabled));
     }
 
@@ -716,6 +752,49 @@ fn queue_toggle(state: &AppState, file_name: &str, enabled: bool) -> ToggleResul
         outcome: "queued".to_string(),
         enabled,
         message: Some("Изменение применится, когда закроете игру.".to_string()),
+    }
+}
+
+fn try_live_toggle(
+    state: &AppState,
+    mods_dir: &Path,
+    installed: &bmm_domain::library::InstalledMod,
+    disk: &DiskMod,
+    enabled: bool,
+) -> Option<ToggleResult> {
+    let bridge = bmm_game::bridge::GameBridge::with_system_clock(mods_dir);
+    if !bridge.is_alive() {
+        return None;
+    }
+    let id = bridge.send(&[(disk.file_name.as_str(), enabled)])?;
+    let key = bmm_game::db::key_of(&disk.file_name);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(answer) = bridge.read_answer()
+            && answer.ack_id.as_deref() == Some(id.as_str())
+        {
+            return match answer.result(&key) {
+                Some("ok") => {
+                    let mut updated = installed.clone();
+                    updated.enabled = enabled;
+                    state.library.upsert_mod(updated);
+                    Some(ToggleResult {
+                        outcome: "done".to_string(),
+                        enabled,
+                        message: Some(if enabled {
+                            "Включён.".to_string()
+                        } else {
+                            "Выключен.".to_string()
+                        }),
+                    })
+                }
+                _ => None,
+            };
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -914,6 +993,7 @@ mod tests {
     use std::collections::HashMap;
     use std::io::Write;
     use std::sync::Mutex;
+    use std::time::{Duration, Instant};
 
     use bmm_domain::clock::system_clock;
     use bmm_domain::library::JsonLibraryStore;
@@ -947,7 +1027,10 @@ mod tests {
         let state = AppState {
             paths,
             settings,
-            library: JsonLibraryStore::new(temp.path().join("data/library.json"), system_clock()),
+            library: Arc::new(JsonLibraryStore::new(
+                temp.path().join("data/library.json"),
+                system_clock(),
+            )),
             previews: PreviewCache::new(temp.path().join("data/previews")),
             load_lock: Mutex::new(()),
             previews_by_id: Mutex::new(HashMap::new()),
@@ -956,6 +1039,7 @@ mod tests {
             deleted: Mutex::new(HashMap::new()),
             content_cache: Mutex::new(HashMap::new()),
             search: None,
+            update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         };
@@ -989,7 +1073,10 @@ mod tests {
         AppState {
             paths,
             settings,
-            library: JsonLibraryStore::new(temp.path().join("data/library.json"), system_clock()),
+            library: Arc::new(JsonLibraryStore::new(
+                temp.path().join("data/library.json"),
+                system_clock(),
+            )),
             previews: PreviewCache::new(temp.path().join("data/previews")),
             load_lock: Mutex::new(()),
             previews_by_id: Mutex::new(HashMap::new()),
@@ -998,6 +1085,7 @@ mod tests {
             deleted: Mutex::new(HashMap::new()),
             content_cache: Mutex::new(HashMap::new()),
             search: None,
+            update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         }
@@ -1054,6 +1142,27 @@ mod tests {
     }
 
     #[test]
+    fn apply_pending_without_db_moves_file_and_clears_queue() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("fresh.zip"), b"zip").unwrap();
+        let state = test_state(&temp, &mods);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        state
+            .pending
+            .lock()
+            .unwrap()
+            .insert("fresh.zip".to_string(), false);
+
+        apply_pending(&state, &GameModDb::new(&mods), &layout);
+
+        assert!(layout.disabled_dir.join("fresh.zip").is_file());
+        assert!(!mods.join("fresh.zip").exists());
+        assert!(state.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn declined_repo_mod_keeps_user_title_and_version() {
         let temp = tempfile::tempdir().unwrap();
         let mods = temp.path().join("mods");
@@ -1101,6 +1210,61 @@ mod tests {
         let after = state.library.get_mod(&id).unwrap();
         assert_eq!(after.name, "Моя трасса");
         assert_eq!(after.version, None);
+    }
+
+    #[test]
+    fn live_bridge_toggle_updates_library() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("mod.zip"), b"zip").unwrap();
+        let state = test_state(&temp, &mods);
+        let snapshot = load_snapshot(&state).unwrap();
+        let installed = state.library.get_mod(&snapshot.mods[0].id).unwrap();
+        let disk = scan::scan_mods(&ModLayout::in_app_folder(&mods, state.paths.root()))
+            .mods
+            .into_iter()
+            .find(|item| item.file_name == "mod.zip")
+            .unwrap();
+
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        std::fs::create_dir_all(bridge.state_path().parent().unwrap()).unwrap();
+        std::fs::write(
+            bridge.state_path(),
+            format!(r#"{{"alive":{}}}"#, chrono::Utc::now().timestamp()),
+        )
+        .unwrap();
+
+        let mods_for_game = mods.clone();
+        let game = std::thread::spawn(move || {
+            let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods_for_game);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok(text) = std::fs::read_to_string(bridge.command_path())
+                    && let Ok(command) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(id) = command.get("id").and_then(|value| value.as_str())
+                {
+                    let answer = serde_json::json!({
+                        "alive": chrono::Utc::now().timestamp(),
+                        "ackId": id,
+                        "results": {"mod": "ok"},
+                    });
+                    std::fs::write(bridge.state_path(), answer.to_string()).unwrap();
+                    return;
+                }
+                if Instant::now() >= deadline {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        let result =
+            try_live_toggle(&state, &mods, &installed, &disk, false).expect("мост должен ответить");
+        game.join().unwrap();
+        assert_eq!(result.outcome, "done");
+        assert!(!result.enabled);
+        assert!(!state.library.get_mod(&installed.id).unwrap().enabled);
     }
 
     #[test]

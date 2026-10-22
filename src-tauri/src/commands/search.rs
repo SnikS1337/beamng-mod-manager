@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+use url::Url;
 
 use bmm_domain::filename;
 use bmm_domain::library::LibraryStore;
@@ -237,6 +238,40 @@ pub async fn search_cancel(
         cancel.store(true, Ordering::Relaxed);
     }
     Ok(())
+}
+
+const PREVIEW_HOSTS: &[&str] = &["modland.net", "stmods.org", "modsgaming.ru", "beamng.com"];
+
+#[tauri::command]
+pub async fn search_preview(
+    state: tauri::State<'_, Arc<AppState>>,
+    url: String,
+) -> Result<Option<String>, AppError> {
+    let runtime = state
+        .search
+        .clone()
+        .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
+    let parsed =
+        Url::parse(&url).map_err(|_| AppError::new("url", "Некорректный адрес картинки."))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !bmm_domain::hosts::host_matches(&parsed, PREVIEW_HOSTS)
+    {
+        return Err(AppError::new(
+            "url",
+            "Картинка с этого сайта не загружается.",
+        ));
+    }
+    let cache = runtime.previews.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || cache.fetch(&parsed))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?;
+    match result {
+        Ok(Some(image)) => Ok(Some(format!(
+            "http://bmm.localhost/search-preview/{}.{}",
+            image.key, image.extension
+        ))),
+        Ok(None) | Err(_) => Ok(None),
+    }
 }
 
 #[tauri::command]

@@ -66,7 +66,7 @@
     return source.filter((mod) => {
       if (filter === "enabled" && !mod.enabled) return false;
       if (filter === "updates" && mod.update === "none") return false;
-      if (filter === "unchecked") return false;
+      if (filter === "unchecked" && !mod.unchecked) return false;
       return matchesQuery(mod, query);
     });
   });
@@ -385,8 +385,8 @@
       return snapshot.folderError;
     }
     if (query) return "Проверьте написание. Ищем только среди ваших модов.";
-    if (filter === "updates") return "Проверка обновлений появится на следующем этапе.";
-    if (filter === "unchecked") return "У всех модов есть страница.";
+    if (filter === "updates") return "Обновлений нет. Проверить снова можно на экране «Обновления».";
+    if (filter === "unchecked") return "У всех модов есть подтверждённая страница.";
     if (filter === "enabled") return "Включите нужные в общем списке.";
     if (filter === "deleted") return "Удалённые моды появятся здесь после подтверждения.";
     return "Найдите мод в поиске или перетащите архив на окно.";

@@ -6,13 +6,16 @@ use std::time::SystemTime;
 
 use tokio::sync::Semaphore;
 
+use bmm_checks::coordinator::UpdateCoordinator;
 use bmm_domain::library::JsonLibraryStore;
 use bmm_domain::matches::MatchDecisionStore;
 use bmm_domain::paths::AppPaths;
 use bmm_domain::settings_store::SettingsStore;
 use bmm_packs::cache::PreviewCache;
+use bmm_sources::images::RemoteImageCache;
 use bmm_sources::net::PoliteFetcher;
 use bmm_sources::search::{SearchResponse, SearchService};
+use bmm_sources::sources::ModSource;
 
 #[derive(Debug, Clone)]
 pub struct PreviewTarget {
@@ -42,12 +45,19 @@ pub struct SearchRuntime {
     pub fetcher: Arc<PoliteFetcher>,
     pub service: Arc<SearchService>,
     pub matches: Arc<MatchDecisionStore>,
+    pub previews: Arc<RemoteImageCache>,
+}
+
+pub struct UpdateRuntime {
+    pub coordinator: Arc<UpdateCoordinator>,
+    pub enabled: Arc<Mutex<HashSet<String>>>,
+    pub sources: Arc<Vec<Arc<dyn ModSource>>>,
 }
 
 pub struct AppState {
     pub paths: AppPaths,
     pub settings: SettingsStore,
-    pub library: JsonLibraryStore,
+    pub library: Arc<JsonLibraryStore>,
     pub previews: PreviewCache,
     pub load_lock: Mutex<()>,
     pub previews_by_id: Mutex<HashMap<String, PreviewTarget>>,
@@ -56,6 +66,7 @@ pub struct AppState {
     pub deleted: Mutex<HashMap<String, DeletedTicket>>,
     pub content_cache: Mutex<HashMap<PathBuf, CachedContent>>,
     pub search: Option<Arc<SearchRuntime>>,
+    pub update: Option<Arc<UpdateRuntime>>,
     pub search_cancel: Mutex<Option<(u64, Arc<AtomicBool>)>>,
     pub last_search: Mutex<Option<SearchResponse>>,
 }

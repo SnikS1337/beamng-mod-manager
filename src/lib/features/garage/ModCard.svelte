@@ -82,7 +82,9 @@
     {#if mod.deleted}
       <span class="off">Удалён</span>
     {:else if mod.update !== "none"}
-      <span class="update">Есть обновление</span>
+      <span class="update">
+        {mod.updateVersion ? `→ ${mod.updateVersion}` : "Есть обновление"}
+      </span>
     {:else if !mod.enabled}
       <span class="off">Выключен</span>
     {/if}

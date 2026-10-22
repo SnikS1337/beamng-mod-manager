@@ -5,3 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bmm-domain = { path = "../bmm-domain" }
+bmm-sources = { path = "../bmm-sources" }
+chrono.workspace = true
+url.workspace = true
