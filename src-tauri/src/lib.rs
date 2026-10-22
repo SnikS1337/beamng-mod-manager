@@ -9,10 +9,14 @@ use std::sync::{Arc, Mutex};
 
 use bmm_domain::clock::system_clock;
 use bmm_domain::library::JsonLibraryStore;
+use bmm_domain::matches::{MatchDecisionStore, MatchDecisions};
 use bmm_domain::paths::AppPaths;
 use bmm_domain::settings_store::SettingsStore;
 use bmm_packs::cache::PreviewCache;
-use state::AppState;
+use bmm_sources::net::{PoliteFetcher, PoliteOptions, default_fetcher};
+use bmm_sources::search::{SearchOptions, SearchService};
+use bmm_sources::sources::all_sources;
+use state::{AppState, SearchRuntime};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -37,6 +41,28 @@ pub fn run() {
         eprintln!("[bmm] не удалось создать каталоги данных: {error}");
     }
 
+    let matches = Arc::new(MatchDecisionStore::new(
+        Some(paths.matches()),
+        system_clock(),
+    ));
+    let fetcher = Arc::new(PoliteFetcher::new(
+        default_fetcher(),
+        PoliteOptions::default(),
+    ));
+    let status_fetcher = fetcher.clone();
+    let decisions: Arc<dyn MatchDecisions + Send + Sync> = matches.clone();
+    let search_service = Arc::new(SearchService::new(
+        all_sources(fetcher.clone()),
+        Arc::new(move |source| status_fetcher.status_of(source)),
+        SearchOptions::default(),
+        Some(decisions),
+    ));
+    let search = Some(Arc::new(SearchRuntime {
+        fetcher,
+        service: search_service,
+        matches,
+    }));
+
     let state = Arc::new(AppState {
         settings: SettingsStore::with_system_clock(paths.settings()),
         library: JsonLibraryStore::new(paths.library(), system_clock()),
@@ -48,6 +74,9 @@ pub fn run() {
         preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
         deleted: Mutex::new(HashMap::new()),
         content_cache: Mutex::new(HashMap::new()),
+        search,
+        search_cancel: Mutex::new(None),
+        last_search: Mutex::new(None),
     });
     state.load_pending();
 
@@ -89,7 +118,10 @@ pub fn run() {
             commands::incoming::incoming_inspect,
             commands::incoming::incoming_install,
             commands::incoming::incoming_undo,
-            commands::incoming::incoming_discard
+            commands::incoming::incoming_discard,
+            commands::search::search_start,
+            commands::search::search_cancel,
+            commands::search::search_decide
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -346,6 +346,9 @@ mod tests {
             preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
             deleted: Mutex::new(HashMap::new()),
             content_cache: Mutex::new(HashMap::new()),
+            search: None,
+            search_cancel: Mutex::new(None),
+            last_search: Mutex::new(None),
         });
         (temp, state)
     }

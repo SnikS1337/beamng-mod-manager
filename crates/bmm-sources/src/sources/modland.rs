@@ -1,0 +1,116 @@
+//! Адаптер Modland.
+
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, LazyLock};
+
+use url::Url;
+
+use bmm_domain::models::Listing;
+
+use crate::net::PoliteFetcher;
+use crate::parsers::modland as parser;
+
+use super::common;
+use super::{ModSource, SourceError};
+
+static ROOT: LazyLock<Url> = LazyLock::new(|| Url::parse(parser::BASE).unwrap());
+
+pub struct ModlandSource {
+    fetcher: Arc<PoliteFetcher>,
+}
+
+impl ModlandSource {
+    pub fn new(fetcher: Arc<PoliteFetcher>) -> Self {
+        Self { fetcher }
+    }
+
+    fn search_url(query: &str) -> Option<Url> {
+        if query.trim_matches(['.', ' ']).is_empty() {
+            return None;
+        }
+        let mut url = ROOT.join("search").ok()?;
+        url.path_segments_mut().ok()?.push(query);
+        Some(url)
+    }
+
+    fn feed_url(page: u32) -> Url {
+        if page <= 1 {
+            ROOT.join("beamng.drive-mods").unwrap()
+        } else {
+            ROOT.join(&format!("beamng.drive-mods/page/{page}"))
+                .unwrap()
+        }
+    }
+}
+
+impl ModSource for ModlandSource {
+    fn id(&self) -> &'static str {
+        parser::SOURCE_ID
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Modland"
+    }
+
+    fn supports_search(&self) -> bool {
+        true
+    }
+
+    fn home(&self) -> Url {
+        ROOT.clone()
+    }
+
+    fn owns(&self, url: &Url) -> bool {
+        common::belongs_to(&ROOT, url)
+    }
+
+    fn is_mod_page(&self, url: &Url) -> bool {
+        let parts = common::segments(url);
+        parts.len() >= 2
+            && parts[0].eq_ignore_ascii_case("beamng.drive-mods")
+            && parts.last().is_some_and(|last| {
+                last.to_lowercase().ends_with(".html") && last.len() > ".html".len()
+            })
+    }
+
+    fn feed_covers(&self, _url: &Url) -> bool {
+        true
+    }
+
+    fn search(&self, query: &str, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+        let Some(url) = Self::search_url(query) else {
+            return Ok(Vec::new());
+        };
+        common::read_search(
+            &self.fetcher,
+            self.id(),
+            &url,
+            |_page| None,
+            1,
+            None,
+            parser::parse_list,
+            &|url| self.is_mod_page(url),
+            cancel,
+        )
+    }
+
+    fn feed_page(&self, page: u32, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+        let url = Self::feed_url(page.max(1));
+        let html = common::load(&self.fetcher, self.id(), &url, None, cancel)?;
+        Ok(html
+            .map(|html| parser::parse_list(&html))
+            .unwrap_or_default())
+    }
+
+    fn listing(&self, url: &Url, cancel: &AtomicBool) -> Result<Option<Listing>, SourceError> {
+        common::read_listing(
+            &self.fetcher,
+            self.id(),
+            url,
+            &|url| self.owns(url),
+            &parser::slug_of,
+            &parser::parse_detail,
+            cancel,
+        )
+    }
+}

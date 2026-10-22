@@ -5,3 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bmm-domain = { path = "../bmm-domain" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+url.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
+reqwest.workspace = true
+encoding_rs.workspace = true
+html-escape.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
