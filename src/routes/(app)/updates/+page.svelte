@@ -3,6 +3,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { Check, ExternalLink, EyeOff, RefreshCw, Search } from "@lucide/svelte";
   import { sourceName } from "$lib/ipc/search";
+  import { toasts } from "$lib/shell/toasts.svelte";
   import {
     listenUpdates,
     updatesCancel,
@@ -15,6 +16,7 @@
     updatesRestore,
     updatesSnapshot,
     updatesStart,
+    updatesUndoPage,
     type PageSuggestion,
     type UpdateFinding,
     type UpdateProgress,
@@ -144,6 +146,11 @@
   async function confirmPage(suggestion: PageSuggestion) {
     try {
       snapshot = await updatesConfirmPage(suggestion.modId);
+      toasts.show(`Следим за страницей «${suggestion.modName}»`, {
+        undo: async () => {
+          snapshot = await updatesUndoPage(suggestion);
+        },
+      });
     } catch (reason) {
       error = errorText(reason);
     }
@@ -152,6 +159,11 @@
   async function rejectPage(suggestion: PageSuggestion) {
     try {
       snapshot = await updatesRejectPage(suggestion.modId);
+      toasts.show(`Страница «${suggestion.modName}» отклонена`, {
+        undo: async () => {
+          snapshot = await updatesUndoPage(suggestion);
+        },
+      });
     } catch (reason) {
       error = errorText(reason);
     }

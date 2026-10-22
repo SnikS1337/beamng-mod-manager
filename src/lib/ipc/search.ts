@@ -91,6 +91,10 @@ export async function searchPreview(url: string): Promise<string | null> {
   return invoke<string | null>("search_preview", { url });
 }
 
+export async function searchOpenModland(query: string): Promise<void> {
+  if (isTauri()) await invoke("search_open_modland", { query });
+}
+
 export async function searchDecide(
   query: string,
   a: { source: string; sourceId: string },

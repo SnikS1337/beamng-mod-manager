@@ -38,6 +38,7 @@
   let details = $state<ModDetails | null>(null);
   let detailsLoading = $state(false);
   let renderedCount = $state(0);
+  let bannerDismissed = $state(false);
   let searchEl = $state<HTMLInputElement | null>(null);
   let archiveInput = $state<HTMLInputElement | null>(null);
   let detailsToken = 0;
@@ -428,6 +429,12 @@
   {#if snapshot?.warning}
     <div class="banner">{snapshot.warning}</div>
   {/if}
+  {#if snapshot?.manyEnabled && !bannerDismissed}
+    <div class="banner many">
+      <span>{snapshot.manyEnabled}</span>
+      <button type="button" aria-label="Скрыть предупреждение" onclick={() => (bannerDismissed = true)}>×</button>
+    </div>
+  {/if}
 
   <div class="body" class:with-inspector={selectedId !== null}>
     <section class="work">
@@ -606,6 +613,22 @@
     background: color-mix(in oklab, oklch(0.82 0.15 85) 10%, transparent);
     color: oklch(0.85 0.12 85);
     font-size: 10.5px;
+  }
+
+  .banner.many {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .banner.many button {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 15px;
+    line-height: 1;
+    cursor: default;
   }
 
   .body {

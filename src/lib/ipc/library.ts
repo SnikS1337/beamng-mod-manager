@@ -47,6 +47,7 @@ export interface LibrarySnapshot {
   gameVersion: string | null;
   gameRunning: boolean;
   warning: string | null;
+  manyEnabled: string | null;
   deleted: ModCardDto[];
 }
 
@@ -230,6 +231,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
     gameVersion: "0.39.4",
     gameRunning: false,
     warning: null,
+    manyEnabled: "Включено 3333 модов. Игра может грузиться дольше",
     deleted: [],
   };
 }

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use bmm_checks::UpdateCheckOptions;
 use bmm_domain::settings::{AppSettings, BackgroundTheme, UiMode};
 
 use crate::error::AppError;
@@ -125,5 +126,10 @@ pub async fn settings_save(
         .save(&current)
         .map_err(|error| AppError::new("settings", error.to_string()))?;
     let saved = state.settings.load().settings;
+    if let Some(runtime) = &state.update {
+        runtime
+            .coordinator
+            .update_check_options(UpdateCheckOptions::from_settings(&saved));
+    }
     Ok(SettingsDto::from_settings(&saved))
 }

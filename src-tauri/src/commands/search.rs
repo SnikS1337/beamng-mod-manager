@@ -240,6 +240,16 @@ pub async fn search_cancel(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn search_open_modland(app: AppHandle, query: String) -> Result<(), AppError> {
+    let mut url = Url::parse("https://www.modland.net/search")
+        .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?;
+    url.path_segments_mut()
+        .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?
+        .push(query.trim());
+    crate::commands::updates::open_modland_window(&app, url)
+}
+
 const PREVIEW_HOSTS: &[&str] = &["modland.net", "stmods.org", "modsgaming.ru", "beamng.com"];
 
 #[tauri::command]

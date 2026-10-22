@@ -332,13 +332,17 @@ pub async fn updates_open_modland(app: AppHandle) -> Result<(), AppError> {
     let url: url::Url = "https://www.modland.net/"
         .parse()
         .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?;
+    open_modland_window(&app, url)
+}
+
+pub(crate) fn open_modland_window(app: &AppHandle, url: url::Url) -> Result<(), AppError> {
     if let Some(window) = app.get_webview_window("modland-check") {
         let _ = window.set_focus();
         let _ = window.navigate(url);
         return Ok(());
     }
-    WebviewWindowBuilder::new(&app, "modland-check", WebviewUrl::External(url))
-        .title("Modland — проверка Cloudflare")
+    WebviewWindowBuilder::new(app, "modland-check", WebviewUrl::External(url))
+        .title("Modland")
         .inner_size(1000.0, 800.0)
         .build()
         .map_err(|error| AppError::new("window", error.to_string()))?;

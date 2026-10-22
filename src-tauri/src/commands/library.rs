@@ -77,6 +77,7 @@ pub struct LibrarySnapshot {
     pub game_version: Option<String>,
     pub game_running: bool,
     pub warning: Option<String>,
+    pub many_enabled: Option<String>,
     pub deleted: Vec<ModCardDto>,
 }
 
@@ -498,6 +499,9 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         sync_report.warning,
         state.library.load_warnings().to_vec(),
     );
+    let many_enabled = (settings.active_mods_warn_above > 0
+        && enabled as i32 > settings.active_mods_warn_above)
+        .then(|| format!("Включено {enabled} модов. Игра может грузиться дольше"));
 
     Ok(LibrarySnapshot {
         counts: FilterCounts {
@@ -513,6 +517,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         game_version,
         game_running,
         warning,
+        many_enabled,
         deleted: deleted_cards,
     })
 }
@@ -983,6 +988,7 @@ fn empty_snapshot(
         } else {
             Some(settings_warnings.join(" · "))
         },
+        many_enabled: None,
         deleted: Vec::new(),
     }
 }
