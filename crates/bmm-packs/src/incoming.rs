@@ -154,6 +154,12 @@ fn fail(source: &Path, work_dir: &Path, message: &str) -> IncomingAnalysis {
     }
 }
 
+/// Ошибка разбора, после которой нельзя продолжать и показывать частичный результат:
+/// исчерпан общий бюджет распаковки или пришла отмена.
+fn is_fatal_analysis_error(message: &str) -> bool {
+    message == "отменено" || message.contains("слишком большой")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn analyze_zip(
     source: &Path,
@@ -251,8 +257,7 @@ fn analyze_zip(
         }
         let target = inner_dir.join(format!("{nested_count}.zip"));
         if let Err(error) = copy_entry(source, entry, &target, budget, cancel) {
-            if error.contains("слишком большой") || error.contains("отменено")
-            {
+            if is_fatal_analysis_error(&error) {
                 return Err(error);
             }
             continue;
@@ -269,6 +274,9 @@ fn analyze_zip(
             Some(&entry.name),
         ) {
             Ok(mut nested) => items.append(&mut nested),
+            // Общий бюджет и отмена относятся ко всему разбору: это не «битый вложенный архив»,
+            // а причина остановиться целиком.
+            Err(message) if is_fatal_analysis_error(&message) => return Err(message),
             Err(message) if !message.starts_with("В архиве нет мода") => {
                 items.push(blocked_item(
                     &target,
@@ -437,34 +445,47 @@ enum Shape {
 }
 
 fn shape_of(index: &ZipIndex) -> Shape {
-    let mut top = HashSet::new();
+    // Первые сегменты путей без учёта регистра: «Car/…» и «car/…» — одна и та же лишняя папка.
+    let mut tops: Vec<&str> = Vec::new();
     let mut root_has_files = false;
     for entry in &index.entries {
         let name = entry.name.trim_start_matches("./").trim_start_matches('/');
-        let parts: Vec<&str> = name.split('/').filter(|part| !part.is_empty()).collect();
-        if let Some(first) = parts.first() {
-            top.insert(first.to_string());
+        let first = name.split('/').find(|part| !part.is_empty());
+        if let Some(first) = first
+            && !tops.iter().any(|known| known.eq_ignore_ascii_case(first))
+        {
+            tops.push(first);
         }
         if entry.depth == 1 {
             root_has_files = true;
         }
     }
-    if top.iter().any(|name| is_known_root(name)) {
+
+    // Файл с именем «vehicles» в корне — не папка мода: известный корень должен быть
+    // первым сегментом пути, за которым что-то есть (как в legacy ShapeOf).
+    let is_mod = index.entries.iter().any(|entry| {
+        let name = entry.name.trim_start_matches("./").trim_start_matches('/');
+        let mut parts = name.split('/').filter(|part| !part.is_empty());
+        parts.next().map(is_known_root).unwrap_or(false) && parts.next().is_some()
+    });
+    if is_mod {
         return Shape::Mod;
     }
-    if top.len() == 1 && !root_has_files {
-        let folder = top.into_iter().next().unwrap();
-        let prefix = format!("{folder}/");
+
+    if tops.len() == 1 && !root_has_files {
+        let folder = tops[0];
         let has_known_child = index.entries.iter().any(|entry| {
-            entry
-                .name
-                .strip_prefix(&prefix)
-                .and_then(|rest| rest.split('/').next())
-                .map(is_known_root)
-                .unwrap_or(false)
+            let name = entry.name.trim_start_matches("./").trim_start_matches('/');
+            let mut parts = name.split('/').filter(|part| !part.is_empty());
+            match (parts.next(), parts.next()) {
+                (Some(first), Some(second)) if first.eq_ignore_ascii_case(folder) => {
+                    is_known_root(second)
+                }
+                _ => false,
+            }
         });
         if has_known_child {
-            return Shape::Wrap(folder);
+            return Shape::Wrap(folder.to_string());
         }
     }
     Shape::None
@@ -550,9 +571,12 @@ fn match_item(
             _ => {}
         }
     }
-    if let Some((found, _)) = best
-        && !tie
-    {
+    // Два одинаково похожих установленных — не гадаем: мод новый. К поиску по названию
+    // в этом случае не переходим, иначе случайное совпадение выдало бы двусмысленное за обновление.
+    if tie {
+        return (IncomingKind::New, None, false, None);
+    }
+    if let Some((found, _)) = best {
         return (
             IncomingKind::Update,
             Some(found.file_name.clone()),
@@ -600,10 +624,15 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
 }
 
 fn clean_name(source: &Path) -> String {
-    let raw = source
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "mod".to_string());
+    // Не Path::file_name: на Windows «a:b.zip» он прочитал бы как диск «a:» и файл «b.zip»,
+    // а имя записи внутри архива может содержать что угодно (в legacy было так же).
+    let full = source.to_string_lossy();
+    let raw = full.rsplit(['/', '\\']).next().unwrap_or("").to_string();
+    let raw = if raw.is_empty() {
+        "mod".to_string()
+    } else {
+        raw
+    };
     let stem = raw.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&raw);
     let stem = strip_copy_suffix(stem);
     format!("{}.zip", clean_stem(&stem))
@@ -724,14 +753,17 @@ fn repack(
     let file = File::create(&target).map_err(|error| error.to_string())?;
     let mut writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default();
-    let prefix = format!("{wrapper}/");
     for entry in &index.entries {
         if cancel.load(Ordering::Relaxed) {
             return Err("отменено".to_string());
         }
-        let Some(rest) = entry.name.strip_prefix(&prefix) else {
+        // Лишняя папка могла быть записана в разном регистре в разных записях.
+        let Some((first, rest)) = entry.name.split_once('/') else {
             continue;
         };
+        if !first.eq_ignore_ascii_case(wrapper) {
+            continue;
+        }
         if rest.is_empty() || crate::inspect::is_unsafe_entry_path(rest) {
             continue;
         }
@@ -978,13 +1010,22 @@ mod tests {
     }
 
     fn installed(file_name: &str, content: &[&str]) -> InstalledArchive {
+        installed_with(file_name, true, content, None)
+    }
+
+    fn installed_with(
+        file_name: &str,
+        enabled: bool,
+        content: &[&str],
+        sub_folder: Option<&str>,
+    ) -> InstalledArchive {
         InstalledArchive {
             file_name: file_name.to_string(),
-            enabled: true,
+            enabled,
             size: 0,
             path: PathBuf::from("missing"),
             content: content.iter().map(|value| value.to_string()).collect(),
-            sub_folder: None,
+            sub_folder: sub_folder.map(str::to_string),
         }
     }
 
@@ -1020,6 +1061,7 @@ mod tests {
                 ("Wrapper/vehicles/car/info.json", b"{}"),
             ],
         );
+        let before = fs::read(&source).unwrap();
         let analysis = analyze(
             &source,
             &[],
@@ -1029,13 +1071,70 @@ mod tests {
         );
         let item = &analysis.items[0];
         assert!(item.repacked);
+        assert_eq!(item.file_name, "Car.zip");
         assert!(item.zip_path != source);
+        assert_eq!(fs::read(&source).unwrap(), before, "исходник не тронут");
         let index = read_index(&item.zip_path).unwrap();
         assert!(
             index
                 .entries
                 .iter()
                 .all(|entry| !entry.name.starts_with("Wrapper/"))
+        );
+    }
+
+    #[test]
+    fn wrapper_folder_is_matched_case_insensitively() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Mixed.zip");
+        build_zip(
+            &source,
+            &[
+                ("Car/vehicles/car/a.jbeam", b"x"),
+                ("car/levels/town/info.json", b"{}"),
+                ("CAR/art/x.dds", b"dds"),
+            ],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        let item = &analysis.items[0];
+        assert!(item.repacked);
+        let index = read_index(&item.zip_path).unwrap();
+        let names: Vec<&str> = index
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert!(names.contains(&"vehicles/car/a.jbeam"));
+        assert!(names.contains(&"levels/town/info.json"));
+        assert!(names.contains(&"art/x.dds"));
+    }
+
+    #[test]
+    fn root_file_named_like_known_folder_is_not_a_mod() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("odd.zip");
+        build_zip(&source, &[("vehicles", b"x"), ("readme.txt", b"y")]);
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.items.is_empty());
+        assert!(
+            analysis
+                .problem
+                .as_deref()
+                .unwrap()
+                .starts_with("В архиве нет мода BeamNG")
         );
     }
 
@@ -1085,6 +1184,10 @@ mod tests {
         assert_eq!(clean_stem("a:b"), "a_b");
         assert_eq!(clean_stem("mod (1)"), "mod");
         assert_eq!(clean_stem(".hidden"), "mod");
+        assert_eq!(clean_name(Path::new("mod (1).zip")), "mod.zip");
+        assert_eq!(clean_name(Path::new("mod.rar")), "mod.zip");
+        assert_eq!(clean_name(Path::new("a:b.zip")), "a_b.zip");
+        assert_eq!(clean_name(Path::new(".zip")), "mod.zip");
     }
 
     fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -1099,6 +1202,38 @@ mod tests {
             zip.finish().unwrap();
         }
         cursor.into_inner()
+    }
+
+    fn stored_zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut cursor);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for (name, bytes) in entries {
+                zip.start_file(*name, options).unwrap();
+                zip.write_all(bytes).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    fn build_zip_stored(path: &Path, entries: &[(&str, &[u8])]) {
+        fs::write(path, stored_zip_bytes(entries)).unwrap();
+    }
+
+    /// Детерминированный генератор для пачки битых архивов (без внешних зависимостей).
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 33) as u32
+        }
     }
 
     #[test]
@@ -1176,5 +1311,279 @@ mod tests {
         assert!(item.blocked);
         assert!(!item.repacked);
         assert_eq!(item.zip_path, source);
+    }
+
+    #[test]
+    fn already_installed_is_detected_by_exact_hash() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("map.zip");
+        build_zip(
+            &source,
+            &[("levels/town/info.json", br#"{"title":"Town"}"#)],
+        );
+        let installed_path = temp.path().join("installed-map.zip");
+        fs::copy(&source, &installed_path).unwrap();
+        let size = fs::metadata(&installed_path).unwrap().len() as i64;
+        let same = InstalledArchive {
+            file_name: "map_v1.zip".to_string(),
+            enabled: false,
+            size,
+            path: installed_path,
+            content: HashSet::new(),
+            sub_folder: None,
+        };
+        let analysis = analyze(
+            &source,
+            &[same],
+            &temp.path().join("work1"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let item = &analysis.items[0];
+        assert_eq!(item.kind, IncomingKind::AlreadyInstalled);
+        assert_eq!(item.replaces.as_deref(), Some("map_v1.zip"));
+        assert!(!item.replaces_enabled);
+
+        // Тот же размер, другое содержимое — это не «уже установлен».
+        let other_path = temp.path().join("other_v1.zip");
+        fs::write(&other_path, vec![0u8; size as usize]).unwrap();
+        let different = InstalledArchive {
+            file_name: "other_v1.zip".to_string(),
+            enabled: true,
+            size,
+            path: other_path,
+            content: HashSet::new(),
+            sub_folder: None,
+        };
+        let analysis = analyze(
+            &source,
+            &[different],
+            &temp.path().join("work2"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items[0].kind, IncomingKind::New);
+        assert!(analysis.items[0].replaces.is_none());
+    }
+
+    #[test]
+    fn ambiguous_content_match_is_new_not_update() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("car_a_v9.zip");
+        build_zip(&source, &[("vehicles/car/a.jbeam", b"x")]);
+        let first = installed_with("car_a_v1.zip", true, &["vehicles/car"], None);
+        let second = installed_with("other.zip", true, &["vehicles/car"], None);
+
+        let analysis = analyze(
+            &source,
+            &[first, second],
+            &temp.path().join("work1"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let item = &analysis.items[0];
+        assert_eq!(
+            item.kind,
+            IncomingKind::New,
+            "два равных кандидата — не гадаем"
+        );
+        assert!(item.replaces.is_none());
+
+        // Единственное совпадение по составу — обычное обновление.
+        let unique = installed_with("car_a_v1.zip", true, &["vehicles/car"], None);
+        let analysis = analyze(
+            &source,
+            &[unique],
+            &temp.path().join("work2"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items[0].kind, IncomingKind::Update);
+        assert_eq!(analysis.items[0].replaces.as_deref(), Some("car_a_v1.zip"));
+    }
+
+    #[test]
+    fn update_by_normalized_name_when_content_does_not_match() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("speedo_v1.5.zip");
+        build_zip(&source, &[("ui/modules/app/app.js", b"x")]);
+        let old = installed_with("speedo_v1.0.zip", true, &["lua/ge"], None);
+        let analysis = analyze(
+            &source,
+            &[old],
+            &temp.path().join("work1"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items[0].kind, IncomingKind::Update);
+        assert_eq!(
+            analysis.items[0].replaces.as_deref(),
+            Some("speedo_v1.0.zip")
+        );
+
+        // Два установленных с тем же названием — тоже не гадаем.
+        let first = installed_with("speedo_v1.0.zip", true, &["lua/ge"], None);
+        let second = installed_with("speedo_v1.1.zip", true, &["lua/ge"], None);
+        let analysis = analyze(
+            &source,
+            &[first, second],
+            &temp.path().join("work2"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items[0].kind, IncomingKind::New);
+    }
+
+    #[test]
+    fn update_from_game_repo_subfolder_is_locked() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("car_v2.zip");
+        build_zip(&source, &[("vehicles/car/a.jbeam", b"x")]);
+        let repo = installed_with("car_v1.zip", true, &["vehicles/car"], Some("repo"));
+        let analysis = analyze(
+            &source,
+            &[repo],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let item = &analysis.items[0];
+        assert_eq!(item.kind, IncomingKind::Update);
+        assert_eq!(item.replaces.as_deref(), Some("car_v1.zip"));
+        assert_eq!(item.replaces_sub_folder.as_deref(), Some("repo"));
+        assert!(item.locked(), "мод из подпапки repo не устанавливается");
+    }
+
+    #[test]
+    fn budget_overflow_is_a_clear_problem() {
+        let temp = tempfile::tempdir().unwrap();
+        let big = vec![b'x'; 3000];
+        let inner = stored_zip_bytes(&[("vehicles/a/a.jbeam", big.as_slice())]);
+        let source = temp.path().join("pack.zip");
+        build_zip_stored(
+            &source,
+            &[("a.zip", &inner), ("b.zip", &inner), ("c.zip", &inner)],
+        );
+
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work-small"),
+            IncomingOptions {
+                budget_bytes: 5000,
+                ..IncomingOptions::default()
+            },
+            &AtomicBool::new(false),
+        );
+        assert_eq!(
+            analysis.problem.as_deref(),
+            Some("Архив слишком большой после распаковки")
+        );
+        assert!(analysis.items.is_empty());
+
+        let normal = analyze(
+            &source,
+            &[],
+            &temp.path().join("work-normal"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(normal.problem.is_none(), "{:?}", normal.problem);
+        let names: Vec<&str> = normal
+            .items
+            .iter()
+            .map(|item| item.file_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["a.zip", "b.zip", "c.zip"]);
+    }
+
+    #[test]
+    fn budget_overflow_inside_nested_repack_is_a_clear_problem() {
+        let temp = tempfile::tempdir().unwrap();
+        let big = vec![b'x'; 6000];
+        // Вложенный архив маленький (данные сжаты), но распаковка превышает общий бюджет.
+        let inner = zip_bytes(&[("Car/vehicles/car/big.bin", big.as_slice())]);
+        let source = temp.path().join("pack.zip");
+        build_zip_stored(&source, &[("car.zip", &inner)]);
+
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions {
+                budget_bytes: 5000,
+                ..IncomingOptions::default()
+            },
+            &AtomicBool::new(false),
+        );
+        assert_eq!(
+            analysis.problem.as_deref(),
+            Some("Архив слишком большой после распаковки")
+        );
+        assert!(analysis.items.is_empty());
+    }
+
+    #[test]
+    fn pack_skips_nested_zips_that_are_not_mods() {
+        let temp = tempfile::tempdir().unwrap();
+        let audi = zip_bytes(&[("vehicles/audi/a.jbeam", b"a")]);
+        let readme = zip_bytes(&[("readme.txt", b"x")]);
+        let source = temp.path().join("pack.zip");
+        build_zip(
+            &source,
+            &[("cars/audi.zip", &audi), ("readme.zip", &readme)],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        let names: Vec<&str> = analysis
+            .items
+            .iter()
+            .map(|item| item.file_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["audi.zip"]);
+    }
+
+    #[test]
+    fn random_broken_and_truncated_archives_never_panic() {
+        let temp = tempfile::tempdir().unwrap();
+        let good = zip_bytes(&[
+            ("Car/vehicles/car/a.jbeam", b"a"),
+            ("Car/vehicles/car/info.json", b"{}"),
+            ("inner/x.zip", b"x"),
+        ]);
+        let mut rng = Lcg(18);
+        for i in 0..100u32 {
+            let mut data: Vec<u8> = if i % 2 == 0 {
+                let len = (rng.next() % 400) as usize;
+                (0..len).map(|_| (rng.next() & 0xFF) as u8).collect()
+            } else {
+                let len = 1 + (rng.next() as usize % (good.len() - 1));
+                good[..len].to_vec()
+            };
+            if i % 7 == 0 && data.len() > 4 {
+                data = good.clone();
+                let index = rng.next() as usize % data.len();
+                data[index] ^= 0xFF;
+            }
+            let path = temp.path().join(format!("f{i}.zip"));
+            fs::write(&path, &data).unwrap();
+            let analysis = analyze(
+                &path,
+                &[],
+                &temp.path().join(format!("w{i}")),
+                IncomingOptions::default(),
+                &AtomicBool::new(false),
+            );
+            assert!(
+                analysis.problem.is_some() || !analysis.items.is_empty(),
+                "случай {i}: ни причины, ни модов"
+            );
+        }
     }
 }

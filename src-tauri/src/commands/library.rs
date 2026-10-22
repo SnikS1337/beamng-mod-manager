@@ -291,6 +291,29 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         Utc::now().fixed_offset(),
     );
 
+    if !sync_report.added.is_empty() {
+        let mut by_file: HashMap<String, bmm_domain::library::InstalledMod> = state
+            .library
+            .mods()
+            .into_iter()
+            .map(|item| (item.file_name.to_lowercase(), item))
+            .collect();
+        for file_name in &sync_report.added {
+            let Some(added) = db_read.find(file_name).and_then(|entry| entry.date_added) else {
+                continue;
+            };
+            let Some(item) = by_file.get(&file_name.to_lowercase()).cloned() else {
+                continue;
+            };
+            if added < item.installed_at_utc {
+                let mut updated = item;
+                updated.installed_at_utc = added;
+                state.library.upsert_mod(updated.clone());
+                by_file.insert(updated.file_name.to_lowercase(), updated);
+            }
+        }
+    }
+
     apply_repo_info(state, &db_read, &mods_dir);
 
     let installed_list = state.library.mods();
@@ -531,6 +554,9 @@ fn apply_repo_info(
     }
     let _batch = state.library.batch();
     for installed in state.library.mods() {
+        if state.library.is_checking_declined(&installed.id) {
+            continue;
+        }
         let Some(entry) = db.find(&installed.file_name) else {
             continue;
         };
@@ -782,7 +808,10 @@ fn ensure_preview(state: &AppState, id: &str) -> Option<String> {
             CachedPreview::NoImage => None,
         };
     }
-    let pick = preview::pick(&target.path).ok().flatten();
+    let pick = match preview::pick(&target.path) {
+        Ok(pick) => pick,
+        Err(_) => return None,
+    };
     let Some(pick) = pick else {
         let _ = state.previews.put_no_image(&target.key, &target.file_name);
         return None;
@@ -883,6 +912,7 @@ fn empty_snapshot(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::io::Write;
     use std::sync::Mutex;
 
     use bmm_domain::clock::system_clock;
@@ -1021,5 +1051,104 @@ mod tests {
         assert!(mods.join("mod.zip").is_file());
         assert!(!layout.disabled_dir.join("mod.zip").exists());
         assert!(state.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn declined_repo_mod_keeps_user_title_and_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("mudstone_valley.zip"), b"zip").unwrap();
+        std::fs::write(
+            mods.join("db.json"),
+            include_str!("../../../fixtures/game/db-5mods-0.39.4.json"),
+        )
+        .unwrap();
+        let state = test_state(&temp, &mods);
+        let snapshot = load_snapshot(&state).unwrap();
+        let id = snapshot
+            .mods
+            .iter()
+            .find(|item| item.file_name == "mudstone_valley.zip")
+            .unwrap()
+            .id
+            .clone();
+
+        let synced = state.library.get_mod(&id).unwrap();
+        assert_eq!(synced.name, "Mudstone Valley Ultra 4 & Off Road Racing");
+        assert_eq!(synced.version.as_deref(), Some(".901"));
+        assert_eq!(
+            synced.installed_at_utc.timestamp(),
+            1_792_060_320,
+            "дата установки берётся из db.json"
+        );
+        assert!(
+            state
+                .library
+                .bindings()
+                .iter()
+                .any(|binding| binding.source == "beamng")
+        );
+
+        let mut custom = synced;
+        custom.name = "Моя трасса".to_string();
+        custom.version = None;
+        state.library.upsert_mod(custom);
+        state.library.set_checking_declined(&id, true);
+
+        apply_repo_info(&state, &GameModDb::new(&mods).read(), &mods);
+
+        let after = state.library.get_mod(&id).unwrap();
+        assert_eq!(after.name, "Моя трасса");
+        assert_eq!(after.version, None);
+    }
+
+    #[test]
+    fn preview_error_is_not_cached_as_no_image() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("bad.zip"), b"not a zip").unwrap();
+        let state = test_state(&temp, &mods);
+        let snapshot = load_snapshot(&state).unwrap();
+        let id = snapshot.mods[0].id.clone();
+        let key = state
+            .previews_by_id
+            .lock()
+            .unwrap()
+            .get(&id)
+            .unwrap()
+            .key
+            .clone();
+
+        assert!(ensure_preview(&state, &id).is_none());
+        assert!(
+            state.previews.get(&key).is_none(),
+            "ошибка чтения не должна навсегда запрещать превью"
+        );
+
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&100u32.to_be_bytes());
+        png.extend_from_slice(&100u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        png.extend_from_slice(&[0, 0, 0, 0]);
+        let file = std::fs::File::create(mods.join("bad.zip")).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(
+            "mod_info/car/icon.png",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(&png).unwrap();
+        zip.finish().unwrap();
+
+        let snapshot = load_snapshot(&state).unwrap();
+        let id = snapshot.mods[0].id.clone();
+        assert!(
+            ensure_preview(&state, &id).is_some(),
+            "после исправления архива превью должно появиться"
+        );
     }
 }

@@ -317,4 +317,120 @@ mod tests {
         assert!(has_paid_badge(r#"<span title="Paid content">$</span>"#));
         assert!(!has_paid_badge("<span>Sienna</span>"));
     }
+
+    #[test]
+    fn real_list_has_categories_sizes_and_single_paid_badge() {
+        let list = parse_list(&fixture("list-real.html"));
+        assert_eq!(list.len(), 7);
+        assert!(
+            list.iter().all(|item| item
+                .category
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())),
+            "{:?}",
+            list.iter().map(|item| &item.category).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            list.last().unwrap().category.as_deref(),
+            Some("Motorcycles")
+        );
+        assert!(
+            list.iter()
+                .filter(|item| item.size_bytes.is_some_and(|size| size > 0))
+                .count()
+                >= 6,
+            "размеры читаются"
+        );
+        let paid: Vec<_> = list
+            .iter()
+            .filter(|item| item.price == PriceStatus::Paid)
+            .collect();
+        assert_eq!(paid.len(), 1);
+        assert!(
+            paid[0].title.starts_with("Beach House"),
+            "{}",
+            paid[0].title
+        );
+    }
+
+    #[test]
+    fn real_paid_page_reads_versions_and_patreon_link() {
+        let url = url::Url::parse(
+            "https://www.modland.net/beamng.drive-mods/maps/paid-duskport-realistic-city-map.html",
+        )
+        .unwrap();
+        let basis = Listing::new(SOURCE_ID, url, "a", "[PAID] Duskport");
+        let detail = parse_detail(&fixture("mod-paid-real.html"), &basis);
+        assert_eq!(detail.price, PriceStatus::Paid);
+        assert_eq!(detail.mod_version.as_deref(), Some("0.2.3"));
+        assert_eq!(detail.game_version.as_deref(), Some("0.39.x"));
+        assert!(
+            detail
+                .offers
+                .iter()
+                .any(|offer| offer.kind == OfferKind::PaidLink && offer.host.contains("patreon")),
+            "{:?}",
+            detail.offers
+        );
+    }
+
+    #[test]
+    fn paid_badge_on_detail_page_works_without_download_links() {
+        let html = "<h1 class=\"post-title mb-0\"><span title=\"Paid content\"></span>Some Mod</h1><p>Latest Version 1.0</p>";
+        let basis = Listing::new(
+            SOURCE_ID,
+            url::Url::parse("https://www.modland.net/x.html").unwrap(),
+            "x",
+            "Some Mod",
+        );
+        let detail = parse_detail(html, &basis);
+        assert_eq!(detail.price, PriceStatus::Paid);
+    }
+
+    #[test]
+    fn real_packs_without_badge_are_paid_only_by_author_link() {
+        let cases = [
+            (
+                "pack-wheels-boosty-real.html",
+                "boosty.to",
+                "Biggest Stylish Wheelpack",
+            ),
+            (
+                "pack-golf-kofi-real.html",
+                "ko-fi.com",
+                "1997-2004 Volkswagen Golf 4 Pack",
+            ),
+            (
+                "pack-bmw-kofi-discord-real.html",
+                "ko-fi.com",
+                "BMW 3-Series/M3 Pack (Update 2!)",
+            ),
+        ];
+        for (file, host, title) in cases {
+            let basis = Listing::new(
+                SOURCE_ID,
+                url::Url::parse("https://www.modland.net/x/p.html").unwrap(),
+                "p",
+                title,
+            );
+            let detail = parse_detail(&fixture(file), &basis);
+            assert_eq!(detail.price, PriceStatus::Paid, "{file}");
+            assert!(
+                detail
+                    .offers
+                    .iter()
+                    .any(|offer| offer.kind == OfferKind::PaidLink && offer.host.contains(host)),
+                "{file}: {:?}",
+                detail.offers
+            );
+            assert!(
+                detail
+                    .offers
+                    .iter()
+                    .all(|offer| offer.kind == OfferKind::PaidLink),
+                "{file}: {:?}",
+                detail.offers
+            );
+        }
+    }
 }

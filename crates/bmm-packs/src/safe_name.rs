@@ -108,4 +108,24 @@ mod tests {
             Some("car.zip")
         );
     }
+
+    #[test]
+    fn rejects_windows_invalid_characters_on_any_platform() {
+        for name in [
+            "a:b.zip",
+            "a*.zip",
+            "a?.zip",
+            "a\"b.zip",
+            "a<b.zip",
+            "a>b.zip",
+            "a|b.zip",
+            "car.zip:stream",
+        ] {
+            assert!(safe_file_name(Some(name)).is_none(), "{name:?}");
+        }
+        assert_eq!(
+            safe_file_name(Some("Машина №1 (v2).zip")).as_deref(),
+            Some("Машина №1 (v2).zip")
+        );
+    }
 }

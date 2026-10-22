@@ -239,8 +239,10 @@ pub fn is_challenge_page(text: &str) -> bool {
         "проверяем, человек ли вы",
         "verify you are human",
         "checking if the site connection is secure",
-        "id=\"challenge-",
-        "cf-challenge",
+        "needs to review the security of your connection",
+        "id=\"challenge-form\"",
+        "id=\"challenge-running\"",
+        "id=\"challenge-stage\"",
     ];
     BODY.iter().any(|marker| lower.contains(marker))
 }
@@ -330,12 +332,42 @@ struct CacheEntry {
     response: RawResponse,
 }
 
+#[derive(Debug, Clone)]
+struct SourceState {
+    status: SourceStatus,
+    message: Option<String>,
+    /// До какого момента источник отключён после серии сбоев. `None` — пауза уже не действует:
+    /// одиночный сбой не должен закрывать сайт до перезапуска программы.
+    cooldown_until: Option<Instant>,
+}
+
+impl Default for SourceState {
+    fn default() -> Self {
+        Self {
+            status: SourceStatus::Ok,
+            message: None,
+            cooldown_until: None,
+        }
+    }
+}
+
+/// Пауза после серии сбоев истекла — источник снова доступен. Одиночный сбой
+/// (`cooldown_until = None`) тоже не закрывает сайт навсегда.
+fn refresh_source(state: &mut SourceState) {
+    if state.status == SourceStatus::Unavailable
+        && state
+            .cooldown_until
+            .is_none_or(|until| until <= Instant::now())
+    {
+        *state = SourceState::default();
+    }
+}
+
 pub struct PoliteFetcher {
     fetcher: Arc<dyn PageFetcher>,
     options: PoliteOptions,
     hosts: Mutex<HashMap<String, Arc<HostEntry>>>,
-    sources: Mutex<HashMap<String, SourceStatus>>,
-    source_messages: Mutex<HashMap<String, String>>,
+    sources: Mutex<HashMap<String, SourceState>>,
     cache: Mutex<HashMap<String, CacheEntry>>,
 }
 
@@ -346,22 +378,24 @@ impl PoliteFetcher {
             options,
             hosts: Mutex::new(HashMap::new()),
             sources: Mutex::new(HashMap::new()),
-            source_messages: Mutex::new(HashMap::new()),
             cache: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn status_of(&self, source: &str) -> SourceStatus {
-        self.sources
-            .lock()
-            .unwrap()
-            .get(source)
-            .copied()
-            .unwrap_or(SourceStatus::Ok)
+        let mut sources = self.sources.lock().unwrap();
+        let Some(state) = sources.get_mut(source) else {
+            return SourceStatus::Ok;
+        };
+        refresh_source(state);
+        state.status
     }
 
     pub fn message_of(&self, source: &str) -> Option<String> {
-        self.source_messages.lock().unwrap().get(source).cloned()
+        let mut sources = self.sources.lock().unwrap();
+        let state = sources.get_mut(source)?;
+        refresh_source(state);
+        state.message.clone()
     }
 
     pub fn get(&self, source: &str, url: &Url) -> FetchResult {
@@ -404,7 +438,12 @@ impl PoliteFetcher {
                     .message
                     .clone()
                     .unwrap_or_else(|| format!("Сайт отдыхает ещё {minutes} мин."));
-                self.remember(source, SourceStatus::Unavailable, Some(message.clone()));
+                self.remember(
+                    source,
+                    SourceStatus::Unavailable,
+                    Some(message.clone()),
+                    Some(until),
+                );
                 return FetchResult::failed(SourceStatus::Unavailable, message);
             }
             if inner.status == SourceStatus::NeedsHumanCheck {
@@ -412,7 +451,12 @@ impl PoliteFetcher {
                     .message
                     .clone()
                     .unwrap_or_else(|| "Сайт просит подтвердить, что вы человек.".to_string());
-                self.remember(source, SourceStatus::NeedsHumanCheck, Some(message.clone()));
+                self.remember(
+                    source,
+                    SourceStatus::NeedsHumanCheck,
+                    Some(message.clone()),
+                    None,
+                );
                 return FetchResult::failed(SourceStatus::NeedsHumanCheck, message);
             }
         }
@@ -442,7 +486,12 @@ impl PoliteFetcher {
                         let mut inner = entry.inner.lock().unwrap();
                         inner.status = SourceStatus::NeedsHumanCheck;
                         inner.message = Some(message.clone());
-                        self.remember(source, SourceStatus::NeedsHumanCheck, Some(message.clone()));
+                        self.remember(
+                            source,
+                            SourceStatus::NeedsHumanCheck,
+                            Some(message.clone()),
+                            None,
+                        );
                         return FetchResult {
                             status: SourceStatus::NeedsHumanCheck,
                             response: Some(response),
@@ -461,29 +510,37 @@ impl PoliteFetcher {
                             std::thread::sleep(wait.min(self.options.max_backoff));
                             continue;
                         }
-                    } else if matches!(response.status, 502 | 504 | 520..=524) && attempt == 0 {
+                    } else if matches!(response.status, 502 | 504 | 520..=524) {
+                        // Шлюз/Cloudflare моргнул: ровно один повтор, как в legacy.
+                        // Retry-After важнее нашей паузы, а при retries = 0 спать не за что.
                         last_message =
                             format!("Сайт временно недоступен (код {}).", response.status);
-                        std::thread::sleep(self.options.backoff);
-                        continue;
+                        if attempt < self.options.retries.min(1) {
+                            let wait = response
+                                .retry_after
+                                .unwrap_or_else(|| self.retry_backoff(attempt));
+                            std::thread::sleep(wait.min(self.options.max_backoff));
+                            continue;
+                        }
+                        break;
                     } else {
                         let success = (200..300).contains(&response.status);
                         if success {
-                            if !response.text.is_empty() {
-                                self.store_cache(key, response.clone());
-                            }
+                            // Пустой успешный ответ — тоже ответ: legacy кэширует и его, чтобы
+                            // не дёргать сайт повторно на каждую страницу без результатов.
+                            self.store_cache(key, response.clone());
                             let mut inner = entry.inner.lock().unwrap();
                             inner.failures = 0;
                             inner.status = SourceStatus::Ok;
                             inner.message = None;
-                            self.remember(source, SourceStatus::Ok, None);
+                            self.remember(source, SourceStatus::Ok, None, None);
                             return FetchResult::ok(response);
                         }
                         if matches!(response.status, 404 | 410) {
                             let mut inner = entry.inner.lock().unwrap();
                             inner.failures = 0;
                             inner.status = SourceStatus::Ok;
-                            self.remember(source, SourceStatus::Ok, None);
+                            self.remember(source, SourceStatus::Ok, None, None);
                             return FetchResult::ok(response);
                         }
                         last_message = format!("Сайт вернул ошибку {}.", response.status);
@@ -491,7 +548,12 @@ impl PoliteFetcher {
                 }
                 Err(error) => {
                     last_message = error.user_message();
-                    if attempt < self.options.retries && matches!(error, FetchError::Timeout) {
+                    // Legacy повторяет и таймаут, и обрыв соединения (IOException /
+                    // HttpRequestException). Прочие ошибки (слишком большой ответ,
+                    // неверный адрес) повтором не лечатся.
+                    if attempt < self.options.retries
+                        && matches!(error, FetchError::Timeout | FetchError::Network)
+                    {
                         std::thread::sleep(self.retry_backoff(attempt));
                         continue;
                     }
@@ -531,25 +593,32 @@ impl PoliteFetcher {
             inner.blocked_until = Some(Instant::now() + self.options.cooldown);
             inner.failures = 0;
         }
+        let cooldown_until = inner.blocked_until;
         drop(inner);
-        self.remember(source, SourceStatus::Unavailable, Some(message.clone()));
+        self.remember(
+            source,
+            SourceStatus::Unavailable,
+            Some(message.clone()),
+            cooldown_until,
+        );
         FetchResult::failed(SourceStatus::Unavailable, message)
     }
 
-    fn remember(&self, source: &str, status: SourceStatus, message: Option<String>) {
-        self.sources
-            .lock()
-            .unwrap()
-            .insert(source.to_string(), status);
-        let mut messages = self.source_messages.lock().unwrap();
-        match message {
-            Some(message) => {
-                messages.insert(source.to_string(), message);
-            }
-            None => {
-                messages.remove(source);
-            }
-        }
+    fn remember(
+        &self,
+        source: &str,
+        status: SourceStatus,
+        message: Option<String>,
+        cooldown_until: Option<Instant>,
+    ) {
+        self.sources.lock().unwrap().insert(
+            source.to_string(),
+            SourceState {
+                status,
+                message,
+                cooldown_until,
+            },
+        );
     }
 
     fn cached(&self, key: &str) -> Option<RawResponse> {
@@ -596,8 +665,7 @@ impl PoliteFetcher {
         self.sources
             .lock()
             .unwrap()
-            .insert(source.to_string(), SourceStatus::Ok);
-        self.source_messages.lock().unwrap().remove(source);
+            .insert(source.to_string(), SourceState::default());
     }
 }
 
@@ -665,6 +733,11 @@ mod tests {
         Url::parse(text).unwrap()
     }
 
+    fn fixture(path: &str) -> String {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        std::fs::read_to_string(root.join(path)).unwrap()
+    }
+
     #[test]
     fn decodes_windows_1251_from_meta() {
         let bytes = b"<html><head><meta charset=\"windows-1251\"></head><body>\xcf\xf0\xe8\xe2\xe5\xf2</body></html>";
@@ -692,6 +765,36 @@ mod tests {
         assert!(!is_challenge_page(
             "<html><head><title>ACNG Tire Heat</title></head><body>mod</body></html>"
         ));
+    }
+
+    #[test]
+    fn challenge_markers_do_not_fire_on_normal_pages() {
+        assert!(is_challenge_page(
+            "<html><body>Needs to review the security of your connection before proceeding.</body></html>"
+        ));
+        assert!(is_challenge_page(
+            "<html><body><div id=\"challenge-running\"></div></body></html>"
+        ));
+        // Обычная карточка мода с подключённым скриптом Cloudflare — не проверка.
+        assert!(!is_challenge_page(
+            "<html><head><title>Мод</title><script src=\"/cdn-cgi/challenge-platform/scripts/precursor/main.js\"></script></head><body>BMW E34</body></html>"
+        ));
+        assert!(!is_challenge_page(
+            "<html><body><a href=\"https://example.org/cf-challenge\">challenge</a></body></html>"
+        ));
+    }
+
+    #[test]
+    fn real_pages_are_not_challenges() {
+        for path in [
+            "modland/list-real.html",
+            "modland/mod-paid-real.html",
+            "modsgaming/list-real.html",
+            "stmods/list-real.html",
+            "beamng/list-real.html",
+        ] {
+            assert!(!is_challenge_page(&fixture(path)), "{path}");
+        }
     }
 
     #[test]
@@ -793,6 +896,100 @@ mod tests {
     }
 
     #[test]
+    fn retries_network_errors_like_legacy() {
+        for error in [FetchError::Network, FetchError::Timeout] {
+            let fake = FakeFetcher::new(vec![Err(error), Ok(response(200, "<html>ok</html>"))]);
+            let polite = PoliteFetcher::new(fake.clone(), options());
+            let result = polite.get("site", &url("https://example.org/mod"));
+            assert_eq!(result.status, SourceStatus::Ok);
+            assert_eq!(fake.calls.lock().unwrap().len(), 2);
+        }
+        // Прочие ошибки (например, слишком большой ответ) не повторяются.
+        let fake = FakeFetcher::new(vec![Err(FetchError::TooLarge), Ok(response(200, "ok"))]);
+        let polite = PoliteFetcher::new(fake.clone(), options());
+        assert_eq!(
+            polite.get("site", &url("https://example.org/mod")).status,
+            SourceStatus::Unavailable
+        );
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn gateway_502_waits_retry_after_and_respects_zero_retries() {
+        let mut retry_after = response(502, "bad gateway");
+        retry_after.retry_after = Some(Duration::from_millis(40));
+        let fake = FakeFetcher::new(vec![Ok(retry_after), Ok(response(200, "ok"))]);
+        let mut opts = options();
+        opts.retries = 2;
+        opts.backoff = Duration::from_secs(5);
+        opts.max_backoff = Duration::from_secs(60);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let started = Instant::now();
+        let result = polite.get("site", &url("https://example.org/mod"));
+        assert_eq!(result.status, SourceStatus::Ok);
+        assert_eq!(fake.calls.lock().unwrap().len(), 2);
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(30), "{elapsed:?}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Retry-After важнее backoff: {elapsed:?}"
+        );
+
+        // retries = 0: один запрос и никакого сна, даже если backoff большой.
+        let mut opts = options();
+        opts.retries = 0;
+        opts.backoff = Duration::from_secs(5);
+        let fake = FakeFetcher::new(vec![Ok(response(520, "cloudflare"))]);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let started = Instant::now();
+        let result = polite.get("site", &url("https://example.org/mod"));
+        assert_eq!(result.status, SourceStatus::Unavailable);
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+
+        // Шлюз не ожил: ровно один повтор, а не 1 + retries запросов.
+        let fake = FakeFetcher::new(vec![
+            Ok(response(502, "bad gateway")),
+            Ok(response(502, "bad gateway")),
+        ]);
+        let mut opts = options();
+        opts.retries = 2;
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        assert_eq!(
+            polite.get("site", &url("https://example.org/mod")).status,
+            SourceStatus::Unavailable
+        );
+        assert_eq!(fake.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn caches_empty_success_and_expires_by_ttl() {
+        let fake = FakeFetcher::new(vec![
+            Ok(response(200, "")),
+            Ok(response(200, "")),
+            Ok(response(200, "")),
+        ]);
+        let mut opts = options();
+        opts.cache_ttl = Duration::from_millis(200);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/empty");
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        assert_eq!(fake.calls.lock().unwrap().len(), 1, "пустой 200 кэширован");
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        assert_eq!(
+            fake.calls.lock().unwrap().len(),
+            2,
+            "после TTL — снова в сеть"
+        );
+    }
+
+    #[test]
     fn challenge_latches_source() {
         let fake = FakeFetcher::new(vec![Ok(response(
             200,
@@ -813,7 +1010,9 @@ mod tests {
             Err(FetchError::Network),
             Err(FetchError::Network),
         ]);
-        let polite = PoliteFetcher::new(fake.clone(), options());
+        let mut opts = options();
+        opts.retries = 0;
+        let polite = PoliteFetcher::new(fake.clone(), opts);
         let page = url("https://example.org/mod");
         for _ in 0..3 {
             polite.clear_cache();
@@ -821,6 +1020,50 @@ mod tests {
         }
         assert_eq!(polite.status_of("site"), SourceStatus::Unavailable);
         assert!(polite.message_of("site").is_some());
+    }
+
+    #[test]
+    fn single_failure_does_not_latch_and_cooldown_expires() {
+        // Одиночный сбой: следующий поиск снова пробует сайт (как StatusOf в legacy).
+        let fake = FakeFetcher::new(vec![
+            Err(FetchError::Network),
+            Ok(response(200, "<html>ok</html>")),
+        ]);
+        let mut opts = options();
+        opts.retries = 0;
+        opts.cooldown = Duration::from_millis(40);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/mod");
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Unavailable);
+        assert_eq!(
+            polite.status_of("site"),
+            SourceStatus::Ok,
+            "один сбой не закрывает сайт"
+        );
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+
+        // Три сбоя подряд закрывают сайт на cooldown; после него — снова Ok и запрос проходит.
+        let fake = FakeFetcher::new(vec![
+            Err(FetchError::Network),
+            Err(FetchError::Network),
+            Err(FetchError::Network),
+            Ok(response(200, "<html>ok</html>")),
+        ]);
+        let mut opts = options();
+        opts.retries = 0;
+        opts.cooldown = Duration::from_millis(250);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        for _ in 0..3 {
+            polite.clear_cache();
+            assert_eq!(polite.get("site", &page).status, SourceStatus::Unavailable);
+        }
+        assert_eq!(polite.status_of("site"), SourceStatus::Unavailable);
+        assert_eq!(fake.calls.lock().unwrap().len(), 3);
+        std::thread::sleep(Duration::from_millis(350));
+        assert_eq!(polite.status_of("site"), SourceStatus::Ok);
+        assert!(polite.message_of("site").is_none(), "причина сбоя снята");
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        assert_eq!(fake.calls.lock().unwrap().len(), 4);
     }
 
     #[test]

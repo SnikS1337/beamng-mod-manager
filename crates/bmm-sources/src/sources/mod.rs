@@ -120,7 +120,9 @@ mod tests {
                 fixture(&["stmods", "mod-real.html"])
             } else if url.path().starts_with("/beamng_drive") {
                 fixture(&["stmods", "list-real.html"])
-            } else if url.path().starts_with("/load/0-0-1") {
+            } else if url.path().starts_with("/load/0-0-1")
+                || url.path() == "/load/beamng_drive/mashiny/38-1-0-160435"
+            {
                 fixture(&["modsgaming", "mod-page.html"])
             } else if url.path().starts_with("/load/beamng_drive") {
                 fixture(&["modsgaming", "list-page.html"])
@@ -160,7 +162,7 @@ mod tests {
         }
     }
 
-    fn polite(fake: Arc<FakeFetcher>) -> Arc<PoliteFetcher> {
+    fn polite(fake: Arc<dyn PageFetcher>) -> Arc<PoliteFetcher> {
         Arc::new(PoliteFetcher::new(
             fake,
             PoliteOptions {
@@ -175,6 +177,66 @@ mod tests {
                 cooldown: std::time::Duration::from_secs(60),
             },
         ))
+    }
+
+    /// Отдаёт одну и ту же страницу на любой адрес: удобно для заглушек и «редизайна».
+    struct FixedFetcher {
+        text: String,
+    }
+
+    impl PageFetcher for FixedFetcher {
+        fn get(&self, url: &Url) -> Result<RawResponse, crate::net::FetchError> {
+            Ok(RawResponse {
+                status: 200,
+                text: self.text.clone(),
+                final_url: url.clone(),
+                retry_after: None,
+            })
+        }
+    }
+
+    /// Отвечает по адресу: `None` — 404. Считает запросы.
+    type Route = Box<dyn Fn(&Url) -> Option<String> + Send + Sync>;
+
+    struct RouteFetcher {
+        route: Route,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl RouteFetcher {
+        fn new<F>(route: F) -> Arc<Self>
+        where
+            F: Fn(&Url) -> Option<String> + Send + Sync + 'static,
+        {
+            Arc::new(Self {
+                route: Box::new(route),
+                calls: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl PageFetcher for RouteFetcher {
+        fn get(&self, url: &Url) -> Result<RawResponse, crate::net::FetchError> {
+            self.calls.lock().unwrap().push(url.to_string());
+            match (self.route)(url) {
+                Some(text) => Ok(RawResponse {
+                    status: 200,
+                    text,
+                    final_url: url.clone(),
+                    retry_after: None,
+                }),
+                None => Ok(RawResponse {
+                    status: 404,
+                    text: String::new(),
+                    final_url: url.clone(),
+                    retry_after: None,
+                }),
+            }
+        }
     }
 
     fn cancel() -> AtomicBool {
@@ -226,7 +288,8 @@ mod tests {
         let source = modsgaming::ModsGamingSource::new(polite(fake));
         let feed = source.feed_page(1, &cancel()).unwrap();
         assert_eq!(feed.len(), 2);
-        let url = Url::parse("https://modsgaming.ru/load/0-0-1-160435-20").unwrap();
+        let url =
+            Url::parse("https://modsgaming.ru/load/beamng_drive/mashiny/38-1-0-160435").unwrap();
         let detail = source.listing(&url, &cancel()).unwrap().unwrap();
         assert_eq!(detail.author.as_deref(), Some("Infiniti"));
     }
@@ -239,5 +302,234 @@ mod tests {
         assert_eq!(found.len(), 9);
         assert!(found.iter().all(|item| source.is_mod_page(&item.url)));
         assert!(fake.calls.lock().unwrap().len() >= 2);
+    }
+
+    fn all_sources(fetcher: Arc<PoliteFetcher>) -> Vec<Arc<dyn ModSource>> {
+        vec![
+            Arc::new(modland::ModlandSource::new(fetcher.clone())),
+            Arc::new(stmods::StModsSource::new(fetcher.clone())),
+            Arc::new(modsgaming::ModsGamingSource::new(fetcher.clone())),
+            Arc::new(beamng::BeamNgRepoSource::new(fetcher)),
+        ]
+    }
+
+    #[test]
+    fn is_mod_page_matrix_all_four_sites() {
+        let fake = FakeFetcher::new();
+        let sources = all_sources(polite(fake));
+        let mods = [
+            "https://www.modland.net/beamng.drive-mods/cars/toyota-sienna-4.html",
+            "https://modland.net/beamng.drive-mods/maps/paid-duskport-realistic-city-map.html",
+            "https://www.modland.net/beamng.drive-mods/2011-2017-toyota-sienna.html",
+            "http://www.modland.net/BeamNG.drive-mods/cars/x.html",
+            "https://stmods.org/beamng_drive/mods/bmw_e34_by_matissator_for_beamng/",
+            "https://stmods.org/beamng_drive/mods/bmw_e34_by_matissator_for_beamng",
+            "https://modsgaming.ru/load/beamng_drive/mashiny/38-1-0-160435",
+            "https://modsgaming.ru/load/beamng_drive/mashiny/mod_vaz_2106_v6_0_0_38_x_dlja_beamng_drive",
+            "https://modsgaming.ru/load/beamng_drive/karty/mod_karta_domik_v_derevne_v1_0_0_38_x_dlja_beamng_drive",
+            "https://beamng.com/resources/acng-tire-heat-pressure-wear.34567/",
+            "https://www.beamng.com/resources/acng.34567/updates",
+        ];
+        for raw in mods {
+            let url = Url::parse(raw).unwrap();
+            let owners: Vec<&str> = sources
+                .iter()
+                .filter(|source| source.is_mod_page(&url))
+                .map(|source| source.id())
+                .collect();
+            assert_eq!(owners.len(), 1, "{raw}: {owners:?}");
+        }
+
+        let sections = [
+            "https://www.modland.net/",
+            "https://www.modland.net/beamng.drive-mods",
+            "https://www.modland.net/beamng.drive-mods/cars",
+            "https://www.modland.net/beamng.drive-mods/page/2",
+            "https://www.modland.net/beamng.drive-mods/version/039x",
+            "https://www.modland.net/search/sienna",
+            "https://www.modland.net/user/rudd",
+            "https://www.modland.net/news",
+            "https://www.modland.net/gta-5-mods/vehicles/cars/2017-toyota-sienna-xle-premium-10-replaceadd-on.html",
+            "https://www.modland.net/beamng.drive-mods/.html",
+            "https://stmods.org/",
+            "https://stmods.org/beamng_drive/",
+            "https://stmods.org/beamng_drive/mods/",
+            "https://stmods.org/search.php?search_request=x",
+            "https://stmods.org/x/",
+            "https://modsgaming.ru/",
+            "https://modsgaming.ru/load/beamng_drive/mashiny/38",
+            "https://modsgaming.ru/load/beamng_drive/mashiny/38-2",
+            "https://modsgaming.ru/load/beamng_drive/mashiny",
+            "https://modsgaming.ru/search/?q=sienna&t=0",
+            "https://modsgaming.ru/load/farming_simulator/traktory/mod_x",
+            "https://beamng.com/",
+            "https://beamng.com/resources/",
+            "https://beamng.com/resources/categories/vehicles.2/",
+            "https://beamng.com/forums/x.12/",
+            "https://evil.example/beamng_drive/mods/x/",
+            "ftp://stmods.org/beamng_drive/mods/x/",
+        ];
+        for raw in sections {
+            let url = Url::parse(raw).unwrap();
+            assert!(
+                sources.iter().all(|source| !source.is_mod_page(&url)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_listing_rejects_feeds_stubs_and_non_mod_urls() {
+        let st_url =
+            Url::parse("https://stmods.org/beamng_drive/mods/bmw_e34_by_matissator_for_beamng/")
+                .unwrap();
+        let st_feed = Url::parse("https://stmods.org/beamng_drive/").unwrap();
+        let mg_url =
+            Url::parse("https://modsgaming.ru/load/beamng_drive/mashiny/38-1-0-160435").unwrap();
+        let ng_url = Url::parse("https://beamng.com/resources/acng.34567/").unwrap();
+
+        let st = stmods::StModsSource::new(polite(FakeFetcher::new()));
+        let page = st.listing(&st_url, &cancel()).unwrap().unwrap();
+        assert_eq!(page.mod_version.as_deref(), Some("3.3"));
+        assert!(
+            st.listing(&st_feed, &cancel()).unwrap().is_none(),
+            "ссылка на раздел не открывается как карточка"
+        );
+
+        let stubs = [
+            String::new(),
+            "<html><body></body></html>".to_string(),
+            "<html><head><title>Сайт на обслуживании</title></head><body><h1>Скоро вернёмся</h1></body></html>".to_string(),
+            "<h1>404 — страница не найдена</h1>".to_string(),
+            fixture(&["stmods", "list-real.html"]),
+            fixture(&["modsgaming", "list-real.html"]),
+            fixture(&["beamng", "list-real.html"]),
+        ];
+        for stub in stubs {
+            let page = Arc::new(FixedFetcher { text: stub.clone() });
+            let st = stmods::StModsSource::new(polite(page.clone()));
+            assert!(
+                st.listing(&st_url, &cancel()).unwrap().is_none(),
+                "STMods: заглушка не читается ({} символов)",
+                stub.len()
+            );
+            let mg = modsgaming::ModsGamingSource::new(polite(page.clone()));
+            assert!(
+                mg.listing(&mg_url, &cancel()).unwrap().is_none(),
+                "ModsGaming: заглушка не читается ({} символов)",
+                stub.len()
+            );
+            let ng = beamng::BeamNgRepoSource::new(polite(page));
+            assert!(
+                ng.listing(&ng_url, &cancel()).unwrap().is_none(),
+                "BeamNG: заглушка не читается ({} символов)",
+                stub.len()
+            );
+        }
+    }
+
+    #[test]
+    fn read_listing_does_not_fetch_sections() {
+        let fake = FakeFetcher::new();
+        let st = stmods::StModsSource::new(polite(fake.clone()));
+        let feed = Url::parse("https://stmods.org/beamng_drive/").unwrap();
+        assert!(st.listing(&feed, &cancel()).unwrap().is_none());
+        let search = Url::parse("https://stmods.org/search.php?search_request=x").unwrap();
+        assert!(st.listing(&search, &cancel()).unwrap().is_none());
+        let foreign = Url::parse("https://evil.example/beamng_drive/mods/x/").unwrap();
+        assert!(st.listing(&foreign, &cancel()).unwrap().is_none());
+        assert!(fake.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stmods_redesign_degrades_to_not_readable() {
+        let html = fixture(&["stmods", "mod-real.html"]);
+        let url =
+            Url::parse("https://stmods.org/beamng_drive/mods/bmw_e34_by_matissator_for_beamng/")
+                .unwrap();
+        let card = |html: String| {
+            let source = stmods::StModsSource::new(polite(Arc::new(FixedFetcher { text: html })));
+            source.listing(&url, &cancel()).unwrap()
+        };
+
+        let no_version = card(html.replace(
+            "Мод BMW E34 версия 3.3 для BeamNG.drive (v0.39.x)",
+            "BMW E34",
+        ))
+        .expect("размер из кнопки остаётся");
+        assert!(no_version.mod_version.is_none());
+        assert_eq!(no_version.size_bytes, Some(223_053_086));
+
+        let no_button = card(
+            html.replace("Скачать мод (", "Download (")
+                .replace("download_file.php", "get.php"),
+        )
+        .expect("версия остаётся");
+        assert_eq!(no_button.mod_version.as_deref(), Some("3.3"));
+        assert!(no_button.offers.is_empty());
+
+        let both = html
+            .replace(
+                "Мод BMW E34 версия 3.3 для BeamNG.drive (v0.39.x)",
+                "BMW E34",
+            )
+            .replace("Скачать мод (", "Download (")
+            .replace("download_file.php", "get.php");
+        assert_eq!(common::page_title(&both), "BMW E34");
+        assert!(
+            card(both).is_none(),
+            "без версии и файла страница не читается"
+        );
+    }
+
+    #[test]
+    fn modsgaming_real_search_keeps_everything_and_drops_typos() {
+        let html = fixture(&["modsgaming", "search-real.html"]);
+        let all = crate::parsers::modsgaming::parse_search(&html).len();
+        assert!(all > 0);
+
+        let full = html.clone();
+        let every = modsgaming::ModsGamingSource::new(polite(RouteFetcher::new(move |_| {
+            Some(full.clone())
+        })));
+        assert_eq!(every.search("sienna", &cancel()).unwrap().len(), all);
+
+        // Опечатка: как есть сайт ничего не нашёл, с «beamng.drive» — всё
+        // подряд по «beamng»; из широкой выдачи не берём ничего.
+        let wide_html = html.clone();
+        let routes = RouteFetcher::new(move |url| {
+            let wide = url
+                .query_pairs()
+                .any(|(key, value)| key == "q" && value.contains("beamng.drive"));
+            Some(if wide {
+                wide_html.clone()
+            } else {
+                String::new()
+            })
+        });
+        let exact_empty =
+            modsgaming::ModsGamingSource::new(polite(Arc::clone(&routes) as Arc<dyn PageFetcher>));
+        assert_eq!(exact_empty.search("bmv", &cancel()).unwrap().len(), 0);
+        let calls = routes.calls();
+        assert!(calls.len() >= 2, "точный и широкий запросы: {calls:?}");
+        assert!(calls[0].contains("q=bmv&t=0"), "{calls:?}");
+        assert!(
+            calls.iter().any(|call| call.contains("beamng.drive")),
+            "{calls:?}"
+        );
+
+        // Слово только в описании (TAA): запрос как есть находит, широкая пуста.
+        let exact_html = html.clone();
+        let wide_empty = modsgaming::ModsGamingSource::new(polite(RouteFetcher::new(move |url| {
+            let wide = url
+                .query_pairs()
+                .any(|(key, value)| key == "q" && value.contains("beamng.drive"));
+            Some(if wide {
+                String::new()
+            } else {
+                exact_html.clone()
+            })
+        })));
+        assert_eq!(wide_empty.search("TAA", &cancel()).unwrap().len(), all);
     }
 }

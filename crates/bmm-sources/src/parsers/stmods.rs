@@ -208,4 +208,22 @@ mod tests {
         assert!(is_update_marked("<div class=\"label\">ОБНОВЛЕНИЕ</div>"));
         assert!(!is_update_marked("<div>МОД</div>"));
     }
+
+    #[test]
+    fn real_search_card_keeps_exact_preview_and_author() {
+        let list = parse_list(&fixture("search-beamng-2026-10-18.html"));
+        assert_eq!(list.len(), 2);
+        assert_eq!(
+            list[0].title,
+            "BMW E34 версия 3.3 для BeamNG.drive (v0.39.x)"
+        );
+        assert_eq!(list[0].mod_version.as_deref(), Some("3.3"));
+        assert_eq!(list[0].author.as_deref(), Some("matissator"));
+        assert_eq!(
+            list[0].preview_url.as_ref().map(url::Url::as_str),
+            Some(
+                "https://stmods.org/beamng_drive/mods/bmw_e34_by_matissator_for_beamng/bmw_e34_by_matissator_for_beamng_img1pre.jpg?6acc95e59b8c2"
+            )
+        );
+    }
 }

@@ -233,6 +233,27 @@ mod tests {
     }
 
     #[test]
+    fn prerelease_words_with_spaces_are_ordered() {
+        assert_eq!(cmp("1.0 beta", "1.0 rc"), VersionOrder::Newer);
+        assert_eq!(cmp("1.0", "1.0 beta"), VersionOrder::Older);
+        assert_eq!(cmp("1.0 beta", "1.0 beta"), VersionOrder::Same);
+        assert_eq!(cmp("2.0 Bold Edition", "2.0"), VersionOrder::Same);
+        assert_eq!(cmp("1.2 Adventure", "1.2"), VersionOrder::Same);
+    }
+
+    #[test]
+    fn huge_numbers_and_garbage_do_not_panic() {
+        assert_eq!(cmp("1.99999999999999999999", "1.0"), VersionOrder::Unknown);
+        let huge = format!("{}.1", "9".repeat(5000));
+        assert_eq!(cmp(&huge, "1.0"), VersionOrder::Unknown);
+        for text in ["", " ", "..", "v", "1.", ".1", "1..2", "-1.0", "版本"] {
+            let _ = cmp(text, "1.0");
+            let _ = cmp("1.0", text);
+        }
+        assert_eq!(VersionComparer::try_parse(Some(&huge)), None);
+    }
+
+    #[test]
     fn size_differences_use_tolerance() {
         assert!(!SizeComparer::differs(None, Some(100)));
         assert!(!SizeComparer::differs(Some(0), Some(100)));
