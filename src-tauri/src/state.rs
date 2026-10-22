@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use tokio::sync::Semaphore;
 
@@ -26,6 +27,13 @@ pub struct DeletedTicket {
     pub was_enabled: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct CachedContent {
+    pub len: u64,
+    pub modified: Option<SystemTime>,
+    pub content: HashSet<String>,
+}
+
 pub struct AppState {
     pub paths: AppPaths,
     pub settings: SettingsStore,
@@ -36,6 +44,7 @@ pub struct AppState {
     pub pending: Mutex<HashMap<String, bool>>,
     pub preview_gate: Arc<Semaphore>,
     pub deleted: Mutex<HashMap<String, DeletedTicket>>,
+    pub content_cache: Mutex<HashMap<PathBuf, CachedContent>>,
 }
 
 impl AppState {
