@@ -48,6 +48,7 @@ pub fn run() {
     if let Err(error) = paths.ensure_dirs() {
         eprintln!("[bmm] не удалось создать каталоги данных: {error}");
     }
+    commands::app_update::remember_rolled_back(&paths.root().join("update-skip.txt"));
 
     let matches = Arc::new(MatchDecisionStore::new(
         Some(paths.matches()),
@@ -132,7 +133,8 @@ pub fn run() {
                 prepared: None,
                 cancel: bmm_app_release::CancelToken::new(),
                 update_dir: paths.update_dir(),
-                skipped_path: paths.update_dir().join("skipped-version.txt"),
+                // Там же, где у 0.3.x: папку обновления чистят после каждого обновления.
+                skipped_path: paths.root().join("update-skip.txt"),
                 manifest_url: "https://github.com/SnikS1337/beamng-mod-manager/releases/latest/download/latest.json"
                     .parse()
                     .expect("статический адрес обновлений"),
@@ -168,6 +170,15 @@ pub fn run() {
                 .build(),
         )
         .manage(state)
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+            {
+                let update_dir = webview.state::<Arc<AppState>>().paths.update_dir();
+                static HEALTHY: std::sync::Once = std::sync::Once::new();
+                HEALTHY.call_once(|| commands::app_update::on_healthy(update_dir));
+            }
+        })
         .register_uri_scheme_protocol("bmm", |context, request| {
             preview_protocol(context.app_handle(), request)
         })

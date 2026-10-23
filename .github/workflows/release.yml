@@ -45,6 +45,20 @@ jobs:
           if (-not (Select-String -Path src-tauri/tauri.conf.json -Pattern "`"version`": `"$version`"" -Quiet)) {
             throw "В tauri.conf.json нет версии $version."
           }
+          if (-not (Select-String -Path package.json -Pattern "`"version`": `"$version`"" -Quiet)) {
+            throw "В package.json нет версии $version."
+          }
+
+      - name: Заметки из CHANGES.md
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          $text = Get-Content CHANGES.md -Raw -Encoding utf8
+          $pattern = "(?ms)^## $([regex]::Escape($version))[ \t]*\r?\n(.*?)(?=^## |\z)"
+          if ($text -notmatch $pattern) { throw "В CHANGES.md нет раздела ## $version" }
+          $notes = $Matches[1].Trim()
+          if (-not $notes) { throw "Раздел ## $version в CHANGES.md пуст" }
+          Set-Content -Path notes.md -Value $notes -Encoding utf8NoBOM
 
       - name: Сборка окна
         run: npm run tauri build -- --no-bundle
@@ -60,7 +74,7 @@ jobs:
           $size = (Get-Item $zip).Length
           $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$zip"
-          $notes = "Обновление $version"
+          $notes = (Get-Content notes.md -Raw -Encoding utf8).Trim()
           $manifest = [ordered]@{
             version = $version
             url = $url
@@ -74,7 +88,7 @@ jobs:
       - name: Публикация
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: notes.md
           files: |
             BeamModManager-*.zip
             latest.json
