@@ -7,9 +7,8 @@
   const fireflies = $derived(appearance.settings?.fireflies ?? true);
   const tilt = $derived(appearance.settings?.backgroundTilt ?? false);
   const motion = $derived(appearance.settings?.uiAnimations ?? true);
-  const reducedMotion =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Флажок Windows «анимация элементов» движение не выключает: только настройки программы (0.3.11).
+  const reducedMotion = false;
 
   const flies = Array.from({ length: 18 }, (_, index) => ({
     left: ((index * 37 + 11) % 96) + 2,
@@ -172,14 +171,4 @@
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .flies span {
-      animation: none;
-      opacity: 0.35;
-    }
-
-    .blobs {
-      transition: none;
-    }
-  }
 </style>

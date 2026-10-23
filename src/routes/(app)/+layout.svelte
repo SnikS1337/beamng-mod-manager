@@ -58,11 +58,10 @@
     position: relative;
     z-index: 10;
     display: grid;
-    grid-template-columns: 96px minmax(0, 1fr);
-    gap: 12px;
-    height: calc(100vh - 44px);
-    margin-top: 44px;
-    padding: 0 12px 12px;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 16px;
+    height: 100vh;
+    padding: 16px;
   }
 
   .content {
@@ -73,7 +72,8 @@
 
   @media (max-width: 1020px) {
     .workspace {
-      grid-template-columns: 76px minmax(0, 1fr);
+      grid-template-columns: 84px minmax(0, 1fr);
+      gap: 12px;
     }
   }
 </style>

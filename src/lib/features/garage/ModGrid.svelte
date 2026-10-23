@@ -18,17 +18,18 @@
     renderedCount?: number;
   } = $props();
 
-  const ROW_HEIGHT = 218;
-  const GAP = 14;
+  // Как в legacy: карточка 236 высотой, промежуток 20, ширина 280–340 → 2–6 колонок.
+  const CARD_HEIGHT = 236;
+  const GAP = 20;
+  const ROW_HEIGHT = CARD_HEIGHT + GAP;
+  const MIN_CARD = 280;
 
   let viewport = $state<HTMLDivElement | null>(null);
   let width = $state(0);
   let height = $state(0);
   let scrollTop = $state(0);
 
-  let columns = $derived(
-    width < 620 ? 2 : width < 930 ? 3 : width < 1660 ? 4 : width < 2000 ? 5 : 6,
-  );
+  let columns = $derived(Math.min(6, Math.max(2, Math.floor((width + GAP) / (MIN_CARD + GAP)))));
   let rows = $derived(Math.ceil(items.length / columns));
   let startRow = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1));
   let endRow = $derived(

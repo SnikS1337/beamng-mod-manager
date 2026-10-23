@@ -154,13 +154,13 @@
 <style>
   .card {
     position: relative;
-    height: 204px;
-    border: 1px solid var(--glass-border);
-    border-radius: 18px;
+    height: 236px;
+    border: 1px solid rgb(255 255 255 / 0.16);
+    border-radius: 26px;
     background: var(--glass-fill);
     box-shadow:
-      inset 0 1px 0 var(--glass-highlight),
-      0 12px 30px rgb(0 0 0 / 0.14);
+      inset 0 1px 0 rgb(255 255 255 / 0.28),
+      0 16px 32px rgb(8 12 24 / 0.22);
     cursor: default;
     overflow: hidden;
     transition:
@@ -169,25 +169,29 @@
       box-shadow 220ms ease;
   }
 
+  /* Наведение (legacy): приподнимается на 5 px, голубое свечение и светлая окантовка. */
   .card:hover {
-    transform: translateY(-2px);
-    border-color: color-mix(in oklab, var(--primary) 40%, var(--glass-border));
+    transform: translateY(-5px);
+    border-color: rgb(255 255 255 / 0.55);
     box-shadow:
-      inset 0 1px 0 var(--glass-highlight),
-      0 18px 38px rgb(0 0 0 / 0.22);
+      inset 0 1px 0 rgb(255 255 255 / 0.4),
+      0 22px 40px rgb(8 12 24 / 0.28),
+      0 0 26px rgb(170 205 255 / 0.28);
   }
 
   .card:focus-visible {
-    outline: 2px solid var(--ring);
+    outline: 3px solid var(--ring);
     outline-offset: 2px;
   }
 
+  /* Выбранная — без обводки: приподнята, кромка ярче, холодное свечение снизу. */
   .card.selected {
-    border-color: color-mix(in oklab, var(--primary) 70%, white 10%);
+    transform: translateY(-4px);
+    border-color: rgb(255 255 255 / 0.5);
     box-shadow:
-      inset 0 1px 0 var(--glass-highlight),
-      0 0 0 1px color-mix(in oklab, var(--primary) 55%, transparent),
-      0 20px 44px rgb(0 0 0 / 0.26);
+      inset 0 1px 0 rgb(255 255 255 / 0.45),
+      0 22px 44px rgb(8 12 24 / 0.3),
+      0 14px 34px rgb(150 190 255 / 0.32);
   }
 
   .thumb {
@@ -217,7 +221,7 @@
     justify-content: center;
     gap: 7px;
     color: rgb(255 255 255 / 0.46);
-    font-size: 9.5px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -235,47 +239,64 @@
     border-color: color-mix(in oklab, var(--foreground) 14%, transparent);
   }
 
+  /* Плашки legacy: тёмное стекло, белый текст и цветная точка — статус читается словом. */
   .badge {
     position: absolute;
-    top: 10px;
-    padding: 4px 8px;
+    top: 12px;
+    right: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid rgb(255 255 255 / 0.16);
     border-radius: 999px;
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgb(10 14 26 / 0.62);
+    color: rgb(255 255 255 / 0.94);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.005em;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
-  .badge.update {
-    right: 10px;
-    background: oklch(0.74 0.14 278 / 0.94);
-    color: oklch(0.17 0.025 270);
+  .badge::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
   }
 
-  .badge.problem {
-    right: 10px;
-    background: oklch(0.66 0.19 25 / 0.94);
-    color: white;
+  .badge.update::before {
+    background: #6fb3ff;
+    box-shadow: 0 0 8px #6fb3ff;
   }
 
-  .badge.possible {
-    right: 10px;
-    background: oklch(0.82 0.15 85 / 0.94);
-    color: oklch(0.2 0.03 70);
+  .badge.problem::before {
+    background: #ff6b5e;
+    box-shadow: 0 0 8px #ff6b5e;
   }
 
-  .badge.off,
-  .badge.deleted {
-    right: 10px;
-    background: rgb(8 12 22 / 0.58);
-    color: rgb(255 255 255 / 0.82);
+  .badge.possible::before {
+    background: #ffb340;
+    box-shadow: 0 0 8px #ffb340;
+  }
+
+  .badge.off::before,
+  .badge.deleted::before {
+    background: rgb(255 255 255 / 0.7);
+  }
+
+  /* Выключенный переключатель на тёмной подложке фото должен быть виден в обоих оформлениях. */
+  .toggle :global([data-slot="switch"][data-state="unchecked"]) {
+    background: rgb(255 255 255 / 0.24);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.3);
   }
 
   .badge.pending-badge {
-    left: 10px;
-    background: rgb(8 12 22 / 0.58);
-    color: rgb(255 255 255 / 0.82);
+    right: auto;
+    left: 12px;
   }
 
   .caption {
@@ -285,7 +306,7 @@
     align-items: flex-end;
     justify-content: space-between;
     gap: 8px;
-    padding: 42px 12px 12px;
+    padding: 56px 14px 14px;
     background: linear-gradient(
       to top,
       rgb(4 7 14 / 0.94),
@@ -302,7 +323,7 @@
   .title {
     margin: 0;
     overflow: hidden;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 620;
     line-height: 1.25;
     text-overflow: ellipsis;
@@ -316,8 +337,8 @@
     gap: 5px;
     margin: 3px 0 0;
     overflow: hidden;
-    color: rgb(255 255 255 / 0.68);
-    font-size: 10px;
+    color: rgb(255 255 255 / 0.72);
+    font-size: 12.5px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

@@ -438,31 +438,73 @@
 <svelte:window onkeydown={onkeydown} />
 
 <div class="garage">
-  <header class="head">
-    <div>
-      <h1>Моды</h1>
-      <p>{note}{snapshot?.gameVersion ? ` · игра ${snapshot.gameVersion}` : ""}</p>
+  <header class="top" data-tauri-drag-region>
+    <div class="title" data-tauri-drag-region>
+      <h1 data-tauri-drag-region>Моды</h1>
+      <p data-tauri-drag-region>
+        {note}{snapshot?.gameVersion ? ` · игра ${snapshot.gameVersion}` : ""}
+      </p>
     </div>
-    <div class="head-actions">
+
+    <div class="island glass liquid-edge">
+      <div class="filters">
+        {#each visibleFilters as item (item.id)}
+          <button
+            class="filter"
+            class:active={filter === item.id}
+            type="button"
+            aria-pressed={filter === item.id}
+            onclick={() => (filter = item.id)}
+          >
+            {item.label}
+            {#if item.id === "enabled" && counts.enabled > 0}
+              <span>{counts.enabled.toLocaleString("ru-RU")}</span>
+            {:else if item.id === "updates" && counts.updates > 0}
+              <span>{counts.updates.toLocaleString("ru-RU")}</span>
+            {:else if item.id === "unchecked" && counts.unchecked > 0}
+              <span>{counts.unchecked.toLocaleString("ru-RU")}</span>
+            {:else if item.id === "deleted"}
+              <span>{counts.deleted.toLocaleString("ru-RU")}</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+      <div class="search">
+        <input
+          bind:this={searchEl}
+          bind:value={query}
+          id="garage-search"
+          name="garage-search"
+          type="search"
+          placeholder="Найти мод"
+          aria-label="Найти мод"
+        />
+        {#if query}
+          <button class="clear" type="button" aria-label="Очистить" onclick={() => (query = "")}>×</button>
+        {/if}
+      </div>
+    </div>
+
+    <div class="actions">
       <button
-        class="refresh glass liquid-edge"
+        class="btn-glass"
         type="button"
         onclick={() => void pickArchive()}
         disabled={refreshing}
-        aria-label="Установить моды из архива"
+        title="Установить моды из архива"
       >
-        <Upload size={14} />
+        <Upload size={15} />
         Из архива
       </button>
       <button
-        class="refresh glass liquid-edge"
+        class="btn-glass icon-only"
         type="button"
         onclick={() => void load(true)}
         disabled={refreshing}
-        aria-label="Обновить библиотеку"
+        aria-label="Перечитать папку модов"
+        title="Перечитать папку модов"
       >
-        <RefreshCw size={14} class={refreshing ? "spin" : ""} />
-        Обновить
+        <RefreshCw size={15} class={refreshing ? "spin" : ""} />
       </button>
     </div>
   </header>
@@ -479,48 +521,6 @@
 
   <div class="body" class:with-inspector={selectedId !== null}>
     <section class="work">
-      <div class="island glass liquid-edge">
-        <div class="search">
-          <input
-            bind:this={searchEl}
-            bind:value={query}
-            id="garage-search"
-            name="garage-search"
-            type="search"
-            placeholder="Найти мод"
-            aria-label="Найти мод"
-          />
-          {#if query}
-            <button class="clear" type="button" aria-label="Очистить" onclick={() => (query = "")}>×</button>
-          {/if}
-        </div>
-
-        <div class="filters">
-          {#each visibleFilters as item (item.id)}
-            <button
-              class="filter"
-              class:active={filter === item.id}
-              type="button"
-              aria-pressed={filter === item.id}
-              onclick={() => (filter = item.id)}
-            >
-              {item.label}
-              {#if item.id === "all"}
-                <span>{counts.all.toLocaleString("ru-RU")}</span>
-              {:else if item.id === "enabled" && counts.enabled > 0}
-                <span>{counts.enabled.toLocaleString("ru-RU")}</span>
-              {:else if item.id === "updates" && counts.updates > 0}
-                <span>{counts.updates.toLocaleString("ru-RU")}</span>
-              {:else if item.id === "unchecked" && counts.unchecked > 0}
-                <span>{counts.unchecked.toLocaleString("ru-RU")}</span>
-              {:else if item.id === "deleted"}
-                <span>{counts.deleted.toLocaleString("ru-RU")}</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      </div>
-
       <div class="grid-wrap">
         {#if loading}
           <div class="state"><p>Загружаем моды…</p></div>
@@ -569,6 +569,8 @@
         loading={detailsLoading}
         canDelete={selected ? !selected.fromGameRepo : false}
         problem={selected?.problem ?? null}
+        update={selected?.update ?? "none"}
+        updateVersion={selected?.updateVersion ?? null}
         {fixing}
         onFix={() => void fixSelected()}
         onToggle={() => {
@@ -604,59 +606,59 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    gap: 12px;
+    gap: 14px;
   }
 
-  .head {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
+  /* Ряд «островков» (legacy, DESIGN.md 4): заголовок на фоне, островок фильтров по центру,
+     справа место под капсулу кнопок окна. */
+  .top {
+    display: grid;
+    grid-template-columns: minmax(170px, 1fr) auto minmax(0, auto);
+    align-items: center;
     gap: 16px;
-    padding: 4px 4px 0;
+    min-height: 52px;
+    padding-right: 148px;
   }
 
   h1 {
     margin: 0;
     font-size: 26px;
-    font-weight: 650;
+    font-weight: 700;
+    line-height: 1.1;
     letter-spacing: -0.02em;
   }
 
-  .head p {
-    margin: 4px 0 0;
-    color: var(--muted-foreground);
-    font-size: 10.5px;
+  .title {
+    min-width: 0;
   }
 
-  .head-actions {
+  .title p {
+    margin: 3px 0 0;
+    overflow: hidden;
+    color: color-mix(in oklab, var(--foreground) 66%, transparent);
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .actions {
     display: flex;
+    justify-content: flex-end;
     gap: 8px;
   }
 
-  .refresh {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 30px;
-    padding: 0 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    color: var(--foreground);
-    font-size: 10.5px;
-    cursor: default;
-  }
-
-  .refresh:disabled {
-    opacity: 0.6;
+  .icon-only {
+    width: 36px;
+    padding: 0;
   }
 
   .banner {
-    padding: 8px 12px;
+    padding: 9px 14px;
     border: 1px solid var(--warning-border);
-    border-radius: 12px;
+    border-radius: 16px;
     background: var(--warning-soft);
     color: var(--warning);
-    font-size: 10.5px;
+    font-size: 13px;
   }
 
   .banner.many {
@@ -670,7 +672,7 @@
     border: 0;
     background: transparent;
     color: inherit;
-    font-size: 15px;
+    font-size: 17px;
     line-height: 1;
     cursor: default;
   }
@@ -678,19 +680,18 @@
   .body {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
+    gap: 16px;
     flex: 1;
     min-height: 0;
   }
 
   .body.with-inspector {
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr) 328px;
   }
 
   .work {
     display: flex;
     flex-direction: column;
-    gap: 12px;
     min-width: 0;
     min-height: 0;
   }
@@ -698,32 +699,30 @@
   .island {
     display: flex;
     align-items: center;
-    gap: 12px;
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 8px;
-    border-radius: 18px;
+    gap: 6px;
+    height: 52px;
+    padding: 0 8px;
+    border-radius: 26px;
   }
 
   .search {
     position: relative;
-    flex: 1;
-    min-width: 150px;
+    width: 160px;
   }
 
   .search input {
     width: 100%;
-    height: 30px;
-    padding: 0 28px 0 12px;
+    height: 35px;
+    padding: 0 30px 0 14px;
     border: 0;
     border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 7%, transparent);
+    background: color-mix(in oklab, var(--foreground) 8%, transparent);
     color: var(--foreground);
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .search input::placeholder {
-    color: var(--muted-foreground);
+    color: color-mix(in oklab, var(--foreground) 55%, transparent);
   }
 
   .search input:focus-visible {
@@ -733,14 +732,14 @@
   .clear {
     position: absolute;
     top: 50%;
-    right: 7px;
-    width: 20px;
-    height: 20px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
     border: 0;
     border-radius: 999px;
     background: transparent;
     color: var(--muted-foreground);
-    font-size: 15px;
+    font-size: 17px;
     transform: translateY(-50%);
     cursor: default;
   }
@@ -748,38 +747,51 @@
   .filters {
     display: flex;
     gap: 2px;
+    height: 35px;
+    padding: 3px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--foreground) 6%, transparent);
     overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .filter {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 30px;
-    padding: 0 10px;
+    gap: 6px;
+    height: 29px;
+    padding: 0 13px;
     border: 0;
     border-radius: 999px;
     background: transparent;
-    color: var(--muted-foreground);
-    font-size: 10.5px;
+    color: color-mix(in oklab, var(--foreground) 74%, transparent);
+    font-size: 13px;
+    font-weight: 550;
     white-space: nowrap;
     cursor: default;
+    transition:
+      background 220ms ease,
+      color 220ms ease;
   }
 
   .filter span {
     color: inherit;
-    opacity: 0.65;
+    opacity: 0.6;
     font-variant-numeric: tabular-nums;
   }
 
-  .filter:hover,
-  .filter.active {
-    background: color-mix(in oklab, var(--foreground) 9%, transparent);
+  .filter:hover {
     color: var(--foreground);
   }
 
   .filter.active {
-    font-weight: 600;
+    background: var(--drop-fill);
+    color: var(--foreground);
+    font-weight: 650;
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      inset 0 0 0 1px var(--glass-border),
+      0 4px 14px var(--drop-glow);
   }
 
   .grid-wrap {
@@ -832,11 +844,17 @@
     }
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1320px) {
+    .top {
+      grid-template-columns: minmax(0, 1fr) auto;
+      padding-right: 148px;
+    }
+
     .island {
-      align-items: stretch;
-      flex-direction: column;
-      gap: 6px;
+      grid-column: 1 / -1;
+      grid-row: 2;
+      justify-self: center;
+      max-width: 100%;
     }
   }
 </style>
