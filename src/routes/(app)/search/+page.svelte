@@ -9,6 +9,7 @@
     searchCancel,
     searchDecide,
     searchOpenModland,
+    searchPagePreview,
     searchPreview,
     searchStart,
     sourceName,
@@ -30,6 +31,9 @@
   let deciding = $state<string | null>(null);
   let previews = $state<Record<string, string>>({});
   const requestedPreviews = new Set<string>();
+  const requestedPages = new Set<string>();
+  let pageRequests = 0;
+  const PAGE_PREVIEW_LIMIT = 24;
   let requestId = 0;
   let input = $state<HTMLInputElement | null>(null);
   let unlisten: (() => void) | undefined;
@@ -42,11 +46,24 @@
     for (const card of cards) {
       if (previews[card.id] || requestedPreviews.has(card.id)) continue;
       const url = card.listings.find((listing) => listing.previewUrl)?.previewUrl;
-      if (!url) continue;
-      requestedPreviews.add(card.id);
-      void searchPreview(url).then((value) => {
-        if (value) previews[card.id] = value;
-      });
+      if (url) {
+        requestedPreviews.add(card.id);
+        void searchPreview(url).then((value) => {
+          if (value) previews[card.id] = value;
+        });
+        continue;
+      }
+      // В выдаче ModsGaming картинок нет — берём её со страницы мода, как legacy.
+      if (pageRequests >= PAGE_PREVIEW_LIMIT || requestedPages.has(card.id)) continue;
+      const listing = card.listings.find((item) => item.source === "modsgaming");
+      if (!listing) continue;
+      pageRequests += 1;
+      requestedPages.add(card.id);
+      void searchPagePreview(listing.source, listing.url)
+        .then((value) => {
+          if (value) previews[card.id] = value;
+        })
+        .catch(() => {});
     }
   });
 
@@ -100,6 +117,8 @@
     sources = [];
     previews = {};
     requestedPreviews.clear();
+    requestedPages.clear();
+    pageRequests = 0;
     try {
       await searchStart(text, current);
     } catch (reason) {
@@ -125,6 +144,8 @@
     sources = [];
     previews = {};
     requestedPreviews.clear();
+    requestedPages.clear();
+    pageRequests = 0;
     error = null;
     input?.focus();
   }
@@ -148,6 +169,8 @@
           query = submitted;
           await runSearch();
         }
+      } else {
+        toasts.show("Проверка не завершена. Пройдите её в окне и попробуйте снова");
       }
     } catch (reason) {
       error = errorText(reason);

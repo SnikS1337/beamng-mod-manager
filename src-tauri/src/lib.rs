@@ -111,6 +111,7 @@ pub fn run() {
             paths.search_previews(),
             pages,
         )),
+        sources: source_list.clone(),
     }));
     let update = Some(Arc::new(UpdateRuntime {
         coordinator: Arc::new(coordinator),
@@ -209,6 +210,7 @@ pub fn run() {
             commands::search::search_cancel,
             commands::search::search_decide,
             commands::search::search_preview,
+            commands::search::search_page_preview,
             commands::search::search_open_modland,
             commands::updates::updates_snapshot,
             commands::updates::updates_start,
