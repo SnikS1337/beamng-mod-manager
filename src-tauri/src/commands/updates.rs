@@ -239,6 +239,8 @@ pub async fn updates_start(
     let state_for_task = state.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let app_for_progress = app.clone();
+        // Сотни записей о проверке — одним пакетом: файл библиотеки пишется раз в 20 с и в конце.
+        let batch = state_for_task.library.batch();
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             coordinator.check(
                 force,
@@ -248,6 +250,7 @@ pub async fn updates_start(
                 }),
             )
         }));
+        drop(batch);
         match result {
             Ok(report) => {
                 // Моды без страницы ищем тем же ходом, как legacy, — но не после отмены.
@@ -638,6 +641,9 @@ fn progress_dto(progress: &UpdateProgress) -> UpdateProgressDto {
     }
 }
 
+/// Фоновая проверка не связана ни с одним нажатием в окне.
+const AUTO_REQUEST_ID: u64 = 0;
+
 fn done_event(
     request_id: u64,
     snapshot: UpdatesSnapshotDto,
@@ -690,7 +696,9 @@ fn source_dto(report: &SourceRunReport, names: &HashMap<String, String>) -> Upda
     }
 }
 
-pub fn spawn_auto_check(state: Arc<AppState>) {
+/// Проверка при запуске и по расписанию. Итог уходит в окно событием `updates://event`
+/// с фазой `auto`: значок на «Обновлениях» и тост появляются без открытия раздела.
+pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(8));
         let mut started = true;
@@ -724,7 +732,10 @@ pub fn spawn_auto_check(state: Arc<AppState>) {
                         }
                     }
                 }
-                let report = runtime.coordinator.check(false, None);
+                let report = {
+                    let _batch = state.library.batch();
+                    runtime.coordinator.check(false, None)
+                };
                 if !report.cancelled
                     && let Some(_guard) = PageBusyGuard::acquire(runtime.page_busy.clone())
                 {
@@ -733,6 +744,20 @@ pub fn spawn_auto_check(state: Arc<AppState>) {
                         run_page_search_quiet(&state, &runtime.page_cancel);
                     }));
                 }
+                let names: HashMap<String, String> = runtime
+                    .sources
+                    .iter()
+                    .map(|source| (source.id().to_string(), source.display_name().to_string()))
+                    .collect();
+                let event = done_event(
+                    AUTO_REQUEST_ID,
+                    build_snapshot(&state),
+                    &report,
+                    &names,
+                    Some("auto"),
+                    None,
+                );
+                let _ = app.emit("updates://event", event);
                 last = std::time::Instant::now();
             }
             std::thread::sleep(std::time::Duration::from_secs(60));

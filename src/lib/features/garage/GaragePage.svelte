@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { listenUpdates } from "$lib/ipc/updates";
   import { isTauri } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { RefreshCw, Upload } from "@lucide/svelte";
@@ -83,7 +84,23 @@
       void refreshAndSelect(detail?.fileNames ?? []);
     };
     window.addEventListener("bmm:library-changed", onLibraryChanged);
-    return () => window.removeEventListener("bmm:library-changed", onLibraryChanged);
+    // Проверка обновлений закончилась (в фоне или в разделе) — метки «Есть обновление» и
+    // счётчик «Нужно обновить» должны появиться без перезапуска.
+    let stopUpdates: (() => void) | undefined;
+    let disposed = false;
+    void listenUpdates((event) => {
+      if (event.phase === "auto" || event.phase === "done" || event.phase === "pages") {
+        void load(true);
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopUpdates = stop;
+    });
+    return () => {
+      disposed = true;
+      stopUpdates?.();
+      window.removeEventListener("bmm:library-changed", onLibraryChanged);
+    };
   });
 
   $effect(() => {

@@ -35,6 +35,9 @@
   let filter = $state<Filter>("available");
   let progress = $state<UpdateProgress | null>(null);
   let error = $state<string | null>(null);
+  // Обычная проверка не трогает моды, проверенные недавно (срок — в настройках). Если она
+  // никуда не сходила, следующее нажатие проверяет всё заново, как в legacy.
+  let offerForce = $state(false);
   let requestId = 0;
   let unlisten: (() => void) | undefined;
 
@@ -58,6 +61,14 @@
   });
 
   function onEvent(event: UpdatesEvent) {
+    if (event.phase === "auto") {
+      // Фоновая проверка закончилась: показываем найденное, если сами сейчас не проверяем.
+      if (!checking) {
+        snapshot = { findings: event.findings, hidden: event.hidden, suggestions: event.suggestions };
+        if (event.sources.length > 0) sources = event.sources;
+      }
+      return;
+    }
     if (event.requestId !== requestId) return;
     if (event.phase === "progress") {
       progress = event.progress;
@@ -80,6 +91,10 @@
     if (event.sources.length > 0) sources = event.sources;
     checking = false;
     progress = null;
+    if (event.phase === "done") {
+      offerForce = !event.cancelled && event.requests === 0;
+      if (offerForce) toasts.show("Всё проверено недавно. Нажмите ещё раз, чтобы проверить заново");
+    }
     if (event.phase === "pages") filter = "pages";
     if (found > 0) toasts.show(`Нашли новые страницы (${found})`);
   }
@@ -102,8 +117,10 @@
     checking = true;
     progress = null;
     error = null;
+    const force = offerForce;
+    offerForce = false;
     try {
-      await updatesStart(true, requestId);
+      await updatesStart(force, requestId);
     } catch (reason) {
       error = errorText(reason);
       checking = false;
@@ -270,7 +287,7 @@
         </button>
         <button class="refresh glass liquid-edge" type="button" onclick={() => void check()}>
           <RefreshCw size={14} />
-          Проверить
+          {offerForce ? "Всё равно проверить" : "Проверить"}
         </button>
       {/if}
     </div>

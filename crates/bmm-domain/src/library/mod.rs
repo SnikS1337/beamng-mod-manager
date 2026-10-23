@@ -81,7 +81,7 @@ pub enum LibraryError {
     NoMod(String),
 }
 
-pub trait LibraryStore {
+pub trait LibraryStore: Send + Sync {
     fn mods(&self) -> Vec<InstalledMod>;
     fn get_mod(&self, id: &str) -> Option<InstalledMod>;
     fn upsert_mod(&self, installed: InstalledMod);

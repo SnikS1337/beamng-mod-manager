@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset, TimeDelta};
@@ -100,7 +101,7 @@ pub struct UpdateRun<'a> {
     /// Флаг отмены. Проверяется между запросами и адаптерами источников.
     pub cancel: &'a AtomicBool,
     /// Часы для лимита времени (в тестах подменяются); `None` — только секундомер.
-    pub clock: Option<&'a dyn Fn() -> DateTime<FixedOffset>>,
+    pub clock: Option<&'a (dyn Fn() -> DateTime<FixedOffset> + Sync)>,
     /// Сайты на паузе после недавнего сбоя: сообщение для отчёта.
     pub hold_off: BTreeMap<String, String>,
 }
@@ -158,7 +159,7 @@ pub fn run(
 
 struct Budget<'a> {
     started: DateTime<FixedOffset>,
-    clock: Option<&'a dyn Fn() -> DateTime<FixedOffset>>,
+    clock: Option<&'a (dyn Fn() -> DateTime<FixedOffset> + Sync)>,
     max: TimeDelta,
     stopwatch: Instant,
 }
@@ -303,6 +304,7 @@ impl Runner<'_, '_, '_> {
         let mut cancelled = false;
         let mut stopped_by_time = false;
 
+        let mut jobs: Vec<(&String, u32, &std::sync::Arc<dyn ModSource>)> = Vec::new();
         for (source, pages) in &plan.feed_pages {
             if reports.contains_key(source) {
                 continue;
@@ -313,7 +315,62 @@ impl Runner<'_, '_, '_> {
                 notes.insert(source.clone(), note);
                 continue;
             };
-            let outcome = self.run_source(source, *pages, &plan.due, adapter);
+            jobs.push((source, *pages, adapter));
+        }
+
+        let due = &plan.due;
+        let budget = &self.budget;
+        let progress = &mut self.progress;
+        let outcomes: Vec<(&String, SourceOutcome)> = std::thread::scope(|scope| {
+            let (sender, receiver) = mpsc::channel::<UpdateProgress>();
+            let handles: Vec<_> = jobs
+                .iter()
+                .map(|&(source, pages, adapter)| {
+                    let worker = Worker {
+                        request,
+                        budget,
+                        progress: sender.clone(),
+                    };
+                    let handle = std::thread::Builder::new()
+                        .name(format!("bmm-check-{source}"))
+                        .spawn_scoped(scope, move || {
+                            worker.run_source(source, pages, due, adapter)
+                        });
+                    (source, handle)
+                })
+                .collect();
+            drop(sender);
+            // Ход проверки отдаём из этого потока: обратный вызов интерфейса не обязан быть потокобезопасным.
+            for event in receiver {
+                if let Some(callback) = progress.as_mut() {
+                    (**callback)(&event);
+                }
+            }
+            handles
+                .into_iter()
+                .map(|(source, handle)| {
+                    let outcome = match handle {
+                        Ok(handle) => handle.join().unwrap_or_else(|_| SourceOutcome {
+                            failure: Some((
+                                SourceStatus::Unavailable,
+                                "внутренняя ошибка при проверке сайта".to_string(),
+                            )),
+                            ..SourceOutcome::default()
+                        }),
+                        Err(_) => SourceOutcome {
+                            failure: Some((
+                                SourceStatus::Unavailable,
+                                "не удалось запустить проверку сайта".to_string(),
+                            )),
+                            ..SourceOutcome::default()
+                        },
+                    };
+                    (source, outcome)
+                })
+                .collect()
+        });
+
+        for (source, outcome) in outcomes {
             requests += outcome.requests;
             up_to_date += outcome.up_to_date;
             cancelled |= outcome.cancelled;
@@ -415,8 +472,25 @@ impl Runner<'_, '_, '_> {
         }
     }
 
+    fn emit(&mut self, progress: &UpdateProgress) {
+        if let Some(callback) = self.progress.as_mut() {
+            (**callback)(progress);
+        }
+    }
+}
+
+/// Работа с одним сайтом. Сайты независимы (у каждого своя очередь запросов и паузы),
+/// поэтому идут в своих потоках: проверка длится столько, сколько самый медленный сайт,
+/// а не их сумму — как в legacy (`Task.WhenAll`).
+struct Worker<'r, 'a> {
+    request: &'r UpdateRun<'a>,
+    budget: &'r Budget<'a>,
+    progress: mpsc::Sender<UpdateProgress>,
+}
+
+impl Worker<'_, '_> {
     fn run_source(
-        &mut self,
+        &self,
         source: &str,
         pages: u32,
         due: &[TrackedBinding],
@@ -698,10 +772,8 @@ impl Runner<'_, '_, '_> {
         self.request.cancel.load(Ordering::Relaxed)
     }
 
-    fn emit(&mut self, progress: &UpdateProgress) {
-        if let Some(callback) = self.progress.as_mut() {
-            (**callback)(progress);
-        }
+    fn emit(&self, progress: &UpdateProgress) {
+        let _ = self.progress.send(progress.clone());
     }
 }
 
@@ -936,6 +1008,58 @@ mod tests {
         assert_eq!(site.card_calls(), 1, "b подтверждён лентой");
         assert_eq!(report.up_to_date, 1);
         assert!(report.complete());
+    }
+
+    #[test]
+    fn sites_are_checked_in_parallel() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        add(&store, "b", "y", "b", Some("1.0"), Some("1.0"), Some(old));
+        let x = Site::new("x").with_feed(vec![l("x", "a", Some("1.1"), None)]);
+        let y = Site::new("y").with_feed(vec![l("y", "b", Some("1.1"), None)]);
+        x.set_card(l("x", "a", Some("1.1"), None));
+        y.set_card(l("y", "b", Some("1.1"), None));
+        let slow: Arc<dyn Fn() + Send + Sync> =
+            Arc::new(|| std::thread::sleep(std::time::Duration::from_millis(400)));
+        x.on_card(slow.clone());
+        y.on_card(slow);
+        let all: Vec<Arc<dyn ModSource>> = vec![x.clone(), y.clone()];
+
+        let started = std::time::Instant::now();
+        let report = run_simple(&store, &all, now(), UpdateCheckOptions::default());
+        let elapsed = started.elapsed();
+
+        assert_eq!(report.findings.len(), 2);
+        assert!(report.complete());
+        // По очереди было бы ≥ 800 мс; вместе — время самого медленного сайта.
+        assert!(
+            elapsed < std::time::Duration::from_millis(750),
+            "{elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn progress_from_all_sites_reaches_the_callback() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        add(&store, "b", "y", "b", Some("1.0"), Some("1.0"), Some(old));
+        let x = Site::new("x").with_feed(vec![l("x", "a", Some("1.0"), None)]);
+        let y = Site::new("y").with_feed(vec![l("y", "b", Some("1.0"), None)]);
+        let all: Vec<Arc<dyn ModSource>> = vec![x, y];
+        let cancel = AtomicBool::new(false);
+        let request = UpdateRun::new(&store, &all, now(), UpdateCheckOptions::default(), &cancel);
+        let mut seen: Vec<String> = Vec::new();
+        let mut callback = |progress: &UpdateProgress| seen.push(progress.source.clone());
+        run(&request, Some(&mut callback));
+        assert!(seen.iter().any(|source| source == "x"));
+        assert!(seen.iter().any(|source| source == "y"));
+        assert_eq!(
+            seen.last().map(String::as_str),
+            Some(""),
+            "«готово» последним"
+        );
     }
 
     #[test]

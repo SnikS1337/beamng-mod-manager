@@ -611,7 +611,10 @@ impl PoliteFetcher {
                             self.remember(source, SourceStatus::Ok, None, None);
                             return FetchResult::ok(response);
                         }
+                        // 403, 500 и прочие коды повтором не лечатся: как legacy, сразу отступаем,
+                        // а не стучимся ещё дважды без паузы.
                         last_message = format!("Сайт вернул ошибку {}.", response.status);
+                        break;
                     }
                 }
                 Err(error) => {
@@ -1040,6 +1043,21 @@ mod tests {
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
         assert_eq!(missing.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn client_and_server_errors_are_not_retried() {
+        for status in [403u16, 500] {
+            let fake = FakeFetcher::new(vec![
+                Ok(response(status, "no")),
+                Ok(response(200, "<html>ok</html>")),
+                Ok(response(200, "<html>ok</html>")),
+            ]);
+            let polite = PoliteFetcher::new(fake.clone(), options());
+            let result = polite.get("site", &url("https://example.org/mod"));
+            assert_eq!(result.status, SourceStatus::Unavailable, "{status}");
+            assert_eq!(fake.calls.lock().unwrap().len(), 1, "{status}");
+        }
     }
 
     #[test]
