@@ -60,7 +60,7 @@
     if (event.requestId !== requestId) return;
     if (event.phase === "progress") {
       progress = event.progress;
-      sources = event.sources;
+      if (event.sources.length > 0) sources = event.sources;
       return;
     }
     if (event.phase === "error") {
@@ -69,15 +69,18 @@
       progress = null;
       return;
     }
+    const known = new Set(snapshot.suggestions.map((item) => item.modId));
+    const found = event.suggestions.filter((item) => !known.has(item.modId)).length;
     snapshot = {
       findings: event.findings,
       hidden: event.hidden,
       suggestions: event.suggestions,
     };
-    sources = event.sources;
+    if (event.sources.length > 0) sources = event.sources;
     checking = false;
     progress = null;
     if (event.phase === "pages") filter = "pages";
+    if (found > 0) toasts.show(`Нашли новые страницы (${found})`);
   }
 
   async function load() {
@@ -210,6 +213,11 @@
 
   function progressText(): string {
     if (!progress) return "Проверяем сайты…";
+    if (progress.source === "страницы") {
+      return progress.total > 0
+        ? `Ищем страницы: ${progress.done} из ${progress.total}`
+        : "Ищем страницы…";
+    }
     const where = progress.source ? `${sourceName(progress.source)}` : "проверка";
     const stage =
       progress.stage === "лента"

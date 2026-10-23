@@ -53,6 +53,8 @@ pub struct UpdateRuntime {
     pub coordinator: Arc<UpdateCoordinator>,
     pub enabled: Arc<Mutex<HashSet<String>>>,
     pub sources: Arc<Vec<Arc<dyn ModSource>>>,
+    pub page_cancel: Arc<AtomicBool>,
+    pub page_busy: Arc<AtomicBool>,
 }
 
 pub struct AppUpdateRuntime {
