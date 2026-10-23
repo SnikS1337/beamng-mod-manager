@@ -250,7 +250,7 @@
   }
 
   .facts .warning b {
-    color: oklch(0.82 0.15 85);
+    color: var(--warning);
   }
 
   section {
@@ -272,7 +272,7 @@
 
   .warn {
     margin: 6px 0 0;
-    color: oklch(0.82 0.15 85);
+    color: var(--warning);
     font-size: 10px;
     line-height: 1.4;
   }

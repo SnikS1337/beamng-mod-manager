@@ -346,7 +346,7 @@
               {source.count}
             {/if}
           </span>
-          {#if source.status === "needsHumanCheck"}
+          {#if source.id === "modland" && source.status === "needsHumanCheck"}
             <button type="button" disabled={passing} onclick={() => void openModland()}>
               {passing ? "Ждём…" : "Пройти проверку"}
             </button>
@@ -597,9 +597,9 @@
   }
 
   .banner.warn {
-    border-color: color-mix(in oklab, oklch(0.82 0.15 85) 35%, transparent);
-    background: color-mix(in oklab, oklch(0.82 0.15 85) 10%, transparent);
-    color: oklch(0.88 0.1 85);
+    border-color: var(--warning-border);
+    background: var(--warning-soft);
+    color: var(--warning);
   }
 
   .sites {
@@ -632,11 +632,11 @@
   }
 
   .site.warn {
-    border-color: color-mix(in oklab, oklch(0.82 0.15 85) 35%, transparent);
+    border-color: var(--warning-border);
   }
 
   .site.warn .dot {
-    background: oklch(0.82 0.15 85);
+    background: var(--warning);
   }
 
   .site.pending .dot {
@@ -652,6 +652,10 @@
     color: var(--foreground);
     font-size: 9px;
     cursor: default;
+  }
+
+  .site button:disabled {
+    opacity: 0.55;
   }
 
   .grid {

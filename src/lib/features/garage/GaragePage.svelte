@@ -608,10 +608,10 @@
 
   .banner {
     padding: 8px 12px;
-    border: 1px solid color-mix(in oklab, oklch(0.82 0.15 85) 35%, transparent);
+    border: 1px solid var(--warning-border);
     border-radius: 12px;
-    background: color-mix(in oklab, oklch(0.82 0.15 85) 10%, transparent);
-    color: oklch(0.85 0.12 85);
+    background: var(--warning-soft);
+    color: var(--warning);
     font-size: 10.5px;
   }
 

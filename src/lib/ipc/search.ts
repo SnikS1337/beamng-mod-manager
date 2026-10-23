@@ -92,7 +92,11 @@ export async function searchPreview(url: string): Promise<string | null> {
 }
 
 export async function searchOpenModland(query: string): Promise<boolean> {
-  if (!isTauri()) return false;
+  if (!isTauri()) {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    mockModlandNeedsCheck = false;
+    return true;
+  }
   return invoke<boolean>("search_open_modland", { query });
 }
 
@@ -136,6 +140,8 @@ const SOURCE_NAMES: Record<string, string> = {
   modsgaming: "ModsGaming",
   beamng: "BeamNG (официальный)",
 };
+
+let mockModlandNeedsCheck = true;
 
 function mockSourceReports(): SearchSource[] {
   return [
@@ -256,9 +262,14 @@ function mockSearch(query: string, requestId: number): void {
           : cards.filter((card) =>
               card.listings.some((listing) => listing.source === source.id),
             ).length,
-      status: index === 2 ? ("needsHumanCheck" as const) : source.status,
+      status:
+        index === 0 && mockModlandNeedsCheck
+          ? ("needsHumanCheck" as const)
+          : source.status,
       note:
-        index === 2 ? "нужно пройти проверку на сайте" : source.note,
+        index === 0 && mockModlandNeedsCheck
+          ? "Сайт просит подтвердить, что вы человек."
+          : source.note,
     }));
     mockCurrentCards = cards;
     mockCurrentSources = reports;

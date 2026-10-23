@@ -295,7 +295,7 @@
               {source.cardsFetched} карточек
             {/if}
           </span>
-          {#if source.status === "needsHumanCheck"}
+          {#if source.id === "modland" && source.status === "needsHumanCheck"}
             <button type="button" disabled={passing} onclick={() => void openModland()}>
               {passing ? "Ждём…" : "Пройти проверку"}
             </button>
@@ -558,11 +558,11 @@
   }
 
   .site.warn {
-    border-color: color-mix(in oklab, oklch(0.82 0.15 85) 35%, transparent);
+    border-color: var(--warning-border);
   }
 
   .site.warn .dot {
-    background: oklch(0.82 0.15 85);
+    background: var(--warning);
   }
 
   .site.bad {
@@ -582,6 +582,10 @@
     color: var(--foreground);
     font-size: 9px;
     cursor: default;
+  }
+
+  .site button:disabled {
+    opacity: 0.55;
   }
 
   .filters {
@@ -664,8 +668,8 @@
   }
 
   .status.possible {
-    color: oklch(0.84 0.12 85);
-    background: color-mix(in oklab, oklch(0.82 0.15 85) 12%, transparent);
+    color: var(--warning);
+    background: var(--warning-soft);
   }
 
   .row p {

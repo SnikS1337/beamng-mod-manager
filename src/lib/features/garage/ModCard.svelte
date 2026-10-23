@@ -287,7 +287,7 @@
   }
 
   .compat {
-    color: oklch(0.82 0.15 85);
+    color: var(--warning);
   }
 
   .pending-note {
