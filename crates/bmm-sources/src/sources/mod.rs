@@ -532,4 +532,64 @@ mod tests {
         })));
         assert_eq!(wide_empty.search("TAA", &cancel()).unwrap().len(), all);
     }
+
+    #[test]
+    fn stmods_feed_pages_and_mod_page() {
+        let fake = FakeFetcher::new();
+        let source = stmods::StModsSource::new(polite(fake.clone()));
+        let first = source.feed_page(0, &cancel()).unwrap();
+        assert!(!first.is_empty());
+        source.feed_page(3, &cancel()).unwrap();
+        {
+            let calls = fake.calls.lock().unwrap();
+            assert_eq!(calls[0], "GET /beamng_drive/");
+            assert_eq!(calls[1], "GET /beamng_drive/");
+        }
+
+        let page = Url::parse("https://stmods.org/beamng_drive/mods/some_car/").unwrap();
+        assert!(source.owns(&page));
+        assert!(source.is_mod_page(&page));
+        assert!(!source.is_mod_page(&Url::parse("https://stmods.org/beamng_drive/").unwrap()));
+        assert!(
+            !source.is_mod_page(&Url::parse("https://other.org/beamng_drive/mods/x/").unwrap())
+        );
+        let detail = source.listing(&page, &cancel()).unwrap().unwrap();
+        assert_eq!(detail.source, "stmods");
+        assert!(detail.size_bytes.is_some() || detail.mod_version.is_some());
+        // Раздел — не карточка: туда даже не ходим.
+        let before = fake.calls.lock().unwrap().len();
+        assert!(
+            source
+                .listing(
+                    &Url::parse("https://stmods.org/beamng_drive/").unwrap(),
+                    &cancel()
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fake.calls.lock().unwrap().len(), before);
+        assert_eq!(source.display_name(), "STMods");
+        assert!(source.supports_search() && source.feed_covers(&page));
+    }
+
+    #[test]
+    fn modland_feed_pages_and_mod_page() {
+        let fake = FakeFetcher::new();
+        let source = modland::ModlandSource::new(polite(fake.clone()));
+        assert!(!source.feed_page(1, &cancel()).unwrap().is_empty());
+        source.feed_page(2, &cancel()).unwrap();
+        {
+            let calls = fake.calls.lock().unwrap();
+            assert_eq!(calls[0], "GET /beamng.drive-mods");
+            assert_eq!(calls[1], "GET /beamng.drive-mods/page/2");
+        }
+        let page =
+            Url::parse("https://www.modland.net/beamng.drive-mods/cars/some-car.html").unwrap();
+        assert!(source.owns(&page));
+        assert!(source.is_mod_page(&page));
+        assert!(
+            !source.is_mod_page(&Url::parse("https://www.modland.net/beamng.drive-mods").unwrap())
+        );
+        assert_eq!(source.display_name(), "Modland");
+    }
 }
