@@ -5,6 +5,27 @@
 @custom-variant data-checked (&[data-state="checked"]);
 @custom-variant data-unchecked (&[data-state="unchecked"]);
 
+[data-slot="switch"][data-state="checked"] {
+  background: linear-gradient(180deg, oklch(0.65 0.18 278), oklch(0.5 0.17 278));
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--primary) 70%, transparent),
+    0 3px 10px color-mix(in oklab, var(--primary) 35%, transparent);
+}
+
+[data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] {
+  background: #fff;
+}
+
+[data-slot="switch"][data-state="unchecked"] {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 14%, transparent);
+}
+
+[data-slot="switch-thumb"] {
+  box-shadow:
+    0 1px 4px rgb(6 10 22 / 0.28),
+    0 1px 1px rgb(6 10 22 / 0.18);
+}
+
 :root {
   --radius: 0.875rem;
 

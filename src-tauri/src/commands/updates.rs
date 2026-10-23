@@ -405,6 +405,9 @@ pub async fn updates_undo_page(
 }
 
 const MODLAND_CHECK_LABEL: &str = "modland-check";
+const MODLAND_CHECK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const MODLAND_CHECK_POLL: Duration = Duration::from_millis(400);
+const MODLAND_CHECK_CLOSED_MISSES: u32 = 4;
 static MODLAND_CHECK_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// Окно проверки одно на приложение: в нём человек проходит Cloudflare, а программа
@@ -443,11 +446,38 @@ pub(crate) async fn open_modland_check(
     .await
     .map_err(|error| AppError::new("check", error.to_string()))?;
 
-    if passed {
+    // Окно могли закрыть сразу после проверки. Тогда true от DOM уже не придёт,
+    // поэтому доступ подтверждаем тем же скрытым браузером, которым работает поиск.
+    let closed = app.get_webview_window(MODLAND_CHECK_LABEL).is_none();
+    let confirmed = if passed || closed {
+        modland_access_confirmed(&state).await
+    } else {
+        false
+    };
+    if confirmed {
         reset_modland_check(&state);
-        let _ = window.close();
+        if !closed {
+            let _ = window.close();
+        }
     }
-    Ok(passed)
+    Ok(confirmed)
+}
+
+/// Проверка настоящим запросом программы: видимая страница могла пустить,
+/// а скрытый браузер всё ещё видеть заглушку. Тогда поиск запускать рано.
+async fn modland_access_confirmed(state: &Arc<AppState>) -> bool {
+    let Some(search) = state.search.clone() else {
+        return false;
+    };
+    let Ok(home) = "https://www.modland.net/".parse::<url::Url>() else {
+        return false;
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        search.fetcher.reset_source("modland", &home);
+        search.fetcher.get("modland", &home).status == SourceStatus::Ok
+    })
+    .await
+    .unwrap_or(false)
 }
 
 struct BusyGuard;
@@ -474,21 +504,33 @@ fn modland_window(app: &AppHandle, url: url::Url) -> Result<WebviewWindow, AppEr
 /// Пока окно открыто, смотрим на страницу: обычная страница Modland без маркера
 /// старого документа и без cloudflare-заглушки означает, что сайт пустил.
 fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(15 * 60);
+    let deadline = Instant::now() + MODLAND_CHECK_TIMEOUT;
+    let mut misses = 0;
     loop {
-        if app.get_webview_window(MODLAND_CHECK_LABEL).is_none() {
+        if app.get_webview_window(MODLAND_CHECK_LABEL).is_none() || window.is_visible().is_err() {
             return false;
         }
         if Instant::now() >= deadline {
             return false;
         }
-        if let Ok(html) = crate::browser_pages::document_html(window)
-            && let Ok(url) = window.url()
-            && page_passed(&html, token, &url)
-        {
-            return true;
+        match crate::browser_pages::document_html(window) {
+            Ok(html) => {
+                misses = 0;
+                if let Ok(url) = window.url()
+                    && page_passed(&html, token, &url)
+                {
+                    return true;
+                }
+            }
+            Err(_) => {
+                // Окно закрыли, а Tauri ещё держит его объект: не ждём полного таймаута.
+                misses += 1;
+                if misses >= MODLAND_CHECK_CLOSED_MISSES {
+                    return false;
+                }
+            }
         }
-        std::thread::sleep(Duration::from_millis(700));
+        std::thread::sleep(MODLAND_CHECK_POLL);
     }
 }
 

@@ -258,6 +258,51 @@ pub async fn search_open_modland(
 const PREVIEW_HOSTS: &[&str] = &["modland.net", "stmods.org", "modsgaming.ru", "beamng.com"];
 
 #[tauri::command]
+pub async fn search_page_preview(
+    state: tauri::State<'_, Arc<AppState>>,
+    source: String,
+    page: String,
+) -> Result<Option<String>, AppError> {
+    let runtime = state
+        .search
+        .clone()
+        .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
+    let parsed =
+        Url::parse(&page).map_err(|_| AppError::new("url", "Некорректный адрес страницы."))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(AppError::new(
+            "url",
+            "Страница с этого сайта не загружается.",
+        ));
+    }
+    let Some(mod_source) = runtime
+        .sources
+        .iter()
+        .find(|item| item.id().eq_ignore_ascii_case(&source))
+        .cloned()
+    else {
+        return Err(AppError::new("source", "Неизвестный сайт."));
+    };
+    if !mod_source.owns(&parsed) || !mod_source.is_mod_page(&parsed) {
+        return Err(AppError::new("url", "Это не страница мода."));
+    }
+    let previews = runtime.previews.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let cancel = AtomicBool::new(false);
+        let listing = mod_source.listing(&parsed, &cancel).ok().flatten()?;
+        let preview = listing.preview_url?;
+        let image = previews.fetch(&preview).ok().flatten()?;
+        Some(format!(
+            "http://bmm.localhost/search-preview/{}.{}",
+            image.key, image.extension
+        ))
+    })
+    .await
+    .map_err(|error| AppError::new("task", error.to_string()))?;
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn search_preview(
     state: tauri::State<'_, Arc<AppState>>,
     url: String,

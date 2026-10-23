@@ -328,6 +328,14 @@ mod tests {
     }
 
     #[test]
+    fn detail_takes_the_page_image() {
+        let html =
+            r#"<div class="detimg" style="background: url('/_ld/abc123.jpg') no-repeat"></div>"#;
+        let image = image_of(html).expect("картинка страницы");
+        assert_eq!(image.as_str(), "https://modsgaming.ru/_ld/abc123.jpg");
+    }
+
+    #[test]
     fn real_detail_reads_size_and_internal_offer() {
         let basis = parse_list(&fixture("list-real.html")).remove(0);
         let detail = parse_detail(&fixture("mod-real.html"), &basis);

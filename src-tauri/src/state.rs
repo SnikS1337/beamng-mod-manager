@@ -47,6 +47,7 @@ pub struct SearchRuntime {
     pub service: Arc<SearchService>,
     pub matches: Arc<MatchDecisionStore>,
     pub previews: Arc<RemoteImageCache>,
+    pub sources: Arc<Vec<Arc<dyn ModSource>>>,
 }
 
 pub struct UpdateRuntime {

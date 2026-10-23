@@ -2,7 +2,23 @@
   import { onDestroy, onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { Download, FolderOpen, Plus, RotateCcw, Save, X } from "@lucide/svelte";
+  import {
+    Check,
+    Cpu,
+    Download,
+    FolderOpen,
+    Globe,
+    Monitor,
+    Moon,
+    Package,
+    Palette,
+    Plus,
+    RefreshCw,
+    RotateCcw,
+    Save,
+    Sun,
+    X,
+  } from "@lucide/svelte";
   import { isTauri } from "@tauri-apps/api/core";
   import { Switch } from "$lib/components/ui/switch";
   import { appearance } from "$lib/shell/appearance.svelte";
@@ -27,17 +43,35 @@
     { id: "forest", label: "Лес", desc: "изумрудный, золото" },
     { id: "graphite", label: "Графит", desc: "серый, голубой" },
   ];
-  const MODES: { id: Mode; label: string }[] = [
-    { id: "dark", label: "Тёмная" },
-    { id: "light", label: "Светлая" },
-    { id: "system", label: "Как в системе" },
+  const MODES: { id: Mode; label: string; icon: typeof Moon }[] = [
+    { id: "dark", label: "Тёмная", icon: Moon },
+    { id: "light", label: "Светлая", icon: Sun },
+    { id: "system", label: "Как в системе", icon: Monitor },
   ];
+  const SECTIONS = [
+    { id: "appearance", label: "Внешний вид", icon: Palette },
+    { id: "folders", label: "Папки", icon: FolderOpen },
+    { id: "mods", label: "Моды и загрузки", icon: Package },
+    { id: "updates", label: "Обновления", icon: RefreshCw },
+    { id: "sites", label: "Сайты", icon: Globe },
+    { id: "program", label: "Программа", icon: Cpu },
+  ] as const;
+  type SectionId = (typeof SECTIONS)[number]["id"];
   const SOURCES = [
-    { id: "modland", label: "Modland" },
-    { id: "stmods", label: "STMods" },
-    { id: "modsgaming", label: "ModsGaming" },
-    { id: "beamng", label: "BeamNG (официальный)" },
+    { id: "modland", label: "Modland", note: "Каталог с проверкой «вы человек»" },
+    { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
+    { id: "modsgaming", label: "ModsGaming", note: "Русский каталог, картинки со страницы" },
+    { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
   ];
+  let activeSection = $state<SectionId>("appearance");
+
+  function scrollToSection(id: SectionId) {
+    activeSection = id;
+    document.getElementById(`settings-${id}`)?.scrollIntoView({
+      behavior: appearance.settings?.uiAnimations === false ? "auto" : "smooth",
+      block: "start",
+    });
+  }
   let draft = $state<SettingsDto | null>(null);
   let loading = $state(true);
   let saving = $state(false);
@@ -310,7 +344,22 @@
   {#if loading || !draft}
     <div class="state glass liquid-edge"><p>Загружаем настройки…</p></div>
   {:else}
-        <section class="block glass liquid-edge">
+    <div class="settings-layout">
+      <nav class="settings-side glass liquid-edge" aria-label="Разделы настроек">
+        {#each SECTIONS as section (section.id)}
+          {@const Icon = section.icon}
+          <button
+            type="button"
+            class:active={activeSection === section.id}
+            onclick={() => scrollToSection(section.id)}
+          >
+            <Icon size={16} strokeWidth={1.8} />
+            <span>{section.label}</span>
+          </button>
+        {/each}
+      </nav>
+      <div class="settings-sections">
+        <section id="settings-appearance" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Внешний вид</h2>
             <span>тема, стекло и движение</span>
@@ -319,18 +368,28 @@
       <div class="appearance-grid">
         <div class="appearance-left">
           <span class="group-title">Как это выглядит</span>
-          <div class="look-preview" aria-hidden="true">
-            <div class="preview-top">
-              <span class="on">Все</span>
-              <span>Включённые</span>
-              <span class="preview-search"></span>
+          <div class="showcase" class:matte={!draft.liquidGlass} aria-hidden="true">
+            <div class="showcase-photo"></div>
+            <div class="showcase-bar">
+              <span class="showcase-logo"></span>
+              <b>Гараж</b>
+              <span class="showcase-count">128 модов</span>
+              <span class="showcase-spacer"></span>
+              <span class="showcase-pill on">Все</span>
+              <span class="showcase-pill">Включённые</span>
             </div>
-            <div class="preview-body">
-              <span class="preview-orb one"></span>
-              <span class="preview-orb two"></span>
-              <span class="preview-tile"></span>
-              <span class="preview-tile small"></span>
+            <div class="showcase-cards">
+              <span class="mini-card first"></span>
+              <span class="mini-card second"></span>
             </div>
+          </div>
+          <div class="showcase-note">
+            <b>{draft.liquidGlass ? "Жидкое стекло" : "Матовое стекло"}</b>
+            <small>
+              {draft.liquidGlass
+                ? "Края панелей преломляют фото, карточки всплывают над фоном."
+                : "Фото размыто, края ровные — быстрее и спокойнее."}
+            </small>
           </div>
 
           <span class="group-title">Готовые наборы</span>
@@ -361,6 +420,7 @@
                 <small>Полупрозрачные панели, блики и мягкие тени.</small>
               </div>
               <Switch
+                size="lg"
                 checked={draft.liquidGlass}
                 onCheckedChange={(value) => setFlag("liquidGlass", value)}
                 aria-label="Жидкое стекло"
@@ -372,6 +432,7 @@
                 <small>Капля-выбор, появление и подъём карточек.</small>
               </div>
               <Switch
+                size="lg"
                 checked={draft.uiAnimations}
                 onCheckedChange={(value) => setFlag("uiAnimations", value)}
                 aria-label="Анимации интерфейса"
@@ -383,6 +444,7 @@
                 <small>По фону медленно плывут пятна света и цветная полоса.</small>
               </div>
               <Switch
+                size="lg"
                 checked={draft.animatedBackground}
                 onCheckedChange={(value) => setFlag("animatedBackground", value)}
                 aria-label="Анимированный фон"
@@ -394,6 +456,7 @@
                 <small>Над фоном плавают светлые точки, на кромках стекла вспыхивают искры.</small>
               </div>
               <Switch
+                size="lg"
                 checked={draft.fireflies}
                 onCheckedChange={(value) => setFlag("fireflies", value)}
                 aria-label="Огоньки"
@@ -405,6 +468,7 @@
                 <small>Фон слегка следует за мышкой.</small>
               </div>
               <Switch
+                size="lg"
                 checked={draft.backgroundTilt}
                 onCheckedChange={(value) => setFlag("backgroundTilt", value)}
                 aria-label="Наклон фона"
@@ -424,6 +488,7 @@
             <p class="hint">Светлое стекло с тёмным текстом или тёмное.</p>
             <div class="choices">
               {#each MODES as mode (mode.id)}
+                {@const ModeIcon = mode.icon}
                 <button
                   type="button"
                   class:active={draft.mode === mode.id}
@@ -434,6 +499,7 @@
                     }
                   }}
                 >
+                  <ModeIcon size={14} strokeWidth={1.8} />
                   {mode.label}
                 </button>
               {/each}
@@ -455,6 +521,9 @@
                 }}
               >
                 <span class="tone"></span>
+                {#if draft.theme === theme.id}
+                  <span class="chosen"><Check size={13} strokeWidth={2.4} /></span>
+                {/if}
                 <b>{theme.label}</b>
                 <small>{theme.desc}</small>
               </button>
@@ -464,7 +533,7 @@
       </div>
     </section>
 
-        <section class="block glass liquid-edge">
+        <section id="settings-folders" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Папки</h2>
         <span>моды и данные игры</span>
@@ -507,7 +576,7 @@
       </div>
     </section>
 
-        <section class="block glass liquid-edge">
+        <section id="settings-mods" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Моды и загрузки</h2>
         <span>копии, предупреждения и наблюдение за папками</span>
@@ -539,15 +608,22 @@
         />
       </div>
 
-      <div class="toggles">
-        <label class="check">
-          <input
-            type="checkbox"
-            bind:checked={draft.allowDownloads}
-            onchange={mark}
-          />
-          Разрешить предлагать скачанные моды
-        </label>
+      <div class="switch-row">
+        <div>
+          <b>Скачанные моды</b>
+          <small>Предлагать установку архивов из «Загрузок» и наблюдаемых папок.</small>
+        </div>
+        <Switch
+          size="lg"
+          checked={draft.allowDownloads}
+          onCheckedChange={(value) => {
+            if (draft) {
+              draft.allowDownloads = value;
+              mark();
+            }
+          }}
+          aria-label="Разрешить предлагать скачанные моды"
+        />
       </div>
 
       <div class="row">
@@ -569,7 +645,7 @@
       </div>
     </section>
 
-        <section class="block glass liquid-edge">
+        <section id="settings-updates" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Обновления</h2>
         <span>как часто проверять сайты</span>
@@ -620,48 +696,67 @@
         </div>
       </div>
 
-      <div class="toggles">
-        <label class="check">
-          <input
-            type="checkbox"
-            bind:checked={draft.autoCheckOnStart}
-            onchange={mark}
-          />
-          Проверять при запуске
-        </label>
-        <label class="check">
-          <input
-            type="checkbox"
-            bind:checked={draft.checkAppUpdates}
-            onchange={mark}
-          />
-          Проверять обновления программы
-        </label>
+      <div class="switch-row">
+        <div>
+          <b>Проверять при запуске</b>
+          <small>Сразу после открытия программы сверять версии модов с сайтами.</small>
+        </div>
+        <Switch
+          size="lg"
+          checked={draft.autoCheckOnStart}
+          onCheckedChange={(value) => {
+            if (draft) {
+              draft.autoCheckOnStart = value;
+              mark();
+            }
+          }}
+          aria-label="Проверять обновления при запуске"
+        />
+      </div>
+      <div class="switch-row">
+        <div>
+          <b>Обновления программы</b>
+          <small>Проверять новые версии самого менеджера на GitHub.</small>
+        </div>
+        <Switch
+          size="lg"
+          checked={draft.checkAppUpdates}
+          onCheckedChange={(value) => {
+            if (draft) {
+              draft.checkAppUpdates = value;
+              mark();
+            }
+          }}
+          aria-label="Проверять обновления программы"
+        />
       </div>
     </section>
 
-        <section class="block glass liquid-edge">
+        <section id="settings-sites" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Сайты</h2>
         <span>где искать моды</span>
       </div>
-      <div class="toggles">
+      <div class="switch-list">
         {#each SOURCES as source (source.id)}
-          <label class="check">
-            <input
-              type="checkbox"
+          <div class="switch-row">
+            <div>
+              <b>{source.label}</b>
+              <small>{source.note}</small>
+            </div>
+            <Switch
+              size="lg"
               checked={sourceEnabled(source.id)}
-              onchange={(event) =>
-                setSource(source.id, (event.currentTarget as HTMLInputElement).checked)}
+              onCheckedChange={(value) => setSource(source.id, value)}
+              aria-label={source.label}
             />
-            {source.label}
-          </label>
+          </div>
         {/each}
       </div>
       <p class="hint">Поиск и проверка обновлений используют только включённые сайты.</p>
     </section>
 
-        <section class="block glass liquid-edge">
+        <section id="settings-program" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Программа</h2>
         <span>версия {appUpdate?.currentVersion ?? "1.0.0"}</span>
@@ -702,6 +797,8 @@
         </div>
       </div>
         </section>
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -832,108 +929,6 @@
     font-weight: 650;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-  }
-
-  .look-preview {
-    position: relative;
-    height: 152px;
-    overflow: hidden;
-    border: 1px solid var(--glass-border);
-    border-radius: 16px;
-    background:
-      radial-gradient(90% 120% at 15% 0%, oklch(0.62 0.17 278 / 0.75), transparent 60%),
-      radial-gradient(80% 100% at 95% 100%, oklch(0.66 0.14 205 / 0.55), transparent 62%),
-      linear-gradient(135deg, oklch(0.26 0.06 268), oklch(0.2 0.04 220));
-  }
-
-  .preview-top {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    right: 10px;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    width: fit-content;
-    max-width: calc(100% - 20px);
-    padding: 4px;
-    border: 1px solid rgb(255 255 255 / 0.16);
-    border-radius: 999px;
-    background: rgb(8 12 24 / 0.38);
-    backdrop-filter: blur(8px);
-  }
-
-  .preview-top span {
-    padding: 3px 8px;
-    border-radius: 999px;
-    color: rgb(255 255 255 / 0.55);
-    font-size: 8.5px;
-    white-space: nowrap;
-  }
-
-  .preview-top .on {
-    background: rgb(255 255 255 / 0.14);
-    color: rgb(255 255 255 / 0.9);
-  }
-
-  .preview-search {
-    width: 14px;
-    height: 14px;
-    margin-left: 8px;
-    border: 1.5px solid rgb(255 255 255 / 0.4);
-    border-radius: 50%;
-  }
-
-  .preview-body {
-    position: absolute;
-    inset: 46px 12px 12px;
-    overflow: hidden;
-  }
-
-  .preview-orb {
-    position: absolute;
-    display: block;
-    border-radius: 50%;
-    background: oklch(0.7 0.13 230 / 0.55);
-    filter: blur(1px);
-  }
-
-  .preview-orb.one {
-    top: -14px;
-    right: 10%;
-    width: 58px;
-    height: 58px;
-    background: oklch(0.74 0.16 278 / 0.55);
-  }
-
-  .preview-orb.two {
-    right: 26%;
-    bottom: -28px;
-    width: 90px;
-    height: 90px;
-    background: oklch(0.68 0.14 205 / 0.38);
-  }
-
-  .preview-tile {
-    position: absolute;
-    left: 4%;
-    bottom: -12px;
-    width: 54%;
-    height: 74px;
-    border-radius: 13px;
-    background: linear-gradient(140deg, oklch(0.78 0.12 230 / 0.75), oklch(0.62 0.18 278 / 0.65));
-    transform: rotate(-7deg);
-  }
-
-  .preview-tile.small {
-    left: auto;
-    right: 8%;
-    bottom: 8px;
-    width: 33%;
-    height: 64px;
-    background: linear-gradient(140deg, oklch(0.8 0.11 85 / 0.75), oklch(0.68 0.14 205 / 0.6));
-    transform: rotate(9deg);
   }
 
   .presets {
@@ -1125,26 +1120,19 @@
     box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 55%, transparent);
   }
 
-  .toggles {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 16px;
-  }
-
-  .check {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    color: var(--foreground);
-    font-size: 10.5px;
-    cursor: default;
-  }
-
-  .check input {
-    width: 15px;
-    height: 15px;
-    accent-color: var(--primary);
-    cursor: default;
+  .chosen {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: rgb(8 12 24 / 0.5);
+    color: #fff;
+    backdrop-filter: blur(8px);
   }
 
   .number {
@@ -1335,6 +1323,375 @@
     }
     .theme-grid {
       grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  /* ── раскладка с разделами: ближе к legacy ── */
+  .settings-layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    align-items: start;
+    gap: 18px;
+    min-height: 0;
+  }
+
+  .settings-side {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px;
+    border-radius: 20px;
+  }
+
+  .settings-side button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 42px;
+    padding: 0 13px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 13px;
+    font-weight: 520;
+    text-align: left;
+    cursor: default;
+    transition:
+      background 150ms ease,
+      color 150ms ease;
+  }
+
+  .settings-side button:hover {
+    background: color-mix(in oklab, var(--foreground) 6%, transparent);
+    color: var(--foreground);
+  }
+
+  .settings-side button.active {
+    background: color-mix(in oklab, var(--primary) 16%, transparent);
+    color: var(--foreground);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent);
+  }
+
+  .settings-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    min-width: 0;
+  }
+
+  .settings-sections > section {
+    scroll-margin-top: 8px;
+  }
+
+  .hint {
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+
+  .head p {
+    font-size: 12px;
+  }
+
+  .block {
+    gap: 16px;
+    padding: 20px 22px;
+    border-radius: 20px;
+  }
+
+  .block-head h2 {
+    font-size: 17px;
+    letter-spacing: -0.01em;
+  }
+
+  .block-head span {
+    font-size: 11.5px;
+  }
+
+  .group-title {
+    margin-top: 4px;
+    font-size: 10px;
+  }
+
+  .row > label,
+  .row > .label {
+    font-size: 13px;
+  }
+
+  .appearance-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .appearance-left,
+  .appearance-right {
+    gap: 12px;
+  }
+
+  .presets button {
+    padding: 13px 15px;
+    border-radius: 15px;
+  }
+
+  .presets button b {
+    font-size: 13px;
+  }
+
+  .presets button small {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .switch-row {
+    padding: 13px 16px;
+    border-radius: 15px;
+  }
+
+  .switch-row b {
+    font-size: 13.5px;
+  }
+
+  .switch-row small {
+    margin-top: 3px;
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
+
+  .settings-subcard {
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  .subcard-title {
+    font-size: 13px;
+  }
+
+  .choices {
+    gap: 7px;
+  }
+
+  .choices button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 14px;
+    font-size: 12.5px;
+  }
+
+  .theme-grid {
+    gap: 10px;
+  }
+
+  .swatch {
+    height: 88px;
+    border-radius: 15px;
+  }
+
+  .swatch b {
+    bottom: 24px;
+    left: 11px;
+    font-size: 12.5px;
+  }
+
+  .swatch small {
+    bottom: 10px;
+    left: 11px;
+    font-size: 9.5px;
+  }
+
+  .number {
+    width: 96px;
+    height: 34px;
+    font-size: 13px;
+  }
+
+  .unit {
+    font-size: 12px;
+  }
+
+  .path-row input {
+    height: 36px;
+    font-size: 12.5px;
+  }
+
+  .path-row button,
+  .watch button,
+  .add {
+    height: 34px;
+    padding: 0 13px;
+    font-size: 11.5px;
+  }
+
+  .watch-row {
+    padding: 6px 6px 6px 12px;
+    font-size: 11.5px;
+  }
+
+  .update-main p {
+    font-size: 13.5px;
+  }
+
+  .update-main span {
+    font-size: 11.5px;
+  }
+
+  .update-actions button {
+    height: 34px;
+    padding: 0 14px;
+    font-size: 11.5px;
+  }
+
+  .save {
+    height: 34px;
+    padding: 0 15px;
+    font-size: 12px;
+  }
+
+  /* ── живое превью вместо абстрактных пятен ── */
+  .showcase {
+    position: relative;
+    height: 230px;
+    overflow: hidden;
+    border: 1px solid var(--glass-border);
+    border-radius: 18px;
+    isolation: isolate;
+  }
+
+  .showcase-photo {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(180deg, rgb(7 11 20 / 0.1), rgb(7 11 20 / 0.55)),
+      url("/preview-mustang.jpg") center 62% / cover no-repeat;
+  }
+
+  .showcase-bar {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    right: 14px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 46px;
+    padding: 0 16px;
+    border: 1px solid rgb(255 255 255 / 0.22);
+    border-radius: 23px;
+    background: rgb(20 28 44 / 0.38);
+    color: #fff;
+    font-size: 13px;
+    backdrop-filter: blur(16px) saturate(1.35);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.24),
+      0 10px 28px rgb(4 8 18 / 0.28);
+  }
+
+  .showcase.matte .showcase-bar {
+    border-color: rgb(255 255 255 / 0.16);
+    background: rgb(20 28 44 / 0.66);
+    backdrop-filter: blur(26px) saturate(1.1);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2);
+  }
+
+  .showcase-logo {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    background:
+      linear-gradient(140deg, rgb(255 255 255 / 0.75), transparent 55%),
+      linear-gradient(320deg, oklch(0.6 0.19 278), oklch(0.52 0.15 210));
+    transform: rotate(8deg);
+  }
+
+  .showcase-bar b {
+    font-weight: 620;
+  }
+
+  .showcase-count {
+    color: rgb(255 255 255 / 0.62);
+    font-size: 11.5px;
+  }
+
+  .showcase-spacer {
+    flex: 1;
+  }
+
+  .showcase-pill {
+    padding: 5px 11px;
+    border-radius: 999px;
+    color: rgb(255 255 255 / 0.58);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .showcase-pill.on {
+    background: rgb(255 255 255 / 0.2);
+    color: #fff;
+  }
+
+  .showcase-cards {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    left: 14px;
+    z-index: 2;
+    display: flex;
+    gap: 12px;
+  }
+
+  .mini-card {
+    flex: 1;
+    height: 96px;
+    border: 1px solid rgb(255 255 255 / 0.26);
+    border-radius: 14px;
+    background-size: cover;
+    background-position: center;
+    box-shadow: 0 12px 26px rgb(4 8 18 / 0.35);
+  }
+
+  .mini-card.first {
+    background-image: linear-gradient(180deg, transparent 40%, rgb(5 9 18 / 0.5)), url("/preview-lambo.jpg");
+  }
+
+  .mini-card.second {
+    background-image: linear-gradient(180deg, transparent 40%, rgb(5 9 18 / 0.5)), url("/preview-mustang.jpg");
+  }
+
+  .showcase-note {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: -4px;
+  }
+
+  .showcase-note b {
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+
+  .showcase-note small {
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  @media (max-width: 1180px) {
+    .settings-layout {
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .settings-side button {
+      padding: 0 10px;
+      font-size: 12px;
+    }
+
+    .showcase {
+      height: 210px;
     }
   }
 </style>
