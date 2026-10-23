@@ -46,6 +46,7 @@ pub fn find_pages(
     now: DateTime<FixedOffset>,
     cancel: &AtomicBool,
     title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
     mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
     let due = PageGuesser::due(store, now);
@@ -106,7 +107,10 @@ pub fn find_pages(
         {
             continue;
         }
-        if let Some(guess) = PageGuesser::pick(installed, title.as_deref(), &listings) {
+        let author = author_of(&installed.id);
+        if let Some(guess) =
+            PageGuesser::pick_with_author(installed, title.as_deref(), author.as_deref(), &listings)
+        {
             let binding = ModBinding {
                 mod_id: installed.id.clone(),
                 source: guess.listing.source,
@@ -439,6 +443,7 @@ mod tests {
             now(),
             &cancel,
             &|_| None,
+            &|_| None,
             Some(&mut |progress: &UpdateProgress| {
                 steps.push(format!("{}/{}", progress.done, progress.total));
             }),
@@ -460,7 +465,7 @@ mod tests {
 
         // Повторный подбор ничего не ищет.
         let before = site.calls.load(Ordering::SeqCst);
-        let report = find_pages(&store, &search, now(), &cancel, &|_| None, None);
+        let report = find_pages(&store, &search, now(), &cancel, &|_| None, &|_| None, None);
         assert_eq!(report.found, 0);
         assert_eq!(site.calls.load(Ordering::SeqCst), before);
 
@@ -507,7 +512,7 @@ mod tests {
         let site = Site::new(|_| Err(SourceError::unavailable("код 503")));
         let search = search(site);
         let cancel = AtomicBool::new(false);
-        let report = find_pages(&store, &search, now(), &cancel, &|_| None, None);
+        let report = find_pages(&store, &search, now(), &cancel, &|_| None, &|_| None, None);
         assert_eq!(report.found, 0);
         assert_eq!(report.searched, 0);
         assert!(
@@ -539,7 +544,7 @@ mod tests {
             }),
         });
         let search = search(site);
-        let report = find_pages(&store, &search, now(), &cancel, &|_| None, None);
+        let report = find_pages(&store, &search, now(), &cancel, &|_| None, &|_| None, None);
         assert!(report.cancelled);
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -657,7 +662,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         // Мод «удаляют» между `due` и записью: здесь это видно по пустому хранилищу.
         store.remove_mod("a");
-        let report = find_pages(&store, &search, now(), &cancel, &|_| None, None);
+        let report = find_pages(&store, &search, now(), &cancel, &|_| None, &|_| None, None);
         assert_eq!(report.found, 0);
         assert!(store.bindings().is_empty());
     }

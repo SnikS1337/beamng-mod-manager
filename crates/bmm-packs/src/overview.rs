@@ -126,6 +126,14 @@ pub fn read_overview(path: &Path) -> ArchiveOverview {
     }
 }
 
+/// Что архив говорит о себе: название и автор из `info.json` его единственной машины
+/// или карты.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArchiveInfo {
+    pub title: Option<String>,
+    pub author: Option<String>,
+}
+
 /// Название мода из его архива — для карточки и для поиска страницы на сайтах.
 ///
 /// Только когда мод кладёт ровно одну свою машину (или одну свою карту) и в её
@@ -136,10 +144,16 @@ pub fn read_overview(path: &Path) -> ArchiveOverview {
 /// `Err` — архив сейчас не открыть (занят, нет доступа): спросить в другой раз.
 /// Читает только оглавление и один маленький файл: годится для тысячи модов подряд.
 pub fn archive_title(path: &Path) -> Result<Option<String>, std::io::Error> {
+    archive_info(path).map(|info| info.title)
+}
+
+/// Название и автор из архива (см. [`archive_title`]). Автор нужен, чтобы не принять
+/// за этот мод одноимённую страницу другого автора.
+pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
     let index = match zip_index::read_index(path) {
         Ok(index) => index,
         Err(ZipError::Io(error)) => return Err(error),
-        Err(ZipError::Zip(_)) => return Ok(None),
+        Err(ZipError::Zip(_)) => return Ok(ArchiveInfo::default()),
     };
     let prefix = wrapper_prefix(&index.entries);
     let mut vehicles = BTreeSet::new();
@@ -161,10 +175,10 @@ pub fn archive_title(path: &Path) -> Result<Option<String>, std::io::Error> {
     let (root, folder) = match (vehicles.len(), levels.len()) {
         (1, 0) => ("vehicles", vehicles.first().cloned()),
         (0, 1) => ("levels", levels.first().cloned()),
-        _ => return Ok(None),
+        _ => return Ok(ArchiveInfo::default()),
     };
     let Some(folder) = folder else {
-        return Ok(None);
+        return Ok(ArchiveInfo::default());
     };
     let stock = if root == "vehicles" {
         crate::stock::is_stock_vehicle(&folder)
@@ -172,10 +186,31 @@ pub fn archive_title(path: &Path) -> Result<Option<String>, std::io::Error> {
         crate::stock::is_stock_level(&folder)
     };
     if stock {
-        return Ok(None);
+        return Ok(ArchiveInfo::default());
     }
     let one = BTreeSet::from([folder.clone()]);
-    Ok(titles_for(path, &prefix, root, &one).remove(&folder))
+    let title = titles_for(path, &prefix, root, &one).remove(&folder);
+    let author = info_value(path, &format!("{prefix}{root}/{folder}/info.json"))
+        .and_then(|value| {
+            ["Author", "author", "Authors", "authors"]
+                .iter()
+                .find_map(|key| value.get(*key).and_then(Value::as_str).map(str::to_string))
+        })
+        .map(|author| author.trim().to_string())
+        .filter(|author| !author.is_empty() && author.chars().count() <= MAX_TITLE);
+    Ok(ArchiveInfo { title, author })
+}
+
+fn info_value(path: &Path, entry: &str) -> Option<Value> {
+    let file = File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let mut info = archive.by_name(entry).ok()?;
+    if info.size() > MAX_INFO_BYTES {
+        return None;
+    }
+    let mut text = String::new();
+    info.read_to_string(&mut text).ok()?;
+    json5::from_str::<Value>(&text).ok()
 }
 
 fn wrapper_prefix(entries: &[zip_index::Entry]) -> String {
@@ -293,6 +328,21 @@ mod tests {
                 ),
                 ("vehicles/sandero1/info_diesel.json", br#"{"Configuration":"TB"}"#),
             ],
+        );
+        let laurel = temp.path().join("laurel_c33.zip");
+        build_zip(
+            &laurel,
+            &[(
+                "vehicles/stvol_c33/info.json",
+                br#"{"Author":"Ruzskye Stvoly","Brand":"Nissan","Name":"Laurel C33"}"#,
+            )],
+        );
+        assert_eq!(
+            archive_info(&laurel).unwrap(),
+            ArchiveInfo {
+                title: Some("Nissan Laurel C33".to_string()),
+                author: Some("Ruzskye Stvoly".to_string()),
+            }
         );
         assert_eq!(
             archive_title(&car).unwrap().as_deref(),
