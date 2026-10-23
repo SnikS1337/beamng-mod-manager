@@ -95,6 +95,10 @@ export async function searchOpenModland(query: string): Promise<void> {
   if (isTauri()) await invoke("search_open_modland", { query });
 }
 
+export async function searchResolveHuman(source: string): Promise<void> {
+  if (isTauri()) await invoke("search_resolve_human", { source });
+}
+
 export async function searchDecide(
   query: string,
   a: { source: string; sourceId: string },

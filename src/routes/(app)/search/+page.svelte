@@ -9,6 +9,7 @@
     searchDecide,
     searchOpenModland,
     searchPreview,
+    searchResolveHuman,
     searchStart,
     sourceName,
     type SearchCard,
@@ -138,6 +139,18 @@
   async function openModland() {
     try {
       await searchOpenModland(submitted || query);
+    } catch (reason) {
+      error = errorText(reason);
+    }
+  }
+
+  async function resolveHuman(source: string) {
+    try {
+      await searchResolveHuman(source);
+      if (submitted) {
+        query = submitted;
+        await runSearch();
+      }
     } catch (reason) {
       error = errorText(reason);
     }
@@ -300,6 +313,13 @@
     <div class="banner error">{error}</div>
   {/if}
 
+  {#if sources.some((source) => source.status === "needsHumanCheck")}
+    <div class="banner warn">
+      Сайт просит подтвердить, что вы человек. Откройте «На сайте», пройдите проверку и нажмите
+      «Я прошёл».
+    </div>
+  {/if}
+
   {#if sources.length > 0}
     <div class="sites">
       {#each sources as source (source.id)}
@@ -324,6 +344,9 @@
           </span>
           {#if source.id === "modland" && submitted}
             <button type="button" onclick={() => void openModland()}>На сайте</button>
+            {#if source.status === "needsHumanCheck"}
+              <button type="button" onclick={() => void resolveHuman(source.id)}>Я прошёл</button>
+            {/if}
           {/if}
         </div>
       {/each}
@@ -568,6 +591,12 @@
     border-color: color-mix(in oklab, oklch(0.75 0.16 25) 35%, transparent);
     background: color-mix(in oklab, oklch(0.75 0.16 25) 10%, transparent);
     color: oklch(0.82 0.12 25);
+  }
+
+  .banner.warn {
+    border-color: color-mix(in oklab, oklch(0.82 0.15 85) 35%, transparent);
+    background: color-mix(in oklab, oklch(0.82 0.15 85) 10%, transparent);
+    color: oklch(0.88 0.1 85);
   }
 
   .sites {
