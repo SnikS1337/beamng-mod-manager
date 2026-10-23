@@ -3,7 +3,7 @@
 > **Ветка `refactor-rust-poc`.** Приложение переписано на Rust + Tauri 2 + Svelte 5;
 > функциональные этапы M0–M7 закрыты. Спека —
 > [docs/superpowers/specs/2026-10-21-rust-tauri-refactor-design.md](docs/superpowers/specs/2026-10-21-rust-tauri-refactor-design.md).
-> Старое приложение на C#/WPF остаётся в `legacy/` как эталон до финальной полировки.
+> Старое приложение на C#/WPF остаётся в `legacy/` как эталон и не удаляется.
 > Как собрать — [docs/BUILD.md](docs/BUILD.md); состояние этапов — `docs/M*_STATUS.md`.
 
 Программа для Windows, которая держит в порядке моды [BeamNG.drive](https://www.beamng.com/): показывает, что
