@@ -18,7 +18,7 @@
     renderedCount?: number;
   } = $props();
 
-  const ROW_HEIGHT = 250;
+  const ROW_HEIGHT = 218;
   const GAP = 14;
 
   let viewport = $state<HTMLDivElement | null>(null);
@@ -27,7 +27,7 @@
   let scrollTop = $state(0);
 
   let columns = $derived(
-    width < 620 ? 2 : width < 900 ? 3 : width < 1180 ? 4 : width < 1480 ? 5 : 6,
+    width < 620 ? 2 : width < 930 ? 3 : width < 1660 ? 4 : width < 2000 ? 5 : 6,
   );
   let rows = $derived(Math.ceil(items.length / columns));
   let startRow = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1));

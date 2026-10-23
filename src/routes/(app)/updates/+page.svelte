@@ -3,6 +3,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { Check, ExternalLink, EyeOff, RefreshCw, Search } from "@lucide/svelte";
   import { sourceName } from "$lib/ipc/search";
+  import { plural } from "$lib/features/garage/format";
   import { toasts } from "$lib/shell/toasts.svelte";
   import {
     listenUpdates,
@@ -250,8 +251,10 @@
           {progressText()}
         {:else}
           {counts.available}
-          {counts.available === 1 ? "доступно" : "доступно"}
-          · {counts.hidden} скрыто · {counts.pages} {counts.pages === 1 ? "страница" : "страниц"} ждёт решения
+          доступно
+          · {counts.hidden} скрыто · {counts.pages}
+          {plural(counts.pages, "страница", "страницы", "страниц")}
+          {plural(counts.pages, "ждёт", "ждут", "ждут")} решения
         {/if}
       </p>
     </div>

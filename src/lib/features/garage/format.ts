@@ -1,5 +1,8 @@
 export function formatSize(bytes: number): string {
   if (!bytes || bytes <= 0) return "—";
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} КБ`;
+  }
   const mb = bytes / (1024 * 1024);
   if (mb >= 1024) {
     return `${(mb / 1024).toFixed(1).replace(".", ",")} ГБ`;

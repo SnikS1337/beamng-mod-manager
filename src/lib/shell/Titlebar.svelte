@@ -7,10 +7,8 @@
   <div class="brand" data-tauri-drag-region>
     <span class="cube" aria-hidden="true"></span>
     <span class="name" data-tauri-drag-region>ModManager BeamNG</span>
-    <span class="tag">0.4</span>
+    <span class="tag">1.0</span>
   </div>
-
-  <div class="stack" data-tauri-drag-region>Tauri 2 · Svelte 5 · Tailwind 4 · shadcn-svelte</div>
 
   <div class="window-capsule glass liquid-edge">
     <button type="button" aria-label="Свернуть" onclick={() => void windowAction("minimize")}>
@@ -78,16 +76,6 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-  }
-
-  .stack {
-    margin-left: 4px;
-    color: var(--muted-foreground);
-    font-size: 10.5px;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .window-capsule {

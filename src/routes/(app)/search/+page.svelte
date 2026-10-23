@@ -2,7 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { ExternalLink, Search, X } from "@lucide/svelte";
-  import { formatSize } from "$lib/features/garage/format";
+  import { formatSize, plural } from "$lib/features/garage/format";
   import { toasts } from "$lib/shell/toasts.svelte";
   import {
     listenSearch,
@@ -274,9 +274,9 @@
           ищем на сайтах…
         {:else if searched}
           {cards.length}
-          {cards.length === 1 ? "мод" : cards.length >= 2 && cards.length <= 4 ? "мода" : "модов"}
+          {plural(cards.length, "мод", "мода", "модов")}
           · {totalListings}
-          {totalListings === 1 ? "страница" : totalListings >= 2 && totalListings <= 4 ? "страницы" : "страниц"}
+          {plural(totalListings, "страница", "страницы", "страниц")}
         {:else}
           один запрос сразу на Modland, STMods, ModsGaming и официальный репозиторий BeamNG
         {/if}
@@ -698,7 +698,7 @@
     padding: 3px 8px;
     border-radius: 999px;
     background: rgba(6, 10, 20, 0.66);
-    color: var(--foreground);
+    color: rgb(255 255 255 / 0.9);
     font-size: 9px;
     font-weight: 600;
     backdrop-filter: blur(6px);
