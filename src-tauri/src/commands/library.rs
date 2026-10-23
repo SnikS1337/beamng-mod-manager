@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::Serialize;
+use tauri::Emitter;
 use url::Url;
 
 use bmm_domain::clock::system_clock;
@@ -155,10 +157,74 @@ pub async fn library_load(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<LibrarySnapshot, AppError> {
     let state = state.inner().clone();
-    let _ = app;
-    tauri::async_runtime::spawn_blocking(move || load_snapshot(&state))
+    let task_state = state.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || load_snapshot(&task_state))
         .await
-        .map_err(|error| AppError::new("task", error.to_string()))?
+        .map_err(|error| AppError::new("task", error.to_string()))??;
+    spawn_title_fill(app, state);
+    Ok(snapshot)
+}
+
+static TITLES_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// Названия модов из их архивов (`info.json`) читаются в фоне и кэшируются: первый
+/// запуск с сотнями модов не ждёт их, а карточки обновляются событием `library://titles`.
+fn spawn_title_fill(app: tauri::AppHandle, state: Arc<AppState>) {
+    if TITLES_BUSY.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let added = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fill_titles(&state)))
+            .unwrap_or(0);
+        TITLES_BUSY.store(false, Ordering::SeqCst);
+        if added > 0 {
+            let _ = app.emit("library://titles", added);
+        }
+    });
+}
+
+/// Дочитывает названия, которых ещё нет в кэше. Возвращает, сколько записали.
+pub(crate) fn fill_titles(state: &AppState) -> usize {
+    let targets: Vec<PreviewTarget> = state
+        .previews_by_id
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    let known = state.previews.titles();
+    let mut found: Vec<(String, Option<String>)> = Vec::new();
+    let mut written = 0usize;
+    for target in targets {
+        if known.contains_key(&target.key) || found.iter().any(|(key, _)| *key == target.key) {
+            continue;
+        }
+        // Архив занят или пропал — спросим при следующей загрузке.
+        if let Ok(title) = overview::archive_title(&target.path) {
+            found.push((target.key.clone(), title));
+        }
+        if found.len() >= 50 {
+            if state.previews.put_titles(&found).is_ok() {
+                written += found.len();
+            }
+            found.clear();
+        }
+    }
+    if state.previews.put_titles(&found).is_ok() {
+        written += found.len();
+    }
+    written
+}
+
+/// Название мода из его архива для поиска страницы: из кэша, иначе прочитать сейчас.
+pub(crate) fn archive_title_of(state: &AppState, mod_id: &str) -> Option<String> {
+    let target = state.previews_by_id.lock().unwrap().get(mod_id).cloned()?;
+    if let Some(known) = state.previews.title(&target.key) {
+        return known;
+    }
+    let title = overview::archive_title(&target.path).ok()?;
+    let _ = state.previews.put_title(&target.key, title.as_deref());
+    title
 }
 
 #[tauri::command]
@@ -382,6 +448,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         );
     }
     *state.previews_by_id.lock().unwrap() = targets;
+    let archive_titles = state.previews.titles();
 
     let game_version = mods_dir.parent().and_then(info::detect_version);
     let mods: Vec<ModCardDto> = installed_list
@@ -399,7 +466,12 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
             });
             let site_title = check.as_ref().and_then(|check| check.last_title.as_deref());
             let repo_title = repo.and_then(|repo| repo.title.as_deref());
-            let name = ModTitles::choose(repo_title, None, site_title, &installed.name);
+            let archive_title = preview_keys
+                .get(&installed.id)
+                .and_then(|key| archive_titles.get(key))
+                .map(String::as_str)
+                .filter(|title| !title.is_empty());
+            let name = ModTitles::choose(repo_title, archive_title, site_title, &installed.name);
             let version = repo
                 .and_then(|repo| repo.version.clone())
                 .or_else(|| installed.version.clone());

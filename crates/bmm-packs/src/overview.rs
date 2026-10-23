@@ -126,6 +126,58 @@ pub fn read_overview(path: &Path) -> ArchiveOverview {
     }
 }
 
+/// Название мода из его архива — для карточки и для поиска страницы на сайтах.
+///
+/// Только когда мод кладёт ровно одну свою машину (или одну свою карту) и в её
+/// `info.json` есть название: «Brand Name» машины или `title` карты. Пак из
+/// нескольких машин, покраска стандартной машины, мод без `info.json` — названия нет.
+///
+/// `Ok(None)` — названия в архиве нет (в том числе архив не zip или повреждён);
+/// `Err` — архив сейчас не открыть (занят, нет доступа): спросить в другой раз.
+/// Читает только оглавление и один маленький файл: годится для тысячи модов подряд.
+pub fn archive_title(path: &Path) -> Result<Option<String>, std::io::Error> {
+    let index = match zip_index::read_index(path) {
+        Ok(index) => index,
+        Err(ZipError::Io(error)) => return Err(error),
+        Err(ZipError::Zip(_)) => return Ok(None),
+    };
+    let prefix = wrapper_prefix(&index.entries);
+    let mut vehicles = BTreeSet::new();
+    let mut levels = BTreeSet::new();
+    for entry in &index.entries {
+        let name = entry.name.strip_prefix(&prefix).unwrap_or(&entry.name);
+        let parts: Vec<&str> = name.split('/').collect();
+        if let [root, folder, rest @ ..] = parts.as_slice()
+            && !rest.is_empty()
+            && !folder.is_empty()
+        {
+            if root.eq_ignore_ascii_case("vehicles") && !folder.eq_ignore_ascii_case("common") {
+                vehicles.insert(folder.to_string());
+            } else if root.eq_ignore_ascii_case("levels") {
+                levels.insert(folder.to_string());
+            }
+        }
+    }
+    let (root, folder) = match (vehicles.len(), levels.len()) {
+        (1, 0) => ("vehicles", vehicles.first().cloned()),
+        (0, 1) => ("levels", levels.first().cloned()),
+        _ => return Ok(None),
+    };
+    let Some(folder) = folder else {
+        return Ok(None);
+    };
+    let stock = if root == "vehicles" {
+        crate::stock::is_stock_vehicle(&folder)
+    } else {
+        crate::stock::is_stock_level(&folder)
+    };
+    if stock {
+        return Ok(None);
+    }
+    let one = BTreeSet::from([folder.clone()]);
+    Ok(titles_for(path, &prefix, root, &one).remove(&folder))
+}
+
 fn wrapper_prefix(entries: &[zip_index::Entry]) -> String {
     let Some(first) = entries
         .iter()
@@ -224,6 +276,79 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn archive_title_of_single_vehicle_and_map() {
+        let temp = tempfile::tempdir().unwrap();
+        let car = temp.path().join("daciasanderomk1_tbdiesel.zip");
+        build_zip(
+            &car,
+            &[
+                ("vehicles/common/x.jbeam", b"{}"),
+                ("vehicles/sandero1/sandero.jbeam", b"{}"),
+                (
+                    "vehicles/sandero1/info.json",
+                    br#"{"Name":"Sandero (B90)", "Brand":"Dacia", /* loose json */ "Years":{"min":2008,},}"#,
+                ),
+                ("vehicles/sandero1/info_diesel.json", br#"{"Configuration":"TB"}"#),
+            ],
+        );
+        assert_eq!(
+            archive_title(&car).unwrap().as_deref(),
+            Some("Dacia Sandero (B90)")
+        );
+
+        let map = temp.path().join("map.zip");
+        build_zip(
+            &map,
+            &[
+                ("Wrapper/levels/my_map/main.level.json", b"{}"),
+                (
+                    "Wrapper/levels/my_map/info.json",
+                    br#"{"title":"Lake Town"}"#,
+                ),
+            ],
+        );
+        assert_eq!(archive_title(&map).unwrap().as_deref(), Some("Lake Town"));
+    }
+
+    #[test]
+    fn archive_title_is_absent_for_packs_stock_tuning_and_junk() {
+        let temp = tempfile::tempdir().unwrap();
+        let pack = temp.path().join("pack.zip");
+        build_zip(
+            &pack,
+            &[
+                ("vehicles/a/info.json", br#"{"Name":"A"}"#),
+                ("vehicles/b/info.json", br#"{"Name":"B"}"#),
+            ],
+        );
+        assert_eq!(archive_title(&pack).unwrap(), None);
+
+        let tuning = temp.path().join("tuning.zip");
+        build_zip(
+            &tuning,
+            &[(
+                "vehicles/pessima/info.json",
+                br#"{"Brand":"Ibishu","Name":"Pessima"}"#,
+            )],
+        );
+        assert_eq!(
+            archive_title(&tuning).unwrap(),
+            None,
+            "стандартная машина игры"
+        );
+
+        let no_info = temp.path().join("noinfo.zip");
+        build_zip(&no_info, &[("vehicles/car/car.jbeam", b"{}")]);
+        assert_eq!(archive_title(&no_info).unwrap(), None);
+
+        let junk = temp.path().join("junk.zip");
+        std::fs::write(&junk, b"not a zip").unwrap();
+        assert_eq!(archive_title(&junk).unwrap(), None);
+
+        assert!(archive_title(&temp.path().join("missing.zip")).is_err());
     }
 
     #[test]

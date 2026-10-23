@@ -6,6 +6,7 @@
   import { RefreshCw, Upload } from "@lucide/svelte";
   import {
     libraryLoad,
+    listenLibraryTitles,
     modDelete,
     modDetails,
     modForgetDeleted,
@@ -96,9 +97,15 @@
       if (disposed) stop();
       else stopUpdates = stop;
     });
+    let stopTitles: (() => void) | undefined;
+    void listenLibraryTitles(() => void load(true)).then((stop) => {
+      if (disposed) stop();
+      else stopTitles = stop;
+    });
     return () => {
       disposed = true;
       stopUpdates?.();
+      stopTitles?.();
       window.removeEventListener("bmm:library-changed", onLibraryChanged);
     };
   });
