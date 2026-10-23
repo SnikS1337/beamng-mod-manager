@@ -64,6 +64,7 @@ export interface UpdatesEvent extends UpdatesSnapshot {
 type Listener = (event: UpdatesEvent) => void;
 const listeners = new Set<Listener>();
 let mockSnapshot: UpdatesSnapshot = mockInitial();
+let mockModlandNeedsCheck = true;
 let mockSources: UpdateSource[] = mockSourceReports();
 
 function mockInitial(): UpdatesSnapshot {
@@ -129,14 +130,14 @@ function mockSourceReports(): UpdateSource[] {
     {
       id: "modland",
       displayName: "Modland",
-      status: "ok",
-      cardsFetched: 12,
-      feedPagesFetched: 3,
+      status: mockModlandNeedsCheck ? "needsHumanCheck" : "ok",
+      cardsFetched: mockModlandNeedsCheck ? 0 : 12,
+      feedPagesFetched: mockModlandNeedsCheck ? 0 : 3,
       postponed: 0,
       missing: 0,
       unreadable: 0,
       layoutChanged: false,
-      note: null,
+      note: mockModlandNeedsCheck ? "Сайт просит подтвердить, что вы человек." : null,
     },
     {
       id: "stmods",
@@ -153,14 +154,14 @@ function mockSourceReports(): UpdateSource[] {
     {
       id: "modsgaming",
       displayName: "ModsGaming",
-      status: "needsHumanCheck",
-      cardsFetched: 0,
-      feedPagesFetched: 0,
+      status: "ok",
+      cardsFetched: 9,
+      feedPagesFetched: 2,
       postponed: 0,
       missing: 0,
       unreadable: 0,
       layoutChanged: false,
-      note: "нужно пройти проверку на сайте",
+      note: null,
     },
     {
       id: "beamng",
@@ -276,7 +277,16 @@ export async function updatesUndoPage(suggestion: PageSuggestion): Promise<Updat
 }
 
 export async function updatesOpenModland(): Promise<boolean> {
-  if (!isTauri()) return false;
+  if (!isTauri()) {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    mockModlandNeedsCheck = false;
+    mockSources = mockSources.map((item) =>
+      item.id === "modland"
+        ? { ...item, status: "ok", cardsFetched: 12, feedPagesFetched: 3, note: null }
+        : item,
+    );
+    return true;
+  }
   return invoke<boolean>("updates_open_modland");
 }
 

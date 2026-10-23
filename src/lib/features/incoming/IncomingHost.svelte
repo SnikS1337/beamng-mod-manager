@@ -750,7 +750,7 @@
   }
 
   .checks li.attention .mark {
-    color: oklch(0.82 0.15 85);
+    color: var(--warning);
   }
 
   .checks li.blocked {
