@@ -2,7 +2,7 @@
   import { openPath } from "@tauri-apps/plugin-opener";
   import { Button } from "$lib/components/ui/button";
   import { modPreview, type ModDetails, type VersionRow } from "$lib/ipc/library";
-  import { formatDate, formatSize, kindLabel } from "./format";
+  import { formatDate, formatSize, kindLabel, plural } from "./format";
   import VersionsBlock from "./VersionsBlock.svelte";
 
   let {
@@ -107,7 +107,7 @@
           {#if details.archive.levels.length > 0}
             <p class="line"><span>Карты</span><b>{details.archive.levels.slice(0, 3).join(", ")}{details.archive.levels.length > 3 ? ` и ещё ${details.archive.levels.length - 3}` : ""}</b></p>
           {/if}
-          <p class="line"><span>Скрипты</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} файлов Lua` : "нет"}</b></p>
+          <p class="line"><span>Скрипты</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} ${plural(details.archive.luaFiles, "файл", "файла", "файлов")} Lua` : "нет"}</b></p>
           <p class="line"><span>Файлов</span><b>{details.archive.files} · {formatSize(details.archive.unpackedBytes)} после распаковки</b></p>
           {#each details.archive.warnings as warning}
             <p class="warn">{warning}</p>

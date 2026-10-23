@@ -630,7 +630,16 @@ fn path_of(layout: &ModLayout, disk: &DiskMod) -> PathBuf {
     match &disk.sub_folder {
         Some(sub_folder) => layout.mods_dir.join(sub_folder).join(&disk.file_name),
         None if disk.enabled => layout.mods_dir.join(&disk.file_name),
-        None => layout.disabled_dir.join(&disk.file_name),
+        None => {
+            // Игра выключает мод записью active=false в db.json, файл при этом остаётся
+            // в mods. В disabled его переносит только сам менеджер.
+            let disabled = layout.disabled_dir.join(&disk.file_name);
+            if disabled.is_file() {
+                disabled
+            } else {
+                layout.mods_dir.join(&disk.file_name)
+            }
+        }
     }
 }
 
@@ -1322,5 +1331,26 @@ mod tests {
             ensure_preview(&state, &id).is_some(),
             "после исправления архива превью должно появиться"
         );
+    }
+
+    #[test]
+    fn disabled_by_game_mod_keeps_its_archive_in_mods() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        let layout = ModLayout::in_app_folder(&mods, temp.path().join("data"));
+        std::fs::create_dir_all(&layout.disabled_dir).unwrap();
+        std::fs::write(mods.join("Car.zip"), b"x").unwrap();
+        let disk = DiskMod {
+            file_name: "Car.zip".to_string(),
+            enabled: false,
+            size_bytes: 1,
+            sub_folder: None,
+            modified_utc: None,
+        };
+        assert_eq!(path_of(&layout, &disk), mods.join("Car.zip"));
+
+        std::fs::write(layout.disabled_dir.join("Car.zip"), b"x").unwrap();
+        assert_eq!(path_of(&layout, &disk), layout.disabled_dir.join("Car.zip"));
     }
 }

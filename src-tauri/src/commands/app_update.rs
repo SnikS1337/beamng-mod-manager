@@ -297,6 +297,6 @@ mod tests {
 
     #[test]
     fn current_version_is_parsed() {
-        assert!(current_version().display().starts_with("0.4"));
+        assert!(current_version().display().starts_with("1.0"));
     }
 }
