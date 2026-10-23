@@ -10,6 +10,12 @@ use bmm_domain::atomic;
 
 const TITLES_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
+/// Картинки модов бывают 4K и по несколько мегабайт. Карточке и панели мода хватает
+/// 720 точек по большей стороне: декодирование при прокрутке становится в разы дешевле.
+const PREVIEW_MAX_SIDE: u32 = 720;
+/// Файл в кэше больше этого — старая полноразмерная картинка, её уменьшаем при чтении.
+const PREVIEW_STALE_BYTES: u64 = 350 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CachedPreview {
     Image { path: PathBuf, extension: String },
@@ -51,17 +57,42 @@ impl PreviewCache {
         }
         for extension in ["jpg", "jpeg", "png"] {
             let path = self.root.join(format!("{key}.{extension}"));
-            if path.is_file() {
-                return Some(CachedPreview::Image {
-                    path,
-                    extension: extension.to_string(),
-                });
+            let Ok(meta) = fs::metadata(&path) else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
             }
+            if meta.len() > PREVIEW_STALE_BYTES {
+                if let Some(small) = fs::read(&path).ok().and_then(|bytes| shrink(&bytes)) {
+                    if let Ok((path, extension)) = self.store(key, "jpg", &small) {
+                        return Some(CachedPreview::Image { path, extension });
+                    }
+                }
+            }
+            return Some(CachedPreview::Image {
+                path,
+                extension: extension.to_string(),
+            });
         }
         None
     }
 
-    pub fn put_image(&self, key: &str, extension: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    /// Сохраняет картинку мода, уменьшив её до размера карточки. Возвращает путь и расширение
+    /// того, что легло в кэш (большая картинка становится jpg).
+    pub fn put_image(
+        &self,
+        key: &str,
+        extension: &str,
+        bytes: &[u8],
+    ) -> std::io::Result<(PathBuf, String)> {
+        match shrink(bytes) {
+            Some(small) => self.store(key, "jpg", &small),
+            None => self.store(key, extension, bytes),
+        }
+    }
+
+    fn store(&self, key: &str, extension: &str, bytes: &[u8]) -> std::io::Result<(PathBuf, String)> {
         fs::create_dir_all(&self.root)?;
         let extension = extension.trim_start_matches('.').to_lowercase();
         let path = self.root.join(format!("{key}.{extension}"));
@@ -72,7 +103,7 @@ impl PreviewCache {
                 let _ = fs::remove_file(self.root.join(format!("{key}.{other}")));
             }
         }
-        Ok(path)
+        Ok((path, extension))
     }
 
     pub fn put_no_image(&self, key: &str, file_name: &str) -> std::io::Result<()> {
@@ -199,6 +230,31 @@ impl PreviewCache {
     }
 }
 
+/// Уменьшает картинку до [`PREVIEW_MAX_SIDE`] и пережимает в jpg. `None` — картинка и так
+/// маленькая или не читается (тогда кладём как есть).
+fn shrink(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    let big = image.width() > PREVIEW_MAX_SIDE || image.height() > PREVIEW_MAX_SIDE;
+    if !big && bytes.len() as u64 <= PREVIEW_STALE_BYTES {
+        return None;
+    }
+    let image = if big {
+        image.resize(
+            PREVIEW_MAX_SIDE,
+            PREVIEW_MAX_SIDE,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        image
+    };
+    let rgb = image.to_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 84)
+        .encode_image(&rgb)
+        .ok()?;
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +297,54 @@ mod tests {
         assert!(dir.path().join("live.jpg").exists());
         assert!(!dir.path().join("dead.jpg").exists());
         assert!(dir.path().join("readme.txt").exists());
+    }
+
+    #[test]
+    fn big_pictures_become_small_jpegs() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path());
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(1920, 1080, image::Rgb([200, 40, 40]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let (path, extension) = cache.put_image("big", "png", &png).unwrap();
+        assert_eq!(extension, "jpg");
+        let small = image::open(&path).unwrap();
+        assert_eq!((small.width(), small.height()), (720, 405));
+        assert!(!dir.path().join("big.png").exists());
+    }
+
+    #[test]
+    fn small_pictures_stay_as_they_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path());
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(300, 200, image::Rgb([1, 2, 3]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let (_, extension) = cache.put_image("small", "png", &png).unwrap();
+        assert_eq!(extension, "png");
+        assert_eq!(fs::read(dir.path().join("small.png")).unwrap(), png);
+    }
+
+    #[test]
+    fn old_full_size_picture_is_shrunk_on_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut jpg = Vec::new();
+        let noisy = image::RgbImage::from_fn(2400, 1600, |x, y| {
+            image::Rgb([(x * 7 % 251) as u8, (y * 13 % 241) as u8, ((x ^ y) % 239) as u8])
+        });
+        noisy
+            .write_to(&mut std::io::Cursor::new(&mut jpg), image::ImageFormat::Jpeg)
+            .unwrap();
+        assert!(jpg.len() as u64 > PREVIEW_STALE_BYTES);
+        fs::write(dir.path().join("old.jpg"), &jpg).unwrap();
+        let cache = PreviewCache::new(dir.path());
+        let Some(CachedPreview::Image { path, .. }) = cache.get("old") else {
+            panic!("картинка пропала");
+        };
+        assert!(fs::metadata(&path).unwrap().len() <= PREVIEW_STALE_BYTES);
+        assert_eq!(image::open(&path).unwrap().width(), 720);
     }
 
     #[test]

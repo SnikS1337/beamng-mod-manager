@@ -289,96 +289,51 @@
 <svelte:window onkeydown={onkeydown} />
 
 <div class="search-page">
-  <header class="head">
-    <div>
-      <h1>Поиск</h1>
-      <p>
+  <header class="top" data-tauri-drag-region>
+    <div class="title" data-tauri-drag-region>
+      <h1 data-tauri-drag-region>Поиск</h1>
+      <p data-tauri-drag-region>
         {#if searching}
           ищем на сайтах…
         {:else if searched}
           {cards.length}
           {plural(cards.length, "мод", "мода", "модов")}
-          · {totalListings}
-          {plural(totalListings, "страница", "страницы", "страниц")}
         {:else}
-          один запрос сразу на Modland, STMods, ModsGaming и официальный репозиторий BeamNG
+          сразу на всех сайтах
         {/if}
       </p>
     </div>
-    {#if searching}
-      <button class="cancel glass liquid-edge" type="button" onclick={() => void cancel()}>
-        Отменить
-      </button>
-    {/if}
-  </header>
 
-  <form class="bar glass liquid-edge" onsubmit={runSearch}>
-    <Search size={17} />
-    <input
-      bind:this={input}
-      bind:value={query}
-      type="search"
-      placeholder="Название машины, карты или автора"
-      aria-label="Поиск модов на сайтах"
-      autocomplete="off"
-    />
-    {#if query}
-      <button class="clear" type="button" aria-label="Очистить" onclick={clear}>
-        <X size={14} />
-      </button>
-    {/if}
-    <button class="go" type="submit" disabled={searching || query.trim().length < 2}>
-      {searching ? "Ищем…" : "Найти"}
-    </button>
-  </form>
+    <form class="bar glass liquid-edge" onsubmit={runSearch}>
+      <Search size={17} />
+      <input
+        bind:this={input}
+        bind:value={query}
+        type="search"
+        placeholder="Название машины, карты или автора"
+        aria-label="Поиск модов на сайтах"
+        autocomplete="off"
+      />
+      {#if query}
+        <button class="clear" type="button" aria-label="Очистить" onclick={clear}>
+          <X size={14} />
+        </button>
+      {/if}
+      {#if searching}
+        <button class="go" type="button" onclick={() => void cancel()}>Остановить</button>
+      {:else}
+        <button class="go" type="submit" disabled={query.trim().length < 2}>Найти</button>
+      {/if}
+    </form>
+    <div></div>
+  </header>
 
   {#if error}
     <div class="banner error">{error}</div>
   {/if}
 
-  {#if sources.some((source) => source.status === "needsHumanCheck")}
-    <div class="banner warn">
-      {#if passing}
-        Окно проверки открыто. Оно закроется само, когда сайт пустит, и поиск продолжится.
-      {:else}
-        Сайт просит подтвердить, что вы человек. Нажмите «Пройти проверку» — окно закроется
-        само, когда сайт пустит.
-      {/if}
-    </div>
-  {/if}
-
-  {#if sources.length > 0}
-    <div class="sites">
-      {#each sources as source (source.id)}
-        <div
-          class="site"
-          class:pending={source.pending}
-          class:warn={source.status !== "ok"}
-          title={source.note ?? source.displayName}
-        >
-          <span class="dot"></span>
-          <b>{source.displayName}</b>
-          <span>
-            {#if source.pending}
-              ищем…
-            {:else if source.status === "needsHumanCheck"}
-              проверка
-            {:else if source.status === "unavailable"}
-              недоступен
-            {:else}
-              {source.count}
-            {/if}
-          </span>
-          {#if source.id === "modland" && source.status === "needsHumanCheck"}
-            <button type="button" disabled={passing} onclick={() => void openModland()}>
-              {passing ? "Ждём…" : "Пройти проверку"}
-            </button>
-          {/if}
-        </div>
-      {/each}
-    </div>
-  {/if}
-
+  <div class="body">
+  <section class="results scroll-area">
   {#if searching && cards.length === 0}
     <div class="grid skeletons">
       {#each Array(6) as _}
@@ -405,7 +360,9 @@
             {:else}
               <span class="glyph">{card.title.slice(0, 1).toUpperCase()}</span>
             {/if}
-            <span class="price {card.price}">{priceLabel(card.price)}</span>
+            {#if card.price !== "unknown"}
+              <span class="price {card.price}">{priceLabel(card.price)}</span>
+            {/if}
             {#if card.installed}
               <span class="installed">Установлен</span>
             {/if}
@@ -508,14 +465,194 @@
       </span>
     </div>
   {/if}
+  </section>
+
+  <aside class="panel glass liquid-edge">
+    <h2>Сайты</h2>
+    <p class="sub">Один мод с разных сайтов собран в одну карточку.</p>
+    {#if sources.length > 0}
+      <div class="site-list">
+        {#each sources as source (source.id)}
+          <div class="site-row" title={source.note ?? source.displayName}>
+            <span
+              class="dot"
+              class:pending={source.pending}
+              class:warn={source.status === "needsHumanCheck"}
+              class:bad={source.status === "unavailable"}
+            ></span>
+            <b>{source.displayName}</b>
+            <span class="state-text">
+              {#if source.pending}
+                ищем…
+              {:else if source.status === "needsHumanCheck"}
+                просит проверку
+              {:else if source.status === "unavailable"}
+                не ответил
+              {:else}
+                нашёл {source.count}
+              {/if}
+            </span>
+          </div>
+          {#if source.id === "modland" && source.status === "needsHumanCheck"}
+            <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
+              {passing ? "Ждём, пока сайт пустит…" : "Пройти проверку Modland"}
+            </button>
+          {/if}
+        {/each}
+      </div>
+    {:else}
+      <p class="sub">Modland, STMods, ModsGaming и репозиторий BeamNG — сразу, одним запросом.</p>
+    {/if}
+    <p class="note">
+      Платные моды не скачиваются: вместо «Скачать» кнопка ведёт на страницу автора.
+    </p>
+    <a class="link" href="/settings">Включить или выключить сайты</a>
+  </aside>
+  </div>
 </div>
 
 <style>
+  .top {
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) minmax(360px, 620px) minmax(0, 1fr);
+    align-items: center;
+    gap: 16px;
+    min-height: 52px;
+    padding-right: 148px;
+  }
+
+  .title {
+    min-width: 0;
+  }
+
+  .title p {
+    margin: 3px 0 0;
+    color: color-mix(in oklab, var(--foreground) 66%, transparent);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 328px;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .results {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+    padding: 2px 4px 16px 2px;
+    overflow-y: auto;
+  }
+
+  .panel {
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px 18px;
+    border-radius: 32px;
+    background: var(--glass-fill-strong);
+  }
+
+  .panel h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+  }
+
+  .panel .sub,
+  .panel .note {
+    margin: 0;
+    color: color-mix(in oklab, var(--foreground) 70%, transparent);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .panel .link {
+    color: var(--foreground);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .site-list {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 14px;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  }
+
+  .site-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    font-size: 13px;
+  }
+
+  .site-row + .site-row {
+    border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+  }
+
+  .site-row b {
+    flex: 1;
+    font-weight: 600;
+  }
+
+  .state-text {
+    color: color-mix(in oklab, var(--foreground) 62%, transparent);
+    font-size: 12.5px;
+  }
+
+  .site-row .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #34c759;
+  }
+
+  .site-row .dot.pending {
+    background: color-mix(in oklab, var(--foreground) 35%, transparent);
+  }
+
+  .site-row .dot.warn {
+    background: #ffb340;
+  }
+
+  .site-row .dot.bad {
+    background: #ff6b5e;
+  }
+
+  .pass {
+    width: 100%;
+    height: 32px;
+    margin: 2px 0 8px;
+    font-size: 12.5px;
+  }
+
+  @media (max-width: 1100px) {
+    .body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .panel {
+      order: -1;
+    }
+  }
+
   .search-page {
     display: flex;
     flex-direction: column;
     gap: 14px;
-    min-height: 100%;
+    height: 100%;
+    min-height: 0;
   }
 
   .head {
@@ -529,32 +666,18 @@
   h1 {
     margin: 0;
     font-size: 26px;
-    font-weight: 650;
+    font-weight: 700;
+    line-height: 1.1;
     letter-spacing: -0.02em;
-  }
-
-  .head p {
-    margin: 4px 0 0;
-    color: var(--muted-foreground);
-    font-size: 10.5px;
-  }
-
-  .cancel {
-    height: 30px;
-    padding: 0 13px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    color: var(--foreground);
-    font-size: 10.5px;
-    cursor: default;
   }
 
   .bar {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 6px 7px 6px 14px;
-    border-radius: 16px;
+    height: 52px;
+    padding: 0 8px 0 18px;
+    border-radius: 26px;
     color: var(--muted-foreground);
   }
 
@@ -590,14 +713,15 @@
   }
 
   .go {
-    height: 32px;
-    min-width: 86px;
-    padding: 0 16px;
+    height: 36px;
+    min-width: 96px;
+    padding: 0 18px;
     border: 1px solid transparent;
-    border-radius: 12px;
+    border-radius: 999px;
+    box-shadow: 0 6px 22px var(--primary-glow);
     background: var(--primary);
     color: var(--primary-foreground);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 650;
     cursor: default;
   }
@@ -610,7 +734,7 @@
     padding: 9px 12px;
     border: 1px solid var(--glass-border);
     border-radius: 12px;
-    font-size: 10.5px;
+    font-size: 12.5px;
   }
 
   .banner.error {
@@ -623,62 +747,6 @@
     border-color: var(--warning-border);
     background: var(--warning-soft);
     color: var(--warning);
-  }
-
-  .sites {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .site {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 10px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    color: var(--muted-foreground);
-    font-size: 10px;
-  }
-
-  .site b {
-    color: var(--foreground);
-    font-weight: 600;
-  }
-
-  .site .dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--primary);
-  }
-
-  .site.warn {
-    border-color: var(--warning-border);
-  }
-
-  .site.warn .dot {
-    background: var(--warning);
-  }
-
-  .site.pending .dot {
-    animation: pulse 1.2s ease-in-out infinite;
-  }
-
-  .site button {
-    height: 19px;
-    padding: 0 7px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--foreground);
-    font-size: 9px;
-    cursor: default;
-  }
-
-  .site button:disabled {
-    opacity: 0.55;
   }
 
   .grid {
@@ -722,9 +790,8 @@
     border-radius: 999px;
     background: rgba(6, 10, 20, 0.66);
     color: rgb(255 255 255 / 0.9);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 600;
-    backdrop-filter: blur(6px);
   }
 
   .price {
@@ -788,7 +855,7 @@
 
   .site-name {
     color: var(--primary);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 650;
     letter-spacing: 0.02em;
     text-transform: uppercase;
@@ -797,7 +864,7 @@
   .listing-title {
     overflow: hidden;
     color: var(--foreground);
-    font-size: 11px;
+    font-size: 13px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -805,7 +872,7 @@
   .version,
   .meta {
     color: var(--muted-foreground);
-    font-size: 9.5px;
+    font-size: 11px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -825,7 +892,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--foreground);
-    font-size: 9px;
+    font-size: 11px;
     cursor: default;
   }
 
@@ -834,7 +901,7 @@
   }
 
   .action.buy {
-    color: oklch(0.84 0.12 85);
+    color: var(--warning);
   }
 
   .icon-action {
@@ -867,7 +934,7 @@
     flex-direction: column;
     gap: 5px;
     color: var(--muted-foreground);
-    font-size: 9.5px;
+    font-size: 11px;
     line-height: 1.35;
   }
 
@@ -887,7 +954,7 @@
     border-radius: 999px;
     background: transparent;
     color: var(--foreground);
-    font-size: 9px;
+    font-size: 11px;
     cursor: default;
   }
 
@@ -915,7 +982,7 @@
 
   .state span {
     max-width: 430px;
-    font-size: 11px;
+    font-size: 13px;
     line-height: 1.45;
   }
 

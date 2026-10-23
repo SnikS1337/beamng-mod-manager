@@ -62,7 +62,6 @@
     place-items: center;
     padding: 24px;
     background: rgba(6, 10, 20, 0.66);
-    backdrop-filter: blur(3px);
   }
 
   .tour {

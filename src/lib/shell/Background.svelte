@@ -77,9 +77,7 @@
     height: 52vw;
     border-radius: 50%;
     filter: blur(72px);
-    opacity: 0.5;
-    animation: drift 28s ease-in-out infinite alternate;
-    will-change: transform;
+    opacity: 0.34;
   }
 
   .a {
@@ -92,16 +90,12 @@
     top: 8vh;
     right: -18vw;
     background: var(--blob-b);
-    animation-duration: 34s;
-    animation-delay: -7s;
   }
 
   .c {
     bottom: -30vh;
     left: 18vw;
     background: var(--blob-c);
-    animation-duration: 31s;
-    animation-delay: -13s;
   }
 
   .d {
@@ -110,9 +104,7 @@
     width: 34vw;
     height: 34vw;
     background: var(--blob-d);
-    opacity: 0.32;
-    animation-duration: 25s;
-    animation-delay: -3s;
+    opacity: 0.22;
   }
 
   .bg-grid {
@@ -145,17 +137,6 @@
     opacity: 0.35;
   }
 
-  @keyframes drift {
-    0% {
-      transform: translate3d(0, 0, 0) scale(1);
-    }
-    50% {
-      transform: translate3d(6vw, 4vh, 0) scale(1.12);
-    }
-    100% {
-      transform: translate3d(-4vw, 7vh, 0) scale(0.94);
-    }
-  }
 
   @keyframes fly {
     0% {
