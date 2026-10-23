@@ -14,7 +14,8 @@ use url::Url;
 
 const LABEL: &str = "modland-pages";
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
-const SELF_CLEAR_WAIT: Duration = Duration::from_secs(6);
+// Cloudflare иногда снимает проверку сам за несколько секунд; ждём, как legacy.
+const SELF_CLEAR_WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(120);
 const EVAL_TIMEOUT: Duration = Duration::from_secs(5);
 
