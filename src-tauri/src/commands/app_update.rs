@@ -1,7 +1,7 @@
 //! Обновление самой программы: проверка latest.json, загрузка и перезапуск.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -13,7 +13,12 @@ use bmm_app_release::{
 };
 
 use crate::error::AppError;
-use crate::state::AppState;
+use crate::state::{AppState, AppUpdateRuntime};
+
+/// Сбой проверки не должен навсегда отравлять состояние обновления.
+fn lock_runtime(runtime: &Mutex<AppUpdateRuntime>) -> MutexGuard<'_, AppUpdateRuntime> {
+    runtime.lock().unwrap_or_else(|poison| poison.into_inner())
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +41,7 @@ pub(crate) fn auto_check(state: &Arc<AppState>) {
     let Some(runtime) = state.app_update.clone() else {
         return;
     };
-    let mut guard = runtime.lock().unwrap();
+    let mut guard = lock_runtime(&runtime);
     let local = current_version();
     let skipped = read_skipped(&guard.skipped_path);
     guard.state = check_url(
@@ -62,7 +67,7 @@ pub async fn app_update_state(
         .app_update
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
-    let state = runtime.lock().unwrap().state.clone();
+    let state = lock_runtime(&runtime).state.clone();
     Ok(dto(state))
 }
 
@@ -75,7 +80,7 @@ pub async fn app_update_check(
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = runtime.lock().unwrap();
+        let mut guard = lock_runtime(&runtime);
         guard.cancel.reset();
         let local = current_version();
         let skipped = read_skipped(&guard.skipped_path);
@@ -102,7 +107,7 @@ pub async fn app_update_download(
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = runtime.lock().unwrap();
+        let mut guard = lock_runtime(&runtime);
         let Some(manifest) = guard.state.manifest.clone() else {
             guard.state = UpdateState::failed("Сначала проверьте обновление.");
             return dto(guard.state.clone());
@@ -163,7 +168,7 @@ pub async fn app_update_cancel(
         .app_update
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
-    let mut guard = runtime.lock().unwrap();
+    let mut guard = lock_runtime(&runtime);
     guard.cancel.cancel();
     guard.state.stage = UpdateStage::Failed;
     guard.state.error = Some("Загрузка обновления отменена.".to_string());
@@ -179,7 +184,7 @@ pub async fn app_update_restart(
         .app_update
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
-    let guard = runtime.lock().unwrap();
+    let guard = lock_runtime(&runtime);
     let prepared = guard
         .prepared
         .as_ref()

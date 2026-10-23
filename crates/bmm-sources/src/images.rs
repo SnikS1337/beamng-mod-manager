@@ -2,12 +2,15 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use url::Url;
 
 use bmm_domain::atomic;
+
+use crate::net::PageFetcher;
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const USER_AGENT: &str = "BeamModManager/0.4 (personal use; update checks)";
@@ -33,10 +36,20 @@ pub enum ImageError {
 pub struct RemoteImageCache {
     root: PathBuf,
     client: Option<reqwest::blocking::Client>,
+    fallback: Option<Arc<dyn PageFetcher>>,
 }
 
 impl RemoteImageCache {
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self::build(root.into(), None)
+    }
+
+    /// Сайт не отдаёт картинки обычным запросом — пробуем тем же путём, что и страницы.
+    pub fn with_fallback(root: impl Into<PathBuf>, fallback: Arc<dyn PageFetcher>) -> Self {
+        Self::build(root.into(), Some(fallback))
+    }
+
+    fn build(root: PathBuf, fallback: Option<Arc<dyn PageFetcher>>) -> Self {
         let client = reqwest::blocking::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(20))
@@ -44,8 +57,9 @@ impl RemoteImageCache {
             .build()
             .ok();
         Self {
-            root: root.into(),
+            root,
             client,
+            fallback,
         }
     }
 
@@ -70,6 +84,19 @@ impl RemoteImageCache {
         if let Some(cached) = self.cached(url) {
             return Ok(Some(cached));
         }
+        match self.download(url) {
+            Ok(Some((content_type, bytes))) => self.store(url, &content_type, bytes),
+            Ok(None) | Err(ImageError::Network) | Err(ImageError::NotImage) => {
+                match self.fallback_bytes(url) {
+                    Some((content_type, bytes)) => self.store(url, &content_type, bytes),
+                    None => Ok(None),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn download(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, ImageError> {
         let client = self.client.as_ref().ok_or(ImageError::Network)?;
         let response = client
             .get(url.clone())
@@ -84,9 +111,9 @@ impl RemoteImageCache {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_lowercase();
-        let Some(extension) = extension_of(&content_type, url) else {
+        if extension_of(&content_type, url).is_none() {
             return Err(ImageError::NotImage);
-        };
+        }
         let mut bytes = Vec::new();
         response
             .take(MAX_IMAGE_BYTES + 1)
@@ -98,6 +125,32 @@ impl RemoteImageCache {
         if bytes.is_empty() {
             return Ok(None);
         }
+        Ok(Some((content_type, bytes)))
+    }
+
+    fn fallback_bytes(&self, url: &Url) -> Option<(String, Vec<u8>)> {
+        let (content_type, bytes) = self.fallback.as_ref()?.get_bytes(url).ok()??;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_IMAGE_BYTES {
+            return None;
+        }
+        Some((content_type, bytes))
+    }
+
+    fn store(
+        &self,
+        url: &Url,
+        content_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<Option<RemoteImage>, ImageError> {
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        if bytes.len() as u64 > MAX_IMAGE_BYTES {
+            return Err(ImageError::TooLarge);
+        }
+        let Some(extension) = extension_of(content_type, url) else {
+            return Err(ImageError::NotImage);
+        };
         let key = key_of(url);
         std::fs::create_dir_all(&self.root).map_err(|error| ImageError::Io(error.to_string()))?;
         atomic::write_atomic(&self.root.join(format!("{key}.{extension}")), &bytes)
@@ -141,6 +194,7 @@ fn extension_of(content_type: &str, url: &Url) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::{FetchError, RawResponse};
     use std::io::Write;
     use std::net::TcpListener;
 
@@ -158,13 +212,29 @@ mod tests {
     }
 
     fn response(body: &'static [u8], content_type: &str) -> &'static [u8] {
+        response_status("200 OK", body, content_type)
+    }
+
+    fn response_status(status: &str, body: &'static [u8], content_type: &str) -> &'static [u8] {
         let mut bytes = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         )
         .into_bytes();
         bytes.extend_from_slice(body);
         Box::leak(bytes.into_boxed_slice())
+    }
+
+    struct BrowserBytes(Option<(String, Vec<u8>)>);
+
+    impl PageFetcher for BrowserBytes {
+        fn get(&self, _url: &Url) -> Result<RawResponse, FetchError> {
+            Err(FetchError::Unsupported)
+        }
+
+        fn get_bytes(&self, _url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+            Ok(self.0.clone())
+        }
     }
 
     #[test]
@@ -182,12 +252,37 @@ mod tests {
     }
 
     #[test]
+    fn browser_fallback_saves_image_when_site_forbids_direct_request() {
+        let (url, server) = serve(response_status("403 Forbidden", b"forbidden", "text/html"));
+        let temp = tempfile::tempdir().unwrap();
+        let fallback = BrowserBytes(Some((
+            "image/png".to_string(),
+            b"\x89PNG\r\n\x1a\nx".to_vec(),
+        )));
+        let cache = RemoteImageCache::with_fallback(temp.path(), Arc::new(fallback));
+        let url = Url::parse(&url).unwrap();
+        let image = cache.fetch(&url).unwrap().unwrap();
+        assert_eq!(image.extension, "png");
+        assert!(cache.path(&image).is_file());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn browser_fallback_without_bytes_leaves_placeholder() {
+        let (url, server) = serve(response_status("403 Forbidden", b"no", "text/html"));
+        let temp = tempfile::tempdir().unwrap();
+        let cache = RemoteImageCache::with_fallback(temp.path(), Arc::new(BrowserBytes(None)));
+        assert!(cache.fetch(&Url::parse(&url).unwrap()).unwrap().is_none());
+        server.join().unwrap();
+    }
+
+    #[test]
     fn rejects_non_image() {
         let (url, server) = serve(response(b"hello", "text/html"));
         let temp = tempfile::tempdir().unwrap();
         let cache = RemoteImageCache::new(temp.path());
         let result = cache.fetch(&Url::parse(&url).unwrap());
-        assert!(matches!(result, Err(ImageError::NotImage)));
+        assert!(matches!(result, Ok(None)));
         server.join().unwrap();
     }
 

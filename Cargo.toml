@@ -24,12 +24,13 @@ chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2", features = ["serde"] }
 regex = "1"
 fancy-regex = "0.14"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls", "charset", "cookies", "gzip", "brotli", "deflate"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "http2", "native-tls", "charset", "cookies", "gzip", "brotli", "deflate"] }
 encoding_rs = "0.8"
 html-escape = "0.2"
 sysinfo = "0.39"
 zip = "9"
 sha2 = "0.10"
+base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [profile.release]

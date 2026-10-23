@@ -39,7 +39,9 @@ pub fn load(
     if cancel.load(Ordering::Relaxed) {
         return Err(SourceError::cancelled());
     }
-    if let Some(response) = result.response {
+    if result.status == crate::net::SourceStatus::Ok
+        && let Some(response) = result.response
+    {
         if matches!(response.status, 404 | 410) {
             return Ok(None);
         }
@@ -182,4 +184,35 @@ pub fn segments(url: &Url) -> Vec<&str> {
     url.path_segments()
         .map(|segments| segments.filter(|part| !part.is_empty()).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::net::{FetchError, PageFetcher, PoliteOptions, RawResponse, SourceStatus};
+
+    struct ChallengePage;
+
+    impl PageFetcher for ChallengePage {
+        fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
+            Ok(RawResponse {
+                status: 200,
+                text: "<html><head><title>Один момент…</title></head><body></body></html>"
+                    .to_string(),
+                final_url: url.clone(),
+                retry_after: None,
+            })
+        }
+    }
+
+    #[test]
+    fn challenge_page_is_not_an_empty_success() {
+        let fetcher = PoliteFetcher::new(Arc::new(ChallengePage), PoliteOptions::default());
+        let url = Url::parse("https://www.modland.net/search/sienna").unwrap();
+        let result = load(&fetcher, "modland", &url, None, &AtomicBool::new(false));
+        let error = result.expect_err("страница проверки — не результат поиска");
+        assert_eq!(error.status, SourceStatus::NeedsHumanCheck);
+    }
 }

@@ -250,6 +250,27 @@ pub async fn search_open_modland(app: AppHandle, query: String) -> Result<(), Ap
     crate::commands::updates::open_modland_window(&app, url)
 }
 
+/// Человек прошёл проверку на сайте: снимаем защёлку и пробуем страницу снова.
+#[tauri::command]
+pub async fn search_resolve_human(
+    state: tauri::State<'_, Arc<AppState>>,
+    source: String,
+) -> Result<(), AppError> {
+    let runtime = state
+        .search
+        .as_ref()
+        .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
+    let update = state
+        .update
+        .as_ref()
+        .ok_or_else(|| AppError::new("search", "Источники недоступны."))?;
+    let Some(found) = update.sources.iter().find(|item| item.id() == source) else {
+        return Err(AppError::new("source", "Неизвестный сайт."));
+    };
+    runtime.fetcher.reset_source(found.id(), &found.home());
+    Ok(())
+}
+
 const PREVIEW_HOSTS: &[&str] = &["modland.net", "stmods.org", "modsgaming.ru", "beamng.com"];
 
 #[tauri::command]

@@ -55,6 +55,11 @@ pub trait PageFetcher: Send + Sync {
         let _ = (url, form);
         Err(FetchError::Unsupported)
     }
+    /// Картинка вместе с её типом; нужен сайтам, которые не отдают файлы обычным запросом.
+    fn get_bytes(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+        let _ = url;
+        Ok(None)
+    }
 }
 
 pub struct HttpPageFetcher {
@@ -76,6 +81,69 @@ pub fn default_fetcher() -> Arc<dyn PageFetcher> {
     match HttpPageFetcher::new() {
         Ok(fetcher) => Arc::new(fetcher),
         Err(_) => Arc::new(OfflineFetcher),
+    }
+}
+
+/// Сайты, которые обычный запрос не пускает (Cloudflare), грузятся встроенным браузером.
+/// Остальные адреса идут обычным запросом.
+pub struct RoutingPageFetcher {
+    plain: Arc<dyn PageFetcher>,
+    browser: Arc<dyn PageFetcher>,
+    browser_hosts: Vec<String>,
+}
+
+impl RoutingPageFetcher {
+    pub fn new(
+        plain: Arc<dyn PageFetcher>,
+        browser: Arc<dyn PageFetcher>,
+        browser_hosts: &[&str],
+    ) -> Self {
+        Self {
+            plain,
+            browser,
+            browser_hosts: browser_hosts
+                .iter()
+                .map(|host| host.to_ascii_lowercase())
+                .collect(),
+        }
+    }
+
+    fn uses_browser(&self, url: &Url) -> bool {
+        let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+            return false;
+        };
+        self.browser_hosts.iter().any(|known| {
+            host == *known
+                || host
+                    .strip_suffix(known.as_str())
+                    .is_some_and(|prefix| prefix.ends_with('.'))
+        })
+    }
+}
+
+impl PageFetcher for RoutingPageFetcher {
+    fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.get(url)
+        } else {
+            self.plain.get(url)
+        }
+    }
+
+    fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.post_form(url, form)
+        } else {
+            self.plain.post_form(url, form)
+        }
+    }
+
+    fn get_bytes(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.get_bytes(url)
+        } else {
+            self.plain.get_bytes(url)
+        }
     }
 }
 
@@ -765,6 +833,97 @@ mod tests {
         assert!(!is_challenge_page(
             "<html><head><title>ACNG Tire Heat</title></head><body>mod</body></html>"
         ));
+    }
+
+    #[test]
+    fn routes_modland_pages_to_browser_and_the_rest_to_plain() {
+        let plain = FakeFetcher::new(vec![
+            Ok(response(200, "plain")),
+            Ok(response(200, "plain-evil")),
+        ]);
+        let browser = FakeFetcher::new(vec![
+            Ok(response(200, "browser")),
+            Ok(response(200, "browser-uppercase")),
+        ]);
+        let routed = RoutingPageFetcher::new(plain.clone(), browser.clone(), &["modland.net"]);
+
+        assert_eq!(
+            routed
+                .get(&url("https://www.modland.net/beamng.drive-mods"))
+                .unwrap()
+                .text,
+            "browser"
+        );
+        assert_eq!(
+            routed
+                .get(&url("https://MODLAND.net/search/bmw"))
+                .unwrap()
+                .text,
+            "browser-uppercase"
+        );
+        assert_eq!(
+            routed
+                .get(&url("https://stmods.org/beamng_drive/"))
+                .unwrap()
+                .text,
+            "plain"
+        );
+        assert_eq!(
+            routed.get(&url("https://evil-modland.net/")).unwrap().text,
+            "plain-evil"
+        );
+        assert_eq!(browser.calls.lock().unwrap().len(), 2);
+        assert_eq!(plain.calls.lock().unwrap().len(), 2);
+
+        let plain = FakeFetcher::new(vec![Ok(response(200, "plain-post"))]);
+        let browser = FakeFetcher::new(vec![Ok(response(200, "browser-post"))]);
+        let routed = RoutingPageFetcher::new(plain.clone(), browser.clone(), &["modland.net"]);
+        assert_eq!(
+            routed
+                .post_form(&url("https://stmods.org/search.php"), &[("q", "bmw")])
+                .unwrap()
+                .text,
+            "plain-post"
+        );
+        assert_eq!(
+            routed
+                .post_form(&url("https://www.modland.net/search.php"), &[("q", "bmw")])
+                .unwrap()
+                .text,
+            "browser-post"
+        );
+        assert_eq!(browser.calls.lock().unwrap().len(), 1);
+        assert_eq!(plain.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn routes_modland_images_to_browser() {
+        struct BrowserBytes;
+
+        impl PageFetcher for BrowserBytes {
+            fn get(&self, _url: &Url) -> Result<RawResponse, FetchError> {
+                Err(FetchError::Unsupported)
+            }
+
+            fn get_bytes(&self, _url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+                Ok(Some(("image/webp".to_string(), vec![1, 2, 3])))
+            }
+        }
+
+        let plain = FakeFetcher::new(Vec::new());
+        let routed = RoutingPageFetcher::new(plain, Arc::new(BrowserBytes), &["modland.net"]);
+        let (content_type, bytes) = routed
+            .get_bytes(&url("https://temp2.modland.net/i/x.webp"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(content_type, "image/webp");
+        assert_eq!(bytes, vec![1, 2, 3]);
+        assert!(
+            routed
+                .get_bytes(&url("https://stmods.org/preview.jpg"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

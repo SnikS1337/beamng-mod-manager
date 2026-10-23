@@ -1,3 +1,4 @@
+mod browser_pages;
 mod commands;
 mod error;
 mod named_mutex;
@@ -14,7 +15,9 @@ use bmm_domain::matches::{MatchDecisionStore, MatchDecisions};
 use bmm_domain::paths::AppPaths;
 use bmm_domain::settings_store::SettingsStore;
 use bmm_packs::cache::PreviewCache;
-use bmm_sources::net::{PoliteFetcher, PoliteOptions, default_fetcher};
+use bmm_sources::net::{
+    PageFetcher, PoliteFetcher, PoliteOptions, RoutingPageFetcher, default_fetcher,
+};
 use bmm_sources::search::{SearchOptions, SearchService};
 use bmm_sources::sources::{ModSource, all_sources};
 use state::{AppState, AppUpdateRuntime, SearchRuntime, UpdateRuntime};
@@ -53,10 +56,13 @@ pub fn run() {
     let settings_store = SettingsStore::with_system_clock(paths.settings());
     let settings_snapshot = settings_store.load().settings;
     let library = Arc::new(JsonLibraryStore::new(paths.library(), system_clock()));
-    let fetcher = Arc::new(PoliteFetcher::new(
+    let browser_pages = Arc::new(browser_pages::BrowserPages::new());
+    let pages: Arc<dyn PageFetcher> = Arc::new(RoutingPageFetcher::new(
         default_fetcher(),
-        PoliteOptions::default(),
+        browser_pages.clone(),
+        &["modland.net"],
     ));
+    let fetcher = Arc::new(PoliteFetcher::new(pages.clone(), PoliteOptions::default()));
     let source_list: Arc<Vec<Arc<dyn ModSource>>> = Arc::new(all_sources(fetcher.clone()));
     let status_fetcher = fetcher.clone();
     let decisions: Arc<dyn MatchDecisions + Send + Sync> = matches.clone();
@@ -101,8 +107,9 @@ pub fn run() {
         fetcher,
         service: search_service,
         matches,
-        previews: Arc::new(bmm_sources::images::RemoteImageCache::new(
+        previews: Arc::new(bmm_sources::images::RemoteImageCache::with_fallback(
             paths.search_previews(),
+            pages,
         )),
     }));
     let update = Some(Arc::new(UpdateRuntime {
@@ -148,12 +155,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // Служебное окно браузера не должно всплывать на экране при следующем запуске.
+                .with_denylist(&["modland-pages"])
+                .build(),
+        )
         .manage(state)
         .register_uri_scheme_protocol("bmm", |context, request| {
             preview_protocol(context.app_handle(), request)
         })
-        .setup(|app| {
+        .setup(move |app| {
+            browser_pages.attach(app.handle().clone());
             let state = app.state::<Arc<AppState>>().inner().clone();
             commands::downloads::spawn(app.handle().clone(), state.clone());
             commands::updates::spawn_auto_check(state);
@@ -192,6 +205,7 @@ pub fn run() {
             commands::search::search_decide,
             commands::search::search_preview,
             commands::search::search_open_modland,
+            commands::search::search_resolve_human,
             commands::updates::updates_snapshot,
             commands::updates::updates_start,
             commands::updates::updates_cancel,
