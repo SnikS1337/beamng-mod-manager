@@ -549,15 +549,20 @@ fn match_item(
         );
     }
 
+    // Сравниваем только то, что называет мод: свои машины и карты. Общие папки
+    // («art/sound», «ui/…», «vehicles/common») есть у многих модов: по ним «Audi R8»
+    // становился обновлением «Mercedes ML».
+    let content = identity_keys(content);
     let candidate_count = content.len();
     let mut best: Option<(&InstalledArchive, f64)> = None;
     let mut tie = false;
     for item in installed {
-        if item.content.is_empty() || candidate_count == 0 {
+        let item_content = identity_keys(&item.content);
+        if item_content.is_empty() || candidate_count == 0 {
             continue;
         }
-        let shared = content.intersection(&item.content).count();
-        let score = shared as f64 / candidate_count.max(item.content.len()) as f64;
+        let shared = content.intersection(&item_content).count();
+        let score = shared as f64 / candidate_count.max(item_content.len()) as f64;
         if score < 0.5 {
             continue;
         }
@@ -603,6 +608,18 @@ fn match_item(
     }
 
     (IncomingKind::New, None, false, None)
+}
+
+/// Ключи содержимого, по которым мод узнаётся: `vehicles/<машина>` (кроме общей
+/// `vehicles/common`) и `levels/<карта>`.
+fn identity_keys(keys: &HashSet<String>) -> HashSet<String> {
+    keys.iter()
+        .filter(|key| {
+            (key.starts_with("vehicles/") && key.as_str() != "vehicles/common")
+                || key.starts_with("levels/")
+        })
+        .cloned()
+        .collect()
 }
 
 fn sha256_file(path: &Path) -> std::io::Result<String> {
@@ -1161,6 +1178,41 @@ mod tests {
         );
         assert_eq!(by_content.items[0].kind, IncomingKind::Update);
         assert_eq!(by_content.items[0].replaces.as_deref(), Some("old.zip"));
+    }
+
+    #[test]
+    fn shared_generic_folders_do_not_make_an_update() {
+        // Как в паке Audi: «Audi R8 2020 Update» и установленный Mercedes ML делят только art/sound.
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Audi R8 2020 Update.zip");
+        build_zip(
+            &source,
+            &[("art/sound/r8.ogg", b"x"), ("vehicles/r8/r8.jbeam", b"x")],
+        );
+        let analysis = analyze(
+            &source,
+            &[installed(
+                "MB_w164_ken_3.0_f4rza.zip",
+                &["art/sound", "vehicles/ml55"],
+            )],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items[0].kind, IncomingKind::New);
+        assert_eq!(analysis.items[0].replaces, None);
+
+        let common = analyze(
+            &source,
+            &[installed(
+                "other.zip",
+                &["vehicles/common", "vehicles/ml55"],
+            )],
+            &temp.path().join("work2"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(common.items[0].kind, IncomingKind::New);
     }
 
     #[test]

@@ -94,6 +94,18 @@ impl PageGuesser {
         title: Option<&str>,
         found: &[Listing],
     ) -> Option<PageGuess> {
+        Self::pick_with_author(installed, title, None, found)
+    }
+
+    /// Как [`Self::pick`], но знает автора из архива мода (`info.json`). Страница другого
+    /// автора не отбрасывается — авторы у новых версий добавляются и пишутся по-разному, —
+    /// но и следить за ней сами не начинаем: только предлагаем.
+    pub fn pick_with_author(
+        installed: &InstalledMod,
+        title: Option<&str>,
+        archive_author: Option<&str>,
+        found: &[Listing],
+    ) -> Option<PageGuess> {
         let guess = from_file_name(&installed.file_name);
         let candidates = [
             title,
@@ -182,8 +194,10 @@ impl PageGuesser {
                 }
                 _ => false,
             };
+            let other_author = !authors_overlap(archive_author, listing.author.as_deref());
             let certain = similarity >= CERTAIN_NAME
                 && tokens >= 2
+                && !other_author
                 && (order == VersionOrder::Same || same_size || (similarity >= 1.0 && tokens >= 3));
             fits.push(PageGuess {
                 listing: listing.clone(),
@@ -214,6 +228,37 @@ impl PageGuesser {
             Some(fits[best].clone())
         }
     }
+}
+
+/// Авторы, по которым мод не отличить: заготовка игры, «неизвестен».
+const GENERIC_AUTHORS: &[&str] = &["beamng", "beamnggmbh", "unknown", "неизвестен", "author"];
+
+/// Авторы мода и страницы пересекаются хотя бы одним именем. Неизвестный с любой
+/// стороны (или общий вроде «BeamNG») — не спорит.
+fn authors_overlap(archive: Option<&str>, listing: Option<&str>) -> bool {
+    let names = |text: Option<&str>| -> Vec<String> {
+        let Some(text) = text else {
+            return Vec::new();
+        };
+        text.replace(" and ", ",")
+            .replace(" и ", ",")
+            .split([',', '&', '/', ';', '+'])
+            .map(|name| author_key(Some(name)))
+            .filter(|key| key.chars().count() >= 2 && !GENERIC_AUTHORS.contains(&key.as_str()))
+            .collect()
+    };
+    let ours = names(archive);
+    let theirs = names(listing);
+    if ours.is_empty() || theirs.is_empty() {
+        return true;
+    }
+    ours.iter().any(|mine| {
+        theirs.iter().any(|other| {
+            mine == other
+                || (mine.chars().count() >= 4 && other.contains(mine.as_str()))
+                || (other.chars().count() >= 4 && mine.contains(other.as_str()))
+        })
+    })
 }
 
 fn author_key(author: Option<&str>) -> String {
@@ -276,6 +321,55 @@ mod tests {
 
     fn l(source: &str, id: &str, title: &str) -> Listing {
         listing(source, id, title, None, None, PriceStatus::Unknown)
+    }
+
+    #[test]
+    fn other_author_is_suggested_not_followed() {
+        let site = listing(
+            "stmods",
+            "1",
+            "Maserati GranTurismo v1.0",
+            Some("cheekqo"),
+            None,
+            PriceStatus::Free,
+        );
+        let guess = PageGuesser::pick_with_author(
+            &installed("a", "Flanje_Maserati_Granturismo.zip", Some("1.0"), None),
+            Some("Maserati GranTurismo"),
+            Some("Flanje"),
+            &[site],
+        )
+        .expect("страницу предлагаем");
+        assert!(!guess.certain, "другой автор — только предложение");
+
+        // Новая версия с двумя авторами, в архиве один из них — тот же мод.
+        let laurel = listing(
+            "stmods",
+            "2",
+            "Nissan Laurel C33 v1.2",
+            Some("Ruzskye Stvoly, black_moon"),
+            None,
+            PriceStatus::Free,
+        );
+        let guess = PageGuesser::pick_with_author(
+            &installed("b", "laurel_c33.zip", Some("1.2"), None),
+            Some("Nissan Laurel C33"),
+            Some("Ruzskye Stvoly"),
+            &[laurel],
+        )
+        .unwrap();
+        assert!(guess.certain);
+    }
+
+    #[test]
+    fn authors_overlap_ignores_generic_and_unknown() {
+        assert!(authors_overlap(Some("BeamNG"), Some("turbodiesel")));
+        assert!(authors_overlap(None, Some("x")));
+        assert!(authors_overlap(
+            Some("black_moon & Ruzskye Stvoly"),
+            Some("Black Moon")
+        ));
+        assert!(!authors_overlap(Some("Flanje"), Some("cheekqo")));
     }
 
     #[test]

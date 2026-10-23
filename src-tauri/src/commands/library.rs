@@ -216,6 +216,13 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
     written
 }
 
+/// Автор мода из его архива (`info.json`) — для поиска страницы. Не кэшируется:
+/// нужен только при подборе, не больше нескольких десятков модов за раз.
+pub(crate) fn archive_author_of(state: &AppState, mod_id: &str) -> Option<String> {
+    let target = state.previews_by_id.lock().unwrap().get(mod_id).cloned()?;
+    overview::archive_info(&target.path).ok()?.author
+}
+
 /// Название мода из его архива для поиска страницы: из кэша, иначе прочитать сейчас.
 pub(crate) fn archive_title_of(state: &AppState, mod_id: &str) -> Option<String> {
     let target = state.previews_by_id.lock().unwrap().get(mod_id).cloned()?;

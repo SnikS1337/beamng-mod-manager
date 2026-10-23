@@ -188,6 +188,7 @@ fn run_page_search(
         Utc::now().fixed_offset(),
         cancel,
         &|mod_id| page_title(state, mod_id),
+        &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
         Some(&mut progress),
     )
 }
@@ -203,6 +204,7 @@ fn run_page_search_quiet(state: &AppState, cancel: &AtomicBool) -> bmm_checks::P
         Utc::now().fixed_offset(),
         cancel,
         &|mod_id| page_title(state, mod_id),
+        &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
         None,
     )
 }
