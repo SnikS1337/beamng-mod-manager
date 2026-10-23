@@ -186,7 +186,7 @@ pub fn run() {
             browser_pages.attach(app.handle().clone());
             let state = app.state::<Arc<AppState>>().inner().clone();
             commands::downloads::spawn(app.handle().clone(), state.clone());
-            commands::updates::spawn_auto_check(state);
+            commands::updates::spawn_auto_check(app.handle().clone(), state);
             if std::env::args().any(|arg| arg == "--probe") {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

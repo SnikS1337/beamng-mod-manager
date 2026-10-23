@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,10 @@ use super::{
 
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const SCHEMA: i32 = 1;
+/// Внутри пакета изменений файл пишется не чаще этого: проверка обновлений после долгого
+/// перерыва идёт до часа и меняет сотни записей, а при сбое теряется не больше 20 секунд
+/// (как в legacy).
+const BATCH_FLUSH_EVERY: Duration = Duration::from_secs(20);
 
 struct State {
     inner: Inner,
@@ -22,6 +27,8 @@ struct State {
     dirty: bool,
     save_blocked: bool,
     save_error: Option<String>,
+    /// Когда последний раз писали файл (или начали пакет).
+    last_save: Option<Instant>,
 }
 
 pub struct JsonLibraryStore {
@@ -45,6 +52,7 @@ impl JsonLibraryStore {
                 dirty: false,
                 save_blocked,
                 save_error: None,
+                last_save: None,
             }),
             load_warnings: warnings,
         }
@@ -65,6 +73,9 @@ impl JsonLibraryStore {
     pub fn batch(&self) -> BatchGuard<'_> {
         {
             let mut state = self.state.lock().unwrap();
+            if state.batch == 0 {
+                state.last_save = Some(Instant::now());
+            }
             state.batch += 1;
         }
         BatchGuard { store: self }
@@ -83,7 +94,10 @@ impl JsonLibraryStore {
             return;
         }
         state.dirty = true;
-        if state.batch == 0 {
+        let overdue = state
+            .last_save
+            .is_none_or(|saved| saved.elapsed() >= BATCH_FLUSH_EVERY);
+        if state.batch == 0 || overdue {
             self.save_locked(state);
         }
     }
@@ -109,6 +123,7 @@ impl JsonLibraryStore {
             Ok(()) => {
                 state.dirty = false;
                 state.save_error = None;
+                state.last_save = Some(Instant::now());
             }
             Err(error) => {
                 state.save_error = Some(error.to_string());

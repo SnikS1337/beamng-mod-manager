@@ -700,11 +700,14 @@ mod tests {
     }
 
     fn wait_for_waiter(coordinator: &UpdateCoordinator) {
-        for _ in 0..10_000 {
+        // По времени, а не по числу уступок: под нагрузкой 10 000 `yield_now` проходили
+        // раньше, чем второй поток успевал присоединиться (тест падал через раз).
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
             if coordinator.waiters() > 0 {
                 return;
             }
-            thread::yield_now();
+            thread::sleep(Duration::from_millis(1));
         }
         panic!("никто не присоединился к идущей проверке");
     }

@@ -50,7 +50,8 @@ export interface UpdatesSnapshot {
 
 export interface UpdatesEvent extends UpdatesSnapshot {
   requestId: number;
-  phase: "progress" | "done" | "pages" | "error";
+  /** `auto` — итог фоновой проверки при запуске или по расписанию (requestId = 0). */
+  phase: "progress" | "done" | "pages" | "error" | "auto";
   progress: UpdateProgress | null;
   sources: UpdateSource[];
   newCount: number;
