@@ -116,6 +116,8 @@ pub fn run() {
         coordinator: Arc::new(coordinator),
         enabled: enabled_sources,
         sources: source_list,
+        page_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        page_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }));
     let app_update = bmm_app_release::UpdateDownloader::reqwest("ModManagerBeamNG/0.4.0")
         .ok()

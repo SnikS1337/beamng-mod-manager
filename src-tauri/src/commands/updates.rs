@@ -99,6 +99,108 @@ pub async fn updates_snapshot(
     Ok(build_snapshot(&state))
 }
 
+fn progress_event(request_id: u64, progress: &UpdateProgress) -> UpdatesEventDto {
+    UpdatesEventDto {
+        request_id,
+        phase: "progress".to_string(),
+        progress: Some(progress_dto(progress)),
+        findings: Vec::new(),
+        hidden: Vec::new(),
+        suggestions: Vec::new(),
+        sources: Vec::new(),
+        new_count: 0,
+        up_to_date: 0,
+        requests: 0,
+        cancelled: false,
+        stopped_by_time: false,
+        error: None,
+    }
+}
+
+fn page_search_service(state: &AppState) -> Option<Arc<bmm_sources::search::SearchService>> {
+    let runtime = state.search.clone()?;
+    let settings = state.settings.load().settings;
+    let sources: Vec<Arc<dyn bmm_sources::sources::ModSource>> = runtime
+        .service
+        .sources()
+        .iter()
+        .filter(|source| {
+            !settings
+                .disabled_sources
+                .iter()
+                .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
+        })
+        .cloned()
+        .collect();
+    let fetcher = runtime.fetcher.clone();
+    let options = runtime.service.options().clone();
+    let decisions: Arc<dyn bmm_domain::matches::MatchDecisions + Send + Sync> =
+        runtime.matches.clone();
+    Some(Arc::new(bmm_sources::search::SearchService::new(
+        sources,
+        Arc::new(move |source| fetcher.status_of(source)),
+        options,
+        Some(decisions),
+    )))
+}
+
+struct PageBusyGuard(Arc<AtomicBool>);
+
+impl PageBusyGuard {
+    fn acquire(busy: Arc<AtomicBool>) -> Option<Self> {
+        if busy.swap(true, Ordering::SeqCst) {
+            None
+        } else {
+            Some(Self(busy))
+        }
+    }
+}
+
+impl Drop for PageBusyGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn run_page_search(
+    app: &AppHandle,
+    state: &AppState,
+    request_id: u64,
+    cancel: &AtomicBool,
+) -> bmm_checks::PageSearchReport {
+    let Some(service) = page_search_service(state) else {
+        return bmm_checks::PageSearchReport::default();
+    };
+    let store = state.library.clone();
+    let app_for_progress = app.clone();
+    let mut progress = |progress: &UpdateProgress| {
+        let _ = app_for_progress.emit("updates://event", progress_event(request_id, progress));
+    };
+    bmm_checks::find_pages(
+        store.as_ref(),
+        service.as_ref(),
+        Utc::now().fixed_offset(),
+        cancel,
+        &|mod_id| store.get_mod(mod_id).map(|item| item.name),
+        Some(&mut progress),
+    )
+}
+
+fn run_page_search_quiet(state: &AppState, cancel: &AtomicBool) -> bmm_checks::PageSearchReport {
+    let Some(service) = page_search_service(state) else {
+        return bmm_checks::PageSearchReport::default();
+    };
+    let store = state.library.clone();
+    bmm_checks::find_pages(
+        store.as_ref(),
+        service.as_ref(),
+        Utc::now().fixed_offset(),
+        cancel,
+        &|mod_id| store.get_mod(mod_id).map(|item| item.name),
+        None,
+    )
+}
+
 #[tauri::command]
 pub async fn updates_start(
     app: AppHandle,
@@ -111,6 +213,9 @@ pub async fn updates_start(
         .update
         .clone()
         .ok_or_else(|| AppError::new("updates", "Проверка обновлений недоступна."))?;
+    runtime.page_cancel.store(false, Ordering::SeqCst);
+    let page_cancel = runtime.page_cancel.clone();
+    let page_busy = runtime.page_busy.clone();
     let settings = state.settings.load().settings;
     {
         let mut enabled = runtime.enabled.lock().unwrap();
@@ -138,29 +243,22 @@ pub async fn updates_start(
             coordinator.check(
                 force,
                 Some(&mut |progress: &UpdateProgress| {
-                    let _ = app_for_progress.emit(
-                        "updates://event",
-                        UpdatesEventDto {
-                            request_id,
-                            phase: "progress".to_string(),
-                            progress: Some(progress_dto(progress)),
-                            findings: Vec::new(),
-                            hidden: Vec::new(),
-                            suggestions: Vec::new(),
-                            sources: Vec::new(),
-                            new_count: 0,
-                            up_to_date: 0,
-                            requests: 0,
-                            cancelled: false,
-                            stopped_by_time: false,
-                            error: None,
-                        },
-                    );
+                    let _ = app_for_progress
+                        .emit("updates://event", progress_event(request_id, progress));
                 }),
             )
         }));
         match result {
             Ok(report) => {
+                // Моды без страницы ищем тем же ходом, как legacy, — но не после отмены.
+                if !report.cancelled
+                    && let Some(_guard) = PageBusyGuard::acquire(page_busy)
+                {
+                    // Подбор — подсказка: его сбой не должен съедать итог проверки.
+                    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        run_page_search(&app, &state_for_task, request_id, &page_cancel);
+                    }));
+                }
                 let snapshot = build_snapshot(&state_for_task);
                 let event = done_event(request_id, snapshot, &report, &names, Some("done"), None);
                 let _ = app.emit("updates://event", event);
@@ -194,6 +292,7 @@ pub async fn updates_start(
 pub async fn updates_cancel(state: tauri::State<'_, Arc<AppState>>) -> Result<(), AppError> {
     if let Some(runtime) = &state.update {
         runtime.coordinator.cancel();
+        runtime.page_cancel.store(true, Ordering::SeqCst);
     }
     Ok(())
 }
@@ -227,44 +326,21 @@ pub async fn updates_find_pages(
 ) -> Result<(), AppError> {
     let state = state.inner().clone();
     let runtime = state
-        .search
+        .update
         .clone()
         .ok_or_else(|| AppError::new("pages", "Поиск страниц недоступен."))?;
-    let settings = state.settings.load().settings;
-    let sources: Vec<Arc<dyn bmm_sources::sources::ModSource>> = runtime
-        .service
-        .sources()
-        .iter()
-        .filter(|source| {
-            !settings
-                .disabled_sources
-                .iter()
-                .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
-        })
-        .cloned()
-        .collect();
-    let fetcher = runtime.fetcher.clone();
-    let options = runtime.service.options().clone();
-    let decisions: Arc<dyn bmm_domain::matches::MatchDecisions + Send + Sync> =
-        runtime.matches.clone();
-    let service = Arc::new(bmm_sources::search::SearchService::new(
-        sources,
-        Arc::new(move |source| fetcher.status_of(source)),
-        options,
-        Some(decisions),
-    ));
-    let store = state.library.clone();
+    let Some(guard) = PageBusyGuard::acquire(runtime.page_busy.clone()) else {
+        return Err(AppError::new("pages", "Поиск страниц уже идёт."));
+    };
+    runtime.page_cancel.store(false, Ordering::SeqCst);
+    let cancel = runtime.page_cancel.clone();
     let state_for_task = state.clone();
-    let cancel = AtomicBool::new(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let report = bmm_checks::find_pages(
-            store.as_ref(),
-            service.as_ref(),
-            Utc::now().fixed_offset(),
-            &cancel,
-            &|mod_id| store.get_mod(mod_id).map(|item| item.name),
-            None,
-        );
+        let _guard = guard;
+        let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            run_page_search(&app, &state_for_task, request_id, &cancel)
+        }))
+        .unwrap_or_default();
         let snapshot = build_snapshot(&state_for_task);
         let event = UpdatesEventDto {
             request_id,
@@ -606,7 +682,15 @@ pub fn spawn_auto_check(state: Arc<AppState>) {
                         }
                     }
                 }
-                runtime.coordinator.check(false, None);
+                let report = runtime.coordinator.check(false, None);
+                if !report.cancelled
+                    && let Some(_guard) = PageBusyGuard::acquire(runtime.page_busy.clone())
+                {
+                    runtime.page_cancel.store(false, Ordering::SeqCst);
+                    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        run_page_search_quiet(&state, &runtime.page_cancel);
+                    }));
+                }
                 last = std::time::Instant::now();
             }
             std::thread::sleep(std::time::Duration::from_secs(60));
