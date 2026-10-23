@@ -228,7 +228,7 @@ fn wait_loaded(window: &WebviewWindow, target: &Url, token: &str) -> Result<(), 
     }
 }
 
-fn document_html(window: &WebviewWindow) -> Result<String, FetchError> {
+pub(crate) fn document_html(window: &WebviewWindow) -> Result<String, FetchError> {
     let value = eval_json(
         window,
         "document.documentElement ? document.documentElement.outerHTML : ''",

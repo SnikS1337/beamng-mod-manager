@@ -12,7 +12,6 @@
     updatesFindPages,
     updatesOpenModland,
     updatesRejectPage,
-    updatesResolveHuman,
     updatesRestore,
     updatesSnapshot,
     updatesStart,
@@ -31,6 +30,7 @@
   let sources = $state<UpdateSource[]>([]);
   let loading = $state(true);
   let checking = $state(false);
+  let passing = $state(false);
   let filter = $state<Filter>("available");
   let progress = $state<UpdateProgress | null>(null);
   let error = $state<string | null>(null);
@@ -169,22 +169,22 @@
     }
   }
 
-  async function resolveHuman(source: UpdateSource) {
-    try {
-      snapshot = await updatesResolveHuman(source.id);
-      sources = sources.map((item) =>
-        item.id === source.id ? { ...item, status: "ok", note: null } : item,
-      );
-    } catch (reason) {
-      error = errorText(reason);
-    }
-  }
-
   async function openModland() {
+    if (passing) return;
+    passing = true;
     try {
-      await updatesOpenModland();
+      const passed = await updatesOpenModland();
+      if (passed) {
+        toasts.show("Modland пускает программу — проверяем снова");
+        sources = sources.map((item) =>
+          item.id === "modland" ? { ...item, status: "ok", note: null } : item,
+        );
+        await check();
+      }
     } catch (reason) {
       error = errorText(reason);
+    } finally {
+      passing = false;
     }
   }
 
@@ -296,10 +296,9 @@
             {/if}
           </span>
           {#if source.status === "needsHumanCheck"}
-            {#if source.id === "modland"}
-              <button type="button" onclick={() => void openModland()}>Открыть Modland</button>
-            {/if}
-            <button type="button" onclick={() => void resolveHuman(source)}>Я прошёл</button>
+            <button type="button" disabled={passing} onclick={() => void openModland()}>
+              {passing ? "Ждём…" : "Пройти проверку"}
+            </button>
           {/if}
         </div>
       {/each}
