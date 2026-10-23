@@ -39,3 +39,14 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Картинки в отладочной сборке декодируются в десятки раз медленнее; при проверке на живых
+# модах это выглядело бы как тормоза, которых в выпуске нет.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
