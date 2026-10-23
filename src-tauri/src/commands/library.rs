@@ -1076,11 +1076,11 @@ fn ensure_preview(state: &AppState, id: &str) -> Option<String> {
     if bytes.len() > 30 * 1024 * 1024 {
         return None;
     }
-    state
+    let (_, extension) = state
         .previews
         .put_image(&target.key, &pick.extension, &bytes)
         .ok()?;
-    Some(preview_url(&target.key, &pick.extension))
+    Some(preview_url(&target.key, &extension))
 }
 
 fn archive_dto(overview: ArchiveOverview) -> ArchiveDto {

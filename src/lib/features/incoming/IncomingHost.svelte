@@ -412,7 +412,7 @@
 
 {#if dragActive && !dialogOpen}
   <div class="drop-layer" aria-hidden="true">
-    <div class="drop-card glass liquid-edge">
+    <div class="drop-card glass solid liquid-edge">
       <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
         <path
           d="M22 6v21M13.5 19 22 27.5 30.5 19M8 34h36"
@@ -581,7 +581,6 @@
     border: 0;
     padding: 0;
     background: rgba(6, 10, 20, 0.62);
-    backdrop-filter: blur(2px);
     cursor: default;
   }
 
@@ -674,15 +673,25 @@
     line-height: 1.5;
   }
 
+  /* Список забирает всё свободное место окна и прокручивается сам; карточки не сжимаются,
+     иначе при большом модпаке текст вылезал за их края. */
   .items {
     display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
     gap: 10px;
-    max-height: 54vh;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding-right: 4px;
   }
 
+  .dialog > :not(.items) {
+    flex: none;
+  }
+
   .item {
+    flex: none;
     padding: 15px 16px 13px;
     border: 1px solid var(--glass-border);
     border-radius: 18px;

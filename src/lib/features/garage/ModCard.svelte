@@ -251,13 +251,11 @@
     padding: 0 10px;
     border: 1px solid rgb(255 255 255 / 0.16);
     border-radius: 999px;
-    background: rgb(10 14 26 / 0.62);
+    background: rgb(10 14 26 / 0.78);
     color: rgb(255 255 255 / 0.94);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.005em;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
   }
 
   .badge::before {

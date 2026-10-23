@@ -54,8 +54,8 @@
   --warning-soft: oklch(0.82 0.15 85 / 0.2);
   --warning-border: oklch(0.66 0.14 75 / 0.5);
 
-  --glass-fill: rgb(255 255 255 / 0.58);
-  --glass-fill-strong: rgb(255 255 255 / 0.76);
+  --glass-fill: rgb(255 255 255 / 0.72);
+  --glass-fill-strong: rgb(255 255 255 / 0.86);
   --glass-border: rgb(255 255 255 / 0.72);
   --glass-highlight: rgb(255 255 255 / 0.9);
   --glass-shadow: 0 20px 55px rgb(30 45 80 / 0.16);
@@ -94,8 +94,8 @@
   --warning-soft: oklch(0.82 0.15 85 / 0.1);
   --warning-border: oklch(0.82 0.15 85 / 0.35);
 
-  --glass-fill: rgb(255 255 255 / 0.07);
-  --glass-fill-strong: rgb(255 255 255 / 0.11);
+  --glass-fill: rgb(30 36 54 / 0.62);
+  --glass-fill-strong: rgb(44 52 74 / 0.72);
   --glass-border: rgb(255 255 255 / 0.14);
   --glass-highlight: rgb(255 255 255 / 0.24);
   --glass-shadow: 0 22px 56px rgb(8 12 24 / 0.38);
@@ -228,8 +228,6 @@ input {
   box-shadow:
     inset 0 1px 0 var(--glass-highlight),
     var(--glass-shadow);
-  backdrop-filter: blur(22px) saturate(1.35);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
 }
 
 /* Кнопки legacy: полностью круглые. Главная — белая (тёмная в светлом) со свечением,
@@ -264,8 +262,6 @@ input {
   border: 1px solid var(--glass-border);
   background: var(--glass-fill);
   color: var(--foreground);
-  backdrop-filter: blur(18px) saturate(1.3);
-  -webkit-backdrop-filter: blur(18px) saturate(1.3);
 }
 
 .btn-glass:hover {
@@ -282,14 +278,20 @@ input {
   opacity: 0.55;
 }
 
+/* Окна поверх содержимого (диалоги, подсказки, тосты) — всегда плотные: без размытия
+   сквозь полупрозрачную панель читались бы карточки под ней. */
+.glass[role="dialog"],
+.glass[role="status"],
+.glass.solid {
+  background: var(--panel-solid);
+}
+
 .glass-strong {
   background: var(--glass-fill-strong);
 }
 
 .no-glass .glass {
   background: var(--panel-solid);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   box-shadow: inset 0 1px 0 var(--glass-highlight), 0 10px 30px rgb(0 0 0 / 0.18);
 }
 

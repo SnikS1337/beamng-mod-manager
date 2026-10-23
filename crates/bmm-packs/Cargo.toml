@@ -13,6 +13,7 @@ thiserror.workspace = true
 zip.workspace = true
 sha2.workspace = true
 json5 = "0.4"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [dev-dependencies]
 tempfile.workspace = true

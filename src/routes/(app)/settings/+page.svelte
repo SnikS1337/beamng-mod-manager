@@ -234,9 +234,9 @@
   }
 
   const preset = $derived(
-    draft?.liquidGlass && draft.uiAnimations && draft.animatedBackground && draft.fireflies
+    draft?.liquidGlass && draft.uiAnimations && draft.fireflies
       ? "beauty"
-      : draft && !draft.liquidGlass && !draft.uiAnimations && !draft.animatedBackground && !draft.fireflies
+      : draft && !draft.liquidGlass && !draft.uiAnimations && !draft.fireflies
         ? "fast"
         : null,
   );
@@ -246,14 +246,13 @@
     const on = kind === "beauty";
     draft.liquidGlass = on;
     draft.uiAnimations = on;
-    draft.animatedBackground = on;
     draft.fireflies = on;
     draft.backgroundTilt = false;
     mark();
   }
 
   function setFlag(
-    key: "liquidGlass" | "uiAnimations" | "animatedBackground" | "fireflies" | "backgroundTilt",
+    key: "liquidGlass" | "uiAnimations" | "fireflies" | "backgroundTilt",
     value: boolean,
   ) {
     if (!draft) return;
@@ -376,36 +375,11 @@
         <section id="settings-appearance" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Внешний вид</h2>
-            <span>тема, стекло и движение</span>
+            <span>тема, панели и движение</span>
           </div>
 
       <div class="appearance-grid">
         <div class="appearance-left">
-          <span class="group-title">Как это выглядит</span>
-          <div class="showcase" class:matte={!draft.liquidGlass} aria-hidden="true">
-            <div class="showcase-photo"></div>
-            <div class="showcase-bar">
-              <span class="showcase-logo"></span>
-              <b>Гараж</b>
-              <span class="showcase-count">128 модов</span>
-              <span class="showcase-spacer"></span>
-              <span class="showcase-pill on">Все</span>
-              <span class="showcase-pill">Включённые</span>
-            </div>
-            <div class="showcase-cards">
-              <span class="mini-card first"></span>
-              <span class="mini-card second"></span>
-            </div>
-          </div>
-          <div class="showcase-note">
-            <b>{draft.liquidGlass ? "Жидкое стекло" : "Матовое стекло"}</b>
-            <small>
-              {draft.liquidGlass
-                ? "Края панелей преломляют фото, карточки всплывают над фоном."
-                : "Фото размыто, края ровные — быстрее и спокойнее."}
-            </small>
-          </div>
-
           <span class="group-title">Готовые наборы</span>
           <div class="presets">
             <button
@@ -414,7 +388,7 @@
               onclick={() => applyPreset("beauty")}
             >
               <b>Красиво</b>
-              <small>жидкое стекло, живой фон, огоньки</small>
+              <small>полупрозрачные панели, анимации, огоньки</small>
             </button>
             <button
               type="button"
@@ -422,7 +396,7 @@
               onclick={() => applyPreset("fast")}
             >
               <b>Быстро</b>
-              <small>матовое стекло, без анимаций</small>
+              <small>плотные панели, без анимаций</small>
             </button>
           </div>
 
@@ -430,14 +404,14 @@
           <div class="switch-list">
             <div class="switch-row">
               <div>
-                <b>Жидкое стекло</b>
-                <small>Полупрозрачные панели, блики и мягкие тени.</small>
+                <b>Полупрозрачные панели</b>
+                <small>Сквозь панели виден цветной фон. Выключено — плотные панели.</small>
               </div>
               <Switch
                 size="lg"
                 checked={draft.liquidGlass}
                 onCheckedChange={(value) => setFlag("liquidGlass", value)}
-                aria-label="Жидкое стекло"
+                aria-label="Полупрозрачные панели"
               />
             </div>
             <div class="switch-row">
@@ -450,18 +424,6 @@
                 checked={draft.uiAnimations}
                 onCheckedChange={(value) => setFlag("uiAnimations", value)}
                 aria-label="Анимации интерфейса"
-              />
-            </div>
-            <div class="switch-row">
-              <div>
-                <b>Анимированный фон</b>
-                <small>По фону медленно плывут пятна света и цветная полоса.</small>
-              </div>
-              <Switch
-                size="lg"
-                checked={draft.animatedBackground}
-                onCheckedChange={(value) => setFlag("animatedBackground", value)}
-                aria-label="Анимированный фон"
               />
             </div>
             <div class="switch-row">
@@ -489,10 +451,6 @@
               />
             </div>
           </div>
-          <p class="hint">
-            Если в Windows выключены эффекты прозрачности, стекло будет плоским, даже когда
-            здесь всё включено.
-          </p>
         </div>
 
         <div class="appearance-right">
@@ -851,7 +809,7 @@
   .head p {
     margin: 4px 0 0;
     color: var(--muted-foreground);
-    font-size: 10.5px;
+    font-size: 12.5px;
   }
 
   .head-actions {
@@ -865,7 +823,7 @@
     align-items: center;
     gap: 7px;
     color: var(--muted-foreground);
-    font-size: 11.5px;
+    font-size: 12.5px;
   }
 
   .save-dot {
@@ -1161,7 +1119,6 @@
     border-radius: 999px;
     background: rgb(8 12 24 / 0.5);
     color: #fff;
-    backdrop-filter: blur(8px);
   }
 
   .number {
@@ -1424,10 +1381,6 @@
     line-height: 1.45;
   }
 
-  .head p {
-    font-size: 12px;
-  }
-
   .block {
     gap: 16px;
     padding: 20px 22px;
@@ -1578,133 +1531,22 @@
   }
 
   /* ── живое превью вместо абстрактных пятен ── */
-  .showcase {
-    position: relative;
-    height: 230px;
-    overflow: hidden;
-    border: 1px solid var(--glass-border);
-    border-radius: 18px;
-    isolation: isolate;
-  }
 
-  .showcase-photo {
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(180deg, rgb(7 11 20 / 0.1), rgb(7 11 20 / 0.55)),
-      url("/preview-mustang.jpg") center 62% / cover no-repeat;
-  }
 
-  .showcase-bar {
-    position: absolute;
-    top: 14px;
-    left: 14px;
-    right: 14px;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 46px;
-    padding: 0 16px;
-    border: 1px solid rgb(255 255 255 / 0.22);
-    border-radius: 23px;
-    background: rgb(20 28 44 / 0.38);
-    color: #fff;
-    font-size: 13px;
-    backdrop-filter: blur(16px) saturate(1.35);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.24),
-      0 10px 28px rgb(4 8 18 / 0.28);
-  }
 
-  .showcase.matte .showcase-bar {
-    border-color: rgb(255 255 255 / 0.16);
-    background: rgb(20 28 44 / 0.66);
-    backdrop-filter: blur(26px) saturate(1.1);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2);
-  }
 
-  .showcase-logo {
-    width: 18px;
-    height: 18px;
-    border-radius: 5px;
-    background:
-      linear-gradient(140deg, rgb(255 255 255 / 0.75), transparent 55%),
-      linear-gradient(320deg, oklch(0.6 0.19 278), oklch(0.52 0.15 210));
-    transform: rotate(8deg);
-  }
 
-  .showcase-bar b {
-    font-weight: 620;
-  }
 
-  .showcase-count {
-    color: rgb(255 255 255 / 0.62);
-    font-size: 11.5px;
-  }
 
-  .showcase-spacer {
-    flex: 1;
-  }
 
-  .showcase-pill {
-    padding: 5px 11px;
-    border-radius: 999px;
-    color: rgb(255 255 255 / 0.58);
-    font-size: 11px;
-    white-space: nowrap;
-  }
 
-  .showcase-pill.on {
-    background: rgb(255 255 255 / 0.2);
-    color: #fff;
-  }
 
-  .showcase-cards {
-    position: absolute;
-    right: 14px;
-    bottom: 14px;
-    left: 14px;
-    z-index: 2;
-    display: flex;
-    gap: 12px;
-  }
 
-  .mini-card {
-    flex: 1;
-    height: 96px;
-    border: 1px solid rgb(255 255 255 / 0.26);
-    border-radius: 14px;
-    background-size: cover;
-    background-position: center;
-    box-shadow: 0 12px 26px rgb(4 8 18 / 0.35);
-  }
 
-  .mini-card.first {
-    background-image: linear-gradient(180deg, transparent 40%, rgb(5 9 18 / 0.5)), url("/preview-lambo.jpg");
-  }
 
-  .mini-card.second {
-    background-image: linear-gradient(180deg, transparent 40%, rgb(5 9 18 / 0.5)), url("/preview-mustang.jpg");
-  }
 
-  .showcase-note {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-top: -4px;
-  }
 
-  .showcase-note b {
-    font-size: 12.5px;
-    font-weight: 600;
-  }
 
-  .showcase-note small {
-    color: var(--muted-foreground);
-    font-size: 11px;
-    line-height: 1.4;
-  }
 
   @media (max-width: 1180px) {
     .settings-layout {
@@ -1715,10 +1557,6 @@
     .settings-side button {
       padding: 0 10px;
       font-size: 12px;
-    }
-
-    .showcase {
-      height: 210px;
     }
   }
 </style>

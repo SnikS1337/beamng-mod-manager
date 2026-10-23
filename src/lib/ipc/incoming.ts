@@ -164,7 +164,17 @@ function mockArchive(path: string): IncomingArchiveDto {
   } satisfies Omit<IncomingItemDto, "fileName" | "title" | "kind" | "replaces">;
 
   const items: IncomingItemDto[] = [];
-  if (lower.includes("pack")) {
+  if (lower.includes("bigpack")) {
+    for (let index = 1; index <= 14; index += 1) {
+      items.push({
+        ...base,
+        fileName: `bigpack_vehicle_${index}.zip`,
+        title: `Машина из большого модпака № ${index}`,
+        kind: index % 4 === 0 ? "update" : "new",
+        replaces: index % 4 === 0 ? `bmm_mod_0000${index % 10}.zip` : null,
+      });
+    }
+  } else if (lower.includes("pack")) {
     items.push(
       { ...base, fileName: "track_pack_1.zip", title: "Track pack · трасса", kind: "new", replaces: null },
       {

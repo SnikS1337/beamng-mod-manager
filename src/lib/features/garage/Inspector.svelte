@@ -225,12 +225,10 @@
     height: 30px;
     border: 1px solid rgb(255 255 255 / 0.2);
     border-radius: 999px;
-    background: rgb(10 14 26 / 0.5);
+    background: rgb(10 14 26 / 0.7);
     color: rgb(255 255 255 / 0.85);
     font-size: 18px;
     line-height: 1;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
     cursor: default;
   }
 
