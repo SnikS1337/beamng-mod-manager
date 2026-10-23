@@ -459,9 +459,7 @@ impl SearchService {
         for left in 0..cards.len() {
             for right in left + 1..cards.len() {
                 let (a, b) = (&cards[left].listings, &cards[right].listings);
-                let shares_site = a
-                    .iter()
-                    .any(|x| b.iter().any(|y| x.source == y.source));
+                let shares_site = a.iter().any(|x| b.iter().any(|y| x.source == y.source));
                 if shares_site {
                     continue;
                 }
@@ -968,7 +966,10 @@ mod tests {
         all.extend(others);
         let cards = service().group(&all, "rolls royce phantom");
         let questions: usize = cards.iter().map(|card| card.possible_same_as.len()).sum();
-        assert!(cards.iter().all(|card| card.possible_same_as.len() <= 1), "{cards:?}");
+        assert!(
+            cards.iter().all(|card| card.possible_same_as.len() <= 1),
+            "{cards:?}"
+        );
         // Каждая карточка участвует не больше чем в одном вопросе.
         let mut mentioned = std::collections::HashMap::<&str, usize>::new();
         for card in &cards {
@@ -998,7 +999,10 @@ mod tests {
         );
         let cards = service().group(&[a, b, c], "sienna");
         assert_eq!(cards.len(), 2, "{cards:?}");
-        assert!(cards.iter().all(|card| card.possible_same_as.is_empty()), "{cards:?}");
+        assert!(
+            cards.iter().all(|card| card.possible_same_as.is_empty()),
+            "{cards:?}"
+        );
     }
 
     #[test]

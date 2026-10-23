@@ -133,3 +133,58 @@ pub async fn settings_save(
     }
     Ok(SettingsDto::from_settings(&saved))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_setting_survives_the_window_round_trip() {
+        // Настройки должны сохраняться между запусками: поле, забытое в переводе для окна,
+        // молча сбрасывалось бы при каждом сохранении.
+        let mut changed = AppSettings::default();
+        changed.allow_downloads = !changed.allow_downloads;
+        changed.mods_folder = Some("D:/Games/BeamNG/mods".to_string());
+        changed.user_folder = Some("D:/Games/BeamNG".to_string());
+        changed.check_ttl_hours = 7;
+        changed.auto_check_on_start = !changed.auto_check_on_start;
+        changed.check_app_updates = !changed.check_app_updates;
+        changed.auto_check_every_hours = 5;
+        changed.disabled_sources = vec!["modland".to_string()];
+        changed.keep_backups = 9;
+        changed.max_card_checks_per_source = 33;
+        changed.liquid_glass = !changed.liquid_glass;
+        changed.mode = UiMode::Light;
+        changed.theme = BackgroundTheme::Forest;
+        changed.ui_animations = !changed.ui_animations;
+        changed.animated_background = !changed.animated_background;
+        changed.fireflies = !changed.fireflies;
+        changed.background_tilt = !changed.background_tilt;
+        changed.active_mods_warn_above = 123;
+        changed.first_run_done = !changed.first_run_done;
+        changed.watch_folders = vec!["C:/Downloads".to_string()];
+
+        let dto = SettingsDto::from_settings(&changed);
+        let mut restored = AppSettings::default();
+        dto.apply_to(&mut restored);
+        assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&changed).unwrap()
+        );
+    }
+
+    #[test]
+    fn every_theme_and_mode_keeps_its_name() {
+        for theme in ["night", "deep", "dusk", "forest", "graphite"] {
+            for mode in ["dark", "light", "system"] {
+                let mut dto = SettingsDto::from_settings(&AppSettings::default());
+                dto.theme = theme.to_string();
+                dto.mode = mode.to_string();
+                let mut settings = AppSettings::default();
+                dto.apply_to(&mut settings);
+                let back = SettingsDto::from_settings(&settings);
+                assert_eq!((back.theme.as_str(), back.mode.as_str()), (theme, mode));
+            }
+        }
+    }
+}

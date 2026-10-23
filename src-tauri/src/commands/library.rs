@@ -1573,7 +1573,11 @@ mod tests {
         };
         assert_eq!(after.mods.len(), 1);
         assert_eq!(after.mods[0].problem, None);
-        assert_eq!(after.mods[0].version.as_deref(), Some("1.2"), "версия не потерялась");
+        assert_eq!(
+            after.mods[0].version.as_deref(),
+            Some("1.2"),
+            "версия не потерялась"
+        );
         let index = bmm_packs::zip_index::read_index(&mods.join("acadia.zip")).unwrap();
         assert!(
             index
@@ -1581,7 +1585,11 @@ mod tests {
                 .iter()
                 .all(|entry| entry.name.starts_with("vehicles/acadia/")),
             "{:?}",
-            index.entries.iter().map(|entry| &entry.name).collect::<Vec<_>>()
+            index
+                .entries
+                .iter()
+                .map(|entry| &entry.name)
+                .collect::<Vec<_>>()
         );
     }
 }

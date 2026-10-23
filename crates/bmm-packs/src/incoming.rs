@@ -1914,9 +1914,17 @@ mod tests {
         assert_eq!(analysis.items.len(), 2, "{:?}", analysis.items);
         for item in &analysis.items {
             let keys = content_keys(&read_index(&item.zip_path).unwrap());
-            assert_eq!(keys, item.content, "{}: файл не тот, что разобран", item.file_name);
+            assert_eq!(
+                keys, item.content,
+                "{}: файл не тот, что разобран",
+                item.file_name
+            );
         }
-        let paths: HashSet<_> = analysis.items.iter().map(|item| item.zip_path.clone()).collect();
+        let paths: HashSet<_> = analysis
+            .items
+            .iter()
+            .map(|item| item.zip_path.clone())
+            .collect();
         assert_eq!(paths.len(), 2);
     }
 
@@ -1943,7 +1951,10 @@ mod tests {
         let source = temp.path().join("pack.zip");
         build_zip_stored(
             &source,
-            &[("good.zip", &good), ("bad.zip", b"PK\x03\x04 not really a zip")],
+            &[
+                ("good.zip", &good),
+                ("bad.zip", b"PK\x03\x04 not really a zip"),
+            ],
         );
         let analysis = analyze(
             &source,
@@ -1959,7 +1970,9 @@ mod tests {
             .expect("битый вложенный архив показан");
         assert!(bad.blocked);
         assert!(
-            bad.findings.iter().all(|finding| finding.entry.as_deref() != Some("good.zip")),
+            bad.findings
+                .iter()
+                .all(|finding| finding.entry.as_deref() != Some("good.zip")),
             "{:?}",
             bad.findings
         );

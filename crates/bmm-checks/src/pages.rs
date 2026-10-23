@@ -108,8 +108,12 @@ pub fn find_pages(
             continue;
         }
         let author = author_of(&installed.id);
-        let mut guess =
-            PageGuesser::pick_with_author(installed, title.as_deref(), author.as_deref(), &listings);
+        let mut guess = PageGuesser::pick_with_author(
+            installed,
+            title.as_deref(),
+            author.as_deref(),
+            &listings,
+        );
         // Следить без вопроса можно, только если ничто не спорит. В выдаче поиска размера
         // обычно нет, а совпадение одного названия обманчиво («Mercedes-Benz ML» — десятки
         // разных модов): открываем страницу мода и решаем ещё раз уже с размером и автором.

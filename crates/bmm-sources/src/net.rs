@@ -772,7 +772,9 @@ fn jitter_for(url: &Url, jitter: Duration) -> Duration {
 /// Замок, переживший панику в другом потоке. Внутри — счётчики и кэш: после сбоя одного
 /// запроса они остаются пригодными, а «отравленный» замок ломал бы сайт до перезапуска.
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]
@@ -1327,13 +1329,11 @@ mod tests {
             options(),
         );
         let url = Url::parse("https://site.test/mod/1").unwrap();
-        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            fetcher.get("site", &url)
-        }));
+        let first =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fetcher.get("site", &url)));
         assert!(first.is_err());
-        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            fetcher.get("site", &url)
-        }));
+        let second =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fetcher.get("site", &url)));
         let second = second.expect("второй запрос не падает");
         assert_eq!(second.status, SourceStatus::Ok);
         assert_eq!(fetcher.status_of("site"), SourceStatus::Ok);

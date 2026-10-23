@@ -528,14 +528,22 @@ mod tests {
         let old = installed("acadia", "acadia.zip", "acadia", 100);
         store.upsert_mod(old.clone());
         bind(&store, &old, "2.0", 300);
-        assert!(rename_file(&store, "ACADIA.zip", "GMC_Acadia_GMT968.zip", 300));
+        assert!(rename_file(
+            &store,
+            "ACADIA.zip",
+            "GMC_Acadia_GMT968.zip",
+            300
+        ));
         let report = reconcile(
             &store,
             &[disk("GMC_Acadia_GMT968.zip", true, 300)],
             true,
             now(),
         );
-        assert!(report.added.is_empty() && report.removed.is_empty(), "{report:?}");
+        assert!(
+            report.added.is_empty() && report.removed.is_empty(),
+            "{report:?}"
+        );
         let after = store.get_mod("acadia").unwrap();
         assert_eq!(after.file_name, "GMC_Acadia_GMT968.zip");
         assert_eq!(after.version.as_deref(), Some("2.0"));
@@ -550,6 +558,9 @@ mod tests {
         store.upsert_mod(installed("car", "car_mod.zip", "car mod", 100));
         let report = reconcile(&store, &[disk("Car Mod.zip", true, 100)], true, now());
         assert_eq!(report.renamed.len(), 1, "{report:?}");
-        assert_eq!(store.get_mod("car").unwrap().version.as_deref(), Some("1.0"));
+        assert_eq!(
+            store.get_mod("car").unwrap().version.as_deref(),
+            Some("1.0")
+        );
     }
 }
