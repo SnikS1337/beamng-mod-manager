@@ -211,56 +211,231 @@ pub struct InstallerArgs {
     backup: PathBuf,
 }
 
-pub fn installer_args() -> Option<InstallerArgs> {
-    let args: Vec<String> = std::env::args().collect();
-    let value = |flag: &str| {
-        args.iter()
-            .position(|arg| *arg == flag)
-            .and_then(|index| args.get(index + 1))
-            .cloned()
+/// Значение флага: `--flag value`.
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|arg| arg == flag)
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+}
+
+/// Аргументы режима установщика. `--backup` передаёт только Rust-версия; C#-версия 0.3.x
+/// запускает новую с `--install-update <pid> --target <exe>`, и копия прежней тогда кладётся
+/// туда же, куда её клала сама 0.3.x: `%LOCALAPPDATA%\BeamModManager\update\previous.exe`.
+fn parse_installer_args(
+    args: &[String],
+    default_backup: impl FnOnce() -> Option<PathBuf>,
+) -> Option<InstallerArgs> {
+    let old_pid = flag_value(args, "--install-update")?.parse().ok()?;
+    let target = PathBuf::from(flag_value(args, "--target")?);
+    let backup = match flag_value(args, "--backup") {
+        Some(path) => PathBuf::from(path),
+        None => default_backup()?,
     };
     Some(InstallerArgs {
-        old_pid: value("--install-update")?.parse().ok()?,
-        target: PathBuf::from(value("--target")?),
-        backup: PathBuf::from(value("--backup")?),
+        old_pid,
+        target,
+        backup,
     })
 }
 
+pub fn installer_args() -> Option<InstallerArgs> {
+    let args: Vec<String> = std::env::args().collect();
+    parse_installer_args(&args, || {
+        bmm_domain::paths::AppPaths::resolve()
+            .ok()
+            .map(|paths| paths.update_dir().join("previous.exe"))
+    })
+}
+
+/// Код выхода новой версии, которая сама вернула прежнюю: откатывать второй раз не нужно.
+const ROLLED_BACK_EXIT_CODE: i32 = 3;
+/// Сколько ждать, пока новая версия покажет окно.
+const START_WAIT: Duration = Duration::from_secs(60);
+
+/// Новая версия вышла, не показав окна. 0 — закрыли обычным образом, 3 — уже откатилась сама.
+fn start_failed(exit_code: Option<i32>) -> bool {
+    !matches!(exit_code, Some(0) | Some(ROLLED_BACK_EXIT_CODE))
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn started_event_name(installer_pid: u32) -> String {
+    // Как в 0.3.x: так прежняя и новая версии понимают друг друга в обе стороны.
+    format!("Local\\BeamModManager.Started.{installer_pid}")
+}
+
+/// Новая версия, запущенная из папки обновления: ждёт выхода прежней, записывает себя в тот же
+/// файл (прежнюю — в копию), запускает программу и ждёт её окна до минуты. Программа упала
+/// раньше — прежняя возвращается из копии и запускается с `--rolled-back`.
 pub fn run_installer(arguments: InstallerArgs) {
     wait_for_exit(arguments.old_pid, Duration::from_secs(30));
     let self_exe = match std::env::current_exe() {
         Ok(path) => path,
         Err(_) => return,
     };
-    if write_in_place(&self_exe, &arguments.target, &arguments.backup).is_err() {
+    if let Err(error) = write_in_place(&self_exe, &arguments.target, &arguments.backup) {
         let _ = std::process::Command::new(&arguments.target)
             .arg("--update-failed")
+            .arg(error.to_string())
             .spawn();
         return;
     }
-    if std::process::Command::new(&arguments.target)
-        .spawn()
-        .is_err()
-    {
-        bmm_app_release::restore_in_place(&arguments.backup, &arguments.target);
-        let _ = std::process::Command::new(&arguments.target).spawn();
+    let started = StartedSignal::create(std::process::id());
+    let child = std::process::Command::new(&arguments.target)
+        .arg("--after-update")
+        .arg(std::process::id().to_string())
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(_) => {
+            roll_back(&arguments);
+            return;
+        }
+    };
+    let begin = Instant::now();
+    while begin.elapsed() < START_WAIT {
+        if started.wait(Duration::from_millis(250)) {
+            return;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if start_failed(status.code()) {
+                    roll_back(&arguments);
+                }
+                return;
+            }
+            Ok(None) => {}
+            Err(_) => return,
+        }
+    }
+}
+
+fn roll_back(arguments: &InstallerArgs) {
+    if bmm_app_release::restore_in_place(&arguments.backup, &arguments.target) {
+        let _ = std::process::Command::new(&arguments.target)
+            .arg("--rolled-back")
+            .arg(current_version().display())
+            .spawn();
+    }
+}
+
+/// Запуск после самообновления: `--after-update <pid установщика>`.
+pub fn after_update_parent() -> Option<u32> {
+    let args: Vec<String> = std::env::args().collect();
+    flag_value(&args, "--after-update")?.parse().ok()
+}
+
+/// Новая версия не запустилась и вернула эту: её больше не предлагаем.
+pub fn remember_rolled_back(skipped_path: &std::path::Path) {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(version) = flag_value(&args, "--rolled-back").and_then(|v| AppVersion::parse(&v)) {
+        let _ = bmm_app_release::write_skipped(skipped_path, version);
+    }
+}
+
+/// Окно показалось: сказать установщику «запустилась» и убрать прежний exe и скачанное.
+/// До этого из них возвращали бы прежнюю версию.
+pub fn on_healthy(update_dir: PathBuf) {
+    if let Some(parent) = after_update_parent() {
+        StartedSignal::set(parent);
+    }
+    std::thread::spawn(move || {
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        // Программа, запущенная прямо из папки обновления, свою папку не удаляет.
+        if exe.starts_with(&update_dir) {
+            return;
+        }
+        // Установщик выходит сразу после сигнала; даём ему отпустить свой exe.
+        std::thread::sleep(Duration::from_secs(3));
+        bmm_app_release::cleanup(&exe, &update_dir);
+    });
+}
+
+#[cfg(windows)]
+struct StartedSignal(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(windows)]
+impl StartedSignal {
+    fn create(installer_pid: u32) -> Self {
+        use windows_sys::Win32::System::Threading::CreateEventW;
+        let name = wide(&started_event_name(installer_pid));
+        Self(unsafe { CreateEventW(std::ptr::null(), 1, 0, name.as_ptr()) })
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        if self.0.is_null() {
+            std::thread::sleep(timeout);
+            return false;
+        }
+        unsafe { WaitForSingleObject(self.0, timeout.as_millis() as u32) == WAIT_OBJECT_0 }
+    }
+
+    fn set(installer_pid: u32) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{OpenEventW, SetEvent};
+        const EVENT_MODIFY_STATE: u32 = 0x0002;
+        let name = wide(&started_event_name(installer_pid));
+        let handle = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
+        if handle.is_null() {
+            return;
+        }
+        unsafe {
+            SetEvent(handle);
+            CloseHandle(handle);
+        }
     }
 }
 
 #[cfg(windows)]
+impl Drop for StartedSignal {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+        }
+    }
+}
+
+#[cfg(not(windows))]
+struct StartedSignal;
+
+#[cfg(not(windows))]
+impl StartedSignal {
+    fn create(_installer_pid: u32) -> Self {
+        Self
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        std::thread::sleep(timeout);
+        false
+    }
+
+    fn set(_installer_pid: u32) {}
+}
+
+/// Ждём, пока прежний процесс действительно выйдет. `OpenProcess` в цикле не годится:
+/// дескриптор вышедшего процесса открывается, пока его держит кто-то ещё.
+#[cfg(windows)]
 fn wait_for_exit(pid: u32, timeout: Duration) {
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::OpenProcess;
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
 
-    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if handle.is_null() {
-            return;
-        }
-        unsafe { CloseHandle(handle) };
-        std::thread::sleep(Duration::from_millis(100));
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        return; // уже вышел
+    }
+    unsafe {
+        WaitForSingleObject(handle, timeout.as_millis() as u32);
+        CloseHandle(handle);
     }
 }
 
@@ -273,9 +448,13 @@ fn wait_for_exit(_pid: u32, _timeout: Duration) {
 mod tests {
     use super::*;
 
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| arg.to_string()).collect()
+    }
+
     #[test]
     fn parses_installer_arguments() {
-        let args = [
+        let args = strings(&[
             "BeamModManager.exe",
             "--install-update",
             "42",
@@ -283,16 +462,56 @@ mod tests {
             "C:\\app\\BeamModManager.exe",
             "--backup",
             "C:\\app\\previous.exe",
-        ];
-        let value = |flag: &str| {
-            args.iter()
-                .position(|arg| *arg == flag)
-                .and_then(|index| args.get(index + 1))
-                .map(|value| value.to_string())
-        };
-        assert_eq!(value("--install-update").unwrap(), "42");
-        assert_eq!(value("--target").unwrap(), "C:\\app\\BeamModManager.exe");
-        assert_eq!(value("--backup").unwrap(), "C:\\app\\previous.exe");
+        ]);
+        let parsed = parse_installer_args(&args, || None).unwrap();
+        assert_eq!(parsed.old_pid, 42);
+        assert_eq!(parsed.target, PathBuf::from("C:\\app\\BeamModManager.exe"));
+        assert_eq!(parsed.backup, PathBuf::from("C:\\app\\previous.exe"));
+    }
+
+    #[test]
+    fn legacy_launch_without_backup_uses_default_copy() {
+        // Так новую версию запускает C# 0.3.12: без --backup.
+        let args = strings(&[
+            "BeamModManager.exe",
+            "--install-update",
+            "7",
+            "--target",
+            "C:\\app\\BeamModManager.exe",
+        ]);
+        let parsed = parse_installer_args(&args, || {
+            Some(PathBuf::from("D:\\data\\update\\previous.exe"))
+        })
+        .unwrap();
+        assert_eq!(parsed.old_pid, 7);
+        assert_eq!(
+            parsed.backup,
+            PathBuf::from("D:\\data\\update\\previous.exe")
+        );
+    }
+
+    #[test]
+    fn ordinary_launch_is_not_installer() {
+        assert!(parse_installer_args(&strings(&["BeamModManager.exe"]), || None).is_none());
+        let bad_pid = strings(&["x", "--install-update", "abc", "--target", "t"]);
+        assert!(parse_installer_args(&bad_pid, || Some(PathBuf::from("b"))).is_none());
+    }
+
+    #[test]
+    fn crash_before_window_means_rollback() {
+        assert!(!start_failed(Some(0)));
+        assert!(!start_failed(Some(ROLLED_BACK_EXIT_CODE)));
+        assert!(start_failed(Some(101)));
+        assert!(start_failed(Some(1)));
+        assert!(start_failed(None));
+    }
+
+    #[test]
+    fn started_event_matches_legacy_name() {
+        assert_eq!(
+            started_event_name(1234),
+            "Local\\BeamModManager.Started.1234"
+        );
     }
 
     #[test]
