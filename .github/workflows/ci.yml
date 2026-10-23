@@ -54,5 +54,9 @@ jobs:
       - name: Тесты Rust
         run: cargo test --workspace --all-targets
 
-      - name: Сборка окна
+      # Release-сборка с LTO — самая долгая часть. На каждый push она не нужна:
+      # код уже проверен clippy и тестами, а portable exe собирает release.yml на теге.
+      # Ручной запуск workflow остаётся способом проверить полную сборку.
+      - name: Сборка окна (по запросу)
+        if: github.event_name == 'workflow_dispatch'
         run: npm run tauri build -- --no-bundle

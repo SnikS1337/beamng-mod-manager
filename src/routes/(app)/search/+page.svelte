@@ -3,13 +3,13 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { ExternalLink, Search, X } from "@lucide/svelte";
   import { formatSize } from "$lib/features/garage/format";
+  import { toasts } from "$lib/shell/toasts.svelte";
   import {
     listenSearch,
     searchCancel,
     searchDecide,
     searchOpenModland,
     searchPreview,
-    searchResolveHuman,
     searchStart,
     sourceName,
     type SearchCard,
@@ -22,6 +22,7 @@
   let query = $state("");
   let submitted = $state("");
   let searching = $state(false);
+  let passing = $state(false);
   let searched = $state(false);
   let cards = $state<SearchCard[]>([]);
   let sources = $state<SearchSource[]>([]);
@@ -137,22 +138,21 @@
   }
 
   async function openModland() {
+    if (passing) return;
+    passing = true;
     try {
-      await searchOpenModland(submitted || query);
-    } catch (reason) {
-      error = errorText(reason);
-    }
-  }
-
-  async function resolveHuman(source: string) {
-    try {
-      await searchResolveHuman(source);
-      if (submitted) {
-        query = submitted;
-        await runSearch();
+      const passed = await searchOpenModland(submitted || query);
+      if (passed) {
+        toasts.show("Modland пускает программу — ищем снова");
+        if (submitted) {
+          query = submitted;
+          await runSearch();
+        }
       }
     } catch (reason) {
       error = errorText(reason);
+    } finally {
+      passing = false;
     }
   }
 
@@ -315,8 +315,8 @@
 
   {#if sources.some((source) => source.status === "needsHumanCheck")}
     <div class="banner warn">
-      Сайт просит подтвердить, что вы человек. Откройте «На сайте», пройдите проверку и нажмите
-      «Я прошёл».
+      Сайт просит подтвердить, что вы человек. Нажмите «Пройти проверку» — окно закроется само,
+      когда сайт пустит.
     </div>
   {/if}
 
@@ -342,11 +342,10 @@
               {source.count}
             {/if}
           </span>
-          {#if source.id === "modland" && submitted}
-            <button type="button" onclick={() => void openModland()}>На сайте</button>
-            {#if source.status === "needsHumanCheck"}
-              <button type="button" onclick={() => void resolveHuman(source.id)}>Я прошёл</button>
-            {/if}
+          {#if source.status === "needsHumanCheck"}
+            <button type="button" disabled={passing} onclick={() => void openModland()}>
+              {passing ? "Ждём…" : "Пройти проверку"}
+            </button>
           {/if}
         </div>
       {/each}

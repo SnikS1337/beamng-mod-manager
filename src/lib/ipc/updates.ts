@@ -275,16 +275,9 @@ export async function updatesUndoPage(suggestion: PageSuggestion): Promise<Updat
   return clone(mockSnapshot);
 }
 
-export async function updatesResolveHuman(source: string): Promise<UpdatesSnapshot> {
-  if (isTauri()) return invoke<UpdatesSnapshot>("updates_resolve_human", { source });
-  mockSources = mockSources.map((item) =>
-    item.id === source ? { ...item, status: "ok", note: null } : item,
-  );
-  return clone(mockSnapshot);
-}
-
-export async function updatesOpenModland(): Promise<void> {
-  if (isTauri()) await invoke("updates_open_modland");
+export async function updatesOpenModland(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("updates_open_modland");
 }
 
 function mockStart(requestId: number): void {

@@ -3,11 +3,12 @@
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use bmm_checks::runner::SourceRunReport;
 use bmm_checks::{UpdateCheckService, UpdateFinding, UpdateProgress, UpdateRunReport};
@@ -327,37 +328,129 @@ pub async fn updates_undo_page(
     Ok(build_snapshot(&state))
 }
 
+const MODLAND_CHECK_LABEL: &str = "modland-check";
+static MODLAND_CHECK_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// Окно проверки одно на приложение: в нём человек проходит Cloudflare, а программа
+/// сама замечает, что сайт пустил, и продолжает работу.
+pub(crate) async fn open_modland_check(
+    app: AppHandle,
+    state: Arc<AppState>,
+    url: url::Url,
+) -> Result<bool, AppError> {
+    if MODLAND_CHECK_BUSY.swap(true, Ordering::SeqCst) {
+        return Err(AppError::new("check", "Проверка Modland уже идёт."));
+    }
+    let _busy = BusyGuard;
+
+    let window = modland_window(&app, url.clone())?;
+    let token = format!(
+        "bmm-check-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|time| time.as_nanos())
+            .unwrap_or_default()
+    );
+    let _ = window.eval(format!(
+        "document.documentElement && document.documentElement.setAttribute('data-bmm-check','{token}')"
+    ));
+    window
+        .navigate(url)
+        .map_err(|error| AppError::new("window", error.to_string()))?;
+    let _ = window.set_focus();
+
+    let worker_app = app.clone();
+    let worker_window = window.clone();
+    let passed = tauri::async_runtime::spawn_blocking(move || {
+        wait_for_check(&worker_app, &worker_window, &token)
+    })
+    .await
+    .map_err(|error| AppError::new("check", error.to_string()))?;
+
+    if passed {
+        reset_modland_check(&state);
+        let _ = window.close();
+    }
+    Ok(passed)
+}
+
+struct BusyGuard;
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        MODLAND_CHECK_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
+fn modland_window(app: &AppHandle, url: url::Url) -> Result<WebviewWindow, AppError> {
+    if let Some(window) = app.get_webview_window(MODLAND_CHECK_LABEL) {
+        return Ok(window);
+    }
+    WebviewWindowBuilder::new(app, MODLAND_CHECK_LABEL, WebviewUrl::External(url))
+        .title("Проверка Modland")
+        .inner_size(980.0, 720.0)
+        .min_inner_size(520.0, 420.0)
+        .center()
+        .build()
+        .map_err(|error| AppError::new("window", error.to_string()))
+}
+
+/// Пока окно открыто, смотрим на страницу: обычная страница Modland без маркера
+/// старого документа и без cloudflare-заглушки означает, что сайт пустил.
+fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(15 * 60);
+    loop {
+        if app.get_webview_window(MODLAND_CHECK_LABEL).is_none() {
+            return false;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        if let Ok(html) = crate::browser_pages::document_html(window)
+            && let Ok(url) = window.url()
+            && page_passed(&html, token, &url)
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(700));
+    }
+}
+
+fn page_passed(html: &str, token: &str, url: &url::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let modland = host.eq_ignore_ascii_case("modland.net")
+        || host.to_ascii_lowercase().ends_with(".modland.net");
+    modland
+        && html.len() > 200
+        && !html.contains(token)
+        && !html.contains("id=\"main-frame-error\"")
+        && !bmm_sources::net::is_challenge_page(html)
+}
+
+fn reset_modland_check(state: &AppState) {
+    if let Some(runtime) = &state.update {
+        runtime.coordinator.resolve_human_check("modland");
+        return;
+    }
+    if let Some(search) = &state.search
+        && let Ok(home) = "https://www.modland.net/".parse()
+    {
+        search.fetcher.reset_source("modland", &home);
+    }
+}
+
 #[tauri::command]
-pub async fn updates_open_modland(app: AppHandle) -> Result<(), AppError> {
+pub async fn updates_open_modland(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<bool, AppError> {
     let url: url::Url = "https://www.modland.net/"
         .parse()
         .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?;
-    open_modland_window(&app, url)
-}
-
-pub(crate) fn open_modland_window(app: &AppHandle, url: url::Url) -> Result<(), AppError> {
-    if let Some(window) = app.get_webview_window("modland-check") {
-        let _ = window.set_focus();
-        let _ = window.navigate(url);
-        return Ok(());
-    }
-    WebviewWindowBuilder::new(app, "modland-check", WebviewUrl::External(url))
-        .title("Modland")
-        .inner_size(1000.0, 800.0)
-        .build()
-        .map_err(|error| AppError::new("window", error.to_string()))?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn updates_resolve_human(
-    state: tauri::State<'_, Arc<AppState>>,
-    source: String,
-) -> Result<UpdatesSnapshotDto, AppError> {
-    if let Some(runtime) = &state.update {
-        runtime.coordinator.resolve_human_check(&source);
-    }
-    Ok(build_snapshot(&state))
+    let state = state.inner().clone();
+    open_modland_check(app, state, url).await
 }
 
 fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
@@ -646,5 +739,26 @@ mod tests {
 
         UpdateCheckService::restore(store, "m1");
         assert_eq!(build_snapshot(&state).findings.len(), 1);
+    }
+
+    #[test]
+    fn check_window_detects_a_page_the_site_let_through() {
+        let page = format!("<html><body>{}</body></html>", "Toyota Sienna ".repeat(30));
+        let url = url::Url::parse("https://www.modland.net/search/sienna").unwrap();
+        assert!(page_passed(&page, "bmm-check-2", &url));
+        let old = format!("{page} data-bmm-check=\"bmm-check-1\"");
+        assert!(!page_passed(&old, "bmm-check-1", &url));
+        assert!(!page_passed(
+            "<html><head><title>Один момент…</title></head></html>",
+            "bmm-check-1",
+            &url
+        ));
+        assert!(!page_passed(
+            "<html><body><div id=\"main-frame-error\">ERR_TIMED_OUT</div></body></html>",
+            "bmm-check-1",
+            &url
+        ));
+        let other = url::Url::parse("https://stmods.org/beamng_drive/").unwrap();
+        assert!(!page_passed(&page, "bmm-check-1", &other));
     }
 }
