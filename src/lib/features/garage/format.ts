@@ -85,3 +85,35 @@ export function matchesQuery(mod: { name: string; fileName: string }, query: str
   const haystack = words(`${mod.name} ${mod.fileName}`);
   return needles.every((needle) => haystack.some((word) => word.startsWith(needle)));
 }
+
+/** «18 минут назад», «2 дня назад», «3 недели назад» — как в legacy. */
+export function formatAgo(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "";
+  const at = new Date(iso).getTime();
+  if (Number.isNaN(at)) return "";
+  const minutes = Math.max(0, Math.round((now - at) / 60000));
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")} назад`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ${plural(hours, "час", "часа", "часов")} назад`;
+  const days = Math.round(hours / 24);
+  if (days < 14) return `${days} ${plural(days, "день", "дня", "дней")} назад`;
+  const weeks = Math.round(days / 7);
+  if (weeks < 9) return `${weeks} ${plural(weeks, "неделю", "недели", "недель")} назад`;
+  const months = Math.round(days / 30);
+  return `${months} ${plural(months, "месяц", "месяца", "месяцев")} назад`;
+}
+
+/** «сегодня в 3:47», «вчера в 21:10», «12 октября в 9:05». */
+export function formatWhen(iso: string | null | undefined, now = new Date()): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const day = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const diff = Math.round((day(now) - day(date)) / 86400000);
+  if (diff === 0) return `сегодня в ${time}`;
+  if (diff === 1) return `вчера в ${time}`;
+  const label = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
+  return `${label} в ${time}`;
+}

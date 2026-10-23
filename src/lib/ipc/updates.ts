@@ -12,6 +12,18 @@ export interface UpdateFinding {
   latestVersion: string | null;
   url: string;
   dismissed: boolean;
+  previewUrl?: string | null;
+  installedSize?: number | null;
+  latestSize?: number | null;
+  /** Когда программа заметила изменение на сайте (ISO). */
+  noticedAt?: string | null;
+}
+
+export interface UpdateSite {
+  id: string;
+  displayName: string;
+  status: "ok" | "human_check" | "unavailable" | "off";
+  tracked: number;
 }
 
 export interface PageSuggestion {
@@ -46,6 +58,8 @@ export interface UpdatesSnapshot {
   findings: UpdateFinding[];
   hidden: UpdateFinding[];
   suggestions: PageSuggestion[];
+  sites?: UpdateSite[];
+  lastChecked?: string | null;
 }
 
 export interface UpdatesEvent extends UpdatesSnapshot {
@@ -80,6 +94,9 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "1.5",
         url: "https://stmods.org/beamng_drive/mods/bmw_m2_g87/",
         dismissed: false,
+        installedSize: 142 * 1024 * 1024,
+        latestSize: 151 * 1024 * 1024,
+        noticedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
       },
       {
         modId: "mock-2",
@@ -90,6 +107,9 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "2.2",
         url: "https://modsgaming.ru/load/beamng_drive/mashiny/38-1-0-160200",
         dismissed: false,
+        installedSize: 410 * 1024 * 1024,
+        latestSize: 438 * 1024 * 1024,
+        noticedAt: new Date(Date.now() - 21 * 86400000).toISOString(),
       },
       {
         modId: "mock-3",
@@ -123,6 +143,13 @@ function mockInitial(): UpdatesSnapshot {
         url: "https://stmods.org/beamng_drive/mods/audi_rs6_c7/",
       },
     ],
+    sites: [
+      { id: "modland", displayName: "Modland", status: "human_check", tracked: 2 },
+      { id: "modsgaming", displayName: "ModsGaming", status: "ok", tracked: 5 },
+      { id: "stmods", displayName: "STMods", status: "ok", tracked: 9 },
+      { id: "beamng", displayName: "Репозиторий BeamNG", status: "ok", tracked: 0 },
+    ],
+    lastChecked: new Date(Date.now() - 40 * 60000).toISOString(),
   };
 }
 
@@ -329,5 +356,7 @@ function clone(snapshot: UpdatesSnapshot): UpdatesSnapshot {
     findings: snapshot.findings.map((item) => ({ ...item })),
     hidden: snapshot.hidden.map((item) => ({ ...item })),
     suggestions: snapshot.suggestions.map((item) => ({ ...item })),
+    sites: snapshot.sites?.map((item) => ({ ...item })),
+    lastChecked: snapshot.lastChecked ?? null,
   };
 }

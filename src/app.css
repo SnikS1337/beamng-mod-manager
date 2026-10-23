@@ -5,11 +5,12 @@
 @custom-variant data-checked (&[data-state="checked"]);
 @custom-variant data-unchecked (&[data-state="unchecked"]);
 
+/* Переключатель как в legacy: включённый — мягкий голубой, бегунок белый. */
 [data-slot="switch"][data-state="checked"] {
-  background: linear-gradient(180deg, oklch(0.65 0.18 278), oklch(0.5 0.17 278));
+  background: linear-gradient(180deg, oklch(0.74 0.12 255), oklch(0.62 0.14 262));
   box-shadow:
-    0 0 0 1px color-mix(in oklab, var(--primary) 70%, transparent),
-    0 3px 10px color-mix(in oklab, var(--primary) 35%, transparent);
+    0 0 0 1px oklch(0.7 0.12 258 / 0.7),
+    0 3px 10px oklch(0.7 0.13 258 / 0.35);
 }
 
 [data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] {
@@ -35,8 +36,10 @@
   --card-foreground: oklch(0.21 0.02 265);
   --popover: oklch(0.99 0.004 250);
   --popover-foreground: oklch(0.21 0.02 265);
-  --primary: oklch(0.5 0.17 278);
-  --primary-foreground: oklch(0.99 0.003 260);
+  /* Главная кнопка в светлом — тёмная (#141B2B), в тёмном — белая (legacy, DESIGN.md 3.3). */
+  --primary: #141b2b;
+  --primary-foreground: #ffffff;
+  --primary-glow: rgb(60 80 140 / 0.22);
   --secondary: oklch(0.93 0.012 255);
   --secondary-foreground: oklch(0.25 0.02 265);
   --muted: oklch(0.93 0.01 255);
@@ -46,7 +49,7 @@
   --destructive: oklch(0.58 0.21 25);
   --border: oklch(0.21 0.02 265 / 0.12);
   --input: oklch(0.21 0.02 265 / 0.16);
-  --ring: oklch(0.55 0.15 278);
+  --ring: oklch(0.55 0.13 258);
   --warning: oklch(0.44 0.13 68);
   --warning-soft: oklch(0.82 0.15 85 / 0.2);
   --warning-border: oklch(0.66 0.14 75 / 0.5);
@@ -56,6 +59,8 @@
   --glass-border: rgb(255 255 255 / 0.72);
   --glass-highlight: rgb(255 255 255 / 0.9);
   --glass-shadow: 0 20px 55px rgb(30 45 80 / 0.16);
+  --drop-fill: rgb(255 255 255 / 0.66);
+  --drop-glow: rgb(80 100 170 / 0.16);
   --panel-solid: oklch(0.985 0.004 250);
   --grid-line: rgb(20 35 60 / 0.06);
 
@@ -72,8 +77,9 @@
   --card-foreground: oklch(0.95 0.008 255);
   --popover: oklch(0.2 0.022 268);
   --popover-foreground: oklch(0.95 0.008 255);
-  --primary: oklch(0.74 0.14 278);
-  --primary-foreground: oklch(0.18 0.025 270);
+  --primary: #ffffff;
+  --primary-foreground: #111111;
+  --primary-glow: rgb(170 205 255 / 0.42);
   --secondary: oklch(0.27 0.024 268);
   --secondary-foreground: oklch(0.94 0.008 255);
   --muted: oklch(0.25 0.02 268);
@@ -83,7 +89,7 @@
   --destructive: oklch(0.63 0.2 25);
   --border: rgb(255 255 255 / 0.12);
   --input: rgb(255 255 255 / 0.16);
-  --ring: oklch(0.74 0.14 278);
+  --ring: rgb(255 255 255 / 0.9);
   --warning: oklch(0.85 0.12 85);
   --warning-soft: oklch(0.82 0.15 85 / 0.1);
   --warning-border: oklch(0.82 0.15 85 / 0.35);
@@ -92,7 +98,9 @@
   --glass-fill-strong: rgb(255 255 255 / 0.11);
   --glass-border: rgb(255 255 255 / 0.14);
   --glass-highlight: rgb(255 255 255 / 0.24);
-  --glass-shadow: 0 26px 70px rgb(0 0 0 / 0.48);
+  --glass-shadow: 0 22px 56px rgb(8 12 24 / 0.38);
+  --drop-fill: rgb(255 255 255 / 0.13);
+  --drop-glow: rgb(170 205 255 / 0.22);
   --panel-solid: oklch(0.21 0.022 268);
   --grid-line: rgb(255 255 255 / 0.05);
 
@@ -201,6 +209,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   font-size: 13px;
+  line-height: 1.4;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -221,6 +230,56 @@ input {
     var(--glass-shadow);
   backdrop-filter: blur(22px) saturate(1.35);
   -webkit-backdrop-filter: blur(22px) saturate(1.35);
+}
+
+/* Кнопки legacy: полностью круглые. Главная — белая (тёмная в светлом) со свечением,
+   вторичные — стеклянные пилюли. */
+.btn-primary,
+.btn-glass {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 620;
+  white-space: nowrap;
+  cursor: default;
+  transition:
+    transform 100ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.btn-primary {
+  border: 0;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 6px 22px var(--primary-glow);
+}
+
+.btn-glass {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-fill);
+  color: var(--foreground);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+}
+
+.btn-glass:hover {
+  background: var(--glass-fill-strong);
+}
+
+.btn-primary:active,
+.btn-glass:active {
+  transform: scale(0.97);
+}
+
+.btn-primary:disabled,
+.btn-glass:disabled {
+  opacity: 0.55;
 }
 
 .glass-strong {
@@ -375,8 +434,5 @@ input[type="checkbox"]:focus-visible {
   background: var(--glass-border);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .bg-blob {
-    animation: none !important;
-  }
-}
+/* Флажок Windows «анимация элементов» фон не гасит: движением управляют только
+   настройки программы (решение 0.3.11, класс .no-motion / .no-background). */

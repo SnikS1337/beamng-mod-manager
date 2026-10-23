@@ -30,6 +30,23 @@ pub struct UpdateFindingDto {
     pub latest_version: Option<String>,
     pub url: String,
     pub dismissed: bool,
+    /// Картинка мода (как на карточке), если уже есть в кэше.
+    pub preview_url: Option<String>,
+    pub installed_size: Option<i64>,
+    pub latest_size: Option<i64>,
+    /// Когда программа заметила изменение на сайте (RFC 3339).
+    pub noticed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSiteDto {
+    pub id: String,
+    pub display_name: String,
+    /// `ok`, `human_check`, `unavailable`, `off` (выключен в настройках).
+    pub status: String,
+    /// За сколькими модами следим на этом сайте.
+    pub tracked: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +89,12 @@ pub struct UpdatesSnapshotDto {
     pub findings: Vec<UpdateFindingDto>,
     pub hidden: Vec<UpdateFindingDto>,
     pub suggestions: Vec<PageSuggestionDto>,
+    /// Сайты и их состояние — панель «Проверка», как в legacy.
+    #[serde(default)]
+    pub sites: Vec<UpdateSiteDto>,
+    /// Последняя проверка любого мода (RFC 3339).
+    #[serde(default)]
+    pub last_checked: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -597,7 +620,7 @@ pub async fn updates_open_modland(
 
 fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
     let store = state.library.as_ref();
-    // Как на карточках модов: название из архива, если оно уже прочитано.
+    // Как на карточках модов: название и картинка из архива, если уже прочитаны.
     let titles = state.previews.titles();
     let keys: HashMap<String, String> = state
         .previews_by_id
@@ -614,20 +637,90 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
             .or_else(|| store.get_mod(mod_id).map(|item| item.name))
             .unwrap_or_else(|| mod_id.to_string())
     };
+    let preview_of = |mod_id: &str| -> Option<String> {
+        let key = keys.get(mod_id)?;
+        match state.previews.get(key) {
+            Some(bmm_packs::cache::CachedPreview::Image { extension, .. }) => {
+                Some(crate::commands::library::preview_url(key, &extension))
+            }
+            _ => None,
+        }
+    };
+    let finding = |finding: UpdateFinding| -> UpdateFindingDto {
+        let check = store.get_check(&finding.mod_id, &finding.source);
+        let mut dto = finding_dto(&name_of, finding);
+        dto.preview_url = preview_of(&dto.mod_id);
+        dto.installed_size = store.get_mod(&dto.mod_id).and_then(|item| item.size_bytes);
+        dto.latest_size = check.as_ref().and_then(|check| check.last_size);
+        dto.noticed_at = check
+            .as_ref()
+            .and_then(|check| check.last_changed_utc)
+            .map(|at| at.to_rfc3339());
+        dto
+    };
+    let checks = store.checks();
+    let last_checked = checks
+        .iter()
+        .map(|check| check.last_checked_utc)
+        .max()
+        .map(|at| at.to_rfc3339());
+    let statuses = store.source_statuses();
+    let disabled = state.settings.load().settings.disabled_sources;
+    let tracked: Vec<ModBinding> = store
+        .bindings()
+        .into_iter()
+        .filter(|binding| binding.confirmed)
+        .collect();
+    let sites = state
+        .update
+        .as_ref()
+        .map(|runtime| {
+            runtime
+                .sources
+                .iter()
+                .map(|source| {
+                    let id = source.id().to_string();
+                    let off = disabled.iter().any(|item| item.eq_ignore_ascii_case(&id));
+                    let status = if off {
+                        "off"
+                    } else {
+                        match statuses.get(&id) {
+                            Some(bmm_domain::library::SourceStatus::NeedsHumanCheck) => {
+                                "human_check"
+                            }
+                            Some(bmm_domain::library::SourceStatus::Unavailable) => "unavailable",
+                            _ => "ok",
+                        }
+                    };
+                    UpdateSiteDto {
+                        tracked: tracked
+                            .iter()
+                            .filter(|binding| binding.source == id)
+                            .count(),
+                        display_name: source.display_name().to_string(),
+                        status: status.to_string(),
+                        id,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     UpdatesSnapshotDto {
         findings: UpdateCheckService::pending(store, false)
             .into_iter()
-            .map(|finding| finding_dto(&name_of, finding))
+            .map(&finding)
             .collect(),
         hidden: UpdateCheckService::pending(store, true)
             .into_iter()
-            .filter(|finding| finding.is_dismissed)
-            .map(|finding| finding_dto(&name_of, finding))
+            .filter(|item| item.is_dismissed)
+            .map(&finding)
             .collect(),
         suggestions: bmm_checks::suggestions(store)
             .into_iter()
             .map(|binding| suggestion_dto(&name_of, binding))
             .collect(),
+        sites,
+        last_checked,
     }
 }
 
@@ -642,6 +735,10 @@ fn finding_dto(name_of: &dyn Fn(&str) -> String, finding: UpdateFinding) -> Upda
         latest_version: finding.latest_version,
         url: finding.url.to_string(),
         dismissed: finding.is_dismissed,
+        preview_url: None,
+        installed_size: None,
+        latest_size: None,
+        noticed_at: None,
     }
 }
 
