@@ -7,6 +7,7 @@
   import {
     libraryLoad,
     listenLibraryTitles,
+    modFixPackaging,
     modDelete,
     modDetails,
     modForgetDeleted,
@@ -166,6 +167,22 @@
     } finally {
       loading = false;
       refreshing = false;
+    }
+  }
+
+  let fixing = $state(false);
+
+  async function fixSelected() {
+    if (!selected || fixing) return;
+    fixing = true;
+    try {
+      await modFixPackaging(selected.id);
+      showToast("Архив переупакован: игра теперь его загрузит");
+      await load(true);
+    } catch (reason) {
+      showToast(errorText(reason));
+    } finally {
+      fixing = false;
     }
   }
 
@@ -551,6 +568,9 @@
         {details}
         loading={detailsLoading}
         canDelete={selected ? !selected.fromGameRepo : false}
+        problem={selected?.problem ?? null}
+        {fixing}
+        onFix={() => void fixSelected()}
         onToggle={() => {
           if (selected) void toggle(selected);
         }}

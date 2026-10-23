@@ -597,28 +597,42 @@ pub async fn updates_open_modland(
 
 fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
     let store = state.library.as_ref();
+    // Как на карточках модов: название из архива, если оно уже прочитано.
+    let titles = state.previews.titles();
+    let keys: HashMap<String, String> = state
+        .previews_by_id
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, target)| (id.clone(), target.key.clone()))
+        .collect();
+    let name_of = |mod_id: &str| -> String {
+        keys.get(mod_id)
+            .and_then(|key| titles.get(key))
+            .filter(|title| !title.is_empty())
+            .cloned()
+            .or_else(|| store.get_mod(mod_id).map(|item| item.name))
+            .unwrap_or_else(|| mod_id.to_string())
+    };
     UpdatesSnapshotDto {
         findings: UpdateCheckService::pending(store, false)
             .into_iter()
-            .map(|finding| finding_dto(store, finding))
+            .map(|finding| finding_dto(&name_of, finding))
             .collect(),
         hidden: UpdateCheckService::pending(store, true)
             .into_iter()
             .filter(|finding| finding.is_dismissed)
-            .map(|finding| finding_dto(store, finding))
+            .map(|finding| finding_dto(&name_of, finding))
             .collect(),
         suggestions: bmm_checks::suggestions(store)
             .into_iter()
-            .map(|binding| suggestion_dto(store, binding))
+            .map(|binding| suggestion_dto(&name_of, binding))
             .collect(),
     }
 }
 
-fn finding_dto(store: &dyn LibraryStore, finding: UpdateFinding) -> UpdateFindingDto {
-    let name = store
-        .get_mod(&finding.mod_id)
-        .map(|item| item.name)
-        .unwrap_or_else(|| finding.mod_id.clone());
+fn finding_dto(name_of: &dyn Fn(&str) -> String, finding: UpdateFinding) -> UpdateFindingDto {
+    let name = name_of(&finding.mod_id);
     UpdateFindingDto {
         mod_id: finding.mod_id,
         mod_name: name,
@@ -631,11 +645,8 @@ fn finding_dto(store: &dyn LibraryStore, finding: UpdateFinding) -> UpdateFindin
     }
 }
 
-fn suggestion_dto(store: &dyn LibraryStore, binding: ModBinding) -> PageSuggestionDto {
-    let name = store
-        .get_mod(&binding.mod_id)
-        .map(|item| item.name)
-        .unwrap_or_else(|| binding.mod_id.clone());
+fn suggestion_dto(name_of: &dyn Fn(&str) -> String, binding: ModBinding) -> PageSuggestionDto {
+    let name = name_of(&binding.mod_id);
     PageSuggestionDto {
         mod_id: binding.mod_id,
         mod_name: name,

@@ -30,7 +30,11 @@ export interface ModCardDto {
   deleted: boolean;
   copies: number;
   savedAt: string | null;
+  /** Почему игра не загрузит архив; null — в порядке. */
+  problem: PackagingProblem | null;
 }
+
+export type PackagingProblem = "wrapped" | "loose" | "not_mod";
 
 export interface FilterCounts {
   all: number;
@@ -178,6 +182,7 @@ export function mockAddInstalled(
       deleted: false,
       copies: 0,
       savedAt: null,
+      problem: null,
     });
   }
   recount(snapshot);
@@ -213,6 +218,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
       deleted: false,
       copies: 0,
       savedAt: null,
+      problem: index === 4 ? "loose" : index === 9 ? "not_mod" : null,
     };
   });
   const enabled = mods.filter((mod) => mod.enabled).length;
@@ -394,4 +400,9 @@ export async function modRestoreVersion(id: string, backupId: string): Promise<v
 export async function listenLibraryTitles(handler: () => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<number>("library://titles", () => handler());
+}
+
+/** Переупаковать архив, который игра не загрузит (прежний уходит в копии). */
+export async function modFixPackaging(id: string): Promise<void> {
+  if (isTauri()) await invoke("mod_fix_packaging", { id });
 }

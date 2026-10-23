@@ -117,6 +117,33 @@ impl PreviewCache {
         }
     }
 
+    /// Что не так с упаковкой архива (`PackagingProblem::code`), по ключу превью;
+    /// пустая строка — проверено, всё в порядке.
+    pub fn problems(&self) -> BTreeMap<String, String> {
+        let path = self.root.join("problems.json");
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.len() <= TITLES_MAX_BYTES => {}
+            _ => return BTreeMap::new(),
+        }
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn put_problems(&self, entries: &[(String, Option<String>)]) -> std::io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        fs::create_dir_all(&self.root)?;
+        let mut problems = self.problems();
+        for (key, problem) in entries {
+            problems.insert(key.clone(), problem.clone().unwrap_or_default());
+        }
+        let json = serde_json::to_string(&problems).map_err(std::io::Error::other)?;
+        atomic::write_atomic(&self.root.join("problems.json"), json.as_bytes())
+    }
+
     pub fn titles(&self) -> BTreeMap<String, String> {
         let path = self.root.join("titles.json");
         let Ok(metadata) = fs::metadata(&path) else {

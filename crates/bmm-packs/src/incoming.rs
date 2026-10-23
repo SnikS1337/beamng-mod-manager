@@ -220,8 +220,9 @@ fn analyze_zip(
             false,
         )]);
     }
-    if let Shape::Wrap(folder) = shape {
-        let repacked = repack(source, &folder, work_dir, budget, cancel)?;
+    let mapped = shape_map(&shape);
+    if let Some(map) = mapped {
+        let repacked = repack(source, map.as_ref(), work_dir, budget, cancel)?;
         let nested_index =
             read_index(&repacked).map_err(|_| "Архив повреждён и не читается.".to_string())?;
         let nested_overview = read_overview(&repacked);
@@ -441,7 +442,150 @@ fn blocked_item(
 enum Shape {
     Mod,
     Wrap(String),
+    /// Папка машины без `vehicles/` (старый способ раздачи: «распакуйте в vehicles»):
+    /// `dir` — путь к ней в архиве, `folder` — её имя.
+    Loose {
+        dir: String,
+        folder: String,
+    },
     None,
+}
+
+/// Почему игра не загрузит архив из папки модов.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackagingProblem {
+    /// Всё лежит в лишней папке («Car/vehicles/…»): программа уберёт её.
+    Wrapped,
+    /// Папка машины без `vehicles/` («Acadia_16/acadia/*.jbeam»): программа переупакует.
+    Loose,
+    /// Внутри нет ничего, что ждёт игра (установщик, картинки, архив в архиве).
+    NotMod,
+}
+
+impl PackagingProblem {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Wrapped => "wrapped",
+            Self::Loose => "loose",
+            Self::NotMod => "not_mod",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "wrapped" => Some(Self::Wrapped),
+            "loose" => Some(Self::Loose),
+            "not_mod" => Some(Self::NotMod),
+            _ => None,
+        }
+    }
+
+    pub fn fixable(self) -> bool {
+        matches!(self, Self::Wrapped | Self::Loose)
+    }
+}
+
+/// Загрузит ли игра этот архив из папки модов. `Err` — архив сейчас не открыть.
+pub fn archive_problem(path: &Path) -> Result<Option<PackagingProblem>, std::io::Error> {
+    let index = match read_index(path) {
+        Ok(index) => index,
+        Err(crate::zip_index::ZipError::Io(error)) => return Err(error),
+        Err(crate::zip_index::ZipError::Zip(_)) => return Ok(Some(PackagingProblem::NotMod)),
+    };
+    Ok(match shape_of(&index) {
+        Shape::Mod => None,
+        Shape::Wrap(_) => Some(PackagingProblem::Wrapped),
+        Shape::Loose { .. } => Some(PackagingProblem::Loose),
+        Shape::None => Some(PackagingProblem::NotMod),
+    })
+}
+
+/// Переупаковать архив так, как его ждёт игра (см. [`PackagingProblem::fixable`]).
+/// Возвращает путь к новому архиву в `work_dir`.
+pub fn fix_packaging(source: &Path, work_dir: &Path) -> Result<PathBuf, String> {
+    let index = read_index(source).map_err(|_| "Архив повреждён и не читается.".to_string())?;
+    let map = shape_map(&shape_of(&index))
+        .ok_or_else(|| "Этот архив не переупаковать: в нём нет мода BeamNG.".to_string())?;
+    fs::create_dir_all(work_dir).map_err(|error| error.to_string())?;
+    let mut budget = ExtractBudget::new(IncomingOptions::default().budget_bytes);
+    repack(
+        source,
+        map.as_ref(),
+        work_dir,
+        &mut budget,
+        &AtomicBool::new(false),
+    )
+}
+
+type EntryMap = Box<dyn Fn(&str) -> Option<String>>;
+
+/// Как переименовать записи архива этой формы, чтобы игра его увидела.
+fn shape_map(shape: &Shape) -> Option<EntryMap> {
+    match shape {
+        Shape::Wrap(folder) => {
+            let folder = folder.clone();
+            Some(Box::new(move |name: &str| {
+                let (first, rest) = name.split_once('/')?;
+                (first.eq_ignore_ascii_case(&folder) && !rest.is_empty()).then(|| rest.to_string())
+            }))
+        }
+        Shape::Loose { dir, folder } => {
+            let prefix = format!("{}/", dir.to_lowercase());
+            let target = format!("vehicles/{folder}/");
+            let cut = prefix.len();
+            Some(Box::new(move |name: &str| {
+                let name = name.trim_start_matches("./").trim_start_matches('/');
+                (name.to_lowercase().starts_with(&prefix) && name.len() > cut)
+                    .then(|| format!("{target}{}", &name[cut..]))
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// Папка машины, упакованная без `vehicles/`: в архиве нет ни одной папки, которую ждёт
+/// игра, а файлы `.jbeam` лежат в одной папке (и её подпапках) не глубже трёх уровней.
+/// Игра такой архив не загрузит; программа переупаковывает его в `vehicles/<папка>/`.
+/// Возвращает путь к папке в архиве и её имя.
+pub fn loose_vehicle(index: &ZipIndex) -> Option<(String, String)> {
+    let has_known_root = index.entries.iter().any(|entry| {
+        entry
+            .name
+            .trim_start_matches("./")
+            .split('/')
+            .any(is_known_root)
+    });
+    if has_known_root {
+        return None;
+    }
+    let mut dirs: Vec<String> = index
+        .entries
+        .iter()
+        .filter(|entry| entry.name.to_lowercase().ends_with(".jbeam"))
+        .filter_map(|entry| {
+            let name = entry.name.trim_start_matches("./").trim_start_matches('/');
+            name.rsplit_once('/').map(|(dir, _)| dir.to_string())
+        })
+        .collect();
+    if dirs.is_empty() {
+        return None;
+    }
+    dirs.sort_by_key(|dir| dir.matches('/').count());
+    let top = dirs[0].clone();
+    let inside = |dir: &str| {
+        dir.eq_ignore_ascii_case(&top)
+            || dir
+                .to_lowercase()
+                .starts_with(&format!("{}/", top.to_lowercase()))
+    };
+    if !dirs.iter().all(|dir| inside(dir)) || top.matches('/').count() > 2 {
+        return None;
+    }
+    let folder = top.rsplit('/').next().unwrap_or(&top).to_string();
+    if folder.is_empty() || crate::inspect::is_unsafe_entry_path(&folder) {
+        return None;
+    }
+    Some((top, folder))
 }
 
 fn shape_of(index: &ZipIndex) -> Shape {
@@ -487,6 +631,9 @@ fn shape_of(index: &ZipIndex) -> Shape {
         if has_known_child {
             return Shape::Wrap(folder.to_string());
         }
+    }
+    if let Some((dir, folder)) = loose_vehicle(index) {
+        return Shape::Loose { dir, folder };
     }
     Shape::None
 }
@@ -758,9 +905,11 @@ fn name_key(file_name: &str) -> String {
     TitleNormalizer::normalize(&filename::from_file_name(file_name).name)
 }
 
-fn repack(
+/// Новый архив из записей `source`, переименованных `map` (`None` — запись не нужна):
+/// снять лишнюю папку или положить папку машины в `vehicles/`.
+pub(crate) fn repack(
     source: &Path,
-    wrapper: &str,
+    map: &dyn Fn(&str) -> Option<String>,
     work_dir: &Path,
     budget: &mut ExtractBudget,
     cancel: &AtomicBool,
@@ -775,12 +924,10 @@ fn repack(
             return Err("отменено".to_string());
         }
         // Лишняя папка могла быть записана в разном регистре в разных записях.
-        let Some((first, rest)) = entry.name.split_once('/') else {
+        let Some(rest) = map(&entry.name) else {
             continue;
         };
-        if !first.eq_ignore_ascii_case(wrapper) {
-            continue;
-        }
+        let rest = rest.as_str();
         if rest.is_empty() || crate::inspect::is_unsafe_entry_path(rest) {
             continue;
         }
@@ -1213,6 +1360,110 @@ mod tests {
             &AtomicBool::new(false),
         );
         assert_eq!(common.items[0].kind, IncomingKind::New);
+    }
+
+    #[test]
+    fn loose_vehicle_folder_is_repacked_into_vehicles() {
+        // Как Acadia с Modland: «Acadia_16/acadia/*.jbeam» без vehicles/.
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Acadia_16_modland.zip");
+        build_zip(
+            &source,
+            &[
+                ("Acadia_16/acadia/acadia.jbeam", b"{}"),
+                ("Acadia_16/acadia/wheels/wheels.jbeam", b"{}"),
+                ("Acadia_16/acadia/acadia.dae", b"x"),
+                ("Acadia_16/readme.txt", b"x"),
+            ],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items.len(), 1);
+        let item = &analysis.items[0];
+        assert!(item.repacked);
+        assert!(!item.blocked);
+        assert!(item.content.contains("vehicles/acadia"));
+        let names: Vec<String> = read_index(&item.zip_path)
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert!(
+            names.contains(&"vehicles/acadia/acadia.jbeam".to_string()),
+            "{names:?}"
+        );
+        assert!(names.contains(&"vehicles/acadia/wheels/wheels.jbeam".to_string()));
+        assert!(!names.iter().any(|name| name.contains("readme")));
+    }
+
+    #[test]
+    fn packaging_problems_are_found_and_fixed_in_place() {
+        let temp = tempfile::tempdir().unwrap();
+        let loose = temp.path().join("acadia.zip");
+        build_zip(&loose, &[("Acadia_16/acadia/acadia.jbeam", b"{}")]);
+        assert_eq!(
+            archive_problem(&loose).unwrap(),
+            Some(PackagingProblem::Loose)
+        );
+        let fixed = fix_packaging(&loose, &temp.path().join("work")).unwrap();
+        assert_eq!(archive_problem(&fixed).unwrap(), None);
+
+        let wrapped = temp.path().join("wrapped.zip");
+        build_zip(&wrapped, &[("Car/vehicles/car/car.jbeam", b"{}")]);
+        assert_eq!(
+            archive_problem(&wrapped).unwrap(),
+            Some(PackagingProblem::Wrapped)
+        );
+        let fixed = fix_packaging(&wrapped, &temp.path().join("work")).unwrap();
+        assert_eq!(archive_problem(&fixed).unwrap(), None);
+
+        let installer = temp.path().join("RealSmoke_3D_Setup.zip");
+        build_zip(
+            &installer,
+            &[
+                ("install.bat", b"x"),
+                ("RealSmoke_3D.zip", b"x"),
+                ("README_INSTALL.txt", b"x"),
+            ],
+        );
+        assert_eq!(
+            archive_problem(&installer).unwrap(),
+            Some(PackagingProblem::NotMod)
+        );
+        assert!(fix_packaging(&installer, &temp.path().join("work")).is_err());
+
+        let good = temp.path().join("good.zip");
+        build_zip(&good, &[("vehicles/car/car.jbeam", b"{}")]);
+        assert_eq!(archive_problem(&good).unwrap(), None);
+    }
+
+    #[test]
+    fn loose_vehicle_needs_one_folder_and_no_game_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let two = temp.path().join("two.zip");
+        build_zip(&two, &[("a/a.jbeam", b"{}"), ("b/b.jbeam", b"{}")]);
+        assert_eq!(
+            loose_vehicle(&read_index(&two).unwrap()),
+            None,
+            "две машины — не гадаем"
+        );
+
+        let normal = temp.path().join("normal.zip");
+        build_zip(&normal, &[("vehicles/car/car.jbeam", b"{}")]);
+        assert_eq!(loose_vehicle(&read_index(&normal).unwrap()), None);
+
+        let flat = temp.path().join("flat.zip");
+        build_zip(&flat, &[("car/car.jbeam", b"{}"), ("car/info.json", b"{}")]);
+        assert_eq!(
+            loose_vehicle(&read_index(&flat).unwrap()),
+            Some(("car".to_string(), "car".to_string()))
+        );
     }
 
     #[test]
