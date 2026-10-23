@@ -252,6 +252,55 @@ input {
   mix-blend-mode: overlay;
 }
 
+input[type="checkbox"] {
+  display: inline-grid;
+  place-content: center;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border: 1px solid color-mix(in oklab, var(--foreground) 28%, transparent);
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  color: var(--primary-foreground);
+  accent-color: var(--primary);
+  cursor: default;
+  appearance: none;
+  vertical-align: middle;
+  transition:
+    border-color 0.12s ease-out,
+    background-color 0.12s ease-out;
+}
+
+input[type="checkbox"]::after {
+  content: "";
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid currentColor;
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform 0.12s ease-out;
+}
+
+input[type="checkbox"]:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+input[type="checkbox"]:checked::after {
+  transform: rotate(45deg) scale(1);
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.no-motion input[type="checkbox"],
+.no-motion input[type="checkbox"]::after {
+  transition: none;
+}
+
 .scroll-area {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
