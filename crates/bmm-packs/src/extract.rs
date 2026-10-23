@@ -10,6 +10,7 @@ use crate::inspect::is_unsafe_entry_path;
 use crate::zip_index::normalize_name;
 
 const TAR_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const SIZE_CHECK_EVERY: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtractBudget {
@@ -170,6 +171,7 @@ fn extract_with_tar(
         })?;
 
     let started = Instant::now();
+    let mut last_size_check = Instant::now();
     loop {
         if cancel.load(Ordering::Relaxed) {
             kill_tree(&mut child);
@@ -181,7 +183,14 @@ fn extract_with_tar(
                 "Распаковка идёт слишком долго".to_string(),
             ));
         }
-        if dir_size(destination) > budget.limit {
+        // Обход распакованного — тысячи файлов у большого модпака: делать его каждые
+        // 250 мс значит мешать самой распаковке. Раз в пару секунд хватает, чтобы
+        // остановить «бомбу», а итог всё равно считается целиком в конце.
+        let size_due = last_size_check.elapsed() >= SIZE_CHECK_EVERY;
+        if size_due {
+            last_size_check = Instant::now();
+        }
+        if size_due && dir_size(destination) > budget.remaining() {
             kill_tree(&mut child);
             return Err(ExtractError::Message(
                 "Распакованный архив слишком большой".to_string(),
@@ -199,7 +208,7 @@ fn extract_with_tar(
 
     let output = child.wait_with_output().map_err(io_error)?;
     let size = dir_size(destination);
-    if size > budget.limit {
+    if size > budget.remaining() {
         return Err(ExtractError::Message(
             "Распакованный архив слишком большой".to_string(),
         ));
@@ -401,5 +410,141 @@ mod tests {
         assert!(is_archive_name("a.7z"));
         assert!(!is_archive_name(".hidden.zip"));
         assert!(!is_archive_name("a.zip.crdownload"));
+    }
+
+    /// Архив 7z, собранный тем же распаковщиком Windows (`tar.exe` умеет писать 7z).
+    #[cfg(windows)]
+    fn seven_zip(dir: &Path, name: &str, files: &[(&str, &[u8])]) -> PathBuf {
+        let source = dir.join(format!("{name}-src"));
+        for (path, bytes) in files {
+            let target = source.join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, bytes).unwrap();
+        }
+        let archive = dir.join(format!("{name}.7z"));
+        let status = Command::new(tar_path().expect("tar.exe"))
+            .args(["--format", "7zip", "-cf"])
+            .arg(&archive)
+            .arg("-C")
+            .arg(&source)
+            .arg(".")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        archive
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extracts_seven_zip_modpack_and_counts_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive = seven_zip(
+            temp.path(),
+            "pack",
+            &[
+                ("Audi pack/audi_rs3.zip", b"first mod"),
+                ("Audi pack/audi_r8.zip", b"second"),
+            ],
+        );
+        let dest = temp.path().join("out");
+        let mut budget = ExtractBudget::new(1000);
+        extract_archive(&archive, &dest, &mut budget, &AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            fs::read(dest.join("Audi pack/audi_rs3.zip")).unwrap(),
+            b"first mod"
+        );
+        assert_eq!(budget.used, 15);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn seven_zip_respects_budget_already_spent() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive = seven_zip(temp.path(), "big", &[("a.bin", &[7u8; 600])]);
+        // Часть бюджета уже ушла на соседний архив: остатка на этот не хватает.
+        let mut budget = ExtractBudget::new(1000);
+        budget.add(500).unwrap();
+        let error = extract_archive(
+            &archive,
+            &temp.path().join("out"),
+            &mut budget,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("слишком большой"), "{error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn broken_seven_zip_gets_a_clear_message() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive = temp.path().join("broken.7z");
+        fs::write(&archive, b"7z\xBC\xAF\x27\x1C not really").unwrap();
+        let mut budget = ExtractBudget::new(1000);
+        let error = extract_archive(
+            &archive,
+            &temp.path().join("out"),
+            &mut budget,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(
+            text.contains("повреждён") || text.contains("не читает"),
+            "{text}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cancelled_seven_zip_stops() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive = seven_zip(temp.path(), "pack", &[("a.zip", b"x")]);
+        let mut budget = ExtractBudget::new(1000);
+        let error = extract_archive(
+            &archive,
+            &temp.path().join("out"),
+            &mut budget,
+            &AtomicBool::new(true),
+        )
+        .unwrap_err();
+        assert_eq!(error, ExtractError::Cancelled);
+    }
+
+    #[test]
+    fn dir_size_counts_nested_files() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("a/b")).unwrap();
+        fs::write(temp.path().join("a/one"), [0u8; 10]).unwrap();
+        fs::write(temp.path().join("a/b/two"), [0u8; 5]).unwrap();
+        assert_eq!(dir_size(temp.path()), 15);
+        assert!(!contains_reparse(temp.path()));
+        assert_eq!(dir_size(&temp.path().join("missing")), 0);
+    }
+
+    #[test]
+    fn unknown_archive_kind_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("mod.tar.gz");
+        fs::write(&file, b"x").unwrap();
+        assert_eq!(archive_kind(&file), None);
+        let error = extract_archive(
+            &file,
+            &temp.path().join("out"),
+            &mut ExtractBudget::new(10),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("не открываются"));
+        assert_eq!(archive_kind(Path::new("A.7Z")), Some("7z"));
+    }
+
+    #[test]
+    fn budget_remaining_and_overflow() {
+        let mut budget = ExtractBudget::new(10);
+        budget.add(4).unwrap();
+        assert_eq!(budget.remaining(), 6);
+        assert!(budget.add(7).is_err());
+        assert_eq!(budget.remaining(), 0);
     }
 }
