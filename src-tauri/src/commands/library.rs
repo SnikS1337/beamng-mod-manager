@@ -18,7 +18,8 @@ use bmm_game::db::{GameModDb, SetActiveOutcome};
 use bmm_game::folders::{self, FolderProblem};
 use bmm_game::{info, process};
 use bmm_packs::cache::{CachedPreview, PreviewCache};
-use bmm_packs::install::ModInstaller;
+use bmm_packs::incoming;
+use bmm_packs::install::{InstallOptions, ModInstaller};
 use bmm_packs::overview::{self, ArchiveOverview};
 use bmm_packs::preview;
 use bmm_packs::scan::{self, ModLayout};
@@ -57,6 +58,8 @@ pub struct ModCardDto {
     pub deleted: bool,
     pub copies: usize,
     pub saved_at: Option<String>,
+    /// Почему игра не загрузит архив: `wrapped`, `loose`, `not_mod`; `None` — в порядке.
+    pub problem: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -165,6 +168,59 @@ pub async fn library_load(
     Ok(snapshot)
 }
 
+/// «Исправить»: переупаковать архив, который игра не загрузит (лишняя папка или папка
+/// машины без `vehicles/`). Прежний файл уходит в копии — его можно вернуть.
+#[tauri::command]
+pub async fn mod_fix_packaging(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || fix_packaging(&state, &id))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
+    let target = state
+        .previews_by_id
+        .lock()
+        .unwrap()
+        .get(id)
+        .cloned()
+        .ok_or_else(|| AppError::new("fix", "Мод не найден. Обновите список."))?;
+    if target.sub_folder.is_some() {
+        return Err(AppError::new(
+            "fix",
+            "Моды из репозитория игры не переупаковываем.",
+        ));
+    }
+    let work = state.paths.root().join("work").join("fix");
+    let fixed = incoming::fix_packaging(&target.path, &work)
+        .map_err(|message| AppError::new("fix", message))?;
+    let installer = crate::commands::versions::installer_for(state)?;
+    let result = installer.update_from_path(
+        &target.file_name,
+        &fixed,
+        &target.file_name,
+        InstallOptions {
+            allow_warnings: true,
+            ..InstallOptions::default()
+        },
+    );
+    let _ = std::fs::remove_file(&fixed);
+    if !result.install.success {
+        return Err(AppError::new(
+            "fix",
+            result
+                .install
+                .message
+                .unwrap_or_else(|| "Не удалось переупаковать архив.".to_string()),
+        ));
+    }
+    Ok(())
+}
+
 static TITLES_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// Названия модов из их архивов (`info.json`) читаются в фоне и кэшируются: первый
@@ -193,26 +249,40 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
         .cloned()
         .collect();
     let known = state.previews.titles();
+    let known_problems = state.previews.problems();
     let mut found: Vec<(String, Option<String>)> = Vec::new();
+    let mut problems: Vec<(String, Option<String>)> = Vec::new();
     let mut written = 0usize;
-    for target in targets {
-        if known.contains_key(&target.key) || found.iter().any(|(key, _)| *key == target.key) {
-            continue;
+    let mut flush = |found: &mut Vec<(String, Option<String>)>,
+                     problems: &mut Vec<(String, Option<String>)>| {
+        if state.previews.put_titles(found).is_ok() {
+            written += found.len();
         }
+        if state.previews.put_problems(problems).is_ok() {
+            written += problems.len();
+        }
+        found.clear();
+        problems.clear();
+    };
+    for target in targets {
         // Архив занят или пропал — спросим при следующей загрузке.
-        if let Ok(title) = overview::archive_title(&target.path) {
+        if !known.contains_key(&target.key)
+            && !found.iter().any(|(key, _)| *key == target.key)
+            && let Ok(title) = overview::archive_title(&target.path)
+        {
             found.push((target.key.clone(), title));
         }
-        if found.len() >= 50 {
-            if state.previews.put_titles(&found).is_ok() {
-                written += found.len();
-            }
-            found.clear();
+        if !known_problems.contains_key(&target.key)
+            && !problems.iter().any(|(key, _)| *key == target.key)
+            && let Ok(problem) = incoming::archive_problem(&target.path)
+        {
+            problems.push((target.key.clone(), problem.map(|p| p.code().to_string())));
+        }
+        if found.len() + problems.len() >= 100 {
+            flush(&mut found, &mut problems);
         }
     }
-    if state.previews.put_titles(&found).is_ok() {
-        written += found.len();
-    }
+    flush(&mut found, &mut problems);
     written
 }
 
@@ -456,6 +526,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     }
     *state.previews_by_id.lock().unwrap() = targets;
     let archive_titles = state.previews.titles();
+    let archive_problems = state.previews.problems();
 
     let game_version = mods_dir.parent().and_then(info::detect_version);
     let mods: Vec<ModCardDto> = installed_list
@@ -524,6 +595,13 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 deleted: false,
                 copies: 0,
                 saved_at: None,
+                // Моды из репозитория игры кладёт сама игра — их упаковку не судим.
+                problem: preview_keys
+                    .get(&installed.id)
+                    .and_then(|key| archive_problems.get(key))
+                    .filter(|code| !code.is_empty())
+                    .filter(|_| disk.and_then(|disk| disk.sub_folder.as_ref()).is_none())
+                    .cloned(),
             }
         })
         .collect();
@@ -564,6 +642,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 deleted: true,
                 copies: item.copies,
                 saved_at: item.last_saved_at.map(|date| date.to_rfc3339()),
+                problem: None,
             }
         })
         .collect();

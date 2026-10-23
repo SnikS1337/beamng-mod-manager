@@ -207,6 +207,7 @@ pub fn run() {
             commands::library::mod_toggle,
             commands::library::mod_details,
             commands::library::mod_preview,
+            commands::library::mod_fix_packaging,
             commands::versions::mod_delete,
             commands::versions::mod_undelete,
             commands::versions::mod_forget_deleted,

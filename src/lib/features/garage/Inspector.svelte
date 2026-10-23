@@ -1,7 +1,12 @@
 <script lang="ts">
   import { openPath } from "@tauri-apps/plugin-opener";
   import { Button } from "$lib/components/ui/button";
-  import { modPreview, type ModDetails, type VersionRow } from "$lib/ipc/library";
+  import {
+    modPreview,
+    type ModDetails,
+    type PackagingProblem,
+    type VersionRow,
+  } from "$lib/ipc/library";
   import { formatDate, formatSize, kindLabel, plural } from "./format";
   import VersionsBlock from "./VersionsBlock.svelte";
 
@@ -9,6 +14,9 @@
     details,
     loading,
     canDelete,
+    problem = null,
+    fixing = false,
+    onFix,
     onToggle,
     onDelete,
     onRestoreVersion,
@@ -17,6 +25,9 @@
     details: ModDetails | null;
     loading: boolean;
     canDelete: boolean;
+    problem?: PackagingProblem | null;
+    fixing?: boolean;
+    onFix?: () => void;
     onToggle: () => void;
     onDelete: () => void;
     onRestoreVersion: (version: VersionRow) => void;
@@ -24,6 +35,15 @@
   } = $props();
 
   let preview = $state<string | null>(null);
+
+  const problemText: Record<PackagingProblem, string> = {
+    wrapped:
+      "Всё лежит в лишней папке внутри архива, и игра мод не видит. Программа уберёт эту папку, прежний файл останется в копиях.",
+    loose:
+      "Машина упакована без папки vehicles, и игра мод не видит. Программа переупакует архив, прежний файл останется в копиях.",
+    not_mod:
+      "Внутри нет ничего, что загружает игра: это может быть установщик, архив в архиве или картинки. Распакуйте и поставьте мод через «Из архива».",
+  };
 
   $effect(() => {
     const id = details?.id;
@@ -95,6 +115,18 @@
       {/if}
     </div>
 
+    {#if problem}
+      <section class="problem">
+        <h3>Игра не загрузит этот мод</h3>
+        <p>{problemText[problem]}</p>
+        {#if problem !== "not_mod" && onFix}
+          <Button class="primary" onclick={onFix} disabled={fixing}>
+            {fixing ? "Исправляем…" : "Исправить"}
+          </Button>
+        {/if}
+      </section>
+    {/if}
+
     {#if details.archive}
       <section>
         <h3>Внутри архива</h3>
@@ -138,6 +170,19 @@
 </aside>
 
 <style>
+  .problem {
+    border: 1px solid oklch(0.66 0.19 25 / 0.45);
+    border-radius: 14px;
+    padding: 12px;
+    background: oklch(0.66 0.19 25 / 0.08);
+  }
+
+  .problem p {
+    margin: 6px 0 10px;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
   .inspector {
     min-width: 0;
     height: 100%;

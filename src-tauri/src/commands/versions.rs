@@ -82,7 +82,7 @@ pub async fn mod_restore_version(
         .map_err(|error| AppError::new("task", error.to_string()))?
 }
 
-fn installer_for(state: &AppState) -> Result<ModInstaller, AppError> {
+pub(crate) fn installer_for(state: &AppState) -> Result<ModInstaller, AppError> {
     let settings = state.settings.load().settings;
     let (mods_dir, error) = resolve_folder(&settings);
     let Some(mods_dir) = mods_dir else {

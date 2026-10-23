@@ -55,6 +55,8 @@
   const status = $derived(
     mod.deleted
       ? { text: "Удалён", class: "deleted" }
+      : mod.problem
+        ? { text: "Игра не загрузит", class: "problem" }
       : mod.update === "likely"
         ? { text: "Есть обновление", class: "update" }
         : mod.update === "possible"
@@ -249,6 +251,12 @@
     right: 10px;
     background: oklch(0.74 0.14 278 / 0.94);
     color: oklch(0.17 0.025 270);
+  }
+
+  .badge.problem {
+    right: 10px;
+    background: oklch(0.66 0.19 25 / 0.94);
+    color: white;
   }
 
   .badge.possible {
