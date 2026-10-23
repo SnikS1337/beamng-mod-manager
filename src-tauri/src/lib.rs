@@ -242,8 +242,15 @@ pub fn run() {
             commands::app_update::app_update_cancel,
             commands::app_update::app_update_restart
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Фоновая проверка пишет библиотеку пакетами раз в 20 секунд: при закрытии
+            // программы дописываем то, что накопилось, иначе найденное пропадёт.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<Arc<AppState>>().library.flush();
+            }
+        });
 }
 
 fn preview_protocol(

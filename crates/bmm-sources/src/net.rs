@@ -451,7 +451,7 @@ impl PoliteFetcher {
     }
 
     pub fn status_of(&self, source: &str) -> SourceStatus {
-        let mut sources = self.sources.lock().unwrap();
+        let mut sources = lock(&self.sources);
         let Some(state) = sources.get_mut(source) else {
             return SourceStatus::Ok;
         };
@@ -460,7 +460,7 @@ impl PoliteFetcher {
     }
 
     pub fn message_of(&self, source: &str) -> Option<String> {
-        let mut sources = self.sources.lock().unwrap();
+        let mut sources = lock(&self.sources);
         let state = sources.get_mut(source)?;
         refresh_source(state);
         state.message.clone()
@@ -485,7 +485,7 @@ impl PoliteFetcher {
         }
         let host = url.host_str().unwrap_or_default().to_lowercase();
         let entry = {
-            let mut hosts = self.hosts.lock().unwrap();
+            let mut hosts = lock(&self.hosts);
             hosts
                 .entry(host)
                 .or_insert_with(|| {
@@ -497,7 +497,7 @@ impl PoliteFetcher {
                 .clone()
         };
         {
-            let inner = entry.inner.lock().unwrap();
+            let inner = lock(&entry.inner);
             if let Some(until) = inner.blocked_until
                 && until > Instant::now()
             {
@@ -528,7 +528,7 @@ impl PoliteFetcher {
                 return FetchResult::failed(SourceStatus::NeedsHumanCheck, message);
             }
         }
-        let _guard = entry.gate.lock().unwrap();
+        let _guard = lock(&entry.gate);
         if let Some(response) = self.cached(&key) {
             return FetchResult::ok(response);
         }
@@ -546,12 +546,12 @@ impl PoliteFetcher {
                 }
                 None => self.fetcher.get(url),
             };
-            entry.inner.lock().unwrap().last_request = Some(Instant::now());
+            lock(&entry.inner).last_request = Some(Instant::now());
             match result {
                 Ok(response) => {
                     if is_challenge_page(&response.text) {
                         let message = "Сайт просит подтвердить, что вы человек.".to_string();
-                        let mut inner = entry.inner.lock().unwrap();
+                        let mut inner = lock(&entry.inner);
                         inner.status = SourceStatus::NeedsHumanCheck;
                         inner.message = Some(message.clone());
                         self.remember(
@@ -597,7 +597,7 @@ impl PoliteFetcher {
                             // Пустой успешный ответ — тоже ответ: legacy кэширует и его, чтобы
                             // не дёргать сайт повторно на каждую страницу без результатов.
                             self.store_cache(key, response.clone());
-                            let mut inner = entry.inner.lock().unwrap();
+                            let mut inner = lock(&entry.inner);
                             inner.failures = 0;
                             inner.status = SourceStatus::Ok;
                             inner.message = None;
@@ -605,7 +605,7 @@ impl PoliteFetcher {
                             return FetchResult::ok(response);
                         }
                         if matches!(response.status, 404 | 410) {
-                            let mut inner = entry.inner.lock().unwrap();
+                            let mut inner = lock(&entry.inner);
                             inner.failures = 0;
                             inner.status = SourceStatus::Ok;
                             self.remember(source, SourceStatus::Ok, None, None);
@@ -637,7 +637,7 @@ impl PoliteFetcher {
 
     fn wait_for_slot(&self, entry: &HostEntry, url: &Url) {
         let last = {
-            let inner = entry.inner.lock().unwrap();
+            let inner = lock(&entry.inner);
             inner.last_request
         };
         if let Some(last) = last {
@@ -656,7 +656,7 @@ impl PoliteFetcher {
     }
 
     fn mark_failure(&self, entry: &HostEntry, source: &str, message: String) -> FetchResult {
-        let mut inner = entry.inner.lock().unwrap();
+        let mut inner = lock(&entry.inner);
         inner.failures += 1;
         inner.status = SourceStatus::Unavailable;
         inner.message = Some(message.clone());
@@ -682,7 +682,7 @@ impl PoliteFetcher {
         message: Option<String>,
         cooldown_until: Option<Instant>,
     ) {
-        self.sources.lock().unwrap().insert(
+        lock(&self.sources).insert(
             source.to_string(),
             SourceState {
                 status,
@@ -693,7 +693,7 @@ impl PoliteFetcher {
     }
 
     fn cached(&self, key: &str) -> Option<RawResponse> {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = lock(&self.cache);
         let entry = cache.get(key)?;
         if entry.stored.elapsed() > self.options.cache_ttl {
             cache.remove(key);
@@ -703,7 +703,7 @@ impl PoliteFetcher {
     }
 
     fn store_cache(&self, key: String, response: RawResponse) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = lock(&self.cache);
         if cache.len() >= self.options.cache_capacity
             && let Some(oldest) = cache
                 .iter()
@@ -722,14 +722,14 @@ impl PoliteFetcher {
     }
 
     pub fn clear_cache(&self) {
-        self.cache.lock().unwrap().clear();
+        lock(&self.cache).clear();
     }
 
     pub fn reset_source(&self, source: &str, url: &Url) {
         if let Some(host) = url.host_str() {
-            let hosts = self.hosts.lock().unwrap();
+            let hosts = lock(&self.hosts);
             if let Some(entry) = hosts.get(&host.to_lowercase()) {
-                let mut inner = entry.inner.lock().unwrap();
+                let mut inner = lock(&entry.inner);
                 *inner = HostInner::default();
             }
         }
@@ -767,6 +767,12 @@ fn jitter_for(url: &Url, jitter: Duration) -> Duration {
         acc.wrapping_mul(31).wrapping_add(byte as u32)
     }));
     Duration::from_millis((mixed as u64) % (jitter.as_millis().max(1) as u64))
+}
+
+/// Замок, переживший панику в другом потоке. Внутри — счётчики и кэш: после сбоя одного
+/// запроса они остаются пригодными, а «отравленный» замок ломал бы сайт до перезапуска.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]
@@ -1290,5 +1296,46 @@ mod tests {
             .unwrap();
         assert_eq!(response.text, "<html>ok</html>");
         server.join().unwrap();
+    }
+
+    struct PanicsOnce {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl PageFetcher for PanicsOnce {
+        fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                panic!("сбой загрузчика");
+            }
+            Ok(RawResponse {
+                status: 200,
+                text: "<html>ok</html>".to_string(),
+                final_url: url.clone(),
+                retry_after: None,
+            })
+        }
+    }
+
+    #[test]
+    fn site_keeps_working_after_a_panic_inside_a_request() {
+        // Паника посреди запроса «отравляла» замок сайта: дальше любой запрос к нему
+        // падал до перезапуска программы.
+        let fetcher = PoliteFetcher::new(
+            Arc::new(PanicsOnce {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+            options(),
+        );
+        let url = Url::parse("https://site.test/mod/1").unwrap();
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fetcher.get("site", &url)
+        }));
+        assert!(first.is_err());
+        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fetcher.get("site", &url)
+        }));
+        let second = second.expect("второй запрос не падает");
+        assert_eq!(second.status, SourceStatus::Ok);
+        assert_eq!(fetcher.status_of("site"), SourceStatus::Ok);
     }
 }

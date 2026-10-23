@@ -658,6 +658,21 @@ mod tests {
     }
 
     #[test]
+    fn flush_during_batch_saves_what_is_pending() {
+        // Программу закрыли посреди долгой проверки: пакет ещё открыт в другом потоке,
+        // а найденное до этого момента должно лечь на диск.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let store = JsonLibraryStore::new(&path, system_clock());
+        let _guard = store.batch();
+        store.upsert_mod(installed("a", "A", "1.0"));
+        assert!(!path.exists());
+        assert!(store.flush());
+        let loaded = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(loaded.mods().len(), 1);
+    }
+
+    #[test]
     fn nested_batch_writes_only_after_outer() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.json");

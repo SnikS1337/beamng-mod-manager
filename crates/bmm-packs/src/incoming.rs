@@ -256,7 +256,9 @@ fn analyze_zip(
         if crate::inspect::is_unsafe_entry_path(&entry.name) {
             continue;
         }
-        let target = inner_dir.join(format!("{nested_count}.zip"));
+        // Имя уникально на весь разбор: вложенные модпаки одного уровня иначе писали
+        // в один и тот же файл и подменяли уже разобранный мод.
+        let target = inner_dir.join(format!("{nested_count}-{}.zip", short_unique()));
         if let Err(error) = copy_entry(source, entry, &target, budget, cancel) {
             if is_fatal_analysis_error(&error) {
                 return Err(error);
@@ -282,7 +284,7 @@ fn analyze_zip(
                 items.push(blocked_item(
                     &target,
                     &message,
-                    inspection.clone(),
+                    inspect_zip(&target, &ArchiveLimits::default()),
                     Some(&entry.name),
                 ));
             }
@@ -532,11 +534,16 @@ fn shape_map(shape: &Shape) -> Option<EntryMap> {
         Shape::Loose { dir, folder } => {
             let prefix = format!("{}/", dir.to_lowercase());
             let target = format!("vehicles/{folder}/");
-            let cut = prefix.len();
+            let cut = dir.len() + 1;
             Some(Box::new(move |name: &str| {
+                // Сравниваем начало пути той же длины в байтах, что и исходная папка: строчные
+                // буквы бывают длиннее заглавных («İ»), и срез по длине строчной строки
+                // попадал в середину буквы.
                 let name = name.trim_start_matches("./").trim_start_matches('/');
-                (name.to_lowercase().starts_with(&prefix) && name.len() > cut)
-                    .then(|| format!("{target}{}", &name[cut..]))
+                let head = name.get(..cut)?;
+                let rest = name.get(cut..)?;
+                (head.to_lowercase() == prefix && !rest.is_empty())
+                    .then(|| format!("{target}{rest}"))
             }))
         }
         _ => None,
@@ -1134,15 +1141,20 @@ fn is_reparse(metadata: &fs::Metadata) -> bool {
     }
 }
 
+/// Уникальная часть имени временного файла. Часы Windows идут шагом 100 нс, поэтому
+/// к времени добавлен счётчик: два вызова подряд не дадут одно имя.
 fn short_unique() -> String {
+    use std::sync::atomic::AtomicU64;
     use std::time::{SystemTime, UNIX_EPOCH};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     format!(
-        "{}-{}",
+        "{}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
-            .unwrap_or(0)
+            .unwrap_or(0),
+        NEXT.fetch_add(1, Ordering::Relaxed)
     )
 }
 
@@ -1877,5 +1889,85 @@ mod tests {
                 "случай {i}: ни причины, ни модов"
             );
         }
+    }
+
+    #[test]
+    fn packs_inside_a_pack_do_not_overwrite_each_other() {
+        // Модпак из двух модпаков: в каждом свой мод. Раньше оба вложенных мода
+        // распаковывались в один и тот же файл inner-1/0.zip, и первый пункт ставил
+        // чужой мод.
+        let temp = tempfile::tempdir().unwrap();
+        let alpha = zip_bytes(&[("vehicles/alpha/a.jbeam", b"alpha")]);
+        let beta = zip_bytes(&[("vehicles/beta/b.jbeam", b"beta")]);
+        let pack_one = stored_zip_bytes(&[("alpha.zip", &alpha)]);
+        let pack_two = stored_zip_bytes(&[("beta.zip", &beta)]);
+        let source = temp.path().join("Big pack.zip");
+        build_zip_stored(&source, &[("one.zip", &pack_one), ("two.zip", &pack_two)]);
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        assert_eq!(analysis.items.len(), 2, "{:?}", analysis.items);
+        for item in &analysis.items {
+            let keys = content_keys(&read_index(&item.zip_path).unwrap());
+            assert_eq!(keys, item.content, "{}: файл не тот, что разобран", item.file_name);
+        }
+        let paths: HashSet<_> = analysis.items.iter().map(|item| item.zip_path.clone()).collect();
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn loose_folder_with_unusual_letters_is_repacked_without_panic() {
+        // «İ» в нижнем регистре занимает больше байт: срез по длине строчного префикса
+        // попадал в середину буквы.
+        let map = shape_map(&Shape::Loose {
+            dir: "İstanbul_Taxi".to_string(),
+            folder: "İstanbul_Taxi".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            map("İstanbul_Taxi/body.jbeam").as_deref(),
+            Some("vehicles/İstanbul_Taxi/body.jbeam")
+        );
+        assert_eq!(map("other/body.jbeam"), None);
+    }
+
+    #[test]
+    fn broken_nested_archive_does_not_borrow_outer_warnings() {
+        let temp = tempfile::tempdir().unwrap();
+        let good = zip_bytes(&[("vehicles/good/a.jbeam", b"x")]);
+        let source = temp.path().join("pack.zip");
+        build_zip_stored(
+            &source,
+            &[("good.zip", &good), ("bad.zip", b"PK\x03\x04 not really a zip")],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let bad = analysis
+            .items
+            .iter()
+            .find(|item| item.file_name == "bad.zip")
+            .expect("битый вложенный архив показан");
+        assert!(bad.blocked);
+        assert!(
+            bad.findings.iter().all(|finding| finding.entry.as_deref() != Some("good.zip")),
+            "{:?}",
+            bad.findings
+        );
+    }
+
+    #[test]
+    fn temporary_names_never_repeat() {
+        let names: HashSet<String> = (0..10_000).map(|_| short_unique()).collect();
+        assert_eq!(names.len(), 10_000);
     }
 }

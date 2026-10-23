@@ -218,6 +218,15 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
                 .unwrap_or_else(|| "Не удалось переупаковать архив.".to_string()),
         ));
     }
+    // Тот же мод, только упакован иначе: размер файла сменился, а версия — нет. Без этого
+    // сверка с папкой приняла бы новый размер за чужую замену файла и забыла бы версию.
+    if let Some(mut installed) = state.library.get_mod(id)
+        && let Some(path) = result.install.path.as_ref()
+        && let Ok(meta) = std::fs::metadata(path)
+    {
+        installed.size_bytes = i64::try_from(meta.len()).ok();
+        state.library.upsert_mod(installed);
+    }
     Ok(())
 }
 
@@ -1515,5 +1524,64 @@ mod tests {
 
         std::fs::write(layout.disabled_dir.join("Car.zip"), b"x").unwrap();
         assert_eq!(path_of(&layout, &disk), layout.disabled_dir.join("Car.zip"));
+    }
+
+    fn write_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        for (name, bytes) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn fix_packaging_repairs_archive_and_keeps_known_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(
+            &mods.join("acadia.zip"),
+            &[
+                ("Acadia_16/acadia/acadia.jbeam", b"{}"),
+                ("Acadia_16/acadia/info.json", b"{\"Name\":\"Acadia\"}"),
+            ],
+        );
+        let state = test_state(&temp, &mods);
+        let first = load_snapshot(&state).unwrap();
+        let id = first.mods[0].id.clone();
+        // Версию программа узнала раньше (например, с сайта после обновления).
+        let mut known = state.library.get_mod(&id).unwrap();
+        known.version = Some("1.2".to_string());
+        state.library.upsert_mod(known);
+        fill_titles(&state);
+        assert_eq!(
+            load_snapshot(&state).unwrap().mods[0].problem.as_deref(),
+            Some("loose")
+        );
+
+        fix_packaging(&state, &id).unwrap();
+
+        let after = load_snapshot(&state).unwrap();
+        fill_titles(&state);
+        let after = if after.mods[0].problem.is_some() {
+            load_snapshot(&state).unwrap()
+        } else {
+            after
+        };
+        assert_eq!(after.mods.len(), 1);
+        assert_eq!(after.mods[0].problem, None);
+        assert_eq!(after.mods[0].version.as_deref(), Some("1.2"), "версия не потерялась");
+        let index = bmm_packs::zip_index::read_index(&mods.join("acadia.zip")).unwrap();
+        assert!(
+            index
+                .entries
+                .iter()
+                .all(|entry| entry.name.starts_with("vehicles/acadia/")),
+            "{:?}",
+            index.entries.iter().map(|entry| &entry.name).collect::<Vec<_>>()
+        );
     }
 }

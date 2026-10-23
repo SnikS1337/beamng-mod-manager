@@ -180,16 +180,47 @@ fn version_after_external_change(
 }
 
 fn migrate_mod(store: &dyn LibraryStore, old: &InstalledMod, new: &DiskMod) {
-    let guessed = filename::from_file_name(&new.file_name);
+    // Файл просто переименовали (размер тот же) — версия прежняя, если в новом имени нет своей.
+    let version = if old.size_bytes == Some(new.size_bytes) {
+        filename::from_file_name(&new.file_name)
+            .version
+            .or_else(|| old.version.clone())
+    } else {
+        version_after_external_change(store, old, new)
+    };
     let updated = InstalledMod {
         file_name: new.file_name.clone(),
-        version: guessed.version,
+        version,
         size_bytes: Some(new.size_bytes),
         enabled: new.enabled,
         ..old.clone()
     };
     store.upsert_mod(updated);
     store.add_file_history(&old.id, &old.file_name);
+}
+
+/// Программа сама поставила новую версию мода под другим именем файла (обновление,
+/// узнанное по содержимому). Запись библиотеки переезжает на новый файл: страница
+/// мода, проверки и история остаются, иначе сверка с папкой приняла бы обновление
+/// за удаление старого мода и появление нового. `false` — записи со старым именем нет.
+pub fn rename_file(store: &dyn LibraryStore, old_file: &str, new_file: &str, size: i64) -> bool {
+    let _gate = GATE.lock().unwrap_or_else(|error| error.into_inner());
+    let Some(old) = store
+        .mods()
+        .into_iter()
+        .find(|item| item.file_name.eq_ignore_ascii_case(old_file))
+    else {
+        return false;
+    };
+    let disk = DiskMod {
+        file_name: new_file.to_string(),
+        enabled: old.enabled,
+        size_bytes: size,
+        sub_folder: None,
+        modified_utc: None,
+    };
+    migrate_mod(store, &old, &disk);
+    true
 }
 
 fn new_mod(store: &dyn LibraryStore, disk: &DiskMod, now: DateTime<FixedOffset>) -> InstalledMod {
@@ -475,5 +506,50 @@ mod tests {
             .map(|item| item.file_name.to_lowercase())
             .collect();
         assert_eq!(keys.len(), 50);
+    }
+
+    #[test]
+    fn renamed_update_takes_version_from_tracked_page_by_size() {
+        // Скачали новую версию с сайта: в имени файла версии нет, но размер совпал
+        // с тем, что программа видела на странице мода, — значит, это та версия.
+        let store = InMemoryLibraryStore::new();
+        let old = installed("rr", "rolls_royce.zip", "rolls royce", 100);
+        store.upsert_mod(old.clone());
+        bind(&store, &old, "1.3", 250);
+        let report = reconcile(&store, &[disk("Rolls Royce.zip", true, 250)], true, now());
+        assert_eq!(report.renamed.len(), 1, "{report:?}");
+        let after = store.get_mod("rr").unwrap();
+        assert_eq!(after.version.as_deref(), Some("1.3"));
+    }
+
+    #[test]
+    fn moved_record_keeps_id_bindings_and_history() {
+        let store = InMemoryLibraryStore::new();
+        let old = installed("acadia", "acadia.zip", "acadia", 100);
+        store.upsert_mod(old.clone());
+        bind(&store, &old, "2.0", 300);
+        assert!(rename_file(&store, "ACADIA.zip", "GMC_Acadia_GMT968.zip", 300));
+        let report = reconcile(
+            &store,
+            &[disk("GMC_Acadia_GMT968.zip", true, 300)],
+            true,
+            now(),
+        );
+        assert!(report.added.is_empty() && report.removed.is_empty(), "{report:?}");
+        let after = store.get_mod("acadia").unwrap();
+        assert_eq!(after.file_name, "GMC_Acadia_GMT968.zip");
+        assert_eq!(after.version.as_deref(), Some("2.0"));
+        assert_eq!(store.bindings().len(), 1);
+        assert_eq!(store.file_history("acadia"), vec!["acadia.zip"]);
+        assert!(!rename_file(&store, "missing.zip", "x.zip", 1));
+    }
+
+    #[test]
+    fn plain_rename_keeps_known_version() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("car", "car_mod.zip", "car mod", 100));
+        let report = reconcile(&store, &[disk("Car Mod.zip", true, 100)], true, now());
+        assert_eq!(report.renamed.len(), 1, "{report:?}");
+        assert_eq!(store.get_mod("car").unwrap().version.as_deref(), Some("1.0"));
     }
 }
