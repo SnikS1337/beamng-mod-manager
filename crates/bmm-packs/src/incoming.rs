@@ -918,7 +918,10 @@ pub(crate) fn repack(
     let target = work_dir.join(format!("repacked-{}.zip", short_unique()));
     let file = File::create(&target).map_err(|error| error.to_string())?;
     let mut writer = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default();
+    // Архив открываем один раз, а записи переносим как есть, без распаковки и нового
+    // сжатия: переупаковка 36 МБ занимала ~40 с, теперь — доли секунды.
+    let input = File::open(source).map_err(|error| error.to_string())?;
+    let mut archive = zip::ZipArchive::new(input).map_err(|error| error.to_string())?;
     for entry in &index.entries {
         if cancel.load(Ordering::Relaxed) {
             return Err("отменено".to_string());
@@ -931,27 +934,13 @@ pub(crate) fn repack(
         if rest.is_empty() || crate::inspect::is_unsafe_entry_path(rest) {
             continue;
         }
-        let mut input = File::open(source).map_err(|error| error.to_string())?;
-        let mut archive = zip::ZipArchive::new(&mut input).map_err(|error| error.to_string())?;
-        let mut nested = archive
+        budget.add(entry.size).map_err(|error| error.to_string())?;
+        let nested = archive
             .by_name(&entry.raw_name)
             .map_err(|error| error.to_string())?;
         writer
-            .start_file(rest, options)
+            .raw_copy_file_rename(nested, rest)
             .map_err(|error| error.to_string())?;
-        let mut buffer = [0u8; 81920];
-        loop {
-            let read = nested
-                .read(&mut buffer)
-                .map_err(|error| error.to_string())?;
-            if read == 0 {
-                break;
-            }
-            budget.add(read as u64).map_err(|error| error.to_string())?;
-            writer
-                .write_all(&buffer[..read])
-                .map_err(|error| error.to_string())?;
-        }
     }
     writer.finish().map_err(|error| error.to_string())?;
     Ok(target)

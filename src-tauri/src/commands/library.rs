@@ -1015,9 +1015,14 @@ fn details(state: &AppState, id: &str) -> Result<ModDetails, AppError> {
             _ => None,
         });
     let site_title = check.as_ref().and_then(|check| check.last_title.as_deref());
+    // Как на карточке: название из архива, если оно уже прочитано.
+    let archive_title = target
+        .as_ref()
+        .and_then(|target| state.previews.title(&target.key))
+        .flatten();
     let name = ModTitles::choose(
         repo.and_then(|repo| repo.title.as_deref()),
-        None,
+        archive_title.as_deref(),
         site_title,
         &installed.name,
     );
