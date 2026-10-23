@@ -52,7 +52,7 @@
 
 ## Осталось
 
-- M7: релизы 1.0.0 и 1.0.1 опубликованы — portable zip и `latest.json` в GitHub Release,
+- M7: релизы 1.0.0–1.0.2 опубликованы — portable zip и `latest.json` в GitHub Release,
   self-update проверен на опубликованной сборке.
   `legacy/` остаётся как эталон по решению пользователя.
 - Modland: Cloudflare может потребовать проверку «вы человек?». До её прохождения сайт

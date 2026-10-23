@@ -1,13 +1,25 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { getVersion } from "@tauri-apps/api/app";
   import { Minus, Square, X } from "@lucide/svelte";
   import { windowAction } from "$lib/ipc/window";
+
+  let version = $state("1.0");
+
+  onMount(() => {
+    void getVersion()
+      .then((value) => {
+        version = value;
+      })
+      .catch(() => {});
+  });
 </script>
 
 <header class="titlebar" data-tauri-drag-region>
   <div class="brand" data-tauri-drag-region>
-    <span class="cube" aria-hidden="true"></span>
+    <img class="brand-icon" src="/app-icon.png" alt="" />
     <span class="name" data-tauri-drag-region>ModManager BeamNG</span>
-    <span class="tag">1.0</span>
+    <span class="tag">{version}</span>
   </div>
 
   <div class="window-capsule glass liquid-edge">
@@ -47,17 +59,13 @@
     min-width: 0;
   }
 
-  .cube {
-    width: 17px;
-    height: 17px;
-    border-radius: 5px;
-    background:
-      linear-gradient(140deg, rgb(255 255 255 / 0.75), transparent 55%),
-      linear-gradient(320deg, oklch(0.6 0.19 278), oklch(0.52 0.15 210));
+  .brand-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
     box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.6),
-      0 4px 12px oklch(0.55 0.18 278 / 0.4);
-    transform: rotate(8deg);
+      0 0 0 1px rgb(255 255 255 / 0.18),
+      0 4px 12px rgb(6 10 22 / 0.35);
   }
 
   .name {

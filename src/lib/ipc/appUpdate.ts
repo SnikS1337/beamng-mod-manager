@@ -33,12 +33,12 @@ export interface AppUpdateSnapshot {
 }
 
 let mock: AppUpdateSnapshot = {
-  currentVersion: "1.0.1",
+  currentVersion: "1.0.2",
   state: {
     stage: "available",
     manifest: {
-      version: "1.0.2",
-      url: "https://github.com/SnikS1337/beamng-mod-manager/releases/download/v1.0.2/BeamModManager-1.0.2.zip",
+      version: "1.0.3",
+      url: "https://github.com/SnikS1337/beamng-mod-manager/releases/download/v1.0.3/BeamModManager-1.0.3.zip",
       size: 18 * 1024 * 1024,
       sha256: "demo",
       notes: "Исправления поиска и обновлений.",

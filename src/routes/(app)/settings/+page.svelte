@@ -15,7 +15,6 @@
     Plus,
     RefreshCw,
     RotateCcw,
-    Save,
     Sun,
     X,
   } from "@lucide/svelte";
@@ -64,13 +63,13 @@
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
   ];
   let activeSection = $state<SectionId>("appearance");
+  let sectionsEl = $state<HTMLDivElement | null>(null);
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let revision = 0;
 
-  function scrollToSection(id: SectionId) {
+  function selectSection(id: SectionId) {
     activeSection = id;
-    document.getElementById(`settings-${id}`)?.scrollIntoView({
-      behavior: appearance.settings?.uiAnimations === false ? "auto" : "smooth",
-      block: "start",
-    });
+    if (sectionsEl) sectionsEl.scrollTop = 0;
   }
   let draft = $state<SettingsDto | null>(null);
   let loading = $state(true);
@@ -95,7 +94,11 @@
     return () => unlistenUpdate?.();
   });
 
-  onDestroy(() => unlistenUpdate?.());
+  onDestroy(() => {
+    unlistenUpdate?.();
+    if (saveTimer) clearTimeout(saveTimer);
+    if (dirty) void save();
+  });
 
   async function loadAppUpdate() {
     try {
@@ -201,6 +204,33 @@
   function mark() {
     dirty = true;
     message = null;
+    revision += 1;
+    scheduleSave();
+  }
+
+  function scheduleSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => void save(), 350);
+  }
+
+  async function save() {
+    if (!draft || saving) return;
+    const rev = revision;
+    saving = true;
+    error = null;
+    try {
+      const saved = clone(await appearance.save(draft));
+      if (revision === rev) {
+        draft = saved;
+        dirty = false;
+        message = "Сохранено";
+      }
+    } catch (reason) {
+      error = errorText(reason);
+    } finally {
+      saving = false;
+      if (dirty && revision !== rev) scheduleSave();
+    }
   }
 
   const preset = $derived(
@@ -229,21 +259,6 @@
     if (!draft) return;
     draft[key] = value;
     mark();
-  }
-
-  async function save() {
-    if (!draft || saving) return;
-    saving = true;
-    error = null;
-    try {
-      draft = clone(await appearance.save(draft));
-      dirty = false;
-      message = "Сохранено";
-    } catch (reason) {
-      error = errorText(reason);
-    } finally {
-      saving = false;
-    }
   }
 
   function sourceEnabled(id: string): boolean {
@@ -319,21 +334,19 @@
   <header class="head">
     <div>
       <h1>Настройки</h1>
-      <p>{dirty ? "есть несохранённые изменения" : "изменения применяются после сохранения"}</p>
+      <p>изменения сохраняются сами</p>
     </div>
     <div class="head-actions">
-      {#if message}
-        <span class="saved">{message}</span>
-      {/if}
-      <button
-        class="save glass liquid-edge"
-        type="button"
-        disabled={!draft || saving || !dirty}
-        onclick={() => void save()}
-      >
-        <Save size={14} />
-        {saving ? "Сохраняем…" : "Сохранить"}
-      </button>
+      <span class="save-state">
+        <span class="save-dot" class:busy={(saving || dirty) && !error} class:failed={!!error}></span>
+        {error
+          ? "Не сохранено"
+          : saving
+            ? "Сохраняем…"
+            : dirty
+              ? "Сохраняем изменения…"
+              : message ?? "Все изменения сохранены"}
+      </span>
     </div>
   </header>
 
@@ -351,14 +364,15 @@
           <button
             type="button"
             class:active={activeSection === section.id}
-            onclick={() => scrollToSection(section.id)}
+            onclick={() => selectSection(section.id)}
           >
             <Icon size={16} strokeWidth={1.8} />
             <span>{section.label}</span>
           </button>
         {/each}
       </nav>
-      <div class="settings-sections">
+      <div class="settings-sections" bind:this={sectionsEl}>
+        {#if activeSection === "appearance"}
         <section id="settings-appearance" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Внешний вид</h2>
@@ -532,7 +546,8 @@
         </div>
       </div>
     </section>
-
+        {/if}
+        {#if activeSection === "folders"}
         <section id="settings-folders" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Папки</h2>
@@ -575,7 +590,8 @@
         </div>
       </div>
     </section>
-
+        {/if}
+        {#if activeSection === "mods"}
         <section id="settings-mods" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Моды и загрузки</h2>
@@ -644,7 +660,8 @@
         </div>
       </div>
     </section>
-
+        {/if}
+        {#if activeSection === "updates"}
         <section id="settings-updates" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Обновления</h2>
@@ -731,7 +748,8 @@
         />
       </div>
     </section>
-
+        {/if}
+        {#if activeSection === "sites"}
         <section id="settings-sites" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Сайты</h2>
@@ -755,7 +773,8 @@
       </div>
       <p class="hint">Поиск и проверка обновлений используют только включённые сайты.</p>
     </section>
-
+        {/if}
+        {#if activeSection === "program"}
         <section id="settings-program" class="block glass liquid-edge">
           <div class="block-head">
             <h2>Программа</h2>
@@ -797,6 +816,7 @@
         </div>
       </div>
         </section>
+        {/if}
       </div>
     </div>
   {/if}
@@ -807,7 +827,9 @@
     display: flex;
     flex-direction: column;
     gap: 13px;
-    min-height: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
     padding-bottom: 10px;
   }
 
@@ -838,27 +860,34 @@
     gap: 10px;
   }
 
-  .saved {
-    color: oklch(0.83 0.14 150);
-    font-size: 10px;
-  }
-
-  .save {
+  .save-state {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    height: 30px;
-    padding: 0 13px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--primary) 16%, transparent);
-    color: var(--foreground);
-    font-size: 10.5px;
-    cursor: default;
+    gap: 7px;
+    color: var(--muted-foreground);
+    font-size: 11.5px;
   }
 
-  .save:disabled {
-    opacity: 0.45;
+  .save-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: oklch(0.72 0.14 150);
+  }
+
+  .save-dot.busy {
+    background: color-mix(in oklab, var(--primary) 80%, white 10%);
+    animation: save-pulse 1.1s ease-in-out infinite;
+  }
+
+  .save-dot.failed {
+    background: oklch(0.68 0.19 25);
+  }
+
+  @keyframes save-pulse {
+    50% {
+      opacity: 0.35;
+    }
   }
 
   .banner.error {
@@ -1330,14 +1359,14 @@
   .settings-layout {
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr);
-    align-items: start;
+    align-items: stretch;
     gap: 18px;
+    flex: 1;
     min-height: 0;
   }
 
   .settings-side {
-    position: sticky;
-    top: 0;
+    align-self: start;
     display: flex;
     flex-direction: column;
     gap: 3px;
@@ -1380,10 +1409,14 @@
     flex-direction: column;
     gap: 13px;
     min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 4px;
   }
 
   .settings-sections > section {
-    scroll-margin-top: 8px;
+    min-height: 100%;
+    box-sizing: border-box;
   }
 
   .hint {
@@ -1542,12 +1575,6 @@
     height: 34px;
     padding: 0 14px;
     font-size: 11.5px;
-  }
-
-  .save {
-    height: 34px;
-    padding: 0 15px;
-    font-size: 12px;
   }
 
   /* ── живое превью вместо абстрактных пятен ── */
