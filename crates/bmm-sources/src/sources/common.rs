@@ -18,7 +18,16 @@ static H1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<h1[^>]*>(?<t>.*
 static TITLE_TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(?<t>.*?)</title>").unwrap());
 static LEADING_MOD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:Скачать\s+)?[Мм]од\s+").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)^(?:Скачать\s+)?мод\s+").unwrap());
+static HTML_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<!--.*?-->").unwrap());
+/// Хвост `<title>` с адресом сайта: « - MODSGAMING.RU - Моды для …».
+static SITE_TAIL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\s+-\s+[\p{L}\p{Nd}-]+\.(?:ru|net|org|com|io|de)\b.*$").unwrap()
+});
+/// Служебные части перед адресом сайта: раздел («BeamNG Машины»), «Моды».
+static SECTION_TAIL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\s+-\s+(?:моды|mods|beamng(?:\s+[\p{L}]+)?)\s*$").unwrap()
+});
 static BEAMNG_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\s+-\s+BeamNG\.drive$").unwrap());
 
@@ -121,6 +130,16 @@ pub fn page_title(html: &str) -> String {
         .map(|value| value.as_str())
         .unwrap_or("");
     let text = clean(raw);
+    let text = HTML_COMMENT.replace_all(&text, " ");
+    let mut text = SITE_TAIL.replace(&text, "").into_owned();
+    loop {
+        let shorter = SECTION_TAIL.replace(&text, "").into_owned();
+        if shorter == text {
+            break;
+        }
+        text = shorter;
+    }
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let text = LEADING_MOD.replace(&text, "");
     BEAMNG_SUFFIX.replace(&text, "").trim().to_string()
 }
@@ -214,5 +233,29 @@ mod tests {
         let result = load(&fetcher, "modland", &url, None, &AtomicBool::new(false));
         let error = result.expect_err("страница проверки — не результат поиска");
         assert_eq!(error.status, SourceStatus::NeedsHumanCheck);
+    }
+
+    #[test]
+    fn page_title_drops_site_tail_and_template_comments() {
+        // На ModsGaming у страницы мода нет <h1>, а <title> тащит за собой раздел,
+        // шаблонный комментарий uCoz и рекламу сайта — всё это попадало в название мода.
+        let html = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/modsgaming/mod-real.html"),
+        )
+        .unwrap();
+        let title = page_title(&html);
+        assert!(!title.contains("<!--"), "{title}");
+        assert!(!title.to_lowercase().contains("modsgaming"), "{title}");
+        assert!(!title.contains("Моды"), "{title}");
+        assert!(title.starts_with("BMW M2 G87"), "{title}");
+    }
+
+    #[test]
+    fn page_title_keeps_dashes_inside_mod_name() {
+        let html = "<title>Rolls - Royce Cullinan v1.3 - BeamNG Машины - Моды - MODSGAMING.RU - Моды для FS 25</title>";
+        assert_eq!(page_title(html), "Rolls - Royce Cullinan v1.3");
+        let plain = "<h1>Мод Rolls - Royce Phantom</h1>";
+        assert_eq!(page_title(plain), "Rolls - Royce Phantom");
     }
 }

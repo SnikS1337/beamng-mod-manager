@@ -108,9 +108,33 @@ pub fn find_pages(
             continue;
         }
         let author = author_of(&installed.id);
-        if let Some(guess) =
-            PageGuesser::pick_with_author(installed, title.as_deref(), author.as_deref(), &listings)
+        let mut guess =
+            PageGuesser::pick_with_author(installed, title.as_deref(), author.as_deref(), &listings);
+        // Следить без вопроса можно, только если ничто не спорит. В выдаче поиска размера
+        // обычно нет, а совпадение одного названия обманчиво («Mercedes-Benz ML» — десятки
+        // разных модов): открываем страницу мода и решаем ещё раз уже с размером и автором.
+        if let Some(found) = guess.as_ref().filter(|guess| {
+            guess.certain && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
+        }) && let Some(detail) = page_details(search, &found.listing, cancel)
         {
+            let enriched: Vec<Listing> = listings
+                .iter()
+                .map(|listing| {
+                    if listing.source == detail.source && listing.source_id == detail.source_id {
+                        detail.clone()
+                    } else {
+                        listing.clone()
+                    }
+                })
+                .collect();
+            guess = PageGuesser::pick_with_author(
+                installed,
+                title.as_deref(),
+                author.as_deref(),
+                &enriched,
+            );
+        }
+        if let Some(guess) = guess {
             let binding = ModBinding {
                 mod_id: installed.id.clone(),
                 source: guess.listing.source,
@@ -143,6 +167,22 @@ pub fn find_pages(
         });
     }
     result
+}
+
+/// Запись со страницы мода поверх записи из поиска: размер, автор и версия, которых
+/// в выдаче поиска обычно нет. `None` — страницу не открыть.
+fn page_details(search: &SearchService, found: &Listing, cancel: &AtomicBool) -> Option<Listing> {
+    let source = search
+        .sources()
+        .iter()
+        .find(|source| source.id() == found.source)?;
+    let detail = source.listing(&found.url, cancel).ok()??;
+    let mut merged = found.clone();
+    merged.size_bytes = detail.size_bytes.or(merged.size_bytes);
+    merged.author = detail.author.or(merged.author);
+    merged.mod_version = detail.mod_version.or(merged.mod_version);
+    merged.game_version = detail.game_version.or(merged.game_version);
+    Some(merged)
 }
 
 /// «Следить»: подтверждает предложенную страницу, снимает отказ «Не проверять»
@@ -698,5 +738,99 @@ mod tests {
         );
         assert_eq!(suggestions(&store).len(), 0);
         assert!(store.get_check("a", "modsgaming").is_some());
+    }
+
+    /// Сайт, у которого в поиске нет размера, а на странице мода он есть.
+    struct DetailSite {
+        found: Listing,
+        detail: Listing,
+        detail_calls: AtomicUsize,
+    }
+
+    impl ModSource for DetailSite {
+        fn id(&self) -> &'static str {
+            "modsgaming"
+        }
+        fn display_name(&self) -> &'static str {
+            "ModsGaming"
+        }
+        fn supports_search(&self) -> bool {
+            true
+        }
+        fn home(&self) -> Url {
+            Url::parse("https://modsgaming.test/").unwrap()
+        }
+        fn owns(&self, url: &Url) -> bool {
+            url.host_str() == Some("modsgaming.test")
+        }
+        fn is_mod_page(&self, url: &Url) -> bool {
+            self.owns(url) && url.path() != "/"
+        }
+        fn feed_covers(&self, _url: &Url) -> bool {
+            true
+        }
+        fn search(&self, _query: &str, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(vec![self.found.clone()])
+        }
+        fn feed_page(&self, _page: u32, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+        fn listing(&self, url: &Url, _cancel: &AtomicBool) -> Result<Option<Listing>, SourceError> {
+            self.detail_calls.fetch_add(1, Ordering::SeqCst);
+            Ok((url == &self.detail.url).then(|| self.detail.clone()))
+        }
+    }
+
+    fn mercedes_case(site_size: i64) -> (InMemoryLibraryStore, PageSearchReport, usize) {
+        // Как на живых модах: «MB_w164_ken_3.0» и страница «Mercedes-Benz ML 3.6» —
+        // название совпало целиком, а файл на странице на треть меньше: это другой мод.
+        let store = InMemoryLibraryStore::new();
+        let mut mine = installed("mb", "MB_w164_ken_3.0_f4rza.zip");
+        mine.version = None;
+        mine.size_bytes = Some(455_163_953);
+        store.upsert_mod(mine);
+        let found = listing("ml36", "МОД Mercedes-Benz ML 3.6 (0.30.X) ДЛЯ BEAMNG DRIVE");
+        let mut detail = found.clone();
+        detail.size_bytes = Some(site_size);
+        let site = Arc::new(DetailSite {
+            found,
+            detail,
+            detail_calls: AtomicUsize::new(0),
+        });
+        let service = SearchService::new(
+            vec![site.clone()],
+            Arc::new(|_| SourceStatus::Ok),
+            SearchOptions::default(),
+            None,
+        );
+        let report = find_pages(
+            &store,
+            &service,
+            now(),
+            &AtomicBool::new(false),
+            &|_| Some("Mercedes-Benz ML".to_string()),
+            &|_| None,
+            None,
+        );
+        (store, report, site.detail_calls.load(Ordering::SeqCst))
+    }
+
+    #[test]
+    fn certain_guess_is_checked_against_size_on_the_mod_page() {
+        let (store, report, calls) = mercedes_case(347_110_113);
+        assert_eq!(calls, 1, "страницу мода открыли, чтобы узнать размер");
+        assert_eq!(report.followed, 0, "{report:?}");
+        assert!(
+            store.bindings().iter().all(|binding| !binding.confirmed),
+            "{:?}",
+            store.bindings()
+        );
+    }
+
+    #[test]
+    fn certain_guess_with_matching_size_is_followed() {
+        let (store, report, _) = mercedes_case(455_000_000);
+        assert_eq!(report.followed, 1, "{report:?}");
+        assert!(store.bindings()[0].confirmed);
     }
 }

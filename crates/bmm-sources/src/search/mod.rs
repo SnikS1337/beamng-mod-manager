@@ -414,32 +414,12 @@ impl SearchService {
             }
         }
 
-        let cards_meta: Vec<(String, usize)> = clusters
+        let ids: Vec<String> = clusters
             .iter()
-            .enumerate()
-            .map(|(index, cluster)| (card_id(cluster, &unique), index))
+            .map(|cluster| card_id(cluster, &unique))
             .collect();
         let mut cards = Vec::new();
         for (cluster_index, cluster) in clusters.iter().enumerate() {
-            let id = cards_meta[cluster_index].0.clone();
-            let mut possible_same_as = Vec::new();
-            for (other_id, other_index) in &cards_meta {
-                if *other_index == cluster_index {
-                    continue;
-                }
-                let other = &clusters[*other_index];
-                let maybe = cluster.iter().any(|&a| {
-                    other.iter().any(|&b| {
-                        unique[a].source != unique[b].source
-                            && DuplicateMatcher::compare(&unique[a], &unique[b], self.decisions())
-                                .verdict
-                                == MatchVerdict::Maybe
-                    })
-                });
-                if maybe {
-                    possible_same_as.push(other_id.clone());
-                }
-            }
             let first = &unique[cluster[0]];
             let mut title = TitleParser::parse(&first.title).name;
             if title.is_empty() {
@@ -451,11 +431,11 @@ impl SearchService {
                 .fold(0.0_f64, f64::max)
                 + 0.05 * cluster.len().min(3) as f64;
             cards.push(ModCard {
-                id,
+                id: ids[cluster_index].clone(),
                 title,
                 listings: cluster.iter().map(|&index| unique[index].clone()).collect(),
                 price: summarize(cluster.iter().map(|&index| unique[index].price)),
-                possible_same_as,
+                possible_same_as: Vec::new(),
                 relevance,
             });
         }
@@ -466,7 +446,60 @@ impl SearchService {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
         });
+        self.ask_about_doubtful(&mut cards);
         cards
+    }
+
+    /// Вопросы «Возможно, тот же мод». Ручных кликов должно быть как можно меньше, поэтому:
+    /// пару спрашиваем один раз (на карточке, что выше в выдаче), на карточке не больше
+    /// одного вопроса (самая похожая пара), а пары, которые всё равно нельзя склеить
+    /// (в обеих карточках есть один и тот же сайт), не спрашиваем вовсе.
+    fn ask_about_doubtful(&self, cards: &mut [ModCard]) {
+        let mut pairs: Vec<(usize, usize, f64)> = Vec::new();
+        for left in 0..cards.len() {
+            for right in left + 1..cards.len() {
+                let (a, b) = (&cards[left].listings, &cards[right].listings);
+                let shares_site = a
+                    .iter()
+                    .any(|x| b.iter().any(|y| x.source == y.source));
+                if shares_site {
+                    continue;
+                }
+                let mut best: Option<f64> = None;
+                let mut refused = false;
+                for x in a {
+                    for y in b {
+                        let result = DuplicateMatcher::compare(x, y, self.decisions());
+                        if let Some(decisions) = &self.decisions
+                            && decisions.get(x, y) == Some(ManualMatch::Different)
+                        {
+                            refused = true;
+                        }
+                        if result.verdict == MatchVerdict::Maybe {
+                            best = Some(best.map_or(result.score, |score| score.max(result.score)));
+                        }
+                    }
+                }
+                if let (Some(score), false) = (best, refused) {
+                    pairs.push((left, right, score));
+                }
+            }
+        }
+        pairs.sort_by(|x, y| {
+            y.2.partial_cmp(&x.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| (x.0, x.1).cmp(&(y.0, y.1)))
+        });
+        let mut busy = vec![false; cards.len()];
+        for (left, right, _) in pairs {
+            if busy[left] || busy[right] {
+                continue;
+            }
+            busy[left] = true;
+            busy[right] = true;
+            let other = cards[right].id.clone();
+            cards[left].possible_same_as.push(other);
+        }
     }
 }
 
@@ -917,12 +950,55 @@ mod tests {
         );
         let cards = service().group(&[first, second], "sienna");
         assert_eq!(cards.len(), 2);
+        // Вопрос задаётся один раз — на карточке, что выше в выдаче.
+        assert_eq!(cards[0].possible_same_as, vec![cards[1].id.clone()]);
+        assert!(cards[1].possible_same_as.is_empty());
+    }
+
+    #[test]
+    fn one_question_per_card_even_with_many_lookalikes() {
+        // Как на «rolls royce»: одна карточка ModsGaming и три похожих со STMods.
+        let main = listing("modsgaming", "m", "Rolls Royce Phantom", None);
+        let others = [
+            listing("stmods", "1", "Rolls-Royce Phantom", None),
+            listing("stmods", "2", "Rolls Royce Phantom VIII", None),
+            listing("modland", "3", "Rolls Royce Phantom 2018", None),
+        ];
+        let mut all = vec![main];
+        all.extend(others);
+        let cards = service().group(&all, "rolls royce phantom");
+        let questions: usize = cards.iter().map(|card| card.possible_same_as.len()).sum();
+        assert!(cards.iter().all(|card| card.possible_same_as.len() <= 1), "{cards:?}");
+        // Каждая карточка участвует не больше чем в одном вопросе.
+        let mut mentioned = std::collections::HashMap::<&str, usize>::new();
         for card in &cards {
-            assert_eq!(card.possible_same_as.len(), 1);
-            assert!(card.possible_same_as[0] != card.id);
+            for other in &card.possible_same_as {
+                *mentioned.entry(card.id.as_str()).or_default() += 1;
+                *mentioned.entry(other.as_str()).or_default() += 1;
+            }
         }
-        assert_eq!(cards[0].possible_same_as[0], cards[1].id);
-        assert_eq!(cards[1].possible_same_as[0], cards[0].id);
+        assert!(mentioned.values().all(|count| *count == 1), "{mentioned:?}");
+        assert!(questions >= 1);
+    }
+
+    #[test]
+    fn no_question_when_cards_cannot_merge_anyway() {
+        // У обеих карточек есть STMods: склеить их нельзя, значит и спрашивать незачем.
+        let mut a = listing("stmods", "a", "Toyota Sienna 2011-2017 2.2", None);
+        a.author = Some("Author".to_string());
+        a.size_bytes = Some(100);
+        let mut b = listing("modland", "b", "Toyota Sienna 2011-2017 2.2", None);
+        b.author = Some("Author".to_string());
+        b.size_bytes = Some(100);
+        let c = listing(
+            "stmods",
+            "c",
+            "МОД Toyota Sienna 2011-2017 v2.2 (0.39.x) ДЛЯ BEAMNG.DRIVE",
+            None,
+        );
+        let cards = service().group(&[a, b, c], "sienna");
+        assert_eq!(cards.len(), 2, "{cards:?}");
+        assert!(cards.iter().all(|card| card.possible_same_as.is_empty()), "{cards:?}");
     }
 
     #[test]

@@ -306,9 +306,11 @@ impl ModInstaller {
         };
         let install = self.install_from_path(source, &new_name, options);
         if !install.success || same_name || !old_exists {
+            // Старая версия «убрана» только если новая встала на её место.
+            let old_removed = same_name && install.success;
             return UpdateResult {
                 install,
-                old_removed: same_name,
+                old_removed,
                 was_enabled,
             };
         }
@@ -786,12 +788,20 @@ fn hex_lower(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Имя временного файла установки. Часы Windows идут шагом 100 нс: без счётчика две
+/// установки, начатые одновременно, писали бы в один и тот же `.part`.
 fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    format!("{}-{nanos}", std::process::id())
+    format!(
+        "{}-{nanos}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 fn next_sequence(dir: &Path) -> i64 {
@@ -1522,5 +1532,59 @@ mod tests {
         let result = installer.disable("car.zip");
         assert!(!result.success);
         assert!(installer.layout().mods_dir.join("car.zip").is_file());
+    }
+
+    #[test]
+    fn failed_update_under_same_name_does_not_claim_old_was_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let v1 = source_zip(&temp);
+        assert!(installer.install_from_path(&v1, "car.zip", InstallOptions::default()).success);
+        let broken = temp.path().join("broken.zip");
+        fs::write(&broken, b"definitely not a zip").unwrap();
+        let update =
+            installer.update_from_path("car.zip", &broken, "car.zip", InstallOptions::default());
+        assert!(!update.install.success);
+        assert!(!update.old_removed, "старая версия на месте");
+        assert!(installer.layout().mods_dir.join("car.zip").is_file());
+    }
+
+    #[test]
+    fn simultaneous_installs_do_not_share_a_temporary_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = Arc::new(installer(&temp));
+        let sources: Vec<PathBuf> = (0..8)
+            .map(|index| {
+                let path = temp.path().join(format!("src{index}.zip"));
+                let body = vec![index as u8; 200_000 + index * 1000];
+                zip_stored(&path, &[(&format!("vehicles/car{index}/a.jbeam"), &body)]);
+                path
+            })
+            .collect();
+        std::thread::scope(|scope| {
+            for (index, source) in sources.iter().enumerate() {
+                let installer = Arc::clone(&installer);
+                scope.spawn(move || {
+                    let result = installer.install_from_path(
+                        source,
+                        &format!("car{index}.zip"),
+                        InstallOptions::default(),
+                    );
+                    assert!(result.success, "{index}: {:?}", result.message);
+                });
+            }
+        });
+        for (index, source) in sources.iter().enumerate() {
+            let installed = installer.layout().mods_dir.join(format!("car{index}.zip"));
+            assert_eq!(fs::read(installed).unwrap(), fs::read(source).unwrap(), "{index}");
+        }
+        assert!(part_files(&installer).is_empty());
+    }
+
+    #[test]
+    fn temporary_names_are_unique() {
+        let names: std::collections::HashSet<String> =
+            (0..10_000).map(|_| unique_suffix()).collect();
+        assert_eq!(names.len(), 10_000);
     }
 }

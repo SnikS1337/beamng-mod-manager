@@ -332,6 +332,21 @@ fn install_items(
         };
         if let Some(replaced) = &request.replaces {
             let update = installer.update_from_path(replaced, &source, &request.file_name, options);
+            if update.install.success
+                && !replaced.eq_ignore_ascii_case(&request.file_name)
+                && let Some(path) = update.install.path.as_ref()
+            {
+                let size = fs::metadata(path)
+                    .ok()
+                    .and_then(|meta| i64::try_from(meta.len()).ok())
+                    .unwrap_or(0);
+                bmm_domain::library::rename_file(
+                    state.library.as_ref(),
+                    replaced,
+                    &request.file_name,
+                    size,
+                );
+            }
             let backup_id = if update.install.success {
                 installer
                     .list_backups(replaced)
@@ -394,6 +409,21 @@ fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppE
             }
             if ticket.was_disabled {
                 let _ = installer.disable(replaced);
+            }
+            // Запись библиотеки возвращается на прежний файл вместе со страницей мода.
+            if !ticket.same_name {
+                let size = result
+                    .path
+                    .as_ref()
+                    .and_then(|path| fs::metadata(path).ok())
+                    .and_then(|meta| i64::try_from(meta.len()).ok())
+                    .unwrap_or(0);
+                bmm_domain::library::rename_file(
+                    state.library.as_ref(),
+                    &ticket.file_name,
+                    replaced,
+                    size,
+                );
             }
         }
         Ok(())
@@ -589,5 +619,71 @@ mod tests {
                 .join("new_mod.zip")
                 .exists()
         );
+    }
+
+    #[test]
+    fn update_under_another_name_keeps_tracked_page() {
+        // Обновление узнано по содержимому, а имя файла другое: страница мода и проверки
+        // должны остаться за ним, иначе программа «забудет», где следить за модом.
+        let (temp, state) = setup();
+        let v1 = temp.path().join("v1.zip");
+        let v2 = temp.path().join("v2.zip");
+        make_zip(&v1, b"one");
+        make_zip(&v2, b"two, longer body");
+        let installer = installer_for_test(&state);
+        assert!(
+            installer
+                .install_from_path(&v1, "acadia.zip", InstallOptions::default())
+                .success
+        );
+        let first = crate::commands::library::load_snapshot(&state).unwrap();
+        let id = first.mods[0].id.clone();
+        state
+            .library
+            .upsert_binding(bmm_domain::library::ModBinding {
+                mod_id: id.clone(),
+                source: "stmods".to_string(),
+                source_id: "acadia".to_string(),
+                url: url::Url::parse("https://stmods.org/acadia/").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: v2.display().to_string(),
+                file_name: "GMC_Acadia_GMT968.zip".to_string(),
+                replaces: Some("acadia.zip".to_string()),
+                allow_warnings: true,
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+
+        let after = crate::commands::library::load_snapshot(&state).unwrap();
+        assert_eq!(after.mods.len(), 1);
+        assert_eq!(after.mods[0].id, id, "та же запись библиотеки");
+        assert_eq!(after.mods[0].file_name, "GMC_Acadia_GMT968.zip");
+        assert!(!after.mods[0].unchecked, "страница мода не потерялась");
+        assert_eq!(state.library.bindings().len(), 1);
+
+        // «Отменить» возвращает и файл, и запись со страницей мода.
+        undo_install(
+            &state,
+            &IncomingTicketDto {
+                file_name: "GMC_Acadia_GMT968.zip".to_string(),
+                replaces: Some("acadia.zip".to_string()),
+                backup_id: results[0].backup_id.clone(),
+                was_disabled: false,
+                same_name: false,
+            },
+        )
+        .unwrap();
+        let undone = crate::commands::library::load_snapshot(&state).unwrap();
+        assert_eq!(undone.mods.len(), 1);
+        assert_eq!(undone.mods[0].id, id);
+        assert_eq!(undone.mods[0].file_name, "acadia.zip");
+        assert!(!undone.mods[0].unchecked);
     }
 }

@@ -200,6 +200,8 @@ fn run_page_search(
     let Some(service) = page_search_service(state) else {
         return bmm_checks::PageSearchReport::default();
     };
+    // Десятки привязок и отметок поиска — одной записью файла библиотеки.
+    let _batch = state.library.batch();
     let store = state.library.clone();
     let app_for_progress = app.clone();
     let mut progress = |progress: &UpdateProgress| {
@@ -220,6 +222,8 @@ fn run_page_search_quiet(state: &AppState, cancel: &AtomicBool) -> bmm_checks::P
     let Some(service) = page_search_service(state) else {
         return bmm_checks::PageSearchReport::default();
     };
+    // Десятки привязок и отметок поиска — одной записью файла библиотеки.
+    let _batch = state.library.batch();
     let store = state.library.clone();
     bmm_checks::find_pages(
         store.as_ref(),
@@ -860,6 +864,11 @@ fn source_dto(report: &SourceRunReport, names: &HashMap<String, String>) -> Upda
     }
 }
 
+/// Выполняет шаг проверки так, что паника внутри не роняет поток, который его вызвал.
+fn contained<T>(step: impl FnOnce() -> T) -> Option<T> {
+    std::panic::catch_unwind(AssertUnwindSafe(step)).ok()
+}
+
 /// Проверка при запуске и по расписанию. Итог уходит в окно событием `updates://event`
 /// с фазой `auto`: значок на «Обновлениях» и тост появляются без открытия раздела.
 pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
@@ -896,9 +905,15 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                         }
                     }
                 }
-                let mut report = {
+                // Сбой одной проверки не должен останавливать проверки по расписанию до
+                // перезапуска программы: поток живёт, пока открыто окно.
+                let Some(mut report) = contained(|| {
                     let _batch = state.library.batch();
                     runtime.coordinator.check(false, None)
+                }) else {
+                    last = std::time::Instant::now();
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                    continue;
                 };
                 if !report.cancelled
                     && let Some(_guard) = PageBusyGuard::acquire(runtime.page_busy.clone())
@@ -908,11 +923,12 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                         run_page_search_quiet(&state, &runtime.page_cancel)
                     }))
                     .unwrap_or_default();
-                    if pages.followed > 0 {
-                        let again = {
+                    if pages.followed > 0
+                        && let Some(again) = contained(|| {
                             let _batch = state.library.batch();
                             runtime.coordinator.check(false, None)
-                        };
+                        })
+                    {
                         report = merge_reports(report, again);
                     }
                 }
@@ -1083,5 +1099,14 @@ mod tests {
         ));
         let other = url::Url::parse("https://stmods.org/beamng_drive/").unwrap();
         assert!(!page_passed(&page, "bmm-check-1", &other));
+    }
+
+    #[test]
+    fn contained_step_survives_panic() {
+        assert_eq!(contained(|| 5), Some(5));
+        let failed: Option<i32> = contained(|| panic!("сбой проверки"));
+        assert_eq!(failed, None);
+        // Поток продолжает работать после сбоя.
+        assert_eq!(contained(|| "дальше"), Some("дальше"));
     }
 }
