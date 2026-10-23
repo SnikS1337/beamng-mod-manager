@@ -10,7 +10,6 @@ use tauri::{AppHandle, Emitter};
 use url::Url;
 
 use bmm_domain::filename;
-use bmm_domain::library::LibraryStore;
 use bmm_domain::matches::{ManualMatch, MatchDecisions};
 use bmm_domain::models::{Listing, Offer, PriceStatus};
 use bmm_domain::text::{TitleNormalizer, TitleParser};
@@ -93,18 +92,34 @@ struct InstalledIndex {
 
 impl InstalledIndex {
     fn build(state: &AppState) -> Self {
+        Self::from_store(state.library.as_ref())
+    }
+
+    /// «Установлен» в поиске: страница, за которой программа следит, или то же название,
+    /// что у установленного мода без страницы. Предложенная, но не подтверждённая страница
+    /// ещё не «его»; а у мода со своей страницей одноимённые чужие моды — не он.
+    fn from_store(store: &dyn bmm_domain::library::LibraryStore) -> Self {
         let mut keys = HashSet::new();
         let mut urls = HashSet::new();
-        for binding in state.library.bindings() {
+        let mut followed = HashSet::new();
+        for binding in store
+            .bindings()
+            .into_iter()
+            .filter(|binding| binding.confirmed)
+        {
             keys.insert(format!(
                 "{}:{}",
                 binding.source.trim().to_lowercase(),
                 binding.source_id.trim()
             ));
             urls.insert(binding.url.as_str().trim_end_matches('/').to_string());
+            followed.insert(binding.mod_id);
         }
         let mut names = HashSet::new();
-        for installed in state.library.mods() {
+        for installed in store.mods() {
+            if followed.contains(&installed.id) {
+                continue;
+            }
             for name in [
                 installed.name.as_str(),
                 filename::from_file_name(&installed.file_name).name.as_str(),
@@ -486,5 +501,83 @@ fn price_summary(price: PriceSummary) -> &'static str {
         PriceSummary::Free => "free",
         PriceSummary::Paid => "paid",
         PriceSummary::Mixed => "mixed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bmm_domain::library::{InMemoryLibraryStore, InstalledMod, LibraryStore, ModBinding};
+    use chrono::Utc;
+
+    fn installed(id: &str, name: &str) -> InstalledMod {
+        InstalledMod {
+            id: id.to_string(),
+            name: name.to_string(),
+            file_name: format!("{id}.zip"),
+            version: None,
+            size_bytes: None,
+            installed_at_utc: Utc::now().fixed_offset(),
+            enabled: true,
+        }
+    }
+
+    fn listing(source: &str, id: &str, title: &str) -> Listing {
+        Listing::new(
+            source,
+            Url::parse(&format!("https://{source}.test/{id}/")).unwrap(),
+            id,
+            title,
+        )
+    }
+
+    fn bind(store: &InMemoryLibraryStore, mod_id: &str, source: &str, id: &str, confirmed: bool) {
+        store
+            .upsert_binding(ModBinding {
+                mod_id: mod_id.to_string(),
+                source: source.to_string(),
+                source_id: id.to_string(),
+                url: Url::parse(&format!("https://{source}.test/{id}/")).unwrap(),
+                confirmed,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn followed_page_is_installed_but_namesakes_are_not() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("rr", "Rolls-Royce Cullinan"));
+        bind(&store, "rr", "stmods", "luxuryteam", true);
+        let index = InstalledIndex::from_store(&store);
+        assert!(index.contains(&listing("stmods", "luxuryteam", "Rolls-Royce Cullinan")));
+        // Тот же адрес без косой черты в конце.
+        let mut no_slash = listing("other", "x", "Что-то");
+        no_slash.url = Url::parse("https://stmods.test/luxuryteam").unwrap();
+        assert!(index.contains(&no_slash));
+        // Одноимённый мод другого автора на другом сайте — не установлен.
+        assert!(!index.contains(&listing("modsgaming", "7", "Rolls-Royce Cullinan")));
+    }
+
+    #[test]
+    fn suggested_page_is_not_installed_yet() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("maserati", "Maserati GranTurismo"));
+        bind(&store, "maserati", "stmods", "cheekqo", false);
+        let index = InstalledIndex::from_store(&store);
+        assert!(!index.contains(&listing("stmods", "cheekqo", "Lamborghini Urus")));
+        // Пока страницы нет, узнаём мод по названию.
+        assert!(index.contains(&listing("stmods", "cheekqo", "Maserati GranTurismo")));
+    }
+
+    #[test]
+    fn listings_are_found_by_site_and_id() {
+        let response = SearchResponse {
+            cards: Vec::new(),
+            sources: Vec::new(),
+            listings: vec![listing("STMods", "a", "A"), listing("modland", "a", "B")],
+        };
+        assert_eq!(find_listing(&response, "stmods", "a").unwrap().title, "A");
+        assert_eq!(find_listing(&response, "modland", "a").unwrap().title, "B");
+        assert!(find_listing(&response, "stmods", "b").is_none());
     }
 }

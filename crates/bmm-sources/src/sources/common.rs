@@ -25,9 +25,8 @@ static SITE_TAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\s+-\s+[\p{L}\p{Nd}-]+\.(?:ru|net|org|com|io|de)\b.*$").unwrap()
 });
 /// Служебные части перед адресом сайта: раздел («BeamNG Машины»), «Моды».
-static SECTION_TAIL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\s+-\s+(?:моды|mods|beamng(?:\s+[\p{L}]+)?)\s*$").unwrap()
-});
+static SECTION_TAIL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\s+-\s+(?:моды|mods|beamng(?:\s+[\p{L}]+)?)\s*$").unwrap());
 static BEAMNG_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\s+-\s+BeamNG\.drive$").unwrap());
 

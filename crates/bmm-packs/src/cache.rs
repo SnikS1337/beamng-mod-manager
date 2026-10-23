@@ -92,7 +92,12 @@ impl PreviewCache {
         }
     }
 
-    fn store(&self, key: &str, extension: &str, bytes: &[u8]) -> std::io::Result<(PathBuf, String)> {
+    fn store(
+        &self,
+        key: &str,
+        extension: &str,
+        bytes: &[u8],
+    ) -> std::io::Result<(PathBuf, String)> {
         fs::create_dir_all(&self.root)?;
         let extension = extension.trim_start_matches('.').to_lowercase();
         let path = self.root.join(format!("{key}.{extension}"));
@@ -332,10 +337,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut jpg = Vec::new();
         let noisy = image::RgbImage::from_fn(2400, 1600, |x, y| {
-            image::Rgb([(x * 7 % 251) as u8, (y * 13 % 241) as u8, ((x ^ y) % 239) as u8])
+            image::Rgb([
+                (x * 7 % 251) as u8,
+                (y * 13 % 241) as u8,
+                ((x ^ y) % 239) as u8,
+            ])
         });
         noisy
-            .write_to(&mut std::io::Cursor::new(&mut jpg), image::ImageFormat::Jpeg)
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpg),
+                image::ImageFormat::Jpeg,
+            )
             .unwrap();
         assert!(jpg.len() as u64 > PREVIEW_STALE_BYTES);
         fs::write(dir.path().join("old.jpg"), &jpg).unwrap();

@@ -1539,7 +1539,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let installer = installer(&temp);
         let v1 = source_zip(&temp);
-        assert!(installer.install_from_path(&v1, "car.zip", InstallOptions::default()).success);
+        assert!(
+            installer
+                .install_from_path(&v1, "car.zip", InstallOptions::default())
+                .success
+        );
         let broken = temp.path().join("broken.zip");
         fs::write(&broken, b"definitely not a zip").unwrap();
         let update =
@@ -1576,7 +1580,11 @@ mod tests {
         });
         for (index, source) in sources.iter().enumerate() {
             let installed = installer.layout().mods_dir.join(format!("car{index}.zip"));
-            assert_eq!(fs::read(installed).unwrap(), fs::read(source).unwrap(), "{index}");
+            assert_eq!(
+                fs::read(installed).unwrap(),
+                fs::read(source).unwrap(),
+                "{index}"
+            );
         }
         assert!(part_files(&installer).is_empty());
     }
