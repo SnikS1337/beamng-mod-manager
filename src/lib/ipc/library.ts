@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type ModKind = "vehicle" | "level" | "sound" | "script" | "unknown";
 export type PendingState = "none" | "enabling" | "disabling" | "queued";
@@ -387,4 +388,10 @@ export async function modVersions(id: string): Promise<VersionRow[]> {
 
 export async function modRestoreVersion(id: string, backupId: string): Promise<void> {
   if (isTauri()) await invoke("mod_restore_version", { id, backupId });
+}
+
+/** Дочитаны названия модов из их архивов: карточки стоит перерисовать. */
+export async function listenLibraryTitles(handler: () => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<number>("library://titles", () => handler());
 }

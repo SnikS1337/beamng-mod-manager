@@ -21,6 +21,8 @@ use crate::runner::UpdateProgress;
 pub struct PageSearchReport {
     /// Сколько модов получили предложенную страницу.
     pub found: usize,
+    /// Из них сразу взяты под наблюдение (совпадение почти наверняка).
+    pub followed: usize,
     /// Сколько модов реально искали (хотя бы один сайт ответил).
     pub searched: usize,
     pub cancelled: bool,
@@ -110,10 +112,13 @@ pub fn find_pages(
                 source: guess.listing.source,
                 source_id: guess.listing.source_id,
                 url: guess.listing.url,
-                confirmed: false,
+                confirmed: guess.certain,
             };
             if store.upsert_binding(binding).is_ok() {
                 result.found += 1;
+                if guess.certain {
+                    result.followed += 1;
+                }
             }
         }
         store.set_page_search(
@@ -412,13 +417,13 @@ mod tests {
     #[test]
     fn find_pages_suggests_once_then_confirm_reject_undo() {
         let store = InMemoryLibraryStore::new();
-        store.upsert_mod(installed("a", "toyota_sienna_2017_v1.0.zip"));
+        store.upsert_mod(installed("a", "toyota_sienna_v1.0.zip"));
         store.upsert_mod(installed("b", "lada_niva_4x4.zip"));
         let site = Site::new(|query| {
             if query.to_lowercase().contains("sienna") {
                 Ok(vec![listing(
                     "s",
-                    "МОД Toyota Sienna 2017 v2.0 (0.34.x) ДЛЯ BEAMNG.DRIVE",
+                    "МОД Toyota Sienna v2.0 (0.34.x) ДЛЯ BEAMNG.DRIVE",
                 )])
             } else {
                 Ok(Vec::new())

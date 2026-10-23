@@ -9,5 +9,6 @@ pub mod overview;
 pub mod preview;
 pub mod safe_name;
 pub mod scan;
+pub mod stock;
 pub mod versions;
 pub mod zip_index;

@@ -3,8 +3,9 @@
 //! Мод ищется на сайтах по названию; предлагается одна страница, только если
 //! она явно та: название совпадает почти целиком, автор и размер не спорят,
 //! версия на сайте не старше установленной, и на том же сайте нет второй такой
-//! же похожей. Привязка ставится неподтверждённой — следить начинаем, только
-//! когда человек нажмёт «Следить».
+//! же похожей. Если совпадение почти наверняка ([`PageGuess::certain`]), программа
+//! начинает следить сама — сотни модов вручную не подтверждают; остальные страницы
+//! ждут «Следить» или «Это другой мод».
 
 use std::collections::HashSet;
 
@@ -21,19 +22,27 @@ use crate::bindings::BindingSuggester;
 /// Ничего не нашли — следующий поиск для этого мода не раньше.
 pub const RETRY_AFTER: TimeDelta = TimeDelta::days(14);
 /// Сколько модов искать за одну проверку: каждый — несколько запросов к каждому сайту.
-pub const PER_RUN: usize = 20;
+pub const PER_RUN: usize = 60;
 /// Доля совпавших слов названия (Жаккар), с которой страница считается «тем же модом».
 pub const MIN_NAME: f64 = 0.8;
 /// Вторая страница того же сайта ближе этого к лучшей — непонятно, какая из них.
 pub const AMBIGUOUS: f64 = 0.05;
 /// Минимальное отношение размеров установленного мода и страницы.
 pub const SIZE_MIN_RATIO: f64 = 0.85;
+/// Название, с которым следить можно без вопроса (при одном подтверждающем признаке).
+pub const CERTAIN_NAME: f64 = 0.9;
+/// Размеры архива и страницы, которые считаются «тем же файлом».
+pub const CERTAIN_SIZE_RATIO: f64 = 0.97;
 
 /// Предложенная страница: запись на сайте и насколько она похожа.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageGuess {
     pub listing: Listing,
     pub score: f64,
+    /// Почти наверняка тот же мод: название совпадает (≥ 0.9, от двух слов) и есть
+    /// подтверждение — та же версия, тот же размер или полное совпадение длинного
+    /// названия (от трёх слов). Тогда следим без вопроса.
+    pub certain: bool,
 }
 
 /// Подбор страницы по названию.
@@ -159,15 +168,27 @@ impl PageGuesser {
                 .clone()
                 .or_else(|| TitleParser::parse(&listing.title).mod_version);
             let mut score = similarity;
-            match VersionComparer::compare(installed_version.as_deref(), site_version.as_deref()) {
+            let order =
+                VersionComparer::compare(installed_version.as_deref(), site_version.as_deref());
+            match order {
                 VersionOrder::Older => continue, // на сайте старее установленного — это не его страница
                 VersionOrder::Same => score += 0.1,
                 VersionOrder::Newer => score += 0.02,
                 VersionOrder::Unknown => {}
             }
+            let same_size = match (installed.size_bytes, listing.size_bytes) {
+                (Some(mine), Some(theirs)) if mine > 0 && theirs > 0 => {
+                    mine.min(theirs) as f64 / mine.max(theirs) as f64 >= CERTAIN_SIZE_RATIO
+                }
+                _ => false,
+            };
+            let certain = similarity >= CERTAIN_NAME
+                && tokens >= 2
+                && (order == VersionOrder::Same || same_size || (similarity >= 1.0 && tokens >= 3));
             fits.push(PageGuess {
                 listing: listing.clone(),
                 score,
+                certain,
             });
         }
         if fits.is_empty() {
@@ -255,6 +276,53 @@ mod tests {
 
     fn l(source: &str, id: &str, title: &str) -> Listing {
         listing(source, id, title, None, None, PriceStatus::Unknown)
+    }
+
+    #[test]
+    fn certain_match_needs_a_confirming_sign() {
+        let mb = 1024 * 1024;
+        // Название из архива и та же версия на сайте — следим сами.
+        let same_version = PageGuesser::pick(
+            &installed("a", "daciasanderomk1_tbdiesel.zip", Some("1.2"), None),
+            Some("Dacia Sandero (B90)"),
+            &[l("stmods", "1", "Dacia Sandero (B90) v1.2")],
+        )
+        .unwrap();
+        assert!(same_version.certain);
+
+        // Тот же размер архива (в пределах 3 %).
+        let same_size = PageGuesser::pick(
+            &installed("b", "laurel_c33.zip", None, Some(541 * mb)),
+            Some("Nissan Laurel C33"),
+            &[listing(
+                "modsgaming",
+                "2",
+                "Nissan Laurel C33",
+                None,
+                Some(545 * mb),
+                PriceStatus::Free,
+            )],
+        )
+        .unwrap();
+        assert!(same_size.certain);
+
+        // Длинное название совпало целиком, версий и размеров нет.
+        let exact = PageGuesser::pick(
+            &installed("c", "x.zip", None, None),
+            Some("Maserati GranTurismo Trofeo"),
+            &[l("stmods", "3", "Maserati GranTurismo Trofeo")],
+        )
+        .unwrap();
+        assert!(exact.certain);
+
+        // Два слова, на сайте новее, размеров нет — только предложение.
+        let unsure = PageGuesser::pick(
+            &installed("d", "toyota_sienna_v1.0.zip", Some("1.0"), None),
+            None,
+            &[l("stmods", "4", "Toyota Sienna v2.0")],
+        )
+        .unwrap();
+        assert!(!unsure.certain);
     }
 
     #[test]
@@ -441,7 +509,7 @@ mod tests {
     #[test]
     fn due_skips_bound_declined_and_fresh_and_takes_newest() {
         let store = InMemoryLibraryStore::new();
-        for index in 0..25 {
+        for index in 0..(PER_RUN as i64 + 5) {
             let mut installed = installed(
                 &format!("m{index}"),
                 &format!("mod_{index}.zip"),

@@ -162,6 +162,12 @@ impl Drop for PageBusyGuard {
     }
 }
 
+/// Чем искать мод на сайтах: название из его архива (`info.json`), иначе из библиотеки.
+fn page_title(state: &AppState, mod_id: &str) -> Option<String> {
+    crate::commands::library::archive_title_of(state, mod_id)
+        .or_else(|| state.library.get_mod(mod_id).map(|item| item.name))
+}
+
 fn run_page_search(
     app: &AppHandle,
     state: &AppState,
@@ -181,7 +187,7 @@ fn run_page_search(
         service.as_ref(),
         Utc::now().fixed_offset(),
         cancel,
-        &|mod_id| store.get_mod(mod_id).map(|item| item.name),
+        &|mod_id| page_title(state, mod_id),
         Some(&mut progress),
     )
 }
@@ -196,7 +202,7 @@ fn run_page_search_quiet(state: &AppState, cancel: &AtomicBool) -> bmm_checks::P
         service.as_ref(),
         Utc::now().fixed_offset(),
         cancel,
-        &|mod_id| store.get_mod(mod_id).map(|item| item.name),
+        &|mod_id| page_title(state, mod_id),
         None,
     )
 }
@@ -252,15 +258,24 @@ pub async fn updates_start(
         }));
         drop(batch);
         match result {
-            Ok(report) => {
+            Ok(mut report) => {
                 // Моды без страницы ищем тем же ходом, как legacy, — но не после отмены.
                 if !report.cancelled
                     && let Some(_guard) = PageBusyGuard::acquire(page_busy)
                 {
                     // Подбор — подсказка: его сбой не должен съедать итог проверки.
-                    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        run_page_search(&app, &state_for_task, request_id, &page_cancel);
-                    }));
+                    let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        run_page_search(&app, &state_for_task, request_id, &page_cancel)
+                    }))
+                    .unwrap_or_default();
+                    // Взятые под наблюдение сами — проверяем сразу, а не при следующем запуске.
+                    if pages.followed > 0 {
+                        let again = {
+                            let _batch = state_for_task.library.batch();
+                            coordinator.check(false, None)
+                        };
+                        report = merge_reports(report, again);
+                    }
                 }
                 let snapshot = build_snapshot(&state_for_task);
                 let event = done_event(request_id, snapshot, &report, &names, Some("done"), None);
@@ -344,6 +359,10 @@ pub async fn updates_find_pages(
             run_page_search(&app, &state_for_task, request_id, &cancel)
         }))
         .unwrap_or_default();
+        if report.followed > 0 {
+            let _batch = state_for_task.library.batch();
+            let _ = runtime.coordinator.check(false, None);
+        }
         let snapshot = build_snapshot(&state_for_task);
         let event = UpdatesEventDto {
             request_id,
@@ -641,6 +660,41 @@ fn progress_dto(progress: &UpdateProgress) -> UpdateProgressDto {
     }
 }
 
+/// Итог проверки и дополнительной проверки модов, которые программа только что
+/// взяла под наблюдение сама: новые находки обеих, состояние сайтов — свежее.
+fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> UpdateRunReport {
+    let mut new_findings = first.new_findings;
+    for finding in again.new_findings {
+        if !new_findings
+            .iter()
+            .any(|known| known.mod_id == finding.mod_id)
+        {
+            new_findings.push(finding);
+        }
+    }
+    let mut sources = first.sources;
+    for source in again.sources {
+        match sources
+            .iter_mut()
+            .find(|known| known.source == source.source)
+        {
+            Some(known) => *known = source,
+            None => sources.push(source),
+        }
+    }
+    UpdateRunReport {
+        findings: again.findings,
+        sources,
+        requests: first.requests + again.requests,
+        up_to_date: first.up_to_date + again.up_to_date,
+        new_findings,
+        fresh_skipped: first.fresh_skipped,
+        cancelled: first.cancelled || again.cancelled,
+        stopped_by_time: first.stopped_by_time || again.stopped_by_time,
+        reused: false,
+    }
+}
+
 /// Фоновая проверка не связана ни с одним нажатием в окне.
 const AUTO_REQUEST_ID: u64 = 0;
 
@@ -732,7 +786,7 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                         }
                     }
                 }
-                let report = {
+                let mut report = {
                     let _batch = state.library.batch();
                     runtime.coordinator.check(false, None)
                 };
@@ -740,9 +794,17 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                     && let Some(_guard) = PageBusyGuard::acquire(runtime.page_busy.clone())
                 {
                     runtime.page_cancel.store(false, Ordering::SeqCst);
-                    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        run_page_search_quiet(&state, &runtime.page_cancel);
-                    }));
+                    let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        run_page_search_quiet(&state, &runtime.page_cancel)
+                    }))
+                    .unwrap_or_default();
+                    if pages.followed > 0 {
+                        let again = {
+                            let _batch = state.library.batch();
+                            runtime.coordinator.check(false, None)
+                        };
+                        report = merge_reports(report, again);
+                    }
                 }
                 let names: HashMap<String, String> = runtime
                     .sources

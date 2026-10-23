@@ -142,6 +142,23 @@ impl PreviewCache {
         })
     }
 
+    /// Несколько названий одной записью файла: первый проход по сотням модов.
+    pub fn put_titles(&self, entries: &[(String, Option<String>)]) -> std::io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        fs::create_dir_all(&self.root)?;
+        let mut titles = self.titles();
+        for (key, title) in entries {
+            let value = title.as_deref().unwrap_or("");
+            if value.chars().count() <= 200 {
+                titles.insert(key.clone(), value.to_string());
+            }
+        }
+        let json = serde_json::to_string(&titles).map_err(std::io::Error::other)?;
+        atomic::write_atomic(&self.root.join("titles.json"), json.as_bytes())
+    }
+
     pub fn put_title(&self, key: &str, title: Option<&str>) -> std::io::Result<()> {
         fs::create_dir_all(&self.root)?;
         let mut titles = self.titles();
@@ -197,6 +214,21 @@ mod tests {
         assert!(dir.path().join("live.jpg").exists());
         assert!(!dir.path().join("dead.jpg").exists());
         assert!(dir.path().join("readme.txt").exists());
+    }
+
+    #[test]
+    fn titles_are_written_in_one_batch() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(temp.path());
+        cache
+            .put_titles(&[
+                ("a".to_string(), Some("Dacia Sandero".to_string())),
+                ("b".to_string(), None),
+            ])
+            .unwrap();
+        assert_eq!(cache.title("a"), Some(Some("Dacia Sandero".to_string())));
+        assert_eq!(cache.title("b"), Some(None), "известно, что названия нет");
+        assert_eq!(cache.title("c"), None, "ещё не читали");
     }
 
     #[test]
