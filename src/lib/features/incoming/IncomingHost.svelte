@@ -107,8 +107,8 @@
           dragActive = false;
         } else if (payload.type === "drop") {
           dragActive = false;
-          if (dialogOpen) return;
-          const archives = payload.paths.filter(isArchivePath).slice(0, 8);
+          // Всё брошенное — в очередь, даже поверх открытого окна: ничего не теряем.
+          const archives = payload.paths.filter(isArchivePath);
           if (archives.length > 0) incomingQueue.add(archives);
         }
       })
@@ -409,12 +409,8 @@
   function onHtmlDrop(event: DragEvent): void {
     event.preventDefault();
     dragActive = false;
-    if (dialogOpen) return;
     const files = Array.from(event.dataTransfer?.files ?? []);
-    const archives = files
-      .map((file) => file.name)
-      .filter(isArchivePath)
-      .slice(0, 8);
+    const archives = files.map((file) => file.name).filter(isArchivePath);
     if (archives.length > 0) incomingQueue.add(archives);
   }
 </script>

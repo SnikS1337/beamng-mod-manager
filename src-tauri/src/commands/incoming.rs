@@ -554,6 +554,32 @@ mod tests {
     }
 
     #[test]
+    fn broken_and_missing_archives_are_reported_not_dropped() {
+        let (temp, state) = setup();
+        let broken = temp.path().join("broken.zip");
+        fs::write(&broken, b"not a zip at all").unwrap();
+        let missing = temp.path().join("missing.zip");
+        let good = temp.path().join("good.zip");
+        make_zip(&good, b"{}");
+        let paths: Vec<String> = [&broken, &missing, &good]
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let result = inspect_paths(&state, &paths).unwrap();
+        assert_eq!(result.len(), 3, "каждый архив получил ответ");
+        // Битый архив — одна заблокированная строка с одной причиной, а не тишина.
+        let broken_item = &result[0].items[0];
+        assert!(broken_item.blocked);
+        assert_eq!(broken_item.findings.len(), 1, "{:?}", broken_item.findings);
+        assert!(result[1].problem.is_some(), "пропавший файл назван");
+        assert!(result[2].problem.is_none(), "{:?}", result[2].problem);
+        assert_eq!(result[2].items.len(), 1);
+        for archive in &result {
+            let _ = fs::remove_dir_all(&archive.work_dir);
+        }
+    }
+
+    #[test]
     fn install_update_and_undo_keeps_disabled_state() {
         let (temp, state) = setup();
         let v1 = temp.path().join("v1.zip");
