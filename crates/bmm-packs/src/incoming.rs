@@ -807,11 +807,20 @@ fn match_item(
 
 /// Ключи содержимого, по которым мод узнаётся: `vehicles/<машина>` (кроме общей
 /// `vehicles/common`) и `levels/<карта>`.
+/// Свои машины и карты мода. Стандартные папки игры (`vehicles/etk800`, `levels/utah`)
+/// мод не называют: их правят десятки разных модов — тюнинг, двигатели, карьера.
+/// По ним `Universal_EV_Conversion` выходил «обновлением» `CJD_Specials` и при
+/// установке удалил бы его.
 fn identity_keys(keys: &HashSet<String>) -> HashSet<String> {
     keys.iter()
         .filter(|key| {
-            (key.starts_with("vehicles/") && key.as_str() != "vehicles/common")
-                || key.starts_with("levels/")
+            if let Some(folder) = key.strip_prefix("vehicles/") {
+                folder != "common" && !crate::stock::is_stock_vehicle(folder)
+            } else if let Some(folder) = key.strip_prefix("levels/") {
+                !crate::stock::is_stock_level(folder)
+            } else {
+                false
+            }
         })
         .cloned()
         .collect()
@@ -2073,6 +2082,78 @@ mod tests {
             &AtomicBool::new(false),
         );
         assert_eq!(alone.items[0].similar_to, None);
+    }
+
+    #[test]
+    fn mods_for_stock_cars_are_not_updates_of_each_other() {
+        // Реальные пары из скачанного набора: правки стандартных машин игры.
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Universal_EV_Conversion.zip");
+        build_zip(
+            &source,
+            &[
+                ("vehicles/etk800/ev.jbeam", b"x"),
+                ("vehicles/pickup/ev.jbeam", b"x"),
+                ("vehicles/van/ev.jbeam", b"x"),
+                ("lua/ge/extensions/ev.lua", b"x"),
+            ],
+        );
+        let specials = installed_with(
+            "CJD_Specials.zip",
+            true,
+            &["vehicles/etk800", "vehicles/pickup", "vehicles/van"],
+            None,
+        );
+        let career = installed_with(
+            "rls_career_overhaul.zip",
+            true,
+            &[
+                "vehicles/etk800",
+                "levels/west_coast_usa",
+                "vehicles/pickup",
+            ],
+            None,
+        );
+        let analysis = analyze(
+            &source,
+            &[specials, career],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let item = &analysis.items[0];
+        assert_eq!(item.kind, IncomingKind::New);
+        assert_eq!(item.replaces, None);
+    }
+
+    #[test]
+    fn own_car_next_to_stock_folders_still_finds_its_update() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("my_car_v2.zip");
+        build_zip(
+            &source,
+            &[
+                ("vehicles/my_car/a.jbeam", b"x"),
+                ("vehicles/etk800/addon.jbeam", b"x"),
+            ],
+        );
+        let old = installed_with(
+            "my_car_v1.zip",
+            true,
+            &["vehicles/my_car", "vehicles/etk800"],
+            None,
+        );
+        let other = installed_with("tuning.zip", true, &["vehicles/etk800"], None);
+        let analysis = analyze(
+            &source,
+            &[other, old],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let item = &analysis.items[0];
+        assert_eq!(item.kind, IncomingKind::Update);
+        assert_eq!(item.replaces.as_deref(), Some("my_car_v1.zip"));
     }
 
     #[test]
