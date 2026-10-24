@@ -421,6 +421,29 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_disabled_mod_and_undoing_keeps_it_disabled() {
+        let (temp, state) = setup();
+        let source = temp.path().join("source.zip");
+        make_zip(&source);
+        install_direct(&state, &source, "off.zip");
+        let id = load_snapshot(&state).unwrap().mods[0].id.clone();
+        crate::commands::library::toggle_mod(&state, &id, false).unwrap();
+        assert!(!load_snapshot(&state).unwrap().mods[0].enabled);
+
+        let ticket = delete_mod(&state, &id).unwrap();
+        assert!(ticket.was_in_disabled);
+        undelete_mod(&state, &id).unwrap();
+        let snapshot = load_snapshot(&state).unwrap();
+        assert_eq!(snapshot.mods.len(), 1);
+        assert!(!snapshot.mods[0].enabled, "отмена не включает мод сама");
+        assert!(delete_mod(&state, "нет-такого").is_err());
+        assert!(
+            undelete_mod(&state, &id).is_err(),
+            "второй раз отменять нечего"
+        );
+    }
+
+    #[test]
     fn versions_and_restore_version_command() {
         let (temp, state) = setup();
         let source = temp.path().join("source.zip");
