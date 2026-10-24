@@ -24,6 +24,7 @@
     onRestoreVersion,
     onUnfollow,
     onBindPage,
+    onPassCheck,
     onClose,
   }: {
     details: ModDetails | null;
@@ -41,6 +42,8 @@
     onUnfollow?: (source: string) => void;
     /** «Указать страницу»: `null` — получилось, иначе причина, почему нет. */
     onBindPage?: (url: string) => Promise<string | null>;
+    /** Сайт просит подтвердить, что вы человек: открыть его проверку. `true` — пройдена. */
+    onPassCheck?: () => Promise<boolean>;
     onClose: () => void;
   } = $props();
 
@@ -57,13 +60,24 @@
     bindError = null;
   });
 
-  async function bindPage(event: SubmitEvent) {
-    event.preventDefault();
+  const needsCheck = $derived(!!bindError && bindError.includes("человек"));
+
+  async function bindPage(event?: SubmitEvent) {
+    event?.preventDefault();
     if (!onBindPage || bindBusy || !pageUrl.trim()) return;
     bindBusy = true;
     bindError = await onBindPage(pageUrl.trim());
     bindBusy = false;
     if (!bindError) binding = false;
+  }
+
+  async function passCheck() {
+    if (!onPassCheck || bindBusy) return;
+    bindBusy = true;
+    const passed = await onPassCheck().catch(() => false);
+    bindBusy = false;
+    // Проверку прошли — сразу пробуем ещё раз, вставлять ссылку заново не нужно.
+    if (passed) await bindPage();
   }
 
   const problemText: Record<PackagingProblem, string> = {
@@ -218,6 +232,11 @@
         />
         {#if bindError}
           <p class="bind-error">{bindError}</p>
+          {#if needsCheck && onPassCheck}
+            <button class="btn-glass" type="button" onclick={() => void passCheck()} disabled={bindBusy}>
+              Пройти проверку сайта
+            </button>
+          {/if}
         {/if}
         <div class="bind-actions">
           <button class="btn-primary" type="submit" disabled={bindBusy || !pageUrl.trim()}>
