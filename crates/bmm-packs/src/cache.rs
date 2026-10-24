@@ -190,7 +190,12 @@ impl PreviewCache {
         let Ok(text) = fs::read_to_string(path) else {
             return BTreeMap::new();
         };
-        serde_json::from_str(&text).unwrap_or_default()
+        let titles: BTreeMap<String, String> = serde_json::from_str(&text).unwrap_or_default();
+        // Записанное раньше могло сохранить лишние пробелы авторов («Toyota  Mark II»).
+        titles
+            .into_iter()
+            .map(|(key, title)| (key, title.split_whitespace().collect::<Vec<_>>().join(" ")))
+            .collect()
     }
 
     pub fn title(&self, key: &str) -> Option<Option<String>> {
@@ -371,6 +376,22 @@ mod tests {
         assert_eq!(cache.title("a"), Some(Some("Dacia Sandero".to_string())));
         assert_eq!(cache.title("b"), Some(None), "известно, что названия нет");
         assert_eq!(cache.title("c"), None, "ещё не читали");
+    }
+
+    #[test]
+    fn stored_titles_lose_extra_spaces() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(temp.path());
+        fs::create_dir_all(temp.path()).unwrap();
+        fs::write(
+            temp.path().join("titles.json"),
+            r#"{"a":"Toyota  Mark II (X90)","b":"LADA 2104/2105/2107  ","c":""}"#,
+        )
+        .unwrap();
+        let titles = cache.titles();
+        assert_eq!(titles["a"], "Toyota Mark II (X90)");
+        assert_eq!(titles["b"], "LADA 2104/2105/2107");
+        assert_eq!(cache.title("c"), Some(None), "пустое — «названия нет»");
     }
 
     #[test]

@@ -385,12 +385,7 @@ fn build_item(
     };
     let title = overview_title
         .filter(|title| !title.trim().is_empty())
-        .unwrap_or_else(|| {
-            Path::new(&file_name)
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_else(|| file_name.clone())
-        });
+        .unwrap_or_else(|| title_from_file_name(&file_name));
     let similar_to = if kind == IncomingKind::New {
         similar_installed(&title, installed)
     } else {
@@ -958,6 +953,20 @@ fn unique_name(
     name
 }
 
+/// Название по имени файла, без меток сайтов и версии: «hustle traffic rotation»
+/// вместо «hustle_traffic_rotation_modland».
+fn title_from_file_name(file_name: &str) -> String {
+    let guessed = filename::from_file_name(file_name).name;
+    if guessed.trim().is_empty() {
+        Path::new(file_name)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file_name.to_string())
+    } else {
+        guessed
+    }
+}
+
 fn name_key(file_name: &str) -> String {
     TitleNormalizer::normalize(&filename::from_file_name(file_name).name)
 }
@@ -1260,7 +1269,8 @@ mod tests {
         let item = &analysis.items[0];
         assert_eq!(item.kind, IncomingKind::New);
         assert_eq!(item.file_name, "BMW M3.zip");
-        assert_eq!(item.title, "bmw");
+        // Без названия в info.json — имя файла, а не служебное имя папки «bmw».
+        assert_eq!(item.title, "BMW M3");
         assert!(!item.repacked);
     }
 

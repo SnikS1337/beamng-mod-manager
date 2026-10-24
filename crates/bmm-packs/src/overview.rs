@@ -80,6 +80,24 @@ pub fn read_overview(path: &Path) -> ArchiveOverview {
     let mut warnings = Vec::new();
     let vehicle_titles = titles_for(path, &prefix, "vehicles", &vehicles);
     let level_titles = titles_for(path, &prefix, "levels", &levels);
+    // Название мода — только из его info.json. Имя папки («am», «etkhatch») —
+    // служебное: лучше имя файла, чем такое.
+    // Правка стандартной машины несёт её info.json — это название машины игры, не мода.
+    let named_title = if vehicles.len() == 1 && levels.is_empty() {
+        vehicles
+            .iter()
+            .next()
+            .filter(|name| !crate::stock::is_stock_vehicle(name))
+            .and_then(|name| vehicle_titles.get(name).cloned())
+    } else if levels.len() == 1 && vehicles.is_empty() {
+        levels
+            .iter()
+            .next()
+            .filter(|name| !crate::stock::is_stock_level(name))
+            .and_then(|name| level_titles.get(name).cloned())
+    } else {
+        None
+    };
     let vehicles: Vec<String> = vehicles
         .iter()
         .map(|name| {
@@ -99,13 +117,7 @@ pub fn read_overview(path: &Path) -> ArchiveOverview {
         })
         .collect();
 
-    let title = if vehicles.len() == 1 && levels.is_empty() {
-        Some(vehicles[0].clone())
-    } else if levels.len() == 1 && vehicles.is_empty() {
-        Some(levels[0].clone())
-    } else {
-        None
-    };
+    let title = named_title;
 
     if index.entries.is_empty() {
         warnings.push("Архив пуст или не читается.".to_string());
@@ -275,6 +287,8 @@ fn titles_for(
                 .and_then(Value::as_str)
                 .map(str::to_string)
         };
+        // «LADA 2104/2105/2107  », «Toyota  Mark II»: лишние пробелы авторов убираем.
+        let title = title.map(|title| title.split_whitespace().collect::<Vec<_>>().join(" "));
         if let Some(title) = title
             && is_usable_title(&title)
         {
@@ -460,6 +474,56 @@ mod tests {
         );
         let overview = read_overview(&path);
         assert_eq!(overview.title.as_deref(), Some("Ibishu Covet"));
+    }
+
+    #[test]
+    fn folder_name_is_not_a_title() {
+        // AstonMartinValhalla.zip: vehicles/am без названия в info.json.
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("AstonMartinValhalla.zip");
+        build_zip(
+            &path,
+            &[
+                ("vehicles/am/a.jbeam", b"x"),
+                ("vehicles/am/info.json", br#"{"Author":"x"}"#),
+            ],
+        );
+        assert_eq!(read_overview(&path).title, None);
+    }
+
+    #[test]
+    fn extra_spaces_in_titles_are_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("mark2.zip");
+        build_zip(
+            &path,
+            &[(
+                "vehicles/mark2/info.json",
+                br#"{"Name":"  Toyota  Mark II (X90)  "}"#,
+            )],
+        );
+        assert_eq!(
+            read_overview(&path).title.as_deref(),
+            Some("Toyota Mark II (X90)")
+        );
+        assert_eq!(
+            archive_title(&path).unwrap().as_deref(),
+            Some("Toyota Mark II (X90)")
+        );
+    }
+
+    #[test]
+    fn stock_car_edit_has_no_title() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("pickup_tune.zip");
+        build_zip(
+            &path,
+            &[(
+                "vehicles/pickup/info.json",
+                br#"{"Brand":"Gavril","Name":"D-Series"}"#,
+            )],
+        );
+        assert_eq!(read_overview(&path).title, None);
     }
 
     #[test]
