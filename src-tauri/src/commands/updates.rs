@@ -501,6 +501,34 @@ pub async fn updates_refollow(
     Ok(build_snapshot(&state))
 }
 
+/// «Указать страницу» из панели мода: ссылка, которую вставил человек.
+#[tauri::command]
+pub async fn mod_bind_page(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+    url: String,
+) -> Result<(), AppError> {
+    let state = state.inner().clone();
+    let runtime = state
+        .update
+        .clone()
+        .ok_or_else(|| AppError::new("pages", "Проверка обновлений недоступна."))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        bmm_checks::bind_url(
+            state.library.as_ref(),
+            runtime.sources.as_ref(),
+            &mod_id,
+            &url,
+            &AtomicBool::new(false),
+            Utc::now().fixed_offset(),
+        )
+        .map(|_| ())
+        .map_err(|message| AppError::new("pages", message))
+    })
+    .await
+    .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
 #[tauri::command]
 pub async fn updates_undo_page(
     state: tauri::State<'_, Arc<AppState>>,

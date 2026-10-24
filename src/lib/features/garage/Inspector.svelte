@@ -23,6 +23,7 @@
     onDelete,
     onRestoreVersion,
     onUnfollow,
+    onBindPage,
     onClose,
   }: {
     details: ModDetails | null;
@@ -38,10 +39,32 @@
     onRestoreVersion: (version: VersionRow) => void;
     /** «Это другой мод»: программа следит не за той страницей. */
     onUnfollow?: (source: string) => void;
+    /** «Указать страницу»: `null` — получилось, иначе причина, почему нет. */
+    onBindPage?: (url: string) => Promise<string | null>;
     onClose: () => void;
   } = $props();
 
   let preview = $state<string | null>(null);
+  let binding = $state(false);
+  let pageUrl = $state("");
+  let bindError = $state<string | null>(null);
+  let bindBusy = $state(false);
+
+  $effect(() => {
+    details?.id;
+    binding = false;
+    pageUrl = "";
+    bindError = null;
+  });
+
+  async function bindPage(event: SubmitEvent) {
+    event.preventDefault();
+    if (!onBindPage || bindBusy || !pageUrl.trim()) return;
+    bindBusy = true;
+    bindError = await onBindPage(pageUrl.trim());
+    bindBusy = false;
+    if (!bindError) binding = false;
+  }
 
   const problemText: Record<PackagingProblem, string> = {
     wrapped:
@@ -180,7 +203,37 @@
       <VersionsBlock modId={details.id} onRestore={onRestoreVersion} />
     {/if}
 
+    {#if binding}
+      <form class="bind" onsubmit={bindPage}>
+        <span>Ссылка на страницу мода</span>
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          type="text"
+          inputmode="url"
+          spellcheck="false"
+          bind:value={pageUrl}
+          placeholder="https://stmods.org/beamng_drive/mods/…"
+          autofocus
+          disabled={bindBusy}
+        />
+        {#if bindError}
+          <p class="bind-error">{bindError}</p>
+        {/if}
+        <div class="bind-actions">
+          <button class="btn-primary" type="submit" disabled={bindBusy || !pageUrl.trim()}>
+            {bindBusy ? "Открываем страницу…" : "Следить"}
+          </button>
+          <button class="btn-glass" type="button" onclick={() => (binding = false)} disabled={bindBusy}>
+            Отмена
+          </button>
+        </div>
+      </form>
+    {/if}
+
     <div class="links">
+      {#if onBindPage && !details.binding?.confirmed && !binding}
+        <button class="btn-glass" type="button" onclick={() => (binding = true)}>Указать страницу</button>
+      {/if}
       {#if details.binding}
         <button class="btn-glass" type="button" onclick={() => void openPage()}>Открыть страницу</button>
         {#if details.binding.confirmed && onUnfollow}
@@ -389,6 +442,54 @@
     height: 34px;
     padding: 0 14px;
     font-size: 12.5px;
+  }
+
+  .bind {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 18px;
+    padding: 14px;
+    border-radius: 18px;
+    background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  }
+
+  .bind span {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+  }
+
+  .bind input {
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel-solid);
+    color: var(--foreground);
+    font-size: 13px;
+    outline: none;
+    user-select: text;
+  }
+
+  .bind input:focus {
+    border-color: var(--ring);
+  }
+
+  .bind-error {
+    margin: 0;
+    color: var(--destructive);
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+
+  .bind-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .bind-actions :global(button) {
+    flex: 1 1 auto;
+    height: 34px;
   }
 
   .delete {

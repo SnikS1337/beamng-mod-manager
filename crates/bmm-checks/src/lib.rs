@@ -45,8 +45,8 @@ pub use coordinator::{UpdateCoordinator, UpdateCoordinatorOptions};
 pub use options::UpdateCheckOptions;
 pub use page_guesser::{PageGuess, PageGuesser};
 pub use pages::{
-    PageSearchReport, Unfollowed, bind_page, confirm_page, find_pages, refollow_page, reject_page,
-    suggestion_for, suggestions, undo_page, unfollow_page,
+    PageSearchReport, Unfollowed, bind_page, bind_url, confirm_page, find_pages, refollow_page,
+    reject_page, suggestion_for, suggestions, undo_page, unfollow_page,
 };
 pub use planner::{
     CardPlan, FeedCoverage, FeedEntry, FeedPlan, SkippedSource, SourceStatus, TrackedBinding,
