@@ -156,6 +156,16 @@ fn inspect_archive<R: Read + Seek>(
         let compressed_size = entry.compressed_size();
         let is_directory = name.ends_with('/');
 
+        if entry.is_symlink() {
+            findings.push(Finding {
+                severity: Severity::Block,
+                code: "symlink",
+                message: "В архиве есть символическая ссылка.".to_string(),
+                entry: Some(raw_name.clone()),
+            });
+            continue;
+        }
+
         total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(size);
 
         if is_unsafe_path(&name) {
@@ -404,6 +414,34 @@ mod tests {
             assert_eq!(finding.message, "В архиве есть файл с опасным путём.");
             assert_eq!(finding.entry.as_deref(), Some(name));
         }
+    }
+
+    #[test]
+    fn blocks_symlink_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("symlink.zip");
+        let file = File::create(&path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file("vehicles/car/a.jbeam", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"x").unwrap();
+        writer
+            .add_symlink("link", "../outside.txt", SimpleFileOptions::default())
+            .unwrap();
+        writer.finish().unwrap();
+
+        let result = inspect_zip(&path, &ArchiveLimits::default());
+
+        assert!(result.is_blocked());
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.code == "symlink")
+            .expect("symlink finding");
+        assert_eq!(finding.severity, Severity::Block);
+        assert_eq!(finding.message, "В архиве есть символическая ссылка.");
+        assert_eq!(finding.entry.as_deref(), Some("link"));
     }
 
     #[test]

@@ -412,6 +412,49 @@ mod tests {
     }
 
     #[test]
+    fn rejects_symlink_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive = temp.path().join("symlink.zip");
+        let file = File::create(&archive).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(
+            "vehicles/car/a.jbeam",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"x").unwrap();
+        zip.add_symlink(
+            "link",
+            "../outside.txt",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.finish().unwrap();
+
+        let dest = temp.path().join("out");
+        let mut budget = ExtractBudget::new(1000);
+        let error =
+            extract_archive(&archive, &dest, &mut budget, &AtomicBool::new(false)).unwrap_err();
+
+        assert!(error.to_string().contains("символическ"), "{error}");
+        assert!(!dest.join("link").exists());
+    }
+
+    #[test]
+    fn cancelled_zip_stops() {
+        let temp = tempfile::tempdir().unwrap();
+        let archive = temp.path().join("mod.zip");
+        build_zip(&archive, &[("vehicles/car/a.jbeam", b"x")]);
+        let dest = temp.path().join("out");
+        let mut budget = ExtractBudget::new(1000);
+
+        let error =
+            extract_archive(&archive, &dest, &mut budget, &AtomicBool::new(true)).unwrap_err();
+
+        assert_eq!(error, ExtractError::Cancelled);
+    }
+
+    #[test]
     fn archive_names() {
         assert!(is_archive_name("a.zip"));
         assert!(is_archive_name("a.RAR"));
