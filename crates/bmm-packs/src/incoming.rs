@@ -967,7 +967,7 @@ fn title_from_file_name(file_name: &str) -> String {
     }
 }
 
-fn name_key(file_name: &str) -> String {
+pub(crate) fn name_key(file_name: &str) -> String {
     TitleNormalizer::normalize(&filename::from_file_name(file_name).name)
 }
 

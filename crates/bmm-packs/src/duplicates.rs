@@ -69,18 +69,41 @@ pub fn find(items: &[DupItem]) -> HashMap<String, Duplicate> {
         same_cars.entry(identity).or_default().push(item);
     }
     for group in same_cars.values().filter(|group| group.len() > 1) {
-        let main = main_of(group);
-        for item in group.iter().filter(|item| item.id != main.id) {
-            result.insert(
-                item.id.to_string(),
-                Duplicate {
-                    of: main.id.to_string(),
-                    exact: false,
-                },
-            );
+        mark_versions(group, &mut result);
+    }
+
+    // Скрипты и эффекты без своих машин и карт: тот же состав архива и то же имя
+    // («weather_fx_tg_m0dsbeamng.zip», перепакованный каналом, рядом с «weather_fx.zip»).
+    // Одного состава мало: «lua/ge» есть у сотен разных модов.
+    let mut same_scripts: BTreeMap<(Vec<String>, String), Vec<&DupItem>> = BTreeMap::new();
+    for item in items {
+        if result.contains_key(item.id) || item.content.is_empty() {
+            continue;
         }
+        let name = crate::incoming::name_key(item.file_name);
+        if name.is_empty() {
+            continue;
+        }
+        let mut content: Vec<String> = item.content.iter().map(|key| key.to_lowercase()).collect();
+        content.sort();
+        content.dedup();
+        same_scripts.entry((content, name)).or_default().push(item);
+    }
+    for group in same_scripts.values().filter(|group| group.len() > 1) {
+        // Основной мог стать копией в первом проходе — тогда он уже указан у других.
+        mark_versions(group, &mut result);
     }
     result
+}
+
+fn mark_versions(group: &[&DupItem], result: &mut HashMap<String, Duplicate>) {
+    let main = main_of(group);
+    for item in group.iter().filter(|item| item.id != main.id) {
+        result.entry(item.id.to_string()).or_insert(Duplicate {
+            of: main.id.to_string(),
+            exact: false,
+        });
+    }
 }
 
 fn main_of<'a>(group: &[&'a DupItem<'a>]) -> &'a DupItem<'a> {
@@ -176,6 +199,66 @@ mod tests {
             }
         );
         assert!(!found.contains_key("p2"));
+    }
+
+    #[test]
+    fn repacked_script_with_the_same_name_is_a_second_version() {
+        // weather_fx_tg_m0dsbeamng.zip перепакован каналом: размер другой, состав тот же.
+        let weather = keys(&["lua/ge", "scripts/weather_fx"]);
+        let items = [
+            DupItem {
+                id: "w",
+                file_name: "weather_fx.zip",
+                size: 700_000,
+                content: &weather,
+            },
+            DupItem {
+                id: "w1",
+                file_name: "weather_fx (1).zip",
+                size: 700_000,
+                content: &weather,
+            },
+            DupItem {
+                id: "tg",
+                file_name: "weather_fx_tg_m0dsbeamng.zip",
+                size: 690_000,
+                content: &weather,
+            },
+        ];
+        let found = find(&items);
+        assert_eq!(
+            found["w1"],
+            Duplicate {
+                of: "w".to_string(),
+                exact: true
+            }
+        );
+        assert_eq!(
+            found["tg"],
+            Duplicate {
+                of: "w".to_string(),
+                exact: false
+            }
+        );
+        assert!(!found.contains_key("w"));
+
+        // Разные скрипты с одинаково бедным составом — не повторы.
+        let ge = keys(&["lua/ge"]);
+        let others = [
+            DupItem {
+                id: "a",
+                file_name: "traffic_tool.zip",
+                size: 10,
+                content: &ge,
+            },
+            DupItem {
+                id: "b",
+                file_name: "camera_tweaks.zip",
+                size: 20,
+                content: &ge,
+            },
+        ];
+        assert!(find(&others).is_empty());
     }
 
     #[test]
