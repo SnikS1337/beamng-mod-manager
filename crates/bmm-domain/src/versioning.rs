@@ -93,6 +93,22 @@ impl VersionComparer {
     }
 }
 
+impl VersionComparer {
+    /// Числа версий совпадают, а у установленной есть пометка сборки (alpha, beta, rc),
+    /// которой нет на сайте.
+    pub fn only_prerelease_differs(installed: Option<&str>, current: Option<&str>) -> bool {
+        let (Some(a), Some(b)) = (Self::try_parse(installed), Self::try_parse(current)) else {
+            return false;
+        };
+        let len = a.len().max(b.len());
+        let same_numbers = (0..len)
+            .all(|index| a.get(index).copied().unwrap_or(0) == b.get(index).copied().unwrap_or(0));
+        let (rank_a, _, _) = pre(installed);
+        let (rank_b, _, _) = pre(current);
+        same_numbers && rank_a < 100 && rank_b == 100
+    }
+}
+
 fn pre_rank(tag: Option<&str>) -> i32 {
     match tag.map(str::to_lowercase).as_deref() {
         None | Some("") => 100,
@@ -179,6 +195,23 @@ impl UpdateDecider {
         let order =
             VersionComparer::compare(installed.version.as_deref(), current.version.as_deref());
         if order == VersionOrder::Newer {
+            // «2.8.0-alpha2» у нас и «2.8.0» на сайте: сайты часто не пишут пометку
+            // сборки, а в имени файла она есть. Это может быть тот же файл — решает размер.
+            if VersionComparer::only_prerelease_differs(
+                installed.version.as_deref(),
+                current.version.as_deref(),
+            ) {
+                return match (installed.size_bytes, current.size_bytes) {
+                    (Some(a), Some(b)) if a > 0 && b > 0 => {
+                        if SizeComparer::differs(Some(a), Some(b)) {
+                            UpdateStatus::Likely
+                        } else {
+                            UpdateStatus::None
+                        }
+                    }
+                    _ => UpdateStatus::Possible,
+                };
+            }
             return UpdateStatus::Likely;
         }
         if order == VersionOrder::Older {
@@ -268,6 +301,44 @@ mod tests {
         let gib = 1024 * 1024 * 1024;
         assert!(!SizeComparer::differs(Some(gib), Some(gib + gib / 20)));
         assert!(SizeComparer::differs(Some(gib), Some(gib + gib / 10)));
+    }
+
+    #[test]
+    fn prerelease_file_against_unlabelled_site_version() {
+        // rls_career_overhaul_v2.8.0_alpha2.zip против «2.8.0» на STMods.
+        let mb = 1024 * 1024;
+        let ours = |size| VersionSnapshot::new(Some("2.8.0-alpha2"), size, None);
+        let site = |size| VersionSnapshot::new(Some("2.8.0"), size, None);
+        assert_eq!(
+            UpdateDecider::decide(&ours(Some(368 * mb)), &site(Some(368 * mb))),
+            UpdateStatus::None,
+            "размер тот же — это тот же файл"
+        );
+        assert_eq!(
+            UpdateDecider::decide(&ours(Some(368 * mb)), &site(Some(420 * mb))),
+            UpdateStatus::Likely
+        );
+        assert_eq!(
+            UpdateDecider::decide(&ours(Some(368 * mb)), &site(None)),
+            UpdateStatus::Possible,
+            "размера нет — только «возможно»"
+        );
+        // Новее по числам — обновление при любом размере.
+        assert_eq!(
+            UpdateDecider::decide(
+                &ours(Some(368 * mb)),
+                &VersionSnapshot::new(Some("2.8.1"), None, None)
+            ),
+            UpdateStatus::Likely
+        );
+        assert!(!VersionComparer::only_prerelease_differs(
+            Some("2.8.0"),
+            Some("2.8.0-beta")
+        ));
+        assert!(!VersionComparer::only_prerelease_differs(
+            Some("2.8.0-alpha"),
+            Some("2.8.0-beta")
+        ));
     }
 
     #[test]

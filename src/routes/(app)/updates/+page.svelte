@@ -5,6 +5,7 @@
   import { sourceName } from "$lib/ipc/search";
   import { formatAgo, formatSize, formatWhen, plural } from "$lib/features/garage/format";
   import { toasts } from "$lib/shell/toasts.svelte";
+  import { reason, sizeChange } from "$lib/features/updates/reason";
   import {
     listenUpdates,
     updatesCancel,
@@ -319,18 +320,6 @@
     let hash = 0;
     for (let index = 0; index < id.length; index += 1) hash = (hash * 31 + id.charCodeAt(index)) % 360;
     return `radial-gradient(120% 90% at 18% 0%, hsl(${hash} 70% 60% / 0.7), transparent 62%), linear-gradient(135deg, hsl(${hash} 38% 28%), hsl(${(hash + 58) % 360} 42% 16%))`;
-  }
-
-  function sizeChange(finding: UpdateFinding): string {
-    if (!finding.installedSize || !finding.latestSize || finding.installedSize === finding.latestSize) return "";
-    return `${formatSize(finding.installedSize)} → ${formatSize(finding.latestSize)}`;
-  }
-
-  function reason(finding: UpdateFinding): string {
-    const size = sizeChange(finding);
-    if (finding.status === "likely") return "Версия на сайте выше установленной.";
-    if (size) return `Версия та же, но размер на сайте изменился: ${size}. Возможно, автор перезалил файл.`;
-    return "На сайте что-то изменилось, а версия не указана. Проверьте описание на странице.";
   }
 
   function whereText(finding: UpdateFinding): string {
