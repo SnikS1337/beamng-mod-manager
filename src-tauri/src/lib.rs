@@ -234,6 +234,7 @@ pub fn run() {
             commands::updates::updates_reject_page,
             commands::updates::updates_undo_page,
             commands::updates::updates_unfollow,
+            commands::updates::updates_forget_lost,
             commands::updates::updates_refollow,
             commands::updates::mod_bind_page,
             commands::downloads::downloads_expect,

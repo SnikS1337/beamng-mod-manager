@@ -41,7 +41,15 @@ export function checkSummary(event: Done): CheckSummary {
                 : `Не ответили: ${names}`,
         );
     }
-    if (event.stoppedByTime) {
+    const changed = event.sources.filter((source) => source.status === "ok" && source.layoutChanged);
+  if (changed.length > 0) {
+    parts.push(
+      `${changed.map((source) => source.displayName).join(", ")}: сайт изменился, часть модов не прочитали`,
+    );
+  }
+  const missing = event.sources.reduce((sum, source) => sum + source.missing, 0);
+  if (missing > 0) parts.push(`Страницы пропали с сайта: ${missing}`);
+  if (event.stoppedByTime) {
         parts.push("Проверили не всё — остальное в следующий раз");
     } else if (postponed > 0) {
         parts.push(`Отложено, проверяли недавно: ${postponed}`);
