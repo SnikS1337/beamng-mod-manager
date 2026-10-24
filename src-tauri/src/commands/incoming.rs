@@ -42,6 +42,15 @@ pub struct IncomingItemDto {
     pub blocked: bool,
     pub warnings: bool,
     pub findings: Vec<IncomingFindingDto>,
+    /// Похоже, такая машина уже стоит другим модом.
+    pub similar_to: Option<SimilarModDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimilarModDto {
+    pub file_name: String,
+    pub title: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,6 +186,7 @@ fn installed_archives(
     installer: &bmm_packs::install::ModInstaller,
 ) -> Vec<InstalledArchive> {
     let scan = scan::scan_mods(installer.layout());
+    let titles = state.previews.titles();
     let mut result = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for disk in scan.mods {
@@ -216,7 +226,16 @@ fn installed_archives(
                 }
             }
         };
+        let title = titles
+            .get(&bmm_packs::cache::PreviewCache::key(
+                &disk.file_name,
+                disk.size_bytes,
+                disk.modified_utc,
+            ))
+            .filter(|title| !title.is_empty())
+            .cloned();
         result.push(InstalledArchive {
+            title,
             file_name: disk.file_name,
             enabled: disk.enabled,
             size: disk.size_bytes,
@@ -284,6 +303,9 @@ fn item_dto(item: IncomingItem) -> IncomingItemDto {
         repacked: item.repacked,
         blocked: item.blocked,
         warnings: item.warnings,
+        similar_to: item
+            .similar_to
+            .map(|(file_name, title)| SimilarModDto { file_name, title }),
         findings: item
             .findings
             .into_iter()

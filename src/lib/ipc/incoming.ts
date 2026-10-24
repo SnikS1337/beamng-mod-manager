@@ -26,6 +26,8 @@ export interface IncomingItemDto {
   blocked: boolean;
   warnings: boolean;
   findings: IncomingFindingDto[];
+  /** Похоже, такая машина уже стоит другим модом. */
+  similarTo?: { fileName: string; title: string } | null;
 }
 
 export interface IncomingArchiveDto {
@@ -170,6 +172,8 @@ function mockArchive(path: string): IncomingArchiveDto {
         ...base,
         fileName: `bigpack_vehicle_${index}.zip`,
         title: `Машина из большого модпака № ${index}`,
+        similarTo:
+          index === 3 ? { fileName: "Audi_RS3_8Y_2022.zip", title: "Audi RS3 Sportback 8Y" } : null,
         kind: index % 4 === 0 ? "update" : "new",
         replaces: index % 4 === 0 ? `bmm_mod_0000${index % 10}.zip` : null,
       });

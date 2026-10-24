@@ -302,6 +302,12 @@
       if (finding.code === "nested-root") continue;
       checks.push({ level: "attention", text: trimDot(finding.message) });
     }
+    if (item.similarTo) {
+      checks.push({
+        level: "attention",
+        text: `Похоже, такая машина уже стоит: «${item.similarTo.title}» (${item.similarTo.fileName}). В игре будут две похожие машины`,
+      });
+    }
     if (item.locked) {
       const folder = item.replacesSubFolder ?? "";
       checks.push({

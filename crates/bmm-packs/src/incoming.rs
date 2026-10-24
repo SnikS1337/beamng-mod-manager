@@ -29,6 +29,8 @@ pub struct InstalledArchive {
     pub path: PathBuf,
     pub content: HashSet<String>,
     pub sub_folder: Option<String>,
+    /// Название машины или карты из архива (`info.json`), если уже прочитано.
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +48,9 @@ pub struct IncomingItem {
     pub warnings: bool,
     pub findings: Vec<Finding>,
     pub content: HashSet<String>,
+    /// Похоже, такая машина уже стоит другим модом: (имя файла, название).
+    /// Установке не мешает — в игре просто будут две похожие машины.
+    pub similar_to: Option<(String, String)>,
 }
 
 impl IncomingItem {
@@ -386,11 +391,17 @@ fn build_item(
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_else(|| file_name.clone())
         });
+    let similar_to = if kind == IncomingKind::New {
+        similar_installed(&title, installed)
+    } else {
+        None
+    };
     IncomingItem {
         zip_path: zip_path.to_path_buf(),
         file_name,
         size: fs::metadata(zip_path).map(|meta| meta.len()).unwrap_or(0),
         title,
+        similar_to,
         kind,
         replaces,
         replaces_enabled,
@@ -437,8 +448,38 @@ fn blocked_item(
             findings
         },
         content: HashSet::new(),
+        similar_to: None,
     }
 }
+
+/// Установленный мод с почти тем же названием машины, что у нового: разные моды одной
+/// машины («Audi RS3 8Y» с разных сайтов). Обновлением это не считаем — папки машин
+/// разные, — но сказать стоит: в игре окажутся две похожие машины.
+fn similar_installed(title: &str, installed: &[InstalledArchive]) -> Option<(String, String)> {
+    if TitleNormalizer::tokens(title).len() < 2 {
+        return None;
+    }
+    installed
+        .iter()
+        .filter_map(|item| {
+            let theirs = item.title.as_deref()?;
+            if TitleNormalizer::tokens(theirs).len() < 2 {
+                return None;
+            }
+            let score = TitleNormalizer::similarity(title, theirs);
+            (score >= SIMILAR_TITLE).then_some((score, item))
+        })
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, item)| {
+            (
+                item.file_name.clone(),
+                item.title.clone().unwrap_or_default(),
+            )
+        })
+}
+
+/// Насколько похожими должны быть названия, чтобы сказать «такая машина уже есть».
+const SIMILAR_TITLE: f64 = 0.9;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Shape {
@@ -1189,6 +1230,7 @@ mod tests {
             path: PathBuf::from("missing"),
             content: content.iter().map(|value| value.to_string()).collect(),
             sub_folder: sub_folder.map(str::to_string),
+            title: None,
         }
     }
 
@@ -1633,6 +1675,7 @@ mod tests {
             path: installed_path,
             content: HashSet::new(),
             sub_folder: None,
+            title: None,
         };
         let analysis = analyze(
             &source,
@@ -1656,6 +1699,7 @@ mod tests {
             path: other_path,
             content: HashSet::new(),
             sub_folder: None,
+            title: None,
         };
         let analysis = analyze(
             &source,
@@ -1980,5 +2024,62 @@ mod tests {
     fn temporary_names_never_repeat() {
         let names: HashSet<String> = (0..10_000).map(|_| short_unique()).collect();
         assert_eq!(names.len(), 10_000);
+    }
+
+    #[test]
+    fn same_car_from_another_mod_is_pointed_out_but_installs_as_new() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("rs3_from_pack.zip");
+        build_zip(
+            &source,
+            &[
+                ("vehicles/audi_rs3_8y/a.jbeam", b"x"),
+                (
+                    "vehicles/audi_rs3_8y/info.json",
+                    br#"{"Brand":"Audi","Name":"RS3 Sportback (8Y)"}"#,
+                ),
+            ],
+        );
+        let mut other = installed_with("Audi_RS3_8Y_2022.zip", true, &["vehicles/rs3y8"], None);
+        other.title = Some("Audi RS3 Sportback 8Y".to_string());
+        let mut unrelated = installed_with("laurel.zip", true, &["vehicles/laurel"], None);
+        unrelated.title = Some("Nissan Laurel C33".to_string());
+        let analysis = analyze(
+            &source,
+            &[unrelated.clone(), other],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let item = &analysis.items[0];
+        assert_eq!(item.kind, IncomingKind::New);
+        assert_eq!(
+            item.similar_to,
+            Some((
+                "Audi_RS3_8Y_2022.zip".to_string(),
+                "Audi RS3 Sportback 8Y".to_string()
+            ))
+        );
+        assert!(
+            !item.blocked && !item.warnings,
+            "предупреждение установке не мешает"
+        );
+
+        let alone = analyze(
+            &source,
+            &[unrelated],
+            &temp.path().join("work2"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(alone.items[0].similar_to, None);
+    }
+
+    #[test]
+    fn short_titles_are_not_compared() {
+        let mut one_word = installed_with("r8.zip", true, &["vehicles/r8"], None);
+        one_word.title = Some("r8".to_string());
+        assert_eq!(similar_installed("r8", &[one_word.clone()]), None);
+        assert_eq!(similar_installed("Audi R8", &[one_word]), None);
     }
 }
