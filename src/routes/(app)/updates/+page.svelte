@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { expectDownload } from "$lib/ipc/incoming";
   import { onDestroy, onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { sourceName } from "$lib/ipc/search";
@@ -249,6 +250,15 @@
     }
   }
 
+  /** «Обновить»: страница мода и полчаса наблюдения за «Загрузками». */
+  async function update(finding: UpdateFinding) {
+    await openLink(finding.url);
+    await expectDownload();
+    toasts.show(
+      "Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить",
+    );
+  }
+
   function versionText(finding: UpdateFinding): string {
     if (finding.installedVersion && finding.latestVersion) {
       return `${finding.installedVersion} → ${finding.latestVersion}`;
@@ -415,11 +425,11 @@
                   <button class="btn-primary" type="button" onclick={() => void restore(finding)}>Вернуть в список</button>
                   <button class="link" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                 {:else if possible}
-                  <button class="btn-primary" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
+                  <button class="btn-primary" type="button" onclick={() => void update(finding)}>Открыть страницу</button>
                   <button class="link" type="button" onclick={() => void dismiss(finding)}>Версия не изменилась</button>
                   <button class="link" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
                 {:else}
-                  <button class="btn-primary" type="button" onclick={() => void openLink(finding.url)}>Обновить</button>
+                  <button class="btn-primary" type="button" onclick={() => void update(finding)}>Обновить</button>
                   <button class="link" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                   <button class="link" type="button" onclick={() => void dismiss(finding)}>Пропустить эту версию</button>
                   <button class="link" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>

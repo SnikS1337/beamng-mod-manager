@@ -7,6 +7,8 @@
     type PackagingProblem,
     type VersionRow,
   } from "$lib/ipc/library";
+  import { expectDownload } from "$lib/ipc/incoming";
+  import { toasts } from "$lib/shell/toasts.svelte";
   import { formatDate, formatSize, kindLabel, plural } from "./format";
   import VersionsBlock from "./VersionsBlock.svelte";
 
@@ -126,6 +128,12 @@
       await openUrl(details.binding.url);
     } catch {
       // В браузере и без прав просто ничего не делаем.
+    }
+    if (hasUpdate) {
+      await expectDownload();
+      toasts.show(
+        "Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить",
+      );
     }
   }
 
