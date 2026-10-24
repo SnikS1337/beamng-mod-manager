@@ -247,7 +247,14 @@ impl PageGuesser {
             let certain = (similarity >= CERTAIN_NAME
                 && tokens >= 2
                 && !other_author
-                && (order == VersionOrder::Same || same_size || (similarity >= 1.0 && tokens >= 3)))
+                && (order == VersionOrder::Same
+                    || same_size
+                    // Совпало длинное название целиком — но у страницы должен быть хоть
+                    // какой-то признак (автор или версия): безымянная старая страница
+                    // «Porsche 911 GT3 RS» на ModsGaming — не повод следить за ней молча.
+                    || (similarity >= 1.0
+                        && tokens >= 3
+                        && (listing.author.is_some() || site_version.is_some()))))
                 // Тот же автор и та же версия при похожем названии — тот же мод.
                 || (same_author && order == VersionOrder::Same);
             fits.push(PageGuess {
@@ -257,12 +264,12 @@ impl PageGuesser {
             });
             authorship.push((same_author, other_author));
         }
-        // Нашлась страница того же автора — страницы точно других авторов не нужны:
-        // «Maserati GranTurismo» от Flanje, а не одноимённый мод Cheekqo.
+        // Нашлась страница того же автора — остальные не нужны: «Maserati GranTurismo»
+        // от Flanje, а не одноимённый мод Cheekqo и не безымянные копии на ModsGaming.
         if authorship.iter().any(|(same, _)| *same) {
             let mut index = 0;
             fits.retain(|_| {
-                let keep = !authorship[index].1;
+                let keep = authorship[index].0;
                 index += 1;
                 keep
             });
@@ -557,6 +564,53 @@ mod tests {
     }
 
     #[test]
+    fn same_author_page_beats_unsigned_copies() {
+        let flanje = listing(
+            "stmods",
+            "m-f",
+            "Maserati GranTurismo (2023-2026) версия 1.0 для BeamNG.drive (v0.39.x)",
+            Some("Flanje"),
+            None,
+            PriceStatus::Free,
+        );
+        let copy_a = l(
+            "modsgaming",
+            "a",
+            "Мод автомобиль Maserati GranTurismo для BeamNG . drive",
+        );
+        let copy_b = l(
+            "modsgaming",
+            "b",
+            "Мод автомобиль Maserati Granturismo для BeamNG . drive",
+        );
+        let guess = PageGuesser::pick_with_author(
+            &installed("m", "Maserati_Granturismo.zip", None, None),
+            Some("Maserati GranTurismo"),
+            Some("Flanje"),
+            &[copy_a, copy_b, flanje],
+        )
+        .expect("страница автора");
+        assert_eq!(guess.listing.source_id, "m-f");
+    }
+
+    #[test]
+    fn exact_name_alone_does_not_follow_unsigned_page() {
+        let old = l(
+            "modsgaming",
+            "p",
+            "Мод автомобиль Porsche 911 GT3 RS для BeamNG . drive",
+        );
+        let guess = PageGuesser::pick_with_author(
+            &installed("p", "porsche_992_gt3rs_v2.0_modland.zip", Some("2.0"), None),
+            Some("Porsche 911 GT3 RS (992.1)"),
+            None,
+            &[old],
+        )
+        .expect("предлагаем");
+        assert!(!guess.certain, "без автора и версии — только предложение");
+    }
+
+    #[test]
     fn glued_file_name_is_found_in_page_address() {
         let mut meo = listing(
             "stmods",
@@ -640,11 +694,18 @@ mod tests {
         .unwrap();
         assert!(same_size.certain);
 
-        // Длинное название совпало целиком, версий и размеров нет.
+        // Длинное название совпало целиком, версий и размеров нет, у страницы есть автор.
         let exact = PageGuesser::pick(
             &installed("c", "x.zip", None, None),
             Some("Maserati GranTurismo Trofeo"),
-            &[l("stmods", "3", "Maserati GranTurismo Trofeo")],
+            &[listing(
+                "stmods",
+                "3",
+                "Maserati GranTurismo Trofeo",
+                Some("Flanje"),
+                None,
+                PriceStatus::Free,
+            )],
         )
         .unwrap();
         assert!(exact.certain);
