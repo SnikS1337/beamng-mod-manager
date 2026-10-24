@@ -100,12 +100,13 @@ impl DuplicateMatcher {
             }
         }
 
-        if let (Some(game_a), Some(game_b)) = (&a.game_version, &b.game_version) {
-            if !game_a.trim().is_empty() && !game_b.trim().is_empty() {
-                available += 0.05;
-                if game_a.trim().eq_ignore_ascii_case(game_b.trim()) {
-                    matched += 0.05;
-                }
+        if let (Some(game_a), Some(game_b)) = (&a.game_version, &b.game_version)
+            && !game_a.trim().is_empty()
+            && !game_b.trim().is_empty()
+        {
+            available += 0.05;
+            if game_a.trim().eq_ignore_ascii_case(game_b.trim()) {
+                matched += 0.05;
             }
         }
 

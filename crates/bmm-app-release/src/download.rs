@@ -269,22 +269,21 @@ impl UpdateDownloader {
         if cancel.is_cancelled() {
             return Err(DownloadError::Cancelled);
         }
-        if let Some(parent) = target.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    DownloadError::io("не удалось создать папку загрузки", error)
-                })?;
-            }
+        if let Some(parent) = target.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)
+                .map_err(|error| DownloadError::io("не удалось создать папку загрузки", error))?;
         }
 
         let response = self.send_following(&manifest.url, cancel)?;
         if !(200..300).contains(&response.status) {
             return Err(DownloadError::Status(response.status));
         }
-        if let Some(length) = response.content_length {
-            if length != manifest.size {
-                return Err(DownloadError::SizeMismatch);
-            }
+        if let Some(length) = response.content_length
+            && length != manifest.size
+        {
+            return Err(DownloadError::SizeMismatch);
         }
 
         let mut output = File::create(part)

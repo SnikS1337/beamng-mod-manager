@@ -270,11 +270,11 @@ pub fn commit_with(
         return Err(InstallError::PreparedMissing);
     }
 
-    if old.exists() {
-        if let Err(error) = fs::remove_file(&old) {
-            let _ = fs::remove_file(&staged);
-            return Err(InstallError::OldCleanupFailed(error.to_string()));
-        }
+    if old.exists()
+        && let Err(error) = fs::remove_file(&old)
+    {
+        let _ = fs::remove_file(&staged);
+        return Err(InstallError::OldCleanupFailed(error.to_string()));
     }
 
     if let Err(error) = move_file(current_exe, &old) {
@@ -382,10 +382,10 @@ pub fn read_skipped(path: &Path) -> Option<AppVersion> {
 /// Запомнить версию, которая не запустилась. Ошибки записи не критичны для
 /// обновления, но возвращаются вызывающему.
 pub fn write_skipped(path: &Path, version: AppVersion) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
     fs::write(path, version.display())
 }
@@ -429,10 +429,10 @@ pub fn write_in_place_with(
 
     let saved = retry(
         || {
-            if let Some(parent) = backup.parent() {
-                if !parent.as_os_str().is_empty() {
-                    fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = backup.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                fs::create_dir_all(parent)?;
             }
             fs::copy(target, backup).map(|_| ())
         },

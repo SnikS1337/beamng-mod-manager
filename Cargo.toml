@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
   "src-tauri",
   "crates/bmm-domain",
@@ -13,7 +13,7 @@ members = [
 [workspace.package]
 version = "1.0.3"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
