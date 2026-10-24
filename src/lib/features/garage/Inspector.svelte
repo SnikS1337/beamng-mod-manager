@@ -5,6 +5,7 @@
     modPreview,
     type ModDetails,
     type DuplicateOf,
+    type ModCardDto,
     type PackagingProblem,
     type VersionRow,
   } from "$lib/ipc/library";
@@ -20,11 +21,14 @@
     canDelete,
     problem = null,
     duplicateOf = null,
+    group = [],
     fixing = false,
     update = "none",
     updateVersion = null,
     onFix,
     onShowMod,
+    onKeepOnly,
+    onDeleteCard,
     onToggle,
     onDelete,
     onRestoreVersion,
@@ -37,14 +41,20 @@
     loading: boolean;
     canDelete: boolean;
     problem?: PackagingProblem | null;
-    /** Повторяет другой включённый мод. */
+    /** Повторяет другой мод (основной в группе). */
     duplicateOf?: DuplicateOf | null;
+    /** Основной и его копии, если это основной мод группы. */
+    group?: ModCardDto[];
     fixing?: boolean;
     update?: string;
     updateVersion?: string | null;
     onFix?: () => void;
-    /** Открыть другой мод из пары повторов. */
+    /** Открыть другой мод из группы копий. */
     onShowMod?: (id: string) => void;
+    /** Оставить включённой только эту копию. */
+    onKeepOnly?: (card: ModCardDto) => void;
+    /** Удалить копию (с «Отменить»). */
+    onDeleteCard?: (card: ModCardDto) => void;
     onToggle: () => void;
     onDelete: () => void;
     onRestoreVersion: (version: VersionRow) => void;
@@ -172,6 +182,41 @@
     <h2>{details.name}</h2>
     <p class="file" title={details.fileName}>{details.fileName}</p>
 
+    {#if group.length > 1}
+      {@const enabledCount = group.filter((item) => item.enabled).length}
+      <section class="copies" class:conflict={enabledCount > 1}>
+        <h3>Копии: {group.length - 1}</h3>
+        <p>
+          {enabledCount > 1
+            ? `Включено ${enabledCount} — игра загрузит все, и чьи файлы победят, неизвестно. Оставьте одну.`
+            : "В списке показан самый свежий. Остальные — здесь."}
+        </p>
+        <ul>
+          {#each group as item (item.id)}
+            <li class:current={item.id === details.id}>
+              <div class="copy-text">
+                <b>{item.fileName}</b>
+                <span>
+                  {item.version ? `${item.version} · ` : ""}{formatSize(item.sizeBytes)} · {item.enabled ? "включён" : "выключен"}
+                </span>
+              </div>
+              <div class="copy-actions">
+                {#if onKeepOnly && !(item.enabled && enabledCount === 1)}
+                  <button class="link" type="button" onclick={() => onKeepOnly?.(item)}>Только эта</button>
+                {/if}
+                {#if onShowMod && item.id !== details.id}
+                  <button class="link" type="button" onclick={() => onShowMod?.(item.id)}>Открыть</button>
+                {/if}
+                {#if onDeleteCard && !item.fromGameRepo && item.id !== details.id}
+                  <button class="link danger" type="button" onclick={() => onDeleteCard?.(item)}>Удалить</button>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
     <!-- Одно главное действие по состоянию (legacy): исправить, обновить или включить. -->
     {#if problem}
       <section class="problem">
@@ -183,15 +228,14 @@
           </button>
         {/if}
       </section>
-    {:else if duplicateOf && details.enabled}
+    {:else if duplicateOf}
       {@const explain = duplicateExplain(duplicateOf)}
       <section class="problem">
         <h3>{explain.title}</h3>
         <p>{explain.text}</p>
-        <button class="btn-primary wide" type="button" onclick={onToggle}>Выключить этот</button>
         {#if onShowMod}
           <button class="btn-glass wide" type="button" onclick={() => onShowMod?.(duplicateOf.id)}>
-            Показать {duplicateOf.name ? `«${duplicateOf.name}»` : "другой"}
+            К основной карточке
           </button>
         {/if}
       </section>
@@ -451,6 +495,88 @@
     margin: 0 0 8px 2px;
     font-size: 13px;
     font-weight: 650;
+  }
+
+  .copies {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid rgb(255 255 255 / 0.14);
+    border-radius: 16px;
+    background: rgb(255 255 255 / 0.04);
+  }
+
+  .copies.conflict {
+    border-color: rgb(255 107 94 / 0.5);
+  }
+
+  .copies h3 {
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .copies p {
+    margin: 0;
+    font-size: 12px;
+    opacity: 0.75;
+  }
+
+  .copies ul {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .copies li {
+    display: grid;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: rgb(255 255 255 / 0.04);
+  }
+
+  .copies li.current {
+    outline: 1px solid rgb(111 179 255 / 0.5);
+  }
+
+  .copy-text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .copy-text b {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .copy-text span {
+    font-size: 11px;
+    opacity: 0.7;
+  }
+
+  .copy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .copy-actions .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .copy-actions .danger {
+    color: #ff8b80;
   }
 
   .problem {

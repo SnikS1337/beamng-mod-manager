@@ -60,8 +60,14 @@ pub struct ModCardDto {
     pub saved_at: Option<String>,
     /// Почему игра не загрузит архив: `wrapped`, `loose`, `not_mod`; `None` — в порядке.
     pub problem: Option<String>,
-    /// Повторяет другой включённый мод: игра загрузит оба.
+    /// Повторяет другой мод (основной в группе): в списке не показывается отдельно.
     pub duplicate_of: Option<DuplicateDto>,
+    /// У основного в группе — остальные копии и версии.
+    pub group: Vec<String>,
+    /// В группе включено больше одного: игра загрузит все.
+    pub group_conflict: bool,
+    /// «vehicle», «map», «addon»; `None` — архив ещё не прочитан.
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,28 +247,39 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Помечает включённые моды, которые повторяют другой включённый (см.
-/// [`bmm_packs::duplicates`]). Состав архивов — из кэша; ещё не прочитанные архивы
-/// не участвуют, пометка появится после фонового чтения.
+/// Роль мода по составу архива и группы повторов (см. [`bmm_packs::duplicates`]).
+/// Состав — из кэша; ещё не прочитанные архивы не участвуют, пометка появится после
+/// фонового чтения. В группе основной — самый свежий: в списке видна только его
+/// карточка с числом копий, остальные — в его панели.
 fn mark_duplicates(
     mut mods: Vec<ModCardDto>,
     preview_keys: &HashMap<String, String>,
     contents: &std::collections::BTreeMap<String, Vec<String>>,
+    modified: &HashMap<String, i64>,
 ) -> Vec<ModCardDto> {
     let empty: Vec<String> = Vec::new();
+    let content_of = |id: &str| {
+        preview_keys
+            .get(id)
+            .and_then(|key| contents.get(key))
+            .unwrap_or(&empty)
+    };
+    for card in &mut mods {
+        card.role = bmm_packs::duplicates::role_of(content_of(&card.id))
+            .map(|role| role.code().to_string());
+    }
     let items: Vec<bmm_packs::duplicates::DupItem> = mods
         .iter()
-        .filter(|card| card.enabled && !card.deleted)
+        .filter(|card| !card.deleted)
         .filter_map(|card| {
-            let content = preview_keys
-                .get(&card.id)
-                .and_then(|key| contents.get(key))
-                .unwrap_or(&empty);
+            let content = content_of(&card.id);
             (!content.is_empty()).then_some(bmm_packs::duplicates::DupItem {
                 id: &card.id,
                 file_name: &card.file_name,
                 size: card.size_bytes,
                 content,
+                version: card.version.as_deref(),
+                modified: modified.get(&card.id).copied(),
             })
         })
         .collect();
@@ -272,6 +289,19 @@ fn mark_duplicates(
         .iter()
         .map(|card| (card.id.clone(), card.name.clone()))
         .collect();
+    let enabled: HashMap<String, bool> = mods
+        .iter()
+        .map(|card| (card.id.clone(), card.enabled))
+        .collect();
+    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut ids: Vec<&String> = found.keys().collect();
+    ids.sort();
+    for id in ids {
+        groups
+            .entry(found[id].of.clone())
+            .or_default()
+            .push(id.clone());
+    }
     for card in &mut mods {
         if let Some(duplicate) = found.get(&card.id) {
             card.duplicate_of = Some(DuplicateDto {
@@ -279,6 +309,14 @@ fn mark_duplicates(
                 name: names.get(&duplicate.of).cloned().unwrap_or_default(),
                 exact: duplicate.exact,
             });
+        }
+        if let Some(members) = groups.get(&card.id) {
+            let enabled_count = std::iter::once(&card.id)
+                .chain(members.iter())
+                .filter(|id| enabled.get(*id).copied().unwrap_or(false))
+                .count();
+            card.group = members.clone();
+            card.group_conflict = enabled_count > 1;
         }
     }
     mods
@@ -700,10 +738,22 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                     .filter(|_| disk.and_then(|disk| disk.sub_folder.as_ref()).is_none())
                     .cloned(),
                 duplicate_of: None,
+                group: Vec::new(),
+                group_conflict: false,
+                role: None,
             }
         })
         .collect();
-    let mods = mark_duplicates(mods, &preview_keys, &state.previews.contents());
+    let modified: HashMap<String, i64> = state
+        .library
+        .mods()
+        .iter()
+        .filter_map(|installed| {
+            let disk = disks_by_file.get(&installed.file_name.to_lowercase())?;
+            Some((installed.id.clone(), disk.modified_utc?.timestamp()))
+        })
+        .collect();
+    let mods = mark_duplicates(mods, &preview_keys, &state.previews.contents(), &modified);
 
     let ticket_files: HashSet<String> = tickets_before
         .values()
@@ -743,6 +793,9 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 saved_at: item.last_saved_at.map(|date| date.to_rfc3339()),
                 problem: None,
                 duplicate_of: None,
+                group: Vec::new(),
+                group_conflict: false,
+                role: None,
             }
         })
         .collect();
@@ -1424,7 +1477,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_copies_are_marked_after_contents_are_read() {
+    fn copies_are_grouped_after_contents_are_read() {
         let temp = tempfile::tempdir().unwrap();
         let mods = temp.path().join("mods");
         std::fs::create_dir_all(&mods).unwrap();
@@ -1443,34 +1496,39 @@ mod tests {
 
         fill_titles(&state);
         let snapshot = load_snapshot(&state).unwrap();
-        let copy = snapshot
+        let weather: Vec<&ModCardDto> = snapshot
             .mods
             .iter()
-            .find(|card| card.file_name == "weather_fx (1).zip")
-            .unwrap();
-        let main = snapshot
-            .mods
+            .filter(|card| card.file_name.starts_with("weather_fx"))
+            .collect();
+        let main = weather
             .iter()
-            .find(|card| card.file_name == "weather_fx.zip")
+            .find(|card| card.duplicate_of.is_none())
             .unwrap();
-        let duplicate = copy.duplicate_of.as_ref().expect("копия помечена");
+        let copy = weather
+            .iter()
+            .find(|card| card.duplicate_of.is_some())
+            .unwrap();
+        let duplicate = copy.duplicate_of.as_ref().unwrap();
         assert_eq!(duplicate.id, main.id);
         assert!(duplicate.exact);
-        assert!(main.duplicate_of.is_none());
-        assert!(
-            snapshot
-                .mods
-                .iter()
-                .find(|card| card.file_name == "rs3.zip")
-                .unwrap()
-                .duplicate_of
-                .is_none()
-        );
+        assert_eq!(main.group, vec![copy.id.clone()]);
+        assert!(main.group_conflict, "включены обе — игра загрузит обе");
+        assert_eq!(main.role.as_deref(), Some("addon"));
+        let rs3 = snapshot
+            .mods
+            .iter()
+            .find(|card| card.file_name == "rs3.zip")
+            .unwrap();
+        assert!(rs3.duplicate_of.is_none() && rs3.group.is_empty());
+        assert_eq!(rs3.role.as_deref(), Some("vehicle"));
 
-        // Выключенная копия игре не мешает.
+        // Выключенная копия остаётся в группе, но игре уже не мешает.
         toggle_mod(&state, &copy.id, false).unwrap();
         let after = load_snapshot(&state).unwrap();
-        assert!(after.mods.iter().all(|card| card.duplicate_of.is_none()));
+        let main_after = after.mods.iter().find(|card| card.id == main.id).unwrap();
+        assert_eq!(main_after.group.len(), 1);
+        assert!(!main_after.group_conflict);
     }
 
     #[test]

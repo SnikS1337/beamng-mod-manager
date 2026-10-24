@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { duplicateBadge } from "./duplicates";
+  import { addonHint, copiesBadge } from "./duplicates";
   import { Car, FileCode, Map, Music, Package } from "@lucide/svelte";
   import { Switch } from "$lib/components/ui/switch";
   import { modPreview, type ModCardDto } from "$lib/ipc/library";
@@ -20,8 +20,17 @@
   let preview = $state<string | null>(null);
   let requested = $state("");
 
+  // Дополнение (детали для машин игры, погода, скрипт): картинки у таких модов
+  // случайные — текстуры, шум, — поэтому карточка без картинки, с подписью.
+  const addon = $derived(mod.role === "addon");
+  const copies = $derived(copiesBadge(mod));
+
   $effect(() => {
     const id = mod.id;
+    if (addon) {
+      preview = null;
+      return;
+    }
     if (mod.previewUrl) {
       preview = mod.previewUrl;
       return;
@@ -58,8 +67,6 @@
       ? { text: "Удалён", class: "deleted" }
       : mod.problem
         ? { text: "Игра не загрузит", class: "problem" }
-      : mod.duplicateOf
-        ? { text: duplicateBadge(mod.duplicateOf), class: "problem" }
       : mod.update === "likely"
         ? { text: "Есть обновление", class: "update" }
         : mod.update === "possible"
@@ -104,8 +111,13 @@
   onclick={select}
   onkeydown={onkeydown}
 >
-  <div class="thumb" style={preview ? undefined : `background:${placeholder}`}>
-    {#if preview}
+  <div class="thumb" class:addon style={preview || addon ? undefined : `background:${placeholder}`}>
+    {#if addon}
+      <span class="addon-label">
+        <b>{addonHint(mod)}</b>
+        <span>не машина и не карта</span>
+      </span>
+    {:else if preview}
       <img src={preview} alt="" loading="lazy" />
     {:else}
       {@const Icon = icon}
@@ -120,6 +132,13 @@
     {/if}
     {#if status}
       <span class="badge {status.class}">{status.text}</span>
+    {/if}
+    {#if copies}
+      <span
+        class="copies"
+        class:conflict={mod.groupConflict}
+        title={mod.groupConflict ? "Включено несколько копий — игра загрузит все" : "Остальные копии — в панели мода"}
+      >{copies}</span>
     {/if}
 
     <div class="caption">
@@ -228,6 +247,56 @@
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  .thumb.addon {
+    background:
+      repeating-linear-gradient(135deg, rgb(255 255 255 / 0.035) 0 10px, transparent 10px 20px),
+      linear-gradient(160deg, rgb(52 60 82), rgb(28 33 48));
+  }
+
+  .addon-label {
+    position: absolute;
+    inset: 0 0 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    text-align: center;
+    color: rgb(255 255 255 / 0.82);
+  }
+
+  .addon-label b {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .addon-label span {
+    font-size: 11px;
+    color: rgb(255 255 255 / 0.5);
+  }
+
+  .copies {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid rgb(255 255 255 / 0.16);
+    border-radius: 999px;
+    background: rgb(10 14 26 / 0.78);
+    color: rgb(255 255 255 / 0.94);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .copies.conflict {
+    border-color: rgb(255 107 94 / 0.7);
+    color: #ffb3ab;
   }
 
   .sleeping .thumb {

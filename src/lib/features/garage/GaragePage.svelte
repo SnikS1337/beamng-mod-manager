@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { groupMembers, isShown, visibleCards } from "./duplicates";
   import { onMount } from "svelte";
   import {
     listenUpdates,
@@ -73,7 +74,8 @@
   );
   let filtered = $derived.by(() => {
     if (!snapshot) return [];
-    const source = filter === "deleted" ? snapshot.deleted : snapshot.mods;
+    // Копии прячутся за карточкой основного мода группы — их видно в его панели.
+    const source = filter === "deleted" ? snapshot.deleted : visibleCards(snapshot.mods);
     return source.filter((mod) => {
       if (filter === "enabled" && !mod.enabled) return false;
       if (filter === "updates" && mod.update === "none") return false;
@@ -119,7 +121,7 @@
   });
 
   $effect(() => {
-    if (selectedId && !filtered.some((mod) => mod.id === selectedId)) {
+    if (selectedId && !isShown(selectedId, filtered)) {
       selectedId = null;
     }
   });
@@ -269,10 +271,27 @@
   }
 
   async function deleteSelected() {
-    const card = selected;
-    if (!card || card.deleted || card.fromGameRepo) return;
+    if (selected) await deleteCard(selected);
+  }
+
+  /** «Оставить включённой только эту» в группе копий: остальные выключаются. */
+  async function keepOnly(card: ModCardDto) {
+    const main = snapshot?.mods.find((item) => item.id === card.id || item.group.includes(card.id));
+    if (!main || !snapshot) return;
+    const members = groupMembers(main, snapshot.mods);
+    for (const member of members) {
+      const target = member.id === card.id;
+      if (member.enabled !== target) await applyToggle(member, target, false);
+    }
+    await load(true);
+    showToast(`Включена только «${trimName(card.name)}» (${card.fileName})`);
+  }
+
+  async function deleteCard(card: ModCardDto) {
+    if (card.deleted || card.fromGameRepo) return;
     try {
-      selectedId = null;
+      // Удаляют копию из панели группы — панель основного остаётся открытой.
+      if (selectedId === card.id) selectedId = null;
       const ticket = await modDelete(card.id);
       await load(true);
       showToast(`Удалён «${trimName(ticket.name)}»`, {
@@ -613,7 +632,10 @@
         canDelete={selected ? !selected.fromGameRepo : false}
         problem={selected?.problem ?? null}
         duplicateOf={selected?.duplicateOf ?? null}
+        group={selected && snapshot && selected.group.length > 0 ? groupMembers(selected, snapshot.mods) : []}
         onShowMod={(id) => (selectedId = id)}
+        onKeepOnly={(card) => void keepOnly(card)}
+        onDeleteCard={(card) => void deleteCard(card)}
         update={selected?.update ?? "none"}
         updateVersion={selected?.updateVersion ?? null}
         {fixing}
