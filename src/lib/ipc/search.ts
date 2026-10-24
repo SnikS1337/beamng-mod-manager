@@ -18,6 +18,8 @@ export interface SearchListing {
   sourceId: string;
   url: string;
   title: string;
+  /** Название без рубрики сайта и версии. */
+  name: string;
   modVersion: string | null;
   gameVersion: string | null;
   author: string | null;
@@ -39,6 +41,8 @@ export interface SearchCard {
   possibleSameAs: string[];
   relevance: number;
   installed: boolean;
+  /** Тип по разделу сайта или рубрике в названии; `null` — сайт не сказал. */
+  kind: "vehicle" | "map" | "addon" | null;
   listings: SearchListing[];
 }
 
@@ -181,6 +185,7 @@ function mockListing(index: number, source: string, title: string): SearchListin
     sourceId: `${source}-${index}`,
     url: `https://example.org/${source}/${index}`,
     title,
+    name: title,
     modVersion: `1.${index % 7}`,
     gameVersion: "0.39.x",
     author: index % 2 === 0 ? "InfnityModding" : "matissator",
@@ -232,6 +237,7 @@ function mockCards(query: string): SearchCard[] {
       possibleSameAs: index === 1 ? [mockCardId(2)] : [],
       relevance: 1 - index * 0.05,
       installed: listings.some((item) => item.installed),
+      kind: index % 4 === 3 ? "addon" : index % 5 === 4 ? null : "vehicle",
       listings,
     };
   });

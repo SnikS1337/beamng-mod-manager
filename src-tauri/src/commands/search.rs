@@ -37,6 +37,8 @@ pub struct SearchListingDto {
     pub source_id: String,
     pub url: String,
     pub title: String,
+    /// Название без рубрики сайта и версии («автомобиль LADA 2106 v1.0» → «LADA 2106»).
+    pub name: String,
     pub mod_version: Option<String>,
     pub game_version: Option<String>,
     pub author: Option<String>,
@@ -60,6 +62,8 @@ pub struct SearchCardDto {
     pub possible_same_as: Vec<String>,
     pub relevance: f64,
     pub installed: bool,
+    /// «vehicle», «map», «addon» или нет, если сайт не сказал.
+    pub kind: Option<String>,
     pub listings: Vec<SearchListingDto>,
 }
 
@@ -431,6 +435,7 @@ fn card_dto(card: &ModCard, installed: &InstalledIndex) -> SearchCardDto {
         possible_same_as: card.possible_same_as.clone(),
         relevance: card.relevance,
         installed: listings.iter().any(|listing| listing.installed),
+        kind: card.kind.map(|kind| kind.code().to_string()),
         listings,
     }
 }
@@ -441,6 +446,14 @@ fn listing_dto(listing: &Listing, installed: &InstalledIndex) -> SearchListingDt
         source_id: listing.source_id.clone(),
         url: listing.url.to_string(),
         title: listing.title.clone(),
+        name: {
+            let name = bmm_domain::text::TitleParser::parse(&listing.title).name;
+            if name.is_empty() {
+                listing.title.clone()
+            } else {
+                name
+            }
+        },
         mod_version: listing.mod_version.clone(),
         game_version: listing.game_version.clone(),
         author: listing.author.clone(),
@@ -599,6 +612,7 @@ mod tests {
                     price: PriceSummary::Free,
                     possible_same_as: vec!["modland:9".to_string()],
                     relevance: 1.0,
+                    kind: Some(bmm_domain::text::ModKind::Vehicle),
                 },
                 ModCard {
                     id: "modland:9".to_string(),
@@ -607,6 +621,7 @@ mod tests {
                     price: PriceSummary::Paid,
                     possible_same_as: Vec::new(),
                     relevance: 0.5,
+                    kind: None,
                 },
             ],
             sources: vec![SourceReport {
@@ -624,7 +639,10 @@ mod tests {
         assert_eq!(event.phase, "done");
         assert!(event.cards[0].installed);
         assert!(event.cards[0].listings[0].installed);
+        assert_eq!(event.cards[0].listings[0].name, "Rolls-Royce Cullinan");
         assert_eq!(event.cards[0].price, "free");
+        assert_eq!(event.cards[0].kind.as_deref(), Some("vehicle"));
+        assert_eq!(event.cards[1].kind, None);
         assert_eq!(event.cards[0].possible_same_as, vec!["modland:9"]);
         assert!(!event.cards[1].installed);
         assert_eq!(event.cards[1].price, "paid");

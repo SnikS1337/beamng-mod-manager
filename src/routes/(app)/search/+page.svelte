@@ -3,6 +3,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { ExternalLink, Search, X } from "@lucide/svelte";
   import { formatSize, plural } from "#lib/features/garage/format.js";
+  import { searchKindLabel } from "#lib/features/search/kind.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
     listenSearch,
@@ -366,6 +367,9 @@
             {#if card.installed}
               <span class="installed">Установлен</span>
             {/if}
+            {#if searchKindLabel(card)}
+              <span class="kind {card.kind}">{searchKindLabel(card)}</span>
+            {/if}
           </div>
 
           <div class="card-body">
@@ -375,7 +379,7 @@
                 <div class="listing">
                   <div class="listing-main">
                     <span class="site-name">{sourceName(listing.source)}</span>
-                    <span class="listing-title" title={listing.title}>{listing.title}</span>
+                    <span class="listing-title" title={listing.title}>{listing.name || listing.title}</span>
                     {#if versionText(listing)}
                       <span class="version">{versionText(listing)}</span>
                     {/if}
@@ -805,6 +809,20 @@
   .price.paid,
   .price.mixed {
     color: oklch(0.84 0.12 85);
+  }
+
+  .kind {
+    position: absolute;
+    left: 9px;
+    bottom: 9px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(6, 10, 20, 0.72);
+    color: rgb(255 255 255 / 0.92);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   .installed {
