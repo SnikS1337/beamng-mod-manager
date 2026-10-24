@@ -37,6 +37,10 @@
   let passing = $state(false);
   let filter = $state<Filter>("available");
   let progress = $state<UpdateProgress | null>(null);
+  /** Ход проверки при запуске (она идёт сама, без нажатия). */
+  let autoProgress = $state<UpdateProgress | null>(null);
+  /** Номер запроса проверки при запуске (`AUTO_REQUEST_ID` в окне). */
+  const AUTO_REQUEST = 0;
   let error = $state<string | null>(null);
   // Обычная проверка не трогает моды, проверенные недавно (срок — в настройках). Если она
   // никуда не сходила, следующее нажатие проверяет всё заново, как в legacy.
@@ -79,7 +83,12 @@
   });
 
   function onEvent(event: UpdatesEvent) {
+    if (event.requestId === AUTO_REQUEST && event.phase === "progress") {
+      autoProgress = event.progress;
+      return;
+    }
     if (event.phase === "auto") {
+      autoProgress = null;
       void refreshSites();
       // Фоновая проверка закончилась: показываем найденное, если сами сейчас не проверяем.
       if (!checking) {
@@ -167,6 +176,7 @@
     requestId += 1;
     checking = false;
     progress = null;
+    autoProgress = null;
     await updatesCancel().catch(() => {});
   }
 
@@ -287,7 +297,8 @@
     return finding.status === "likely" ? "Обновление" : "Возможно";
   }
 
-  function progressText(): string {
+  function progressText(current: UpdateProgress | null = progress): string {
+    const progress = current;
     if (!progress) return "Проверяем сайты…";
     if (progress.source === "страницы") {
       return progress.total > 0
@@ -469,14 +480,17 @@
       <p class="sub">
         {#if checking}
           {progressText()}
+        {:else if autoProgress}
+          Проверка при запуске: {progressText(autoProgress)}
         {:else if snapshot.lastChecked}
           Последняя {formatWhen(snapshot.lastChecked)}. Окно можно закрыть: найденное сохранится.
         {:else}
           Ещё не проверяли. Проверим моды, за которыми следим на сайтах.
         {/if}
       </p>
-      {#if checking}
-        <div class="track"><span class="bar" class:pulse={!progress?.total} style={progress?.total ? `width:${Math.round((progress.done / progress.total) * 100)}%` : undefined}></span></div>
+      {#if checking || autoProgress}
+        {@const shown = checking ? progress : autoProgress}
+        <div class="track"><span class="bar" class:pulse={!shown?.total} style={shown?.total ? `width:${Math.round((shown.done / shown.total) * 100)}%` : undefined}></span></div>
         <button class="btn-glass wide" type="button" onclick={() => void cancel()}>Остановить</button>
       {:else}
         <button class="btn-primary wide" type="button" onclick={() => void check()}>
