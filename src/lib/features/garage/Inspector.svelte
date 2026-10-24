@@ -53,8 +53,13 @@
   let bindError = $state<string | null>(null);
   let bindBusy = $state(false);
 
+  // Поле сбрасывается только при переходе к другому моду: панель перечитывает данные
+  // того же мода (после проверки, названий из архивов) и не должна закрывать форму.
+  let formFor: string | undefined;
   $effect(() => {
-    details?.id;
+    const id = details?.id;
+    if (id === formFor) return;
+    formFor = id;
     binding = false;
     pageUrl = "";
     bindError = null;
