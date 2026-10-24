@@ -882,13 +882,36 @@ fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> UpdateRunRep
             new_findings.push(finding);
         }
     }
+    // Повторный ход проверяет только что взятые под наблюдение моды: его отчёт по сайту
+    // дополняет первый, а не заменяет — иначе пропали бы сбои и «не нашлось» первого хода.
     let mut sources = first.sources;
     for source in again.sources {
         match sources
             .iter_mut()
             .find(|known| known.source == source.source)
         {
-            Some(known) => *known = source,
+            Some(known) => {
+                known.feed_pages_fetched += source.feed_pages_fetched;
+                known.cards_fetched += source.cards_fetched;
+                known.postponed += source.postponed;
+                for id in source.missing_mods {
+                    if !known.missing_mods.contains(&id) {
+                        known.missing_mods.push(id);
+                    }
+                }
+                for id in source.unreadable_mods {
+                    if !known.unreadable_mods.contains(&id) {
+                        known.unreadable_mods.push(id);
+                    }
+                }
+                known.layout_changed |= source.layout_changed;
+                if source.status != bmm_sources::sources::SourceStatus::Ok {
+                    known.status = source.status;
+                }
+                if source.note.is_some() {
+                    known.note = source.note;
+                }
+            }
             None => sources.push(source),
         }
     }
@@ -1257,5 +1280,78 @@ mod tests {
             refollow(&state, mod_id, "modsgaming").is_err(),
             "вернуть второй раз нечего"
         );
+    }
+
+    fn site_report(source: &str, cards: u32, missing: &[&str]) -> SourceRunReport {
+        SourceRunReport {
+            source: source.to_string(),
+            status: bmm_sources::sources::SourceStatus::Ok,
+            feed_pages_fetched: 1,
+            cards_fetched: cards,
+            postponed: 0,
+            missing_mods: missing.iter().map(|id| id.to_string()).collect(),
+            unreadable_mods: Vec::new(),
+            layout_changed: false,
+            note: None,
+        }
+    }
+
+    fn run_report(sources: Vec<SourceRunReport>, requests: u32) -> UpdateRunReport {
+        UpdateRunReport {
+            findings: Vec::new(),
+            sources,
+            requests,
+            up_to_date: 2,
+            new_findings: Vec::new(),
+            fresh_skipped: 5,
+            cancelled: false,
+            stopped_by_time: false,
+            reused: false,
+        }
+    }
+
+    #[test]
+    fn second_pass_adds_to_the_site_report_instead_of_replacing_it() {
+        let mut broken = site_report("stmods", 0, &["laurel"]);
+        broken.layout_changed = true;
+        let first = run_report(vec![broken, site_report("modsgaming", 3, &[])], 10);
+        let mut again_stmods = site_report("stmods", 2, &["mb"]);
+        again_stmods.status = bmm_sources::sources::SourceStatus::Unavailable;
+        again_stmods.note = Some("Сайт не ответил.".to_string());
+        let again = run_report(vec![again_stmods, site_report("modland", 1, &[])], 4);
+
+        let merged = merge_reports(first, again);
+        assert_eq!(merged.requests, 14);
+        assert_eq!(merged.up_to_date, 4);
+        assert_eq!(merged.fresh_skipped, 5);
+        let stmods = merged
+            .sources
+            .iter()
+            .find(|item| item.source == "stmods")
+            .unwrap();
+        assert_eq!(stmods.cards_fetched, 2);
+        assert_eq!(stmods.feed_pages_fetched, 2);
+        assert_eq!(stmods.missing_mods, vec!["laurel", "mb"]);
+        assert!(stmods.layout_changed, "сбой первого хода не потерялся");
+        assert_eq!(
+            stmods.status,
+            bmm_sources::sources::SourceStatus::Unavailable
+        );
+        assert_eq!(stmods.note.as_deref(), Some("Сайт не ответил."));
+        assert_eq!(merged.sources.len(), 3);
+        let modsgaming = merged
+            .sources
+            .iter()
+            .find(|item| item.source == "modsgaming")
+            .unwrap();
+        assert_eq!(modsgaming.cards_fetched, 3);
+    }
+
+    #[test]
+    fn snapshot_reports_sites_and_last_check() {
+        let (_temp, state) = state();
+        let snapshot = build_snapshot(&state);
+        assert!(snapshot.sites.is_empty(), "без сайтов в тестовом окружении");
+        assert_eq!(snapshot.last_checked, None);
     }
 }
