@@ -107,6 +107,8 @@ pub fn inspect_zip(path: &Path, limits: &ArchiveLimits) -> InspectionResult {
 }
 
 /// Папка верхнего уровня, которую ждёт игра (vehicles, levels, art, lua…).
+pub const EXECUTABLE_MESSAGE: &str = "Сомнительные файлы: программы или скрипты Windows. Игра их не запускает — ставьте, если доверяете источнику.";
+
 pub fn is_known_root(folder: &str) -> bool {
     KNOWN_ROOTS
         .iter()
@@ -166,13 +168,14 @@ fn inspect_archive<R: Read + Seek>(
         }
 
         // Windows отбрасывает точки и пробелы в конце имени: «run.exe.» и «run.exe » — тот же
-        // исполняемый файл.
+        // исполняемый файл. Игра такие файлы не запускает, но бывают и честные: Maserati
+        // от Flanje несёт скрипты управления Spotify. Решает пользователь — предупреждаем,
+        // а не блокируем; при установке файлы не трогаем.
         if !is_directory && has_blocked_extension(&name) {
             findings.push(Finding {
-                severity: Severity::Block,
+                severity: Severity::Warning,
                 code: "executable",
-                message: "Исполняемый файл или скрипт Windows: в модах BeamNG их не бывает."
-                    .to_string(),
+                message: EXECUTABLE_MESSAGE.to_string(),
                 entry: Some(raw_name.clone()),
             });
         }
@@ -404,27 +407,26 @@ mod tests {
     }
 
     #[test]
-    fn blocks_executable_extensions() {
+    fn executables_are_flagged_for_the_user_not_blocked() {
         for name in [
             "vehicles/x/run.exe",
             "vehicles/x/RUN.EXE",
             "vehicles/x/tool.Ps1",
             "vehicles/x/run.exe.",
             "vehicles/x/run.exe ",
+            "tools/Start_Spotify_Remote.bat",
             ".exe",
         ] {
             let result = inspect(&[("vehicles/a.jbeam", b"x"), (name, b"x")]);
-            assert!(result.is_blocked(), "{name} must be blocked");
+            assert!(!result.is_blocked(), "{name}: решает пользователь");
+            assert!(result.has_warnings(), "{name}: но предупреждаем");
             let finding = result
                 .findings
                 .iter()
                 .find(|finding| finding.code == "executable")
                 .unwrap_or_else(|| panic!("{name} must be treated as executable"));
-            assert_eq!(finding.severity, Severity::Block);
-            assert_eq!(
-                finding.message,
-                "Исполняемый файл или скрипт Windows: в модах BeamNG их не бывает."
-            );
+            assert_eq!(finding.severity, Severity::Warning);
+            assert_eq!(finding.message, EXECUTABLE_MESSAGE);
             assert_eq!(finding.entry.as_deref(), Some(name));
         }
     }

@@ -17,6 +17,7 @@
   import { formatSize, plural } from "$lib/features/garage/format";
   import { toasts } from "$lib/shell/toasts.svelte";
   import { incomingQueue } from "./queue.svelte";
+  import { installable, preselected, suspiciousFiles, suspiciousText } from "./selection";
 
   type CheckLevel = "ok" | "attention" | "blocked";
   interface Check {
@@ -167,7 +168,7 @@
 
   function openArchive(archive: IncomingArchiveDto): void {
     current = archive;
-    selected = archive.items.map(installable);
+    selected = archive.items.map(preselected);
   }
 
   function close(): void {
@@ -263,10 +264,6 @@
     }
   }
 
-  function installable(item: IncomingItemDto): boolean {
-    return !item.blocked && !item.locked && item.kind !== "alreadyInstalled";
-  }
-
   function toggle(index: number, event: Event): void {
     selected[index] = (event.currentTarget as HTMLInputElement).checked;
   }
@@ -300,6 +297,14 @@
     }
     for (const finding of uniqueFindings(item, "warning")) {
       if (finding.code === "nested-root") continue;
+      if (finding.code === "executable") {
+        const files = suspiciousFiles(item);
+        checks.push({
+          level: "attention",
+          text: `${trimDot(finding.message)}: ${suspiciousText(files)}. Отметьте мод, чтобы поставить`,
+        });
+        continue;
+      }
       checks.push({ level: "attention", text: trimDot(finding.message) });
     }
     if (item.similarTo) {
