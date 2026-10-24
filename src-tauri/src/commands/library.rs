@@ -331,13 +331,32 @@ fn spawn_title_fill(app: tauri::AppHandle, state: Arc<AppState>) {
         return;
     }
     std::thread::spawn(move || {
-        let added = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fill_titles(&state)))
-            .unwrap_or(0);
+        let added = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let added = fill_titles(&state);
+            prune_previews(&state);
+            added
+        }))
+        .unwrap_or(0);
         TITLES_BUSY.store(false, Ordering::SeqCst);
         if added > 0 {
             let _ = app.emit("library://titles", added);
         }
     });
+}
+
+/// Убирает из кэша картинки и сведения модов, которых больше нет на диске.
+/// Список ещё не построен (папка не найдена) — ничего не трогаем, иначе стёрли бы всё.
+pub(crate) fn prune_previews(state: &AppState) {
+    let live: std::collections::HashSet<String> = state
+        .previews_by_id
+        .lock()
+        .unwrap()
+        .values()
+        .map(|target| target.key.clone())
+        .collect();
+    if !live.is_empty() {
+        state.previews.prune(&live);
+    }
 }
 
 /// Дочитывает названия, которых ещё нет в кэше. Возвращает, сколько записали.
@@ -1488,6 +1507,34 @@ mod tests {
         assert_eq!(binding.source, "beamng");
         assert_eq!(binding.url.as_str(), "https://beamng.com/resources/906/");
         assert!(binding.confirmed);
+    }
+
+    #[test]
+    fn cache_forgets_removed_mods_but_not_before_the_list_is_built() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(&mods.join("keep.zip"), &[("vehicles/keep/a.jbeam", b"x")]);
+        write_zip(&mods.join("gone.zip"), &[("vehicles/gone/a.jbeam", b"x")]);
+        let state = test_state(&temp, &mods);
+
+        // До первого показа списка чистить нечего — и стирать всё нельзя.
+        state
+            .previews
+            .put_titles(&[("orphan".to_string(), Some("Old".to_string()))])
+            .unwrap();
+        prune_previews(&state);
+        assert!(state.previews.titles().contains_key("orphan"));
+
+        load_snapshot(&state).unwrap();
+        fill_titles(&state);
+        assert_eq!(state.previews.contents().len(), 2);
+        std::fs::remove_file(mods.join("gone.zip")).unwrap();
+        load_snapshot(&state).unwrap();
+        prune_previews(&state);
+        let contents = state.previews.contents();
+        assert_eq!(contents.len(), 1, "остался только живой мод");
+        assert!(!state.previews.titles().contains_key("orphan"));
     }
 
     #[test]

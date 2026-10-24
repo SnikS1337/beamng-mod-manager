@@ -108,10 +108,17 @@ pub fn run() {
         fetcher,
         service: search_service,
         matches,
-        previews: Arc::new(bmm_sources::images::RemoteImageCache::with_fallback(
-            paths.search_previews(),
-            pages,
-        )),
+        previews: {
+            let cache = Arc::new(bmm_sources::images::RemoteImageCache::with_fallback(
+                paths.search_previews(),
+                pages,
+            ));
+            let trimmer = cache.clone();
+            std::thread::spawn(move || {
+                trimmer.trim(bmm_sources::images::DEFAULT_LIMIT_BYTES);
+            });
+            cache
+        },
         sources: source_list.clone(),
     }));
     let update = Some(Arc::new(UpdateRuntime {
