@@ -1,4 +1,4 @@
-import { settingsLoad, settingsSave, type SettingsDto } from "$lib/ipc/settings";
+import { settingsLoad, settingsSave, type SettingsDto } from "#lib/ipc/settings.js";
 
 const THEMES = ["night", "deep", "dusk", "forest", "graphite"] as const;
 

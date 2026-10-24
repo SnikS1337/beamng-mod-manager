@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UpdateSource } from "$lib/ipc/updates";
+import type { UpdateSource } from "#lib/ipc/updates.js";
 import { checkSummary } from "./summary";
 
 function source(patch: Partial<UpdateSource>): UpdateSource {

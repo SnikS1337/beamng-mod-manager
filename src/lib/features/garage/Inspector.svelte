@@ -1,6 +1,6 @@
 <script lang="ts">
   import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-  import { sourceName } from "$lib/ipc/search";
+  import { sourceName } from "#lib/ipc/search.js";
   import {
     modPreview,
     type ModDetails,
@@ -8,9 +8,9 @@
     type ModCardDto,
     type PackagingProblem,
     type VersionRow,
-  } from "$lib/ipc/library";
-  import { expectDownload } from "$lib/ipc/incoming";
-  import { toasts } from "$lib/shell/toasts.svelte";
+  } from "#lib/ipc/library.js";
+  import { expectDownload } from "#lib/ipc/incoming.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
   import { formatDate, formatSize, kindLabel, plural } from "./format";
   import VersionsBlock from "./VersionsBlock.svelte";
   import { duplicateExplain } from "./duplicates";

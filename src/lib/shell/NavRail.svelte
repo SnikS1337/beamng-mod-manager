@@ -3,7 +3,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { LayoutGrid, RefreshCw, Search, SlidersVertical } from "@lucide/svelte";
   import { page } from "$app/state";
-  import { updatesBadge } from "$lib/shell/updatesBadge.svelte";
+  import { updatesBadge } from "#lib/shell/updatesBadge.svelte.js";
 
   // Как в legacy: моды (четыре плитки), обновления, поиск и — под чертой — настройки.
   const nav = [

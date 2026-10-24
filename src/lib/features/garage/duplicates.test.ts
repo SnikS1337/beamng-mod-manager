@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModCardDto } from "$lib/ipc/library";
+import type { ModCardDto } from "#lib/ipc/library.js";
 import {
   addonHint,
   copiesBadge,

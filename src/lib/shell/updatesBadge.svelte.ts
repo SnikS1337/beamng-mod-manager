@@ -1,6 +1,6 @@
-import { listenUpdates, updatesSnapshot, type UpdatesEvent } from "$lib/ipc/updates";
-import { plural } from "$lib/features/garage/format";
-import { toasts } from "$lib/shell/toasts.svelte";
+import { listenUpdates, updatesSnapshot, type UpdatesEvent } from "#lib/ipc/updates.js";
+import { plural } from "#lib/features/garage/format.js";
+import { toasts } from "#lib/shell/toasts.svelte.js";
 
 /**
  * Сколько модов ждут обновления — для значка на «Обновлениях». Знает и о фоновой проверке

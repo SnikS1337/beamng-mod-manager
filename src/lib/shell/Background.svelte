@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appearance } from "$lib/shell/appearance.svelte";
+  import { appearance } from "#lib/shell/appearance.svelte.js";
 
   let tiltX = $state(0);
   let tiltY = $state(0);

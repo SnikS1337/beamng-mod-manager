@@ -2,8 +2,8 @@
   import { onDestroy, onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { ExternalLink, Search, X } from "@lucide/svelte";
-  import { formatSize, plural } from "$lib/features/garage/format";
-  import { toasts } from "$lib/shell/toasts.svelte";
+  import { formatSize, plural } from "#lib/features/garage/format.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
     listenSearch,
     searchCancel,
@@ -18,7 +18,7 @@
     type SearchListing,
     type SearchSource,
     type SearchPriceSummary,
-  } from "$lib/ipc/search";
+  } from "#lib/ipc/search.js";
 
   let query = $state("");
   let submitted = $state("");

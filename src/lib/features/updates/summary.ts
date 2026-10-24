@@ -1,4 +1,4 @@
-import type { UpdatesEvent } from "$lib/ipc/updates";
+import type { UpdatesEvent } from "#lib/ipc/updates.js";
 
 /** Итог нажатия «Проверить сейчас»: одна строка для тоста и нужна ли «Всё равно проверить». */
 export interface CheckSummary {
