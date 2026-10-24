@@ -20,7 +20,10 @@ export function plural(count: number, one: string, few: string, many: string): s
 }
 
 export function modsLabel(count: number): string {
-  return `${count} ${plural(count, "мод", "мода", "модов")}`;
+  const grouped = count
+    .toLocaleString("ru-RU")
+    .replace(/[\u00a0\u202f]/g, " ");
+  return `${grouped} ${plural(count, "мод", "мода", "модов")}`;
 }
 
 export function headerNote(count: number, updates: number): string {

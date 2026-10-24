@@ -1,7 +1,34 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { Archive, RefreshCw, Search, Sparkles } from "@lucide/svelte";
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
+  let dialog = $state<HTMLDivElement | null>(null);
+  let startButton = $state<HTMLButtonElement | null>(null);
+
+  $effect(() => {
+    if (!open) return;
+    void tick().then(() => startButton?.focus());
+  });
+
+  function onkeydown(event: KeyboardEvent) {
+    if (event.key !== "Tab" || !dialog) return;
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   const points = [
     {
@@ -29,7 +56,15 @@
 
 {#if open}
   <div class="backdrop">
-    <div class="tour glass liquid-edge" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+    <div
+      class="tour glass liquid-edge"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="welcome-title"
+      tabindex="-1"
+      bind:this={dialog}
+      onkeydown={onkeydown}
+    >
       <p class="eyebrow">Первый запуск</p>
       <h1 id="welcome-title">ModManager BeamNG</h1>
       <p class="lead">Всё, чтобы держать моды в порядке, — в одном окне. Коротко о главном:</p>
@@ -47,7 +82,7 @@
       </div>
       <footer>
         <span>Это окно больше не появится.</span>
-        <button type="button" onclick={onClose}>Начать</button>
+        <button type="button" bind:this={startButton} onclick={onClose}>Начать</button>
       </footer>
     </div>
   </div>

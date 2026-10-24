@@ -249,7 +249,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
     gameVersion: "0.39.4",
     gameRunning: false,
     warning: null,
-    manyEnabled: "Включено 3333 модов. Игра может грузиться дольше",
+    manyEnabled: "Включено 3 333 модов. Игра может грузиться дольше",
     deleted: [],
   };
 }

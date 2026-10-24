@@ -29,11 +29,19 @@
     {#each nav as item (item.href)}
       {@const Icon = item.icon}
       {@const active = page.url.pathname === item.href}
-      <a class="nav" class:active href={item.href} aria-current={active ? "page" : undefined}>
+      <a
+        class="nav"
+        class:active
+        href={item.href}
+        aria-current={active ? "page" : undefined}
+        aria-label={item.href === "/updates" && updatesBadge.available > 0
+          ? `Обновления, ${updatesBadge.available} ждут обновления`
+          : item.label}
+      >
         <span class="icon">
           <Icon size={22} strokeWidth={1.7} />
           {#if item.href === "/updates" && updatesBadge.available > 0}
-            <span class="badge" aria-label="ждут обновления: {updatesBadge.available}">
+            <span class="badge" aria-hidden="true">
               {updatesBadge.available > 99 ? "99+" : updatesBadge.available}
             </span>
           {/if}

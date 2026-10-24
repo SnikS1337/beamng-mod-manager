@@ -742,7 +742,12 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     );
     let many_enabled = (settings.active_mods_warn_above > 0
         && enabled as i32 > settings.active_mods_warn_above)
-        .then(|| format!("Включено {enabled} модов. Игра может грузиться дольше"));
+        .then(|| {
+            format!(
+                "Включено {} модов. Игра может грузиться дольше",
+                group_digits(enabled)
+            )
+        });
 
     Ok(LibrarySnapshot {
         counts: FilterCounts {
@@ -1248,6 +1253,18 @@ fn empty_snapshot(
     }
 }
 
+fn group_digits(value: usize) -> String {
+    let text = value.to_string();
+    let mut result = String::with_capacity(text.len() + text.len() / 3);
+    for (index, character) in text.chars().enumerate() {
+        if index > 0 && (text.len() - index).is_multiple_of(3) {
+            result.push(' ');
+        }
+        result.push(character);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1262,6 +1279,14 @@ mod tests {
     use bmm_domain::settings::AppSettings;
     use bmm_domain::settings_store::SettingsStore;
     use bmm_packs::cache::PreviewCache;
+
+    #[test]
+    fn formats_enabled_count_with_thousands_separator() {
+        assert_eq!(group_digits(999), "999");
+        assert_eq!(group_digits(1_000), "1 000");
+        assert_eq!(group_digits(3_333), "3 333");
+        assert_eq!(group_digits(20_000), "20 000");
+    }
 
     #[test]
     fn loads_real_folder_and_toggles_active() {

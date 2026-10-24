@@ -10,6 +10,7 @@
   } from "$lib/ipc/library";
   import { expectDownload } from "$lib/ipc/incoming";
   import { toasts } from "$lib/shell/toasts.svelte";
+  import { safeExternalUrl } from "$lib/url";
   import { formatDate, formatSize, kindLabel, plural } from "./format";
   import VersionsBlock from "./VersionsBlock.svelte";
   import { duplicateExplain } from "./duplicates";
@@ -132,8 +133,13 @@
 
   async function openPage() {
     if (!details?.binding) return;
+    const url = safeExternalUrl(details.binding.url);
+    if (!url) {
+      toasts.show("Ссылка не открывается");
+      return;
+    }
     try {
-      await openUrl(details.binding.url);
+      await openUrl(url);
     } catch {
       // В браузере и без прав просто ничего не делаем.
     }
@@ -188,7 +194,7 @@
       <section class="problem">
         <h3>{explain.title}</h3>
         <p>{explain.text}</p>
-        <button class="btn-primary wide" type="button" onclick={onToggle}>Выключить этот</button>
+        <button class="btn-primary wide" type="button" onclick={onToggle}>Выключить этот мод</button>
         {#if onShowMod}
           <button class="btn-glass wide" type="button" onclick={() => onShowMod?.(duplicateOf.id)}>
             Показать {duplicateOf.name ? `«${duplicateOf.name}»` : "другой"}
@@ -217,10 +223,17 @@
           <span>Для игры</span><b>{details.compat.text}</b>
         </div>
       {/if}
-      <div>
-        <span>Следим на</span>
-        <b>{details.binding ? sourceName(details.binding.source) : "не проверяется"}</b>
-      </div>
+      {#if details.binding}
+        <div>
+          <span>Следим на</span>
+          <b>{sourceName(details.binding.source)}</b>
+        </div>
+      {:else}
+        <div>
+          <span>Проверка страницы</span>
+          <b>не проверяется</b>
+        </div>
+      {/if}
     </div>
 
     {#if details.archive}
@@ -236,8 +249,8 @@
             {#if details.archive.levels.length > 0}
               <div><span>{details.archive.levels.length > 1 ? "Карты" : "Карта"}</span><b>{details.archive.levels.slice(0, 3).join(", ")}{details.archive.levels.length > 3 ? ` и ещё ${details.archive.levels.length - 3}` : ""}</b></div>
             {/if}
-            <div><span>Скрипты</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} ${plural(details.archive.luaFiles, "файл", "файла", "файлов")} Lua` : "нет"}</b></div>
-            <div><span>Файлов</span><b>{details.archive.files.toLocaleString("ru-RU")}, {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
+            <div><span>{details.archive.hasScripts ? "Скрипты" : "Скриптов"}</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} ${plural(details.archive.luaFiles, "файл", "файла", "файлов")} Lua` : "нет"}</b></div>
+            <div><span>Файлов</span><b>{details.archive.files.toLocaleString("ru-RU")} · {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
             {#each details.archive.warnings as warning}
               <p class="warn">{warning}</p>
             {/each}
