@@ -30,7 +30,7 @@ encoding_rs = "0.8"
 html-escape = "0.3.0"
 sysinfo = "0.39"
 zip = "9"
-sha2 = "0.10"
+sha2 = "0.11.1"
 base64 = "0.23.1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
