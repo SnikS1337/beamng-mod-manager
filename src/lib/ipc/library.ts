@@ -32,6 +32,15 @@ export interface ModCardDto {
   savedAt: string | null;
   /** Почему игра не загрузит архив; null — в порядке. */
   problem: PackagingProblem | null;
+  /** Повторяет другой включённый мод: игра загрузит оба. */
+  duplicateOf: DuplicateOf | null;
+}
+
+export interface DuplicateOf {
+  id: string;
+  name: string;
+  /** Тот же архив; иначе другая версия тех же машин или карт. */
+  exact: boolean;
 }
 
 export type PackagingProblem = "wrapped" | "loose" | "not_mod";
@@ -183,6 +192,7 @@ export function mockAddInstalled(
       copies: 0,
       savedAt: null,
       problem: null,
+      duplicateOf: null,
     });
   }
   recount(snapshot);
@@ -219,6 +229,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
       copies: 0,
       savedAt: null,
       problem: index === 4 ? "loose" : index === 9 ? "not_mod" : null,
+      duplicateOf: index === 6 ? { id: "mock-1", name: TITLES[1], exact: true } : null,
     };
   });
   const enabled = mods.filter((mod) => mod.enabled).length;

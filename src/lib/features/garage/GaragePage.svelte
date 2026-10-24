@@ -612,6 +612,8 @@
         loading={detailsLoading}
         canDelete={selected ? !selected.fromGameRepo : false}
         problem={selected?.problem ?? null}
+        duplicateOf={selected?.duplicateOf ?? null}
+        onShowMod={(id) => (selectedId = id)}
         update={selected?.update ?? "none"}
         updateVersion={selected?.updateVersion ?? null}
         {fixing}

@@ -1,6 +1,7 @@
 //! Архивы, превью и установка модов.
 
 pub mod cache;
+pub mod duplicates;
 pub mod extract;
 pub mod incoming;
 pub mod inspect;

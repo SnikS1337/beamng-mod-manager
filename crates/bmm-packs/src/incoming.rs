@@ -806,7 +806,7 @@ fn match_item(
 /// мод не называют: их правят десятки разных модов — тюнинг, двигатели, карьера.
 /// По ним `Universal_EV_Conversion` выходил «обновлением» `CJD_Specials` и при
 /// установке удалил бы его.
-fn identity_keys(keys: &HashSet<String>) -> HashSet<String> {
+pub(crate) fn identity_keys(keys: &HashSet<String>) -> HashSet<String> {
     keys.iter()
         .filter(|key| {
             if let Some(folder) = key.strip_prefix("vehicles/") {

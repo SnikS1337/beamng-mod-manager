@@ -4,6 +4,7 @@
   import {
     modPreview,
     type ModDetails,
+    type DuplicateOf,
     type PackagingProblem,
     type VersionRow,
   } from "$lib/ipc/library";
@@ -11,16 +12,19 @@
   import { toasts } from "$lib/shell/toasts.svelte";
   import { formatDate, formatSize, kindLabel, plural } from "./format";
   import VersionsBlock from "./VersionsBlock.svelte";
+  import { duplicateExplain } from "./duplicates";
 
   let {
     details,
     loading,
     canDelete,
     problem = null,
+    duplicateOf = null,
     fixing = false,
     update = "none",
     updateVersion = null,
     onFix,
+    onShowMod,
     onToggle,
     onDelete,
     onRestoreVersion,
@@ -33,10 +37,14 @@
     loading: boolean;
     canDelete: boolean;
     problem?: PackagingProblem | null;
+    /** Повторяет другой включённый мод. */
+    duplicateOf?: DuplicateOf | null;
     fixing?: boolean;
     update?: string;
     updateVersion?: string | null;
     onFix?: () => void;
+    /** Открыть другой мод из пары повторов. */
+    onShowMod?: (id: string) => void;
     onToggle: () => void;
     onDelete: () => void;
     onRestoreVersion: (version: VersionRow) => void;
@@ -172,6 +180,18 @@
         {#if problem !== "not_mod" && onFix}
           <button class="btn-primary wide" type="button" onclick={onFix} disabled={fixing}>
             {fixing ? "Исправляем…" : "Исправить"}
+          </button>
+        {/if}
+      </section>
+    {:else if duplicateOf && details.enabled}
+      {@const explain = duplicateExplain(duplicateOf)}
+      <section class="problem">
+        <h3>{explain.title}</h3>
+        <p>{explain.text}</p>
+        <button class="btn-primary wide" type="button" onclick={onToggle}>Выключить этот</button>
+        {#if onShowMod}
+          <button class="btn-glass wide" type="button" onclick={() => onShowMod?.(duplicateOf.id)}>
+            Показать {duplicateOf.name ? `«${duplicateOf.name}»` : "другой"}
           </button>
         {/if}
       </section>

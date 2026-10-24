@@ -60,6 +60,17 @@ pub struct ModCardDto {
     pub saved_at: Option<String>,
     /// Почему игра не загрузит архив: `wrapped`, `loose`, `not_mod`; `None` — в порядке.
     pub problem: Option<String>,
+    /// Повторяет другой включённый мод: игра загрузит оба.
+    pub duplicate_of: Option<DuplicateDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateDto {
+    pub id: String,
+    pub name: String,
+    /// Та же копия (состав и размер совпали), иначе другая версия тех же машин или карт.
+    pub exact: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -230,6 +241,49 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Помечает включённые моды, которые повторяют другой включённый (см.
+/// [`bmm_packs::duplicates`]). Состав архивов — из кэша; ещё не прочитанные архивы
+/// не участвуют, пометка появится после фонового чтения.
+fn mark_duplicates(
+    mut mods: Vec<ModCardDto>,
+    preview_keys: &HashMap<String, String>,
+    contents: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Vec<ModCardDto> {
+    let empty: Vec<String> = Vec::new();
+    let items: Vec<bmm_packs::duplicates::DupItem> = mods
+        .iter()
+        .filter(|card| card.enabled && !card.deleted)
+        .filter_map(|card| {
+            let content = preview_keys
+                .get(&card.id)
+                .and_then(|key| contents.get(key))
+                .unwrap_or(&empty);
+            (!content.is_empty()).then_some(bmm_packs::duplicates::DupItem {
+                id: &card.id,
+                file_name: &card.file_name,
+                size: card.size_bytes,
+                content,
+            })
+        })
+        .collect();
+    let found = bmm_packs::duplicates::find(&items);
+    drop(items);
+    let names: HashMap<String, String> = mods
+        .iter()
+        .map(|card| (card.id.clone(), card.name.clone()))
+        .collect();
+    for card in &mut mods {
+        if let Some(duplicate) = found.get(&card.id) {
+            card.duplicate_of = Some(DuplicateDto {
+                id: duplicate.of.clone(),
+                name: names.get(&duplicate.of).cloned().unwrap_or_default(),
+                exact: duplicate.exact,
+            });
+        }
+    }
+    mods
+}
+
 static TITLES_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// Названия модов из их архивов (`info.json`) читаются в фоне и кэшируются: первый
@@ -259,19 +313,26 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
         .collect();
     let known = state.previews.titles();
     let known_problems = state.previews.problems();
+    let known_contents = state.previews.contents();
     let mut found: Vec<(String, Option<String>)> = Vec::new();
     let mut problems: Vec<(String, Option<String>)> = Vec::new();
+    let mut contents: Vec<(String, Vec<String>)> = Vec::new();
     let mut written = 0usize;
     let mut flush = |found: &mut Vec<(String, Option<String>)>,
-                     problems: &mut Vec<(String, Option<String>)>| {
+                     problems: &mut Vec<(String, Option<String>)>,
+                     contents: &mut Vec<(String, Vec<String>)>| {
         if state.previews.put_titles(found).is_ok() {
             written += found.len();
         }
         if state.previews.put_problems(problems).is_ok() {
             written += problems.len();
         }
+        if state.previews.put_contents(contents).is_ok() {
+            written += contents.len();
+        }
         found.clear();
         problems.clear();
+        contents.clear();
     };
     for target in targets {
         // Архив занят или пропал — спросим при следующей загрузке.
@@ -287,11 +348,21 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
         {
             problems.push((target.key.clone(), problem.map(|p| p.code().to_string())));
         }
-        if found.len() + problems.len() >= 100 {
-            flush(&mut found, &mut problems);
+        // Состав архива — для пометки повторов («weather_fx (1).zip» рядом с «weather_fx.zip»).
+        if !known_contents.contains_key(&target.key)
+            && !contents.iter().any(|(key, _)| *key == target.key)
+            && let Ok(index) = bmm_packs::zip_index::read_index(&target.path)
+        {
+            contents.push((
+                target.key.clone(),
+                incoming::content_keys(&index).into_iter().collect(),
+            ));
+        }
+        if found.len() + problems.len() + contents.len() >= 100 {
+            flush(&mut found, &mut problems, &mut contents);
         }
     }
-    flush(&mut found, &mut problems);
+    flush(&mut found, &mut problems, &mut contents);
     written
 }
 
@@ -611,9 +682,11 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                     .filter(|code| !code.is_empty())
                     .filter(|_| disk.and_then(|disk| disk.sub_folder.as_ref()).is_none())
                     .cloned(),
+                duplicate_of: None,
             }
         })
         .collect();
+    let mods = mark_duplicates(mods, &preview_keys, &state.previews.contents());
 
     let ticket_files: HashSet<String> = tickets_before
         .values()
@@ -652,6 +725,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 copies: item.copies,
                 saved_at: item.last_saved_at.map(|date| date.to_rfc3339()),
                 problem: None,
+                duplicate_of: None,
             }
         })
         .collect();
@@ -1278,6 +1352,56 @@ mod tests {
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
         }
+    }
+
+    #[test]
+    fn enabled_copies_are_marked_after_contents_are_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        let weather: &[(&str, &[u8])] = &[
+            ("lua/ge/extensions/weather_fx.lua", b"print(1)"),
+            ("scripts/weather_fx/modScript.lua", b"x"),
+        ];
+        write_zip(&mods.join("weather_fx.zip"), weather);
+        write_zip(&mods.join("weather_fx (1).zip"), weather);
+        write_zip(&mods.join("rs3.zip"), &[("vehicles/rs3y8/a.jbeam", b"x")]);
+        let state = test_state(&temp, &mods);
+
+        // Первый показ: состав архивов ещё не прочитан — пометок нет, список не ждёт.
+        let first = load_snapshot(&state).unwrap();
+        assert!(first.mods.iter().all(|card| card.duplicate_of.is_none()));
+
+        fill_titles(&state);
+        let snapshot = load_snapshot(&state).unwrap();
+        let copy = snapshot
+            .mods
+            .iter()
+            .find(|card| card.file_name == "weather_fx (1).zip")
+            .unwrap();
+        let main = snapshot
+            .mods
+            .iter()
+            .find(|card| card.file_name == "weather_fx.zip")
+            .unwrap();
+        let duplicate = copy.duplicate_of.as_ref().expect("копия помечена");
+        assert_eq!(duplicate.id, main.id);
+        assert!(duplicate.exact);
+        assert!(main.duplicate_of.is_none());
+        assert!(
+            snapshot
+                .mods
+                .iter()
+                .find(|card| card.file_name == "rs3.zip")
+                .unwrap()
+                .duplicate_of
+                .is_none()
+        );
+
+        // Выключенная копия игре не мешает.
+        toggle_mod(&state, &copy.id, false).unwrap();
+        let after = load_snapshot(&state).unwrap();
+        assert!(after.mods.iter().all(|card| card.duplicate_of.is_none()));
     }
 
     #[test]
