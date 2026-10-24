@@ -248,14 +248,43 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|app, event| {
+        .run(|app, event| match event {
+            // Скрытые окна (страницы Modland, проверка сайта) держат процесс живым:
+            // без этого после закрытия главного окна программа остаётся висеть,
+            // а новый запуск упирается в «уже запущен».
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } => {
+                let open: Vec<String> = app.webview_windows().into_keys().collect();
+                for other in windows_to_close(&label, &open) {
+                    if let Some(window) = app.get_webview_window(&other) {
+                        let _ = window.destroy();
+                    }
+                }
+            }
             // Фоновая проверка пишет библиотеку пакетами раз в 20 секунд: при закрытии
             // программы дописываем то, что накопилось, иначе найденное пропадёт.
-            if let tauri::RunEvent::Exit = event {
+            tauri::RunEvent::Exit => {
                 app.state::<Arc<AppState>>().library.flush();
             }
+            _ => {}
         });
 }
+
+/// Главное окно закрыли — закрываем и все служебные, чтобы процесс завершился.
+fn windows_to_close(closed: &str, open: &[String]) -> Vec<String> {
+    if closed != MAIN_WINDOW {
+        return Vec::new();
+    }
+    open.iter()
+        .filter(|label| label.as_str() != MAIN_WINDOW)
+        .cloned()
+        .collect()
+}
+
+const MAIN_WINDOW: &str = "main";
 
 fn preview_protocol(
     app: &tauri::AppHandle,
@@ -314,4 +343,26 @@ fn preview_protocol(
         .header("Cache-Control", "no-cache")
         .body(Cow::Owned(bytes))
         .expect("preview response")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closing_main_window_closes_hidden_ones() {
+        let open = vec!["modland-pages".to_string(), "modland-check".to_string()];
+        assert_eq!(windows_to_close("main", &open), open);
+        let with_main = vec!["main".to_string(), "modland-pages".to_string()];
+        assert_eq!(
+            windows_to_close("main", &with_main),
+            vec!["modland-pages".to_string()]
+        );
+    }
+
+    #[test]
+    fn closing_a_service_window_keeps_the_rest() {
+        let open = vec!["main".to_string(), "modland-pages".to_string()];
+        assert!(windows_to_close("modland-check", &open).is_empty());
+    }
 }
