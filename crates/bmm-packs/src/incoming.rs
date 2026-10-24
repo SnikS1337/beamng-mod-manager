@@ -1677,6 +1677,45 @@ mod tests {
     }
 
     #[test]
+    fn symlink_in_zip_is_blocked() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("symlink.zip");
+        let file = File::create(&source).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(
+            "vehicles/car/a.jbeam",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"x").unwrap();
+        zip.add_symlink(
+            "link",
+            "../outside.txt",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.finish().unwrap();
+
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        assert_eq!(analysis.items.len(), 1);
+        assert!(analysis.items[0].blocked);
+        assert!(
+            analysis.items[0]
+                .findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Block && finding.code == "symlink")
+        );
+    }
+
+    #[test]
     fn already_installed_is_detected_by_exact_hash() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("map.zip");

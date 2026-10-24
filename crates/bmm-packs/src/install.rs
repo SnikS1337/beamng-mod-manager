@@ -999,6 +999,41 @@ mod tests {
     }
 
     #[test]
+    fn refuses_symlink_zip() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let source = temp.path().join("link.zip");
+        let file = File::create(&source).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(
+                "vehicles/car/a.jbeam",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(b"x").unwrap();
+        writer
+            .add_symlink(
+                "link",
+                "../outside.txt",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.finish().unwrap();
+
+        let result = installer.install_from_path(&source, "link.zip", InstallOptions::default());
+
+        assert_eq!(result.error, Some(InstallError::Blocked));
+        assert!(result.inspection.as_ref().is_some_and(|inspection| {
+            inspection
+                .findings
+                .iter()
+                .any(|finding| finding.code == "symlink")
+        }));
+        assert!(!installer.layout().mods_dir.join("link.zip").exists());
+    }
+
+    #[test]
     fn mod_with_windows_scripts_installs_when_the_user_chose_it() {
         // Maserati GranTurismo (Flanje): tools/*.bat для Spotify. Решение — за пользователем.
         let temp = tempfile::tempdir().unwrap();
