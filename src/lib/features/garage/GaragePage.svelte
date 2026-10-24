@@ -632,6 +632,7 @@
         canDelete={selected ? !selected.fromGameRepo : false}
         problem={selected?.problem ?? null}
         duplicateOf={selected?.duplicateOf ?? null}
+        addon={selected?.role === "addon"}
         group={selected && snapshot && selected.group.length > 0 ? groupMembers(selected, snapshot.mods) : []}
         onShowMod={(id) => (selectedId = id)}
         onKeepOnly={(card) => void keepOnly(card)}
