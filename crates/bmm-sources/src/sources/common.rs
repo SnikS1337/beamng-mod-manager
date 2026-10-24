@@ -41,8 +41,8 @@ pub fn load(
         return Err(SourceError::cancelled());
     }
     let result = match form {
-        Some(form) => fetcher.post_form(source, url, form),
-        None => fetcher.get(source, url),
+        Some(form) => fetcher.post_form_cancellable(source, url, form, cancel),
+        None => fetcher.get_cancellable(source, url, cancel),
     };
     if cancel.load(Ordering::Relaxed) {
         return Err(SourceError::cancelled());
