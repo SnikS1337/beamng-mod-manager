@@ -580,4 +580,55 @@ mod tests {
         assert_eq!(find_listing(&response, "modland", "a").unwrap().title, "B");
         assert!(find_listing(&response, "stmods", "b").is_none());
     }
+
+    #[test]
+    fn search_event_marks_installed_pages_and_prices() {
+        use bmm_sources::search::ModCard;
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("rr", "Rolls-Royce Cullinan"));
+        bind(&store, "rr", "stmods", "luxuryteam", true);
+        let index = InstalledIndex::from_store(&store);
+        let mut paid = listing("modland", "9", "Rolls-Royce Phantom");
+        paid.price = PriceStatus::Paid;
+        let response = SearchResponse {
+            cards: vec![
+                ModCard {
+                    id: "stmods:luxuryteam".to_string(),
+                    title: "Rolls-Royce Cullinan".to_string(),
+                    listings: vec![listing("stmods", "luxuryteam", "Rolls-Royce Cullinan")],
+                    price: PriceSummary::Free,
+                    possible_same_as: vec!["modland:9".to_string()],
+                    relevance: 1.0,
+                },
+                ModCard {
+                    id: "modland:9".to_string(),
+                    title: "Rolls-Royce Phantom".to_string(),
+                    listings: vec![paid],
+                    price: PriceSummary::Paid,
+                    possible_same_as: Vec::new(),
+                    relevance: 0.5,
+                },
+            ],
+            sources: vec![SourceReport {
+                source_id: "stmods".to_string(),
+                display_name: "STMods".to_string(),
+                status: SourceStatus::NeedsHumanCheck,
+                count: 1,
+                note: None,
+                pending: false,
+            }],
+            listings: Vec::new(),
+        };
+        let event = to_event(&response, 7, "done", &index, None);
+        assert_eq!(event.request_id, 7);
+        assert_eq!(event.phase, "done");
+        assert!(event.cards[0].installed);
+        assert!(event.cards[0].listings[0].installed);
+        assert_eq!(event.cards[0].price, "free");
+        assert_eq!(event.cards[0].possible_same_as, vec!["modland:9"]);
+        assert!(!event.cards[1].installed);
+        assert_eq!(event.cards[1].price, "paid");
+        assert_eq!(event.cards[1].listings[0].price, "paid");
+        assert_eq!(event.sources[0].status, "needsHumanCheck");
+    }
 }
