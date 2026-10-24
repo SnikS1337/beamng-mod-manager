@@ -7,8 +7,11 @@
 
 - Windows 10/11 с WebView2 (на целевой машине уже есть);
 - Node.js 24;
-- Rust stable с target `x86_64-pc-windows-msvc`;
+- Rust stable (минимум 1.95 — его требует sysinfo) с target `x86_64-pc-windows-msvc`;
 - Visual Studio Build Tools 2022: workload «C++ build tools» и Windows SDK.
+
+TypeScript остаётся 6.0.x: svelte-check пока не поддерживает TypeScript 7.
+Зависимости раз в неделю проверяет Dependabot (`.github/dependabot.yml`), PR идут в `refactor-rust-poc`.
 
 ## Обычная x64-машина
 
