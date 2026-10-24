@@ -968,7 +968,11 @@ fn path_of(layout: &ModLayout, disk: &DiskMod) -> PathBuf {
     }
 }
 
-fn toggle_mod(state: &AppState, id: &str, enabled: bool) -> Result<ToggleResult, AppError> {
+pub(crate) fn toggle_mod(
+    state: &AppState,
+    id: &str,
+    enabled: bool,
+) -> Result<ToggleResult, AppError> {
     let _guard = state
         .load_lock
         .lock()
