@@ -22,6 +22,7 @@
     problem = null,
     duplicateOf = null,
     group = [],
+    addon = false,
     fixing = false,
     update = "none",
     updateVersion = null,
@@ -45,6 +46,8 @@
     duplicateOf?: DuplicateOf | null;
     /** Основной и его копии, если это основной мод группы. */
     group?: ModCardDto[];
+    /** Дополнение (не машина и не карта): без картинки, как в списке. */
+    addon?: boolean;
     fixing?: boolean;
     update?: string;
     updateVersion?: string | null;
@@ -116,8 +119,8 @@
 
   $effect(() => {
     const id = details?.id;
-    preview = details?.previewUrl ?? null;
-    if (!id || preview) return;
+    preview = addon ? null : (details?.previewUrl ?? null);
+    if (!id || preview || addon) return;
     void modPreview(id)
       .then((url) => {
         if (details?.id === id) preview = url;
@@ -175,7 +178,7 @@
       {#if preview}
         <img src={preview} alt="" />
       {:else}
-        <span>{kindLabel(details.kind)}</span>
+        <span>{addon ? "Дополнение" : kindLabel(details.kind)}</span>
       {/if}
     </div>
 
