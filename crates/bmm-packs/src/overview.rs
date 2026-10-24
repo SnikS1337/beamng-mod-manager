@@ -1,10 +1,8 @@
 use std::collections::BTreeSet;
-use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
 use serde_json::Value;
-use zip::ZipArchive;
 
 use crate::zip_index::{self, ZipError};
 
@@ -202,8 +200,7 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
 }
 
 fn info_value(path: &Path, entry: &str) -> Option<Value> {
-    let file = File::open(path).ok()?;
-    let mut archive = ZipArchive::new(file).ok()?;
+    let mut archive = crate::zip_index::open_archive(path).ok()?;
     let mut info = archive.by_name(entry).ok()?;
     if info.size() > MAX_INFO_BYTES {
         return None;
@@ -244,10 +241,7 @@ fn titles_for(
     names: &BTreeSet<String>,
 ) -> std::collections::HashMap<String, String> {
     let mut result = std::collections::HashMap::new();
-    let Ok(file) = File::open(path) else {
-        return result;
-    };
-    let Ok(mut archive) = ZipArchive::new(file) else {
+    let Ok(mut archive) = crate::zip_index::open_archive(path) else {
         return result;
     };
     for name in names {
@@ -300,6 +294,7 @@ fn is_usable_title(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
 
     fn build_zip(path: &Path, files: &[(&str, &[u8])]) {

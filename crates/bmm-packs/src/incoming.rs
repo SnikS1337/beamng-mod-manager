@@ -927,8 +927,7 @@ pub(crate) fn repack(
     let mut writer = zip::ZipWriter::new(file);
     // Архив открываем один раз, а записи переносим как есть, без распаковки и нового
     // сжатия: переупаковка 36 МБ занимала ~40 с, теперь — доли секунды.
-    let input = File::open(source).map_err(|error| error.to_string())?;
-    let mut archive = zip::ZipArchive::new(input).map_err(|error| error.to_string())?;
+    let mut archive = crate::zip_index::open_archive(source).map_err(|error| error.to_string())?;
     for entry in &index.entries {
         if cancel.load(Ordering::Relaxed) {
             return Err("отменено".to_string());
@@ -1101,8 +1100,7 @@ fn copy_entry(
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut input = File::open(source).map_err(|error| error.to_string())?;
-    let mut archive = zip::ZipArchive::new(&mut input).map_err(|error| error.to_string())?;
+    let mut archive = crate::zip_index::open_archive(source).map_err(|error| error.to_string())?;
     let mut nested = archive
         .by_name(&entry.raw_name)
         .map_err(|error| error.to_string())?;
