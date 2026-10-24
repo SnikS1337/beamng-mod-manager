@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listenUpdates, updatesRefollow, updatesUnfollow } from "$lib/ipc/updates";
+  import {
+    listenUpdates,
+    updatesOpenModland,
+    updatesRefollow,
+    updatesUnfollow,
+  } from "$lib/ipc/updates";
   import { isTauri } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { RefreshCw, Upload } from "@lucide/svelte";
@@ -608,6 +613,7 @@
         onFix={() => void fixSelected()}
         onUnfollow={(source) => void unfollowSelected(source)}
         onBindPage={bindSelected}
+        onPassCheck={updatesOpenModland}
         onToggle={() => {
           if (selected) void toggle(selected);
         }}
