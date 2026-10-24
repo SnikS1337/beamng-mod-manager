@@ -10,7 +10,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2", features = ["serde"] }
-fancy-regex = "0.14"
+fancy-regex.workspace = true
 json5.workspace = true
 
 [dev-dependencies]
