@@ -212,6 +212,32 @@ impl PreviewCache {
         atomic::write_atomic(&self.root.join("contents.json"), json.as_bytes())
     }
 
+    /// `mod_info` из архивов по ключу превью: `{"id": …, "data": {…}}`, `null` — нет.
+    pub fn mod_infos(&self) -> BTreeMap<String, serde_json::Value> {
+        let path = self.root.join("mod_info.json");
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.len() <= CONTENTS_MAX_BYTES => {}
+            _ => return BTreeMap::new(),
+        }
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn put_mod_infos(&self, entries: &[(String, serde_json::Value)]) -> std::io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        fs::create_dir_all(&self.root)?;
+        let mut infos = self.mod_infos();
+        for (key, value) in entries {
+            infos.insert(key.clone(), value.clone());
+        }
+        let json = serde_json::to_string(&infos).map_err(std::io::Error::other)?;
+        atomic::write_atomic(&self.root.join("mod_info.json"), json.as_bytes())
+    }
+
     pub fn titles(&self) -> BTreeMap<String, String> {
         let path = self.root.join("titles.json");
         let Ok(metadata) = fs::metadata(&path) else {
