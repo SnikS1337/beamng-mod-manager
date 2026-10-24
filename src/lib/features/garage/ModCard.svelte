@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { duplicateBadge } from "./duplicates";
   import { Car, FileCode, Map, Music, Package } from "@lucide/svelte";
   import { Switch } from "$lib/components/ui/switch";
   import { modPreview, type ModCardDto } from "$lib/ipc/library";
@@ -57,6 +58,8 @@
       ? { text: "Удалён", class: "deleted" }
       : mod.problem
         ? { text: "Игра не загрузит", class: "problem" }
+      : mod.duplicateOf
+        ? { text: duplicateBadge(mod.duplicateOf), class: "problem" }
       : mod.update === "likely"
         ? { text: "Есть обновление", class: "update" }
         : mod.update === "possible"

@@ -1016,10 +1016,8 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                     runtime.coordinator.check(
                         false,
                         Some(&mut |progress: &UpdateProgress| {
-                            let _ = app_for_progress.emit(
-                                "updates://event",
-                                progress_event(AUTO_REQUEST_ID, progress),
-                            );
+                            let _ = app_for_progress
+                                .emit("updates://event", progress_event(AUTO_REQUEST_ID, progress));
                         }),
                     )
                 }) else {

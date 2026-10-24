@@ -9,6 +9,9 @@ use sha2::{Digest, Sha256};
 use bmm_domain::atomic;
 
 const TITLES_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const CONTENTS_MAX_BYTES: u64 = 32 * 1024 * 1024;
+/// Мод-сборник может нести сотни папок машин; для сравнения хватит первых.
+const CONTENT_KEYS_PER_MOD: usize = 500;
 
 /// Картинки модов бывают 4K и по несколько мегабайт. Карточке и панели мода хватает
 /// 720 точек по большей стороне: декодирование при прокрутке становится в разы дешевле.
@@ -177,6 +180,36 @@ impl PreviewCache {
         }
         let json = serde_json::to_string(&problems).map_err(std::io::Error::other)?;
         atomic::write_atomic(&self.root.join("problems.json"), json.as_bytes())
+    }
+
+    /// Состав архивов (`incoming::content_keys`) по ключу превью — для поиска повторов
+    /// без повторного чтения сотен архивов при каждом показе списка.
+    pub fn contents(&self) -> BTreeMap<String, Vec<String>> {
+        let path = self.root.join("contents.json");
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.len() <= CONTENTS_MAX_BYTES => {}
+            _ => return BTreeMap::new(),
+        }
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn put_contents(&self, entries: &[(String, Vec<String>)]) -> std::io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        fs::create_dir_all(&self.root)?;
+        let mut contents = self.contents();
+        for (key, keys) in entries {
+            let mut keys = keys.clone();
+            keys.sort();
+            keys.truncate(CONTENT_KEYS_PER_MOD);
+            contents.insert(key.clone(), keys);
+        }
+        let json = serde_json::to_string(&contents).map_err(std::io::Error::other)?;
+        atomic::write_atomic(&self.root.join("contents.json"), json.as_bytes())
     }
 
     pub fn titles(&self) -> BTreeMap<String, String> {
@@ -376,6 +409,25 @@ mod tests {
         assert_eq!(cache.title("a"), Some(Some("Dacia Sandero".to_string())));
         assert_eq!(cache.title("b"), Some(None), "известно, что названия нет");
         assert_eq!(cache.title("c"), None, "ещё не читали");
+    }
+
+    #[test]
+    fn contents_round_trip_sorted() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(temp.path());
+        assert!(cache.contents().is_empty());
+        cache
+            .put_contents(&[
+                (
+                    "a".to_string(),
+                    vec!["vehicles/b".to_string(), "lua/ge".to_string()],
+                ),
+                ("b".to_string(), Vec::new()),
+            ])
+            .unwrap();
+        let contents = cache.contents();
+        assert_eq!(contents["a"], vec!["lua/ge", "vehicles/b"]);
+        assert!(contents["b"].is_empty(), "проверено, состава нет");
     }
 
     #[test]
