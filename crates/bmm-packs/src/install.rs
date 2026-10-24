@@ -864,6 +864,23 @@ mod tests {
     use crate::scan::ModLayout;
     use std::io::Write;
 
+    /// Хеши — ключи папок, кэша и проверка архивов: формат не должен меняться
+    /// при обновлении sha2.
+    #[test]
+    fn sha256_hex_is_stable() {
+        assert_eq!(
+            hex_lower(&Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(b"a");
+        hasher.update(b"bc");
+        assert_eq!(
+            hex_lower(&hasher.finalize()),
+            hex_lower(&Sha256::digest(b"abc"))
+        );
+    }
+
     fn layout(temp: &tempfile::TempDir) -> ModLayout {
         let root = temp.path();
         let mods = root.join("mods");
