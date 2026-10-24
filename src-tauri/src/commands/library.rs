@@ -1532,6 +1532,37 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "замер: cargo test --release -- --ignored five_hundred"]
+    fn five_hundred_mods_load_quickly() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        for index in 0..500 {
+            let jbeam = format!("vehicles/car{index}/car.jbeam");
+            let info = format!("vehicles/car{index}/info.json");
+            let body = format!("{{\"Name\":\"Car {index}\"}}");
+            write_zip(
+                &mods.join(format!("car_{index}_v1.{}.zip", index % 7)),
+                &[(jbeam.as_str(), b"{}"), (info.as_str(), body.as_bytes())],
+            );
+        }
+        let state = test_state(&temp, &mods);
+        let started = std::time::Instant::now();
+        let first = load_snapshot(&state).unwrap();
+        let cold = started.elapsed();
+        let started = std::time::Instant::now();
+        fill_titles(&state);
+        let fill = started.elapsed();
+        let started = std::time::Instant::now();
+        let again = load_snapshot(&state).unwrap();
+        let warm = started.elapsed();
+        eprintln!("cold {cold:?} fill {fill:?} warm {warm:?}");
+        assert_eq!(first.mods.len(), 500);
+        assert_eq!(again.mods.len(), 500);
+        assert!(again.mods.iter().all(|card| card.duplicate_of.is_none()));
+    }
+
+    #[test]
     fn toggle_moves_files_the_game_has_not_seen() {
         let temp = tempfile::tempdir().unwrap();
         let mods = temp.path().join("mods");
