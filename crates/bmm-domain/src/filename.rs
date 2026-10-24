@@ -12,7 +12,6 @@ pub struct GuessedName {
 
 struct Patterns {
     by_for: Regex,
-    by_tail: Regex,
     site_tag: Regex,
     copy_suffix: Regex,
     tag_after_version: Regex,
@@ -31,9 +30,6 @@ fn patterns() -> &'static Patterns {
             r"(?i)[_\-\s]by[_\-\s](?<a>.+?)[_\-\s]for[_\-\s]beamng.*$",
         )
         .unwrap(),
-        // «car_by_Author» без «for beamng» — автор последним словом (только через «_»:
-        // «Stand by Me» — название, а не автор).
-        by_tail: Regex::new(r"(?i)_by_(?<a>[\p{L}\p{Nd}][\p{L}\p{Nd}_\-]*)$").unwrap(),
         // Метки сайтов и каналов, которые дописывают к имени файла при раздаче:
         // modland(.net), modsgaming, stmods, телеграм-канал «tg_m0dsbeamng».
         site_tag: Regex::new(
@@ -77,21 +73,20 @@ pub fn from_file_name(file_name: &str) -> GuessedName {
     let mut text = replace_all(&p.site_tag, &stem);
 
     let mut author = None;
-    for regex in [&p.by_for, &p.by_tail] {
-        if let Ok(Some(captures)) = regex.captures(&text)
-            && let Some(found) = captures.get(0)
-            && let Some(author_match) = captures.name("a")
-        {
-            author = Some(
-                author_match
-                    .as_str()
-                    .replace(['_', '-'], " ")
-                    .trim()
-                    .to_string(),
-            );
-            text.truncate(found.start());
-            break;
-        }
+    // Только «by X for beamng»: короткое «_by_X» чаще пишет тот, кто перезалил мод,
+    // и строгая сверка автора отбросила бы настоящую страницу.
+    if let Ok(Some(captures)) = p.by_for.captures(&text)
+        && let Some(found) = captures.get(0)
+        && let Some(author_match) = captures.name("a")
+    {
+        author = Some(
+            author_match
+                .as_str()
+                .replace(['_', '-'], " ")
+                .trim()
+                .to_string(),
+        );
+        text.truncate(found.start());
     }
 
     let mut name = text.replace(['_', '-'], " ").trim().to_string();
@@ -149,12 +144,52 @@ pub fn from_file_name(file_name: &str) -> GuessedName {
         }
         name = rest;
     }
+    let name = name
+        .split_whitespace()
+        .map(split_camel)
+        .collect::<Vec<_>>()
+        .join(" ");
 
     GuessedName {
         name,
         author,
         version,
     }
+}
+
+/// «AstonMartinValhalla» → «Aston Martin Valhalla», «smokeDustFX» → «smoke Dust FX»:
+/// склеенное название сайты не находят. Делим только слово с двумя и больше
+/// переходами и не отрезаем короткие куски вроде «Mc» в «McLaren».
+fn split_camel(word: &str) -> String {
+    let chars: Vec<char> = word.chars().collect();
+    let mut cuts = Vec::new();
+    for index in 1..chars.len() {
+        let (before, here) = (chars[index - 1], chars[index]);
+        let next_lower = chars.get(index + 1).is_some_and(|c| c.is_lowercase());
+        if (before.is_lowercase() && here.is_uppercase())
+            || ((before.is_uppercase() || before.is_ascii_digit())
+                && here.is_uppercase()
+                && next_lower)
+        {
+            cuts.push(index);
+        }
+    }
+    if cuts.len() < 2 {
+        return word.to_string();
+    }
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    for cut in cuts.iter().copied().chain(std::iter::once(chars.len())) {
+        let piece: String = chars[start..cut].iter().collect();
+        let short_word =
+            piece.chars().count() < 3 && piece.chars().skip(1).any(|c| c.is_lowercase());
+        if short_word && cut != chars.len() {
+            continue; // «Mc» остаётся со следующим куском
+        }
+        pieces.push(piece);
+        start = cut;
+    }
+    pieces.join(" ")
 }
 
 fn replace_all(regex: &Regex, text: &str) -> String {
@@ -264,7 +299,7 @@ mod tests {
             ),
             (
                 "VAZ_2104_2105_2107VangohMods_v0.2.3.zip",
-                "VAZ 2104 2105 2107VangohMods",
+                "VAZ 2104 2105 2107 Vangoh Mods",
                 None,
                 Some("0.2.3"),
             ),
@@ -276,15 +311,31 @@ mod tests {
             ),
             (
                 "vaz2106kenemationrelated_by_ViharekMods.zip",
-                "vaz2106kenemationrelated",
-                Some("ViharekMods"),
+                "vaz2106kenemationrelated by ViharekMods",
+                None,
                 None,
             ),
+            (
+                "AstonMartinValhalla.zip",
+                "Aston Martin Valhalla",
+                None,
+                None,
+            ),
+            ("HighPowerCarPack.zip", "High Power Car Pack", None, None),
+            ("MapsFromRCD.zip", "Maps From RCD", None, None),
+            (
+                "smokeDustFX_mihaits.zip",
+                "smoke Dust FX mihaits",
+                None,
+                None,
+            ),
+            ("McLaren_P1.zip", "McLaren P1", None, None),
+            ("CJD_Specials.zip", "CJD Specials", None, None),
             ("mark2_tg_m0dsbeamng.zip", "mark2", None, None),
             ("Sumner_Road_tg_m0dsbeamng.zip", "Sumner Road", None, None),
             (
                 "McLaren7SportSeries_Frix.zip",
-                "McLaren7SportSeries Frix",
+                "McLaren7 Sport Series Frix",
                 None,
                 None,
             ),
@@ -321,6 +372,8 @@ mod tests {
         assert_eq!(from_file_name("xmodlandx.zip").name, "xmodlandx");
         let song = from_file_name("Stand by Me.zip");
         assert_eq!((song.name.as_str(), song.author), ("Stand by Me", None));
+        let repack = from_file_name("car_by_Uploader.zip");
+        assert_eq!(repack.author, None, "«_by_» без «for beamng» — не автор");
     }
 
     #[test]
