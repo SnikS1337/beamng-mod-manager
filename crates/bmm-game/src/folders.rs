@@ -175,6 +175,20 @@ fn expand_env_vars(input: &str, lookup: impl Fn(&str) -> Option<String>) -> Stri
     result
 }
 
+/// Папка установки игры (там `startup.ini` и `Bin64`), а не папка пользователя.
+fn is_game_install(path: &Path) -> bool {
+    path.join("startup.ini").is_file() && path.join("Bin64").is_dir()
+}
+
+/// Выбрали папку установки игры: моды — в папке пользователя из её `startup.ini`.
+fn mods_of_game_install(path: &Path) -> Option<PathBuf> {
+    if !is_game_install(path) {
+        return None;
+    }
+    let root = crate::info::user_root_from_startup_ini(path)?;
+    find_mods_folders(&root).into_iter().next()
+}
+
 pub fn resolve(selected: Option<&str>, check_writable: bool) -> FolderCheck {
     let Some(selected) = selected else {
         return check(FolderProblem::Empty, None, "Папка не выбрана.");
@@ -212,8 +226,19 @@ pub fn resolve(selected: Option<&str>, check_writable: bool) -> FolderCheck {
     {
         path
     } else {
-        match find_mods_folders(&path).into_iter().next() {
+        match find_mods_folders(&path)
+            .into_iter()
+            .next()
+            .or_else(|| mods_of_game_install(&path))
+        {
             Some(found) => found,
+            None if is_game_install(&path) => {
+                return check(
+                    FolderProblem::NoModsFolder,
+                    None,
+                    "Это папка установки игры, моды лежат не здесь. Выберите папку пользователя: обычно %LOCALAPPDATA%\\BeamNG\\BeamNG.drive.",
+                );
+            }
             None => {
                 return check(
                     FolderProblem::NoModsFolder,
@@ -334,6 +359,35 @@ fn same_path(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn game_install_folder_leads_to_its_user_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let game = temp.path().join("BeamNG.drive");
+        fs::create_dir_all(game.join("Bin64")).unwrap();
+        let user = temp.path().join("user");
+        fs::create_dir_all(user.join("current").join("mods")).unwrap();
+
+        // Папка пользователя по умолчанию — моды не здесь, понятный ответ.
+        fs::write(game.join("startup.ini"), "[filesystem]\nUserPath =\n").unwrap();
+        let result = resolve(Some(&game.display().to_string()), false);
+        assert_eq!(result.problem, FolderProblem::NoModsFolder);
+        assert!(
+            result.message.contains("папка установки"),
+            "{}",
+            result.message
+        );
+
+        // Перенесённая папка пользователя — находим её моды.
+        fs::write(
+            game.join("startup.ini"),
+            format!("[filesystem]\nUserPath = {}\n", user.display()),
+        )
+        .unwrap();
+        let result = resolve(Some(&game.display().to_string()), false);
+        assert_eq!(result.problem, FolderProblem::None, "{}", result.message);
+        assert_eq!(result.mods_dir, Some(user.join("current").join("mods")));
+    }
 
     #[test]
     fn steam_library_paths_are_read() {
