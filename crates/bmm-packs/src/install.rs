@@ -204,7 +204,7 @@ impl ModInstaller {
         if inspection.is_blocked() {
             return InstallResult::fail_with_inspection(
                 InstallError::Blocked,
-                "Архив не прошёл проверку безопасности.",
+                "Архив не прошёл проверку структуры.",
                 inspection,
             );
         }

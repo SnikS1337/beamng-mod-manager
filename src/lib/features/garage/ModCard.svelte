@@ -3,7 +3,7 @@
   import { Car, FileCode, Map, Music, Package } from "@lucide/svelte";
   import { Switch } from "$lib/components/ui/switch";
   import { modPreview, type ModCardDto } from "$lib/ipc/library";
-  import { formatSize, kindLabel } from "./format";
+  import { formatSize, kindLabel, plural } from "./format";
 
   let {
     mod,
@@ -80,14 +80,6 @@
   function select() {
     onselect(mod.id);
   }
-
-  function onkeydown(event: KeyboardEvent) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      select();
-    }
-  }
 </script>
 
 <div
@@ -96,62 +88,71 @@
   class:sleeping={!mod.enabled && !mod.deleted}
   class:deleted={mod.deleted}
   class:pending={mod.pending === "queued"}
-  role="button"
-  tabindex="0"
-  aria-pressed={selected}
-  aria-label={mod.name}
-  title={mod.fileName}
-  onclick={select}
-  onkeydown={onkeydown}
 >
   <div class="thumb" style={preview ? undefined : `background:${placeholder}`}>
-    {#if preview}
-      <img src={preview} alt="" loading="lazy" />
-    {:else}
-      {@const Icon = icon}
-      <span class="placeholder">
-        <Icon size={34} strokeWidth={1.4} />
-        <span>{kindLabel(mod.kind)}</span>
-      </span>
-    {/if}
-
-    {#if mod.pending === "queued"}
-      <span class="badge pending-badge">После игры</span>
-    {/if}
-    {#if status}
-      <span class="badge {status.class}">{status.text}</span>
-    {/if}
-
-    <div class="caption">
-      <div class="titles">
-        <p class="title">{mod.name}</p>
-        <p class="meta">
-          {#if mod.version}
-            <span class="version">{mod.version}</span>
-            <span class="dot">·</span>
-          {/if}
-          <span>{formatSize(mod.sizeBytes)}</span>
-          {#if mod.deleted}
-            <span class="dot">·</span>
-            <span>{mod.copies > 1 ? `${mod.copies} копии` : "копия"}</span>
-          {:else if mod.compat.differs}
-            <span class="dot">·</span>
-            <span class="compat">{mod.compat.modFor}</span>
-          {/if}
-        </p>
-      </div>
-      {#if !mod.deleted}
-        <div class="toggle">
-          <Switch
-            checked={mod.enabled}
-            onCheckedChange={() => ontoggle(mod)}
-            onclick={(event: MouseEvent) => event.stopPropagation()}
-            aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
-          />
-        </div>
+      {#if preview}
+        <img src={preview} alt="" loading="lazy" />
+      {:else}
+        {@const Icon = icon}
+        <span class="placeholder">
+          <Icon size={34} strokeWidth={1.4} />
+          <span>{kindLabel(mod.kind)}</span>
+        </span>
       {/if}
+
+      {#if mod.pending === "queued"}
+        <span class="badge pending-badge">После игры</span>
+      {/if}
+      {#if status}
+        <span class="badge {status.class}">{status.text}</span>
+      {/if}
+
+      <div class="caption">
+        <div class="titles">
+          <p class="title">{mod.name}</p>
+          <p class="meta">
+            {#if mod.update !== "none" && mod.updateVersion && mod.updateVersion !== mod.version}
+              <span class="version">{mod.version ? `${mod.version} → ${mod.updateVersion}` : mod.updateVersion}</span>
+            {:else if mod.version}
+              <span class="version">{mod.version}</span>
+            {/if}
+            {#if mod.version || mod.updateVersion}
+              <span class="dot">·</span>
+            {/if}
+            <span>{formatSize(mod.sizeBytes)}</span>
+            {#if mod.deleted}
+              <span class="dot">·</span>
+              <span>{mod.copies > 1 ? `${mod.copies} ${plural(mod.copies, "копия", "копии", "копий")}` : "копия"}</span>
+            {:else if mod.unchecked && mod.update === "none"}
+              <span class="dot">·</span>
+              <span>не проверяется</span>
+            {:else if mod.compat.differs}
+              <span class="dot">·</span>
+              <span class="compat">{mod.compat.modFor}</span>
+            {/if}
+          </p>
+        </div>
+      </div>
     </div>
-  </div>
+
+  <button
+    class="select"
+    type="button"
+    aria-pressed={selected}
+    aria-label={mod.name}
+    title={mod.fileName}
+    onclick={select}
+  ></button>
+
+  {#if !mod.deleted}
+    <div class="toggle">
+      <Switch
+        checked={mod.enabled}
+        onCheckedChange={() => ontoggle(mod)}
+        aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -182,9 +183,20 @@
       0 0 26px rgb(170 205 255 / 0.28);
   }
 
-  .card:focus-visible {
+  .select {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    padding: 0;
+    border: 0;
+    border-radius: 26px;
+    background: transparent;
+    cursor: default;
+  }
+
+  .select:focus-visible {
     outline: 3px solid var(--ring);
-    outline-offset: 2px;
+    outline-offset: -3px;
   }
 
   /* Выбранная — без обводки: приподнята, кромка ярче, холодное свечение снизу. */
@@ -240,6 +252,10 @@
 
   .deleted {
     border-color: color-mix(in oklab, var(--foreground) 14%, transparent);
+  }
+
+  .deleted .caption {
+    padding-right: 14px;
   }
 
   /* Плашки legacy: тёмное стекло, белый текст и цветная точка — статус читается словом. */
@@ -307,7 +323,7 @@
     align-items: flex-end;
     justify-content: space-between;
     gap: 8px;
-    padding: 56px 14px 14px;
+    padding: 56px 74px 14px 14px;
     background: linear-gradient(
       to top,
       rgb(4 7 14 / 0.94),
@@ -358,6 +374,10 @@
   }
 
   .toggle {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    z-index: 2;
     flex: none;
     filter: drop-shadow(0 2px 6px rgb(0 0 0 / 0.45));
   }

@@ -45,7 +45,7 @@
   const MODES: { id: Mode; label: string; icon: typeof Moon }[] = [
     { id: "dark", label: "Тёмная", icon: Moon },
     { id: "light", label: "Светлая", icon: Sun },
-    { id: "system", label: "Как в системе", icon: Monitor },
+    { id: "system", label: "Как в Windows", icon: Monitor },
   ];
   const SECTIONS = [
     { id: "appearance", label: "Внешний вид", icon: Palette },
@@ -57,9 +57,9 @@
   ] as const;
   type SectionId = (typeof SECTIONS)[number]["id"];
   const SOURCES = [
-    { id: "modland", label: "Modland", note: "Каталог с проверкой «вы человек»" },
+    { id: "modland", label: "Modland", note: "Иногда просит подтвердить, что вы человек" },
     { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
-    { id: "modsgaming", label: "ModsGaming", note: "Русский каталог, картинки со страницы" },
+    { id: "modsgaming", label: "ModsGaming", note: "Русский каталог; картинки со страницы" },
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
   ];
   let activeSection = $state<SectionId>("appearance");
@@ -233,18 +233,30 @@
     }
   }
 
+  let lastPreset = $state<"beauty" | "fast">("beauty");
+
   const preset = $derived(
-    draft?.liquidGlass && draft.uiAnimations && draft.fireflies
+    draft?.liquidGlass && draft.animatedBackground && draft.uiAnimations && draft.fireflies
       ? "beauty"
-      : draft && !draft.liquidGlass && !draft.uiAnimations && !draft.fireflies
+      : draft &&
+          !draft.liquidGlass &&
+          !draft.animatedBackground &&
+          !draft.uiAnimations &&
+          !draft.fireflies
         ? "fast"
         : null,
   );
 
+  $effect(() => {
+    if (preset) lastPreset = preset;
+  });
+
   function applyPreset(kind: "beauty" | "fast") {
     if (!draft) return;
     const on = kind === "beauty";
+    lastPreset = kind;
     draft.liquidGlass = on;
+    draft.animatedBackground = on;
     draft.uiAnimations = on;
     draft.fireflies = on;
     draft.backgroundTilt = false;
@@ -252,7 +264,7 @@
   }
 
   function setFlag(
-    key: "liquidGlass" | "uiAnimations" | "fireflies" | "backgroundTilt",
+    key: "liquidGlass" | "animatedBackground" | "uiAnimations" | "fireflies" | "backgroundTilt",
     value: boolean,
   ) {
     if (!draft) return;
@@ -388,7 +400,7 @@
               onclick={() => applyPreset("beauty")}
             >
               <b>Красиво</b>
-              <small>полупрозрачные панели, анимации, огоньки</small>
+              <small>полупрозрачные панели, живой фон, анимации и огоньки</small>
             </button>
             <button
               type="button"
@@ -399,6 +411,14 @@
               <small>плотные панели, без анимаций</small>
             </button>
           </div>
+          {#if preset === null}
+            <p class="preset-note">
+              Движение поменяно вручную.
+              <button type="button" onclick={() => applyPreset(lastPreset)}>
+                Вернуть как в наборе
+              </button>
+            </p>
+          {/if}
 
           <span class="group-title">Движение</span>
           <div class="switch-list">
@@ -424,6 +444,18 @@
                 checked={draft.uiAnimations}
                 onCheckedChange={(value) => setFlag("uiAnimations", value)}
                 aria-label="Анимации интерфейса"
+              />
+            </div>
+            <div class="switch-row">
+              <div>
+                <b>Анимированный фон</b>
+                <small>По фону медленно плывут пятна света и цветная полоса.</small>
+              </div>
+              <Switch
+                size="lg"
+                checked={draft.animatedBackground}
+                onCheckedChange={(value) => setFlag("animatedBackground", value)}
+                aria-label="Анимированный фон"
               />
             </div>
             <div class="switch-row">
@@ -457,7 +489,7 @@
           <span class="group-title">Оформление</span>
           <div class="settings-subcard">
             <div class="subcard-title">Тема</div>
-            <p class="hint">Светлое стекло с тёмным текстом или тёмное.</p>
+            <p class="hint">Светлая или тёмная тема.</p>
             <div class="choices">
               {#each MODES as mode (mode.id)}
                 {@const ModeIcon = mode.icon}
@@ -515,7 +547,13 @@
       <div class="row">
         <label for="mods-folder">Папка модов</label>
         <div class="path-row">
-          <input id="mods-folder" readonly value={draft.modsFolder ?? ""} placeholder="не выбрана" />
+          <input
+            id="mods-folder"
+            readonly
+            value={draft.modsFolder ?? ""}
+            placeholder="не выбрана"
+            title={draft.modsFolder ?? ""}
+          />
           <button type="button" onclick={() => void pickFolder("modsFolder")}>
             <FolderOpen size={13} />
             Выбрать
@@ -533,7 +571,13 @@
       <div class="row">
         <label for="user-folder">Папка пользователя игры</label>
         <div class="path-row">
-          <input id="user-folder" readonly value={draft.userFolder ?? ""} placeholder="определяется автоматически" />
+          <input
+            id="user-folder"
+            readonly
+            value={draft.userFolder ?? ""}
+            placeholder="определяется автоматически"
+            title={draft.userFolder ?? ""}
+          />
           <button type="button" onclick={() => void pickFolder("userFolder")}>
             <FolderOpen size={13} />
             Выбрать
@@ -570,7 +614,7 @@
       </div>
 
       <div class="row">
-        <label for="warn-above">Предупреждать, если включено больше</label>
+        <label for="warn-above">Предупреждать, если включено больше модов</label>
         <input
           id="warn-above"
           class="number"
@@ -691,7 +735,7 @@
       <div class="switch-row">
         <div>
           <b>Обновления программы</b>
-          <small>Проверять новые версии самого менеджера на GitHub.</small>
+          <small>Проверять новые версии самой программы на GitHub.</small>
         </div>
         <Switch
           size="lg"
@@ -951,6 +995,24 @@
   .presets button.active {
     border-color: color-mix(in oklab, var(--primary) 55%, transparent);
     background: color-mix(in oklab, var(--primary) 11%, transparent);
+  }
+
+  .preset-note {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 9.5px;
+    line-height: 1.4;
+  }
+
+  .preset-note button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--primary);
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: default;
   }
 
   .switch-list {
@@ -1372,7 +1434,7 @@
   }
 
   .settings-sections > section {
-    min-height: 100%;
+    min-height: 0;
     box-sizing: border-box;
   }
 

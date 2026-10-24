@@ -42,6 +42,7 @@ describe("headerNote", () => {
     expect(headerNote(8, 0)).toBe("8 модов");
     expect(headerNote(8, 1)).toBe("8 модов · 1 ждёт обновления");
     expect(headerNote(8, 3)).toBe("8 модов · 3 ждут обновления");
+    expect(headerNote(5000, 295)).toBe("5 000 модов · 295 ждут обновления");
   });
 });
 

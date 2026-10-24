@@ -459,7 +459,7 @@
     if (snapshot?.folderError) return "Не нашли папку с модами";
     if (query) return "Нет такого мода";
     if (filter === "updates") return "Всё свежее";
-    if (filter === "unchecked") return "Все моды проверяются";
+    if (filter === "unchecked") return "У всех модов есть страница";
     if (filter === "enabled") return "Все моды выключены";
     if (filter === "deleted") return "Удалённых модов нет";
     return "Модов пока нет";
@@ -473,7 +473,7 @@
     if (filter === "updates") return "Обновлений нет. Проверить снова можно на экране «Обновления».";
     if (filter === "unchecked") return "У всех модов есть подтверждённая страница.";
     if (filter === "enabled") return "Включите нужные в общем списке.";
-    if (filter === "deleted") return "Удалённые моды появятся здесь после подтверждения.";
+    if (filter === "deleted") return "После удаления моды появятся здесь.";
     return "Найдите мод в поиске или перетащите архив на окно.";
   }
 </script>
@@ -580,8 +580,11 @@
             {#if snapshot.folderError}
               <a href="/settings">Открыть настройки</a>
             {:else if query}
+              <a href="/search">Искать на сайтах</a>
               <button type="button" onclick={() => (query = "")}>Сбросить поиск</button>
-            {:else if filter !== "all"}
+            {:else if filter === "all"}
+              <a href="/search">Перейти в поиск</a>
+            {:else}
               <button type="button" onclick={() => (filter = "all")}>Показать все</button>
             {/if}
           </div>
@@ -886,9 +889,45 @@
     color: oklch(0.85 0.12 25);
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1100px) {
     .body.with-inspector {
       grid-template-columns: minmax(0, 1fr);
+      position: relative;
+    }
+
+    .body.with-inspector :global(aside.inspector) {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 6;
+      width: 328px;
+      max-width: calc(100% - 12px);
+      background: var(--background);
+      border-left: 1px solid var(--glass-border);
+      box-shadow: -18px 0 40px rgb(0 0 0 / 0.24);
+    }
+
+    .island {
+      flex-wrap: wrap;
+      height: auto;
+      padding: 6px 8px;
+      border-radius: 20px;
+    }
+
+    .filters {
+      flex-wrap: wrap;
+      height: auto;
+      overflow: visible;
+    }
+
+    .filter {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    .search {
+      width: 100%;
     }
   }
 

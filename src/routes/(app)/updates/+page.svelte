@@ -2,6 +2,7 @@
   import { expectDownload } from "$lib/ipc/incoming";
   import { onDestroy, onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { safeExternalUrl } from "$lib/url";
   import { sourceName } from "$lib/ipc/search";
   import { formatAgo, formatSize, formatWhen, plural } from "$lib/features/garage/format";
   import { toasts } from "$lib/shell/toasts.svelte";
@@ -269,10 +270,15 @@
   }
 
   async function openLink(url: string) {
+    const safe = safeExternalUrl(url);
+    if (!safe) {
+      toasts.show("Ссылка не открывается");
+      return;
+    }
     try {
-      await openUrl(url);
+      await openUrl(safe);
     } catch {
-      window.open(url, "_blank", "noopener");
+      window.open(safe, "_blank", "noopener");
     }
   }
 
@@ -367,22 +373,22 @@
       <h1 data-tauri-drag-region>Обновления</h1>
       <p data-tauri-drag-region>
         {#if counts.available === 0}
-          Всё актуально
+          {snapshot.lastChecked ? "Всё свежее" : "Ещё не проверяли"}
         {:else}
-          {counts.available} {plural(counts.available, "доступно", "доступно", "доступно")}
+          {counts.available.toLocaleString("ru-RU")} {plural(counts.available, "доступно", "доступно", "доступно")}
         {/if}
       </p>
     </div>
     <div class="island glass liquid-edge">
       <div class="filters">
         <button type="button" class="filter" class:active={filter === "available"} onclick={() => (filter = "available")}>
-          Доступные {#if counts.available > 0}<span>{counts.available}</span>{/if}
+          Доступные {#if counts.available > 0}<span>{counts.available.toLocaleString("ru-RU")}</span>{/if}
         </button>
         <button type="button" class="filter" class:active={filter === "hidden"} onclick={() => (filter = "hidden")}>
-          Скрытые {#if counts.hidden > 0}<span>{counts.hidden}</span>{/if}
+          Скрытые {#if counts.hidden > 0}<span>{counts.hidden.toLocaleString("ru-RU")}</span>{/if}
         </button>
         <button type="button" class="filter" class:active={filter === "pages"} onclick={() => (filter = "pages")}>
-          Страницы {#if counts.pages > 0}<span>{counts.pages}</span>{/if}
+          Страницы {#if counts.pages > 0}<span>{counts.pages.toLocaleString("ru-RU")}</span>{/if}
         </button>
       </div>
     </div>
@@ -399,12 +405,15 @@
         <div class="state"><p>Загружаем обновления…</p></div>
       {:else if filter === "available" && snapshot.findings.length === 0}
         <div class="state">
-          <p>Обновлений нет</p>
+          <p>{snapshot.lastChecked ? "Всё свежее" : "Ещё не проверяли"}</p>
           <span>
             {snapshot.lastChecked
               ? `Последняя проверка ${formatWhen(snapshot.lastChecked)}. Программа проверяет сама при запуске.`
-              : "Нажмите «Проверить сейчас», чтобы сверить версии со всеми включёнными сайтами."}
+              : "Сверим версии модов со всеми включёнными сайтами."}
           </span>
+          <button class="btn-primary" type="button" onclick={() => void check()}>
+            Проверить сейчас
+          </button>
         </div>
       {:else if filter === "hidden" && snapshot.hidden.length === 0}
         <div class="state">
@@ -497,7 +506,7 @@
           {offerForce ? "Всё равно проверить" : "Проверить сейчас"}
         </button>
         <button class="btn-glass wide" type="button" onclick={() => void findPages()}>
-          Найти страницы модам без них
+          Найти страницы для модов без страниц
         </button>
       {/if}
 
@@ -910,11 +919,19 @@
 
   @media (max-width: 1100px) {
     .body {
-      grid-template-columns: minmax(0, 1fr);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .list {
+      flex: 0 0 auto;
+      overflow: visible;
     }
 
     .panel {
-      order: -1;
+      flex: none;
+      order: 0;
     }
   }
 </style>
