@@ -226,8 +226,10 @@
     return parts.join(" · ");
   }
 
-  function metaText(listing: SearchListing): string {
-    return [listing.author, listing.category, formatSize(listing.sizeBytes ?? 0)]
+  function metaText(card: SearchCard, listing: SearchListing): string {
+    // Раздел сайта («mashiny», «Cars») уже показан меткой типа на фото.
+    const category = card.kind ? null : listing.category;
+    return [listing.author, category, formatSize(listing.sizeBytes ?? 0)]
       .filter((value) => value && value !== "—")
       .join(" · ");
   }
@@ -383,8 +385,8 @@
                     {#if versionText(listing)}
                       <span class="version">{versionText(listing)}</span>
                     {/if}
-                    {#if metaText(listing)}
-                      <span class="meta">{metaText(listing)}</span>
+                    {#if metaText(card, listing)}
+                      <span class="meta">{metaText(card, listing)}</span>
                     {/if}
                   </div>
                   <div class="actions">
