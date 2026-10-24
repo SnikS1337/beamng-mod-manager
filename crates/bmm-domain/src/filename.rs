@@ -12,7 +12,12 @@ pub struct GuessedName {
 
 struct Patterns {
     by_for: Regex,
+    by_tail: Regex,
     site_tag: Regex,
+    copy_suffix: Regex,
+    tag_after_version: Regex,
+    pre_release: Regex,
+    glued_version: Regex,
     trailing_version: Regex,
     dotted_trailing: Regex,
     v_prefixed: Regex,
@@ -26,8 +31,23 @@ fn patterns() -> &'static Patterns {
             r"(?i)[_\-\s]by[_\-\s](?<a>.+?)[_\-\s]for[_\-\s]beamng.*$",
         )
         .unwrap(),
+        // «car_by_Author» без «for beamng» — автор последним словом (только через «_»:
+        // «Stand by Me» — название, а не автор).
+        by_tail: Regex::new(r"(?i)_by_(?<a>[\p{L}\p{Nd}][\p{L}\p{Nd}_\-]*)$").unwrap(),
+        // Метки сайтов и каналов, которые дописывают к имени файла при раздаче:
+        // modland(.net), modsgaming, stmods, телеграм-канал «tg_m0dsbeamng».
         site_tag: Regex::new(
-            r"(?i)(?<![\p{L}\p{Nd}])[_\-\s]?(?:modland[_\-\s]?net|modsgaming|stmods)(?![\p{L}\p{Nd}])",
+            r"(?i)(?<![\p{L}\p{Nd}])[_\-\s]?(?:modland(?:[_\-\s]?net)?|modsgaming|stmods|(?:tg[_\-\s]?)?m0dsbeamng)(?![\p{L}\p{Nd}])",
+        )
+        .unwrap(),
+        // Копия, которую браузер сохранил повторно: «weather_fx (1)».
+        copy_suffix: Regex::new(r"\s*\(\d{1,3}\)$").unwrap(),
+        // Короткая метка раздачи сразу за версией: «v1.2_bm».
+        tag_after_version: Regex::new(r"(?i)(?:(?<=\.\d)|(?<=\.\d\d)|(?<=\.\d\d\d))\s+bm$").unwrap(),
+        pre_release: Regex::new(r"(?i)\s(?<p>(?:alpha|beta|rc)\s?\d{0,3})$").unwrap(),
+        // Версия, приклеенная к слову: «hotw0.3.0», «remasterVer1.0».
+        glued_version: Regex::new(
+            r"(?i)(?<=\p{L})(?:ver(?:sion)?|v)?(?<v>\d{1,3}(?:\.\d{1,3}){1,3})$",
         )
         .unwrap(),
         trailing_version: Regex::new(
@@ -35,7 +55,7 @@ fn patterns() -> &'static Patterns {
         )
         .unwrap(),
         dotted_trailing: Regex::new(
-            r"(?i)\s(?:v\s*)?(?<v>\d{1,3}(?:\.\d{1,3})+[a-z]?)$",
+            r"(?i)\s(?:v(?:er(?:sion)?)?\.?\s*)?(?<v>\d{1,3}(?:\.\d{1,3})+[a-z]?)$",
         )
         .unwrap(),
         v_prefixed: Regex::new(
@@ -53,28 +73,55 @@ pub fn from_file_name(file_name: &str) -> GuessedName {
         .unwrap_or_else(|| file_name.trim().to_string());
     let p = patterns();
 
+    let stem = replace_all(&p.copy_suffix, &stem);
     let mut text = replace_all(&p.site_tag, &stem);
 
     let mut author = None;
-    if let Ok(Some(captures)) = p.by_for.captures(&text)
-        && let Some(found) = captures.get(0)
-        && let Some(author_match) = captures.name("a")
-    {
-        author = Some(
-            author_match
-                .as_str()
-                .replace(['_', '-'], " ")
-                .trim()
-                .to_string(),
-        );
-        text.truncate(found.start());
+    for regex in [&p.by_for, &p.by_tail] {
+        if let Ok(Some(captures)) = regex.captures(&text)
+            && let Some(found) = captures.get(0)
+            && let Some(author_match) = captures.name("a")
+        {
+            author = Some(
+                author_match
+                    .as_str()
+                    .replace(['_', '-'], " ")
+                    .trim()
+                    .to_string(),
+            );
+            text.truncate(found.start());
+            break;
+        }
     }
 
     let mut name = text.replace(['_', '-'], " ").trim().to_string();
+    name = replace_all(&p.tag_after_version, &name);
+
+    // «v2.8.0 alpha2»: суффикс сборки остаётся частью версии, иначе 2.8.0-alpha2
+    // и 2.8.0 выглядели бы одинаковыми.
+    let mut pre = None;
+    if let Ok(Some(captures)) = p.pre_release.captures(&name)
+        && let (Some(found), Some(value)) = (captures.get(0), captures.name("p"))
+    {
+        pre = Some((
+            found.start(),
+            value.as_str().replace(' ', "").to_lowercase(),
+        ));
+    }
+    let base = match &pre {
+        Some((start, _)) => name[..*start].trim().to_string(),
+        None => name.clone(),
+    };
 
     let mut version = None;
-    for regex in [&p.dotted_trailing, &p.trailing_version, &p.v_prefixed] {
-        let Ok(Some(captures)) = regex.captures(&name) else {
+    let mut rest = base.clone();
+    for regex in [
+        &p.dotted_trailing,
+        &p.trailing_version,
+        &p.v_prefixed,
+        &p.glued_version,
+    ] {
+        let Ok(Some(captures)) = regex.captures(&base) else {
             continue;
         };
         let Some(found) = captures.get(0) else {
@@ -93,9 +140,14 @@ pub fn from_file_name(file_name: &str) -> GuessedName {
                 .collect::<Vec<_>>()
                 .join("."),
         );
-        name.truncate(found.start());
-        name = name.trim().to_string();
+        rest = base[..found.start()].trim().to_string();
         break;
+    }
+    if let Some(found) = &version {
+        if let Some((_, pre)) = pre {
+            version = Some(format!("{found}-{pre}"));
+        }
+        name = rest;
     }
 
     GuessedName {
@@ -157,6 +209,118 @@ mod tests {
         assert_eq!(guessed.name, "BMW M3");
         let guessed = from_file_name("thing_STMods.zip");
         assert_eq!(guessed.name, "thing");
+    }
+
+    /// Имена файлов из реального набора: скачаны с разных сайтов и телеграм-каналов.
+    #[test]
+    fn real_downloaded_file_names() {
+        let cases: &[(&str, &str, Option<&str>, Option<&str>)] = &[
+            (
+                "AndrLada2106remasterVer1.0.zip",
+                "AndrLada2106remaster",
+                None,
+                Some("1.0"),
+            ),
+            ("hotw0.3.0.zip", "hotw", None, Some("0.3.0")),
+            (
+                "Nissan Laurel C33 Ruzskye Stvoly v1.2_bm.zip",
+                "Nissan Laurel C33 Ruzskye Stvoly",
+                None,
+                Some("1.2"),
+            ),
+            (
+                "hawaii_haleakala_maui_v1.2.1_tg_m0dsbeamng.zip",
+                "hawaii haleakala maui",
+                None,
+                Some("1.2.1"),
+            ),
+            (
+                "porsche_992_gt3rs_v2.0_modland.zip",
+                "porsche 992 gt3rs",
+                None,
+                Some("2.0"),
+            ),
+            ("weather_fx_tg_m0dsbeamng.zip", "weather fx", None, None),
+            ("weather_fx_modland.zip", "weather fx", None, None),
+            ("weather_fx (1).zip", "weather fx", None, None),
+            (
+                "acm_percheron_addon_GR_v1-0 (1).zip",
+                "acm percheron addon GR",
+                None,
+                Some("1.0"),
+            ),
+            (
+                "rls_career_overhaul_v2.8.0_alpha2.zip",
+                "rls career overhaul",
+                None,
+                Some("2.8.0-alpha2"),
+            ),
+            ("LXR_S14_V1.3.zip", "LXR S14", None, Some("1.3")),
+            (
+                "carp_dynamicdirt_0.2.zip",
+                "carp dynamicdirt",
+                None,
+                Some("0.2"),
+            ),
+            (
+                "VAZ_2104_2105_2107VangohMods_v0.2.3.zip",
+                "VAZ 2104 2105 2107VangohMods",
+                None,
+                Some("0.2.3"),
+            ),
+            (
+                "Universal_EV_Conversion_modland.zip",
+                "Universal EV Conversion",
+                None,
+                None,
+            ),
+            (
+                "vaz2106kenemationrelated_by_ViharekMods.zip",
+                "vaz2106kenemationrelated",
+                Some("ViharekMods"),
+                None,
+            ),
+            ("mark2_tg_m0dsbeamng.zip", "mark2", None, None),
+            ("Sumner_Road_tg_m0dsbeamng.zip", "Sumner Road", None, None),
+            (
+                "McLaren7SportSeries_Frix.zip",
+                "McLaren7SportSeries Frix",
+                None,
+                None,
+            ),
+            ("etka.zip", "etka", None, None),
+            ("ikarus_55_lux.zip", "ikarus 55 lux", None, None),
+            (
+                "highly_customizable_engines_rk.zip",
+                "highly customizable engines rk",
+                None,
+                None,
+            ),
+            (
+                "vesta sport-cross-oper-avtozvuk.zip",
+                "vesta sport cross oper avtozvuk",
+                None,
+                None,
+            ),
+        ];
+        for (file, name, author, version) in cases {
+            let guessed = from_file_name(file);
+            assert_eq!(guessed.name, *name, "{file}");
+            assert_eq!(guessed.author.as_deref(), *author, "{file}");
+            assert_eq!(guessed.version.as_deref(), *version, "{file}");
+        }
+    }
+
+    #[test]
+    fn bm_inside_a_name_is_kept() {
+        assert_eq!(
+            from_file_name("Nissan Laurel C33 BM.zip").name,
+            "Nissan Laurel C33 BM"
+        );
+        assert_eq!(from_file_name("modland_racer.zip").name, "racer");
+        assert_eq!(from_file_name("xmodlandx.zip").name, "xmodlandx");
+        let song = from_file_name("Stand by Me.zip");
+        assert_eq!((song.name.as_str(), song.author), ("Stand by Me", None));
     }
 
     #[test]
