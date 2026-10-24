@@ -27,8 +27,15 @@ pub const PER_RUN: usize = 60;
 pub const MIN_NAME: f64 = 0.8;
 /// Вторая страница того же сайта ближе этого к лучшей — непонятно, какая из них.
 pub const AMBIGUOUS: f64 = 0.05;
-/// Прибавка, если автор страницы написан в имени файла мода.
+/// Прибавка, если автор страницы написан в имени файла мода или совпал с автором
+/// из архива.
 pub const AUTHOR_IN_FILE_BONUS: f64 = 0.15;
+/// Порог похожести названия, когда автор совпал: «ВАЗ-2104/2105/2107» от VangohMods
+/// и «LADA 2104/2105/2107» из архива VangohMods — один мод, хотя слова разные.
+pub const MIN_NAME_SAME_AUTHOR: f64 = 0.5;
+/// Похожесть, если склеенное имя файла целиком есть в адресе страницы
+/// («dragpartswheelsnitrous» → …/meo_s_drag_parts_wheels_nitrous_by_…).
+pub const NAME_IN_ADDRESS: f64 = 0.9;
 /// Минимальное отношение размеров установленного мода и страницы.
 pub const SIZE_MIN_RATIO: f64 = 0.85;
 /// Название, с которым следить можно без вопроса (при одном подтверждающем признаке).
@@ -135,9 +142,23 @@ impl PageGuesser {
         let installed_version = installed.version.clone().or_else(|| guess.version.clone());
         let author = author_key(guess.author.as_deref());
         let file_key = author_key(Some(&installed.file_name));
+        // Имя файла одним словом без разделителей — его ищем в адресе страницы.
+        let glued = {
+            let stem = installed
+                .file_name
+                .rsplit_once('.')
+                .map_or(installed.file_name.as_str(), |(stem, _)| stem);
+            if stem.chars().all(char::is_alphanumeric) {
+                stem.to_lowercase()
+            } else {
+                String::new()
+            }
+        };
 
         let mut seen: HashSet<(String, String)> = HashSet::new();
         let mut fits: Vec<PageGuess> = Vec::new();
+        // Для каждой подходящей страницы: (тот же автор, точно другой автор).
+        let mut authorship: Vec<(bool, bool)> = Vec::new();
         for listing in found {
             if !seen.insert((listing.source.clone(), listing.source_id.clone()))
                 || listing.price == PriceStatus::Paid
@@ -155,7 +176,26 @@ impl PageGuesser {
                     tokens = TitleNormalizer::tokens(name).len();
                 }
             }
-            if similarity < MIN_NAME || (tokens < 2 && similarity < 1.0) {
+            if glued.chars().count() >= 12
+                && author_key(Some(listing.url.path())).contains(glued.as_str())
+                && similarity < NAME_IN_ADDRESS
+            {
+                similarity = NAME_IN_ADDRESS;
+                tokens = tokens.max(2);
+            }
+            // Автор страницы в имени файла («NissanSkylineER34_Ketinside.zip») или тот же,
+            // что в архиве.
+            let listing_author = author_key(listing.author.as_deref());
+            let author_in_file =
+                listing_author.chars().count() >= 4 && file_key.contains(listing_author.as_str());
+            let same_author =
+                author_in_file || authors_match(archive_author, listing.author.as_deref());
+            let min_name = if same_author {
+                MIN_NAME_SAME_AUTHOR
+            } else {
+                MIN_NAME
+            };
+            if similarity < min_name || (tokens < 2 && similarity < 1.0) {
                 continue;
             }
             if !author.is_empty()
@@ -197,25 +237,34 @@ impl PageGuesser {
                 }
                 _ => false,
             };
-            // Автор страницы прямо в имени файла («NissanSkylineER34_Ketinside.zip») —
-            // сильный признак: две страницы «Nissan Skyline (ER34)» разных авторов
-            // иначе спорили бы друг с другом, и мод остался бы без страницы.
-            let listing_author = author_key(listing.author.as_deref());
-            let author_in_file =
-                listing_author.chars().count() >= 4 && file_key.contains(listing_author.as_str());
-            if author_in_file {
+            // Тот же автор — сильный признак: две страницы «Nissan Skyline (ER34)» разных
+            // авторов иначе спорили бы друг с другом, и мод остался бы без страницы.
+            if same_author {
                 score += AUTHOR_IN_FILE_BONUS;
             }
             let other_author =
-                !author_in_file && !authors_overlap(archive_author, listing.author.as_deref());
-            let certain = similarity >= CERTAIN_NAME
+                !same_author && !authors_overlap(archive_author, listing.author.as_deref());
+            let certain = (similarity >= CERTAIN_NAME
                 && tokens >= 2
                 && !other_author
-                && (order == VersionOrder::Same || same_size || (similarity >= 1.0 && tokens >= 3));
+                && (order == VersionOrder::Same || same_size || (similarity >= 1.0 && tokens >= 3)))
+                // Тот же автор и та же версия при похожем названии — тот же мод.
+                || (same_author && order == VersionOrder::Same);
             fits.push(PageGuess {
                 listing: listing.clone(),
                 score,
                 certain,
+            });
+            authorship.push((same_author, other_author));
+        }
+        // Нашлась страница того же автора — страницы точно других авторов не нужны:
+        // «Maserati GranTurismo» от Flanje, а не одноимённый мод Cheekqo.
+        if authorship.iter().any(|(same, _)| *same) {
+            let mut index = 0;
+            fits.retain(|_| {
+                let keep = !authorship[index].1;
+                index += 1;
+                keep
             });
         }
         if fits.is_empty() {
@@ -245,6 +294,17 @@ impl PageGuesser {
 
 /// Авторы, по которым мод не отличить: заготовка игры, «неизвестен».
 const GENERIC_AUTHORS: &[&str] = &["beamng", "beamnggmbh", "unknown", "неизвестен", "author"];
+
+/// Авторы известны с обеих сторон и совпадают хотя бы одним именем.
+fn authors_match(archive: Option<&str>, listing: Option<&str>) -> bool {
+    let known = |text: Option<&str>| {
+        text.is_some_and(|text| {
+            let key = author_key(Some(text));
+            key.chars().count() >= 2 && !GENERIC_AUTHORS.contains(&key.as_str())
+        })
+    };
+    known(archive) && known(listing) && authors_overlap(archive, listing)
+}
 
 /// Авторы мода и страницы пересекаются хотя бы одним именем. Неизвестный с любой
 /// стороны (или общий вроде «BeamNG») — не спорит.
@@ -411,6 +471,131 @@ mod tests {
                 Some("Nissan Skyline ER34"),
                 Some("ACM"),
                 &[other, ketinside]
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn same_author_finds_pages_with_other_words() {
+        // Реальные заголовки STMods для модов из скачанного набора.
+        let vaz = listing(
+            "stmods",
+            "vaz",
+            "ВАЗ-2104/2105/2107 версия 0.2.3 для BeamNG.drive (v0.38.x)",
+            Some("VangohMods"),
+            None,
+            PriceStatus::Free,
+        );
+        let other_vaz = listing(
+            "stmods",
+            "vaz-nsd",
+            "ВАЗ-2104/2105/2107 версия 1.1 Fix 3 для BeamNG.drive (v0.39.x)",
+            Some("NSD mods"),
+            None,
+            PriceStatus::Free,
+        );
+        let guess = PageGuesser::pick_with_author(
+            &installed(
+                "v",
+                "VAZ_2104_2105_2107VangohMods_v0.2.3.zip",
+                Some("0.2.3"),
+                None,
+            ),
+            Some("LADA 2104/2105/2107"),
+            Some("VangohMods"),
+            &[other_vaz, vaz],
+        )
+        .expect("та же версия того же автора");
+        assert_eq!(guess.listing.source_id, "vaz");
+        assert!(guess.certain);
+
+        // Maserati: страница Flanje вернее одноимённой страницы другого автора.
+        let cheekqo = listing(
+            "stmods",
+            "m-c",
+            "Maserati Granturismo версия 1.1 для BeamNG.drive (v0.23.5.2)",
+            Some("Cheekqo"),
+            None,
+            PriceStatus::Free,
+        );
+        let flanje = listing(
+            "stmods",
+            "m-f",
+            "Maserati GranTurismo (2023-2026) версия 1.0 для BeamNG.drive (v0.39.x)",
+            Some("Flanje"),
+            None,
+            PriceStatus::Free,
+        );
+        let guess = PageGuesser::pick_with_author(
+            &installed("m", "Maserati_Granturismo.zip", None, None),
+            Some("Maserati GranTurismo"),
+            Some("Flanje"),
+            &[cheekqo, flanje],
+        )
+        .unwrap();
+        assert_eq!(guess.listing.source_id, "m-f");
+
+        // Карта: «Карта «Sumner Road»» того же автора.
+        let sumner = listing(
+            "stmods",
+            "s",
+            "Карта «Sumner Road» версия 1.0 для BeamNG.drive (v0.40.x)",
+            Some("DrowsySam"),
+            None,
+            PriceStatus::Free,
+        );
+        assert!(
+            PageGuesser::pick_with_author(
+                &installed("s", "Sumner_Road_tg_m0dsbeamng.zip", None, None),
+                Some("Sumner Road"),
+                Some("DrowsySam"),
+                &[sumner],
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn glued_file_name_is_found_in_page_address() {
+        let mut meo = listing(
+            "stmods",
+            "meo",
+            "Meo’s Drag Parts Pack версия 2.2 для BeamNG.drive",
+            Some("Meo_3000_QC"),
+            None,
+            PriceStatus::Free,
+        );
+        meo.url = Url::parse(
+            "https://stmods.org/beamng_drive/mods/meo_s_drag_parts_wheels_nitrous_by_meo_3000_qc_for_beamng/",
+        )
+        .unwrap();
+        let guess = PageGuesser::pick_with_author(
+            &installed("d", "dragpartswheelsnitrous.zip", None, None),
+            None,
+            None,
+            &[meo],
+        )
+        .expect("имя файла целиком в адресе");
+        assert!(!guess.certain, "по адресу — только предложение");
+    }
+
+    #[test]
+    fn different_known_author_with_weak_name_is_skipped() {
+        let page = listing(
+            "stmods",
+            "x",
+            "Lada 2106 Sport версия 1.0 для BeamNG.drive",
+            Some("Someone"),
+            None,
+            PriceStatus::Free,
+        );
+        assert!(
+            PageGuesser::pick_with_author(
+                &installed("l", "lada.zip", Some("1.0"), None),
+                Some("LADA 2106 (Remaster Version)"),
+                Some("USSR Project"),
+                &[page],
             )
             .is_none()
         );
