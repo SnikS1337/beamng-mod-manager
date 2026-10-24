@@ -218,24 +218,6 @@ fn run_page_search(
     )
 }
 
-fn run_page_search_quiet(state: &AppState, cancel: &AtomicBool) -> bmm_checks::PageSearchReport {
-    let Some(service) = page_search_service(state) else {
-        return bmm_checks::PageSearchReport::default();
-    };
-    // Десятки привязок и отметок поиска — одной записью файла библиотеки.
-    let _batch = state.library.batch();
-    let store = state.library.clone();
-    bmm_checks::find_pages(
-        store.as_ref(),
-        service.as_ref(),
-        Utc::now().fixed_offset(),
-        cancel,
-        &|mod_id| page_title(state, mod_id),
-        &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
-        None,
-    )
-}
-
 #[tauri::command]
 pub async fn updates_start(
     app: AppHandle,
@@ -1026,9 +1008,20 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                 }
                 // Сбой одной проверки не должен останавливать проверки по расписанию до
                 // перезапуска программы: поток живёт, пока открыто окно.
+                // Ход проверки при запуске виден в «Обновлениях»: иначе минуты поиска
+                // страниц для свежей библиотеки выглядят как «ещё не проверяли».
+                let app_for_progress = app.clone();
                 let Some(mut report) = contained(|| {
                     let _batch = state.library.batch();
-                    runtime.coordinator.check(false, None)
+                    runtime.coordinator.check(
+                        false,
+                        Some(&mut |progress: &UpdateProgress| {
+                            let _ = app_for_progress.emit(
+                                "updates://event",
+                                progress_event(AUTO_REQUEST_ID, progress),
+                            );
+                        }),
+                    )
                 }) else {
                     last = std::time::Instant::now();
                     std::thread::sleep(std::time::Duration::from_secs(60));
@@ -1039,7 +1032,7 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                 {
                     runtime.page_cancel.store(false, Ordering::SeqCst);
                     let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        run_page_search_quiet(&state, &runtime.page_cancel)
+                        run_page_search(&app, &state, AUTO_REQUEST_ID, &runtime.page_cancel)
                     }))
                     .unwrap_or_default();
                     if pages.followed > 0
