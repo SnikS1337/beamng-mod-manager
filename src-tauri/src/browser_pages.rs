@@ -151,26 +151,31 @@ impl PageFetcher for BrowserPages {
             return Ok(None);
         }
         let value = eval_json_timeout(&window, IMAGE_SCRIPT, Duration::from_secs(20))?;
-        if value.is_null() {
-            return Ok(None);
-        }
-        let content_type = value
-            .get("type")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let encoded = value
-            .get("data")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        let bytes = BASE64
-            .decode(encoded)
-            .map_err(|_| FetchError::Message("сайт отдал некорректную картинку".to_string()))?;
-        if bytes.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some((content_type, bytes)))
+        image_from_script(&value)
     }
+}
+
+/// Ответ IMAGE_SCRIPT: `null` — картинки нет, иначе `{type, data}` с base64.
+fn image_from_script(value: &serde_json::Value) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let content_type = value
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let encoded = value
+        .get("data")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let bytes = BASE64
+        .decode(encoded)
+        .map_err(|_| FetchError::Message("сайт отдал некорректную картинку".to_string()))?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((content_type, bytes)))
 }
 
 /// Картинку читаем из самой страницы: адрес уже открыт, поэтому это свой источник без CORS.
@@ -275,6 +280,23 @@ fn looks_like_error_page(html: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_from_script_decodes_base64() {
+        let value = serde_json::json!({"type": "image/png", "data": "iVBORw0KGgo="});
+        let (kind, bytes) = image_from_script(&value).unwrap().unwrap();
+        assert_eq!(kind, "image/png");
+        assert_eq!(bytes, b"\x89PNG\r\n\x1a\n");
+        assert!(
+            image_from_script(&serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        let empty = serde_json::json!({"type": "image/png", "data": ""});
+        assert!(image_from_script(&empty).unwrap().is_none());
+        let broken = serde_json::json!({"type": "image/png", "data": "@@@"});
+        assert!(image_from_script(&broken).is_err());
+    }
 
     #[test]
     fn subdomains_share_the_same_site() {
