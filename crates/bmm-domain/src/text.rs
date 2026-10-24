@@ -16,6 +16,7 @@ struct Patterns {
     paid_upper: Regex,
     game_version: Regex,
     leading_mod: Regex,
+    leading_kind: Regex,
     leading_game: Regex,
     for_beam: Regex,
     word_version: Regex,
@@ -53,6 +54,12 @@ impl Patterns {
             paid_upper: compile(r"(?<![\p{L}\p{Nd}])PAID(?![\p{L}\p{Nd}])", false),
             game_version: compile(r"\(\s*v?(\d+\.\d+(?:\.(?:\d+|x))*)\s*\)", true),
             leading_mod: compile(r"^\s*(?:мод|mod)\s+", true),
+            // «Мод автомобиль LADA 2106», «Карта «Sumner Road»»: слово-рубрика сайта
+            // в начале названия — не часть названия мода.
+            leading_kind: compile(
+                r"^\s*(?:автомобил[ьяи]|машин[аы]|карт[аы]|map)(?=[\s«\x22])\s*",
+                true,
+            ),
             leading_game: compile(
                 r"^\s*beamng\s*\.?\s*drive\s*[-–—:]?\s*(?:скачать\s+моды?|скачать|моды?)\s+",
                 true,
@@ -213,6 +220,7 @@ impl TitleNormalizer {
         let mut text = replace_all(&p.square, title, " ");
         text = replace_round(&text);
         text = replace_all(&p.leading_mod, &text, " ");
+        text = replace_all(&p.leading_kind, &text, " ");
         text = replace_all(&p.for_beam, &text, " ");
         text = replace_all(&p.bare_beam, &text, " ");
         text = replace_all(&p.update_word, &text, " ");
@@ -312,6 +320,31 @@ mod tests {
             "daxworx plate pack"
         );
         assert_eq!(TitleNormalizer::normalize("   "), "");
+    }
+
+    #[test]
+    fn site_rubric_words_are_not_part_of_the_name() {
+        // Настоящие заголовки STMods и ModsGaming.
+        assert_eq!(
+            TitleNormalizer::normalize("Карта «Sumner Road» версия 1.0 для BeamNG.drive (v0.40.x)"),
+            "sumner road"
+        );
+        assert_eq!(
+            TitleNormalizer::normalize("Мод автомобиль LADA 2101 для BeamNG . drive"),
+            "lada 2101"
+        );
+        assert_eq!(
+            TitleNormalizer::normalize(
+                "МОД Карта Poland - Winter v3.2 (0.38.x) ДЛЯ BEAMNG . DRIVE"
+            ),
+            "poland winter"
+        );
+        // Слово внутри названия остаётся.
+        assert_eq!(
+            TitleNormalizer::normalize("Treasure Map Pack"),
+            "treasure map pack"
+        );
+        assert_eq!(TitleNormalizer::normalize("Mapleton"), "mapleton");
     }
 
     #[test]
