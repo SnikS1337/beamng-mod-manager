@@ -1,7 +1,6 @@
 //! Структурная проверка ZIP до установки: защита от zip-slip и архивных бомб, поиск
 //! исполняемых файлов, подсказки о нетипичной структуре мода. Это эвристика, а не антивирус.
 
-use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 
@@ -93,14 +92,10 @@ const CORRUPTED_ZIP: &str = "Архив повреждён и не читает�
 
 /// Проверяет ZIP-файл до установки.
 pub fn inspect_zip(path: &Path, limits: &ArchiveLimits) -> InspectionResult {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(_) => return not_zip(CORRUPTED_ZIP),
-    };
-
     // Ошибка конструктора: файл не похож на ZIP или его каталог разрушен.
-    let archive = match ZipArchive::new(file) {
+    let archive = match crate::zip_index::open_archive(path) {
         Ok(archive) => archive,
+        Err(crate::zip_index::ZipError::Io(_)) => return not_zip(CORRUPTED_ZIP),
         Err(_) => return not_zip(NOT_A_ZIP),
     };
 
@@ -326,6 +321,7 @@ fn not_zip(message: &'static str) -> InspectionResult {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::io::Write;
     use std::path::PathBuf;
 

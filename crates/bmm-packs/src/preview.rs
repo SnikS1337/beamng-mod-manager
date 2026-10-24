@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 
@@ -22,8 +21,7 @@ pub fn pick(path: &Path) -> Result<Option<PreviewPick>, ZipError> {
     if index.entries.is_empty() {
         return Ok(None);
     }
-    let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file)?;
+    let mut archive = crate::zip_index::open_archive(path)?;
     let mut reads = 0;
 
     if let Some(pick) = pick_default(&mut archive, &index.entries, &mut reads)? {
@@ -45,8 +43,7 @@ pub fn pick(path: &Path) -> Result<Option<PreviewPick>, ZipError> {
 }
 
 pub fn extract(path: &Path, raw_name: &str) -> Result<Vec<u8>, ZipError> {
-    let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file)?;
+    let mut archive = crate::zip_index::open_archive(path)?;
     let mut entry = archive.by_name(raw_name)?;
     let mut bytes = Vec::new();
     entry.read_to_end(&mut bytes)?;
@@ -349,6 +346,7 @@ fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
 
     fn png(width: u32, height: u32) -> Vec<u8> {

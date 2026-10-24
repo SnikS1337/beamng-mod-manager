@@ -86,8 +86,7 @@ pub fn extract_zip(
     budget: &mut ExtractBudget,
     cancel: &AtomicBool,
 ) -> Result<(), ExtractError> {
-    let file = File::open(archive).map_err(io_error)?;
-    let mut zip = zip::ZipArchive::new(file)
+    let mut zip = crate::zip_index::open_archive(archive)
         .map_err(|_| ExtractError::Message("Архив повреждён и не читается.".to_string()))?;
 
     for index in 0..zip.len() {
