@@ -1,5 +1,5 @@
-import { formatSize } from "$lib/features/garage/format";
-import type { UpdateFinding } from "$lib/ipc/updates";
+import { formatSize } from "#lib/features/garage/format.js";
+import type { UpdateFinding } from "#lib/ipc/updates.js";
 
 /** «633 МБ → 647 МБ», если размер на сайте другой. */
 export function sizeChange(finding: UpdateFinding): string {

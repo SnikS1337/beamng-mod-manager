@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Minus, Square, X } from "@lucide/svelte";
-  import { windowAction } from "$lib/ipc/window";
+  import { windowAction } from "#lib/ipc/window.js";
 </script>
 
 <!-- Своей полосы заголовка нет (как в legacy): окно таскается за верхнюю кромку и за

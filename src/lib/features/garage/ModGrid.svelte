@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ModCardDto } from "$lib/ipc/library";
+  import type { ModCardDto } from "#lib/ipc/library.js";
   import ModCard from "./ModCard.svelte";
 
   let {

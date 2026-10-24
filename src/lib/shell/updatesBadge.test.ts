@@ -4,7 +4,7 @@ describe("значок «Обновления»", () => {
   it("пересчитывается, когда библиотека изменилась (поставили обновление)", async () => {
     const target = new EventTarget();
     vi.stubGlobal("window", target);
-    const ipc = await import("$lib/ipc/updates");
+    const ipc = await import("#lib/ipc/updates.js");
     const { updatesBadge } = await import("./updatesBadge.svelte");
     updatesBadge.start();
     await vi.waitFor(() => expect(updatesBadge.available).toBeGreaterThan(0));

@@ -1,4 +1,4 @@
-import type { DuplicateOf, ModCardDto } from "$lib/ipc/library";
+import type { DuplicateOf, ModCardDto } from "#lib/ipc/library.js";
 
 /** Карточки для списка: копии прячутся за карточкой основного мода группы. */
 export function visibleCards(cards: ModCardDto[]): ModCardDto[] {

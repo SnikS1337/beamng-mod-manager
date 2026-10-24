@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { IncomingItemDto } from "$lib/ipc/incoming";
+import type { IncomingItemDto } from "#lib/ipc/incoming.js";
 import { installable, preselected, suspiciousFiles, suspiciousText } from "./selection";
 
 function item(patch: Partial<IncomingItemDto> = {}): IncomingItemDto {

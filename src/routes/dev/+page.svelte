@@ -10,14 +10,14 @@
     Settings,
     X,
   } from "@lucide/svelte";
-  import { Badge } from "$lib/components/ui/badge";
-  import { Button } from "$lib/components/ui/button";
-  import { Switch } from "$lib/components/ui/switch";
-  import Background from "$lib/shell/Background.svelte";
-  import ModGrid from "$lib/poc/ModGrid.svelte";
-  import Titlebar from "$lib/shell/Titlebar.svelte";
-  import { getEnvInfo, loadLibrary, openModlandProbe } from "$lib/poc/api";
-  import type { EnvInfo, ModEntry, ModSource } from "$lib/poc/api";
+  import { Badge } from "#lib/components/ui/badge/index.js";
+  import { Button } from "#lib/components/ui/button/index.js";
+  import { Switch } from "#lib/components/ui/switch/index.js";
+  import Background from "#lib/shell/Background.svelte";
+  import ModGrid from "#lib/poc/ModGrid.svelte";
+  import Titlebar from "#lib/shell/Titlebar.svelte";
+  import { getEnvInfo, loadLibrary, openModlandProbe } from "#lib/poc/api.js";
+  import type { EnvInfo, ModEntry, ModSource } from "#lib/poc/api.js";
 
   type Section = "mods" | "updates" | "search" | "settings";
   type Filter = "all" | "enabled" | "updates" | "disabled";

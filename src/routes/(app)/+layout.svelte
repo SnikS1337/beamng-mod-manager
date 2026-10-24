@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import IncomingHost from "$lib/features/incoming/IncomingHost.svelte";
-  import Background from "$lib/shell/Background.svelte";
-  import NavRail from "$lib/shell/NavRail.svelte";
-  import Titlebar from "$lib/shell/Titlebar.svelte";
-  import ToastHost from "$lib/shell/ToastHost.svelte";
-  import WelcomeTour from "$lib/shell/WelcomeTour.svelte";
-  import { appearance } from "$lib/shell/appearance.svelte";
+  import IncomingHost from "#lib/features/incoming/IncomingHost.svelte";
+  import Background from "#lib/shell/Background.svelte";
+  import NavRail from "#lib/shell/NavRail.svelte";
+  import Titlebar from "#lib/shell/Titlebar.svelte";
+  import ToastHost from "#lib/shell/ToastHost.svelte";
+  import WelcomeTour from "#lib/shell/WelcomeTour.svelte";
+  import { appearance } from "#lib/shell/appearance.svelte.js";
 
   let { children } = $props();
   let welcome = $state(false);

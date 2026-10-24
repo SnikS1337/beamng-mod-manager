@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
-  import type { ModCardDto } from "$lib/ipc/library";
+  import { Button } from "#lib/components/ui/button/index.js";
+  import type { ModCardDto } from "#lib/ipc/library.js";
   import { formatDateTime, formatSize } from "./format";
 
   let {

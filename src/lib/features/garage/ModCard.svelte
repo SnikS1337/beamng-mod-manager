@@ -1,8 +1,8 @@
 <script lang="ts">
   import { addonHint, copiesBadge } from "./duplicates";
   import { Car, FileCode, Map, Music, Package } from "@lucide/svelte";
-  import { Switch } from "$lib/components/ui/switch";
-  import { modPreview, type ModCardDto } from "$lib/ipc/library";
+  import { Switch } from "#lib/components/ui/switch/index.js";
+  import { modPreview, type ModCardDto } from "#lib/ipc/library.js";
   import { formatSize, kindLabel } from "./format";
 
   let {

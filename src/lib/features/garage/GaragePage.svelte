@@ -6,7 +6,7 @@
     updatesOpenModland,
     updatesRefollow,
     updatesUnfollow,
-  } from "$lib/ipc/updates";
+  } from "#lib/ipc/updates.js";
   import { isTauri } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { RefreshCw, Upload } from "@lucide/svelte";
@@ -27,11 +27,11 @@
     type ModCardDto,
     type ModDetails,
     type VersionRow,
-  } from "$lib/ipc/library";
-  import { isArchivePath } from "$lib/ipc/incoming";
-  import { incomingQueue } from "$lib/features/incoming/queue.svelte";
-  import { toasts } from "$lib/shell/toasts.svelte";
-  import { updatesBadge } from "$lib/shell/updatesBadge.svelte";
+  } from "#lib/ipc/library.js";
+  import { isArchivePath } from "#lib/ipc/incoming.js";
+  import { incomingQueue } from "#lib/features/incoming/queue.svelte.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
+  import { updatesBadge } from "#lib/shell/updatesBadge.svelte.js";
   import DeletedInspector from "./DeletedInspector.svelte";
   import Inspector from "./Inspector.svelte";
   import ModGrid from "./ModGrid.svelte";

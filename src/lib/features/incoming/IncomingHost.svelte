@@ -13,9 +13,9 @@
     type IncomingArchiveDto,
     type IncomingItemDto,
     type IncomingTicket,
-  } from "$lib/ipc/incoming";
-  import { formatSize, plural } from "$lib/features/garage/format";
-  import { toasts } from "$lib/shell/toasts.svelte";
+  } from "#lib/ipc/incoming.js";
+  import { formatSize, plural } from "#lib/features/garage/format.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
   import { incomingQueue } from "./queue.svelte";
   import { installable, preselected, suspiciousFiles, suspiciousText } from "./selection";
 

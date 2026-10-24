@@ -19,9 +19,9 @@
     X,
   } from "@lucide/svelte";
   import { isTauri } from "@tauri-apps/api/core";
-  import { Switch } from "$lib/components/ui/switch";
-  import { appearance } from "$lib/shell/appearance.svelte";
-  import { type SettingsDto } from "$lib/ipc/settings";
+  import { Switch } from "#lib/components/ui/switch/index.js";
+  import { appearance } from "#lib/shell/appearance.svelte.js";
+  import { type SettingsDto } from "#lib/ipc/settings.js";
   import {
     appUpdateCancel,
     appUpdateCheck,
@@ -30,7 +30,7 @@
     appUpdateState,
     listenAppUpdateProgress,
     type AppUpdateSnapshot,
-  } from "$lib/ipc/appUpdate";
+  } from "#lib/ipc/appUpdate.js";
 
   type Theme = SettingsDto["theme"];
   type Mode = SettingsDto["mode"];

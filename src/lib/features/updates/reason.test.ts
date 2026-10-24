@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UpdateFinding } from "$lib/ipc/updates";
+import type { UpdateFinding } from "#lib/ipc/updates.js";
 import { reason } from "./reason";
 
 const MB = 1024 * 1024;

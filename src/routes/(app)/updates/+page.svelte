@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { expectDownload } from "$lib/ipc/incoming";
+  import { expectDownload } from "#lib/ipc/incoming.js";
   import { onDestroy, onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { sourceName } from "$lib/ipc/search";
-  import { formatAgo, formatSize, formatWhen, plural } from "$lib/features/garage/format";
-  import { toasts } from "$lib/shell/toasts.svelte";
-  import { checkSummary } from "$lib/features/updates/summary";
-  import { reason, sizeChange } from "$lib/features/updates/reason";
+  import { sourceName } from "#lib/ipc/search.js";
+  import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
+  import { checkSummary } from "#lib/features/updates/summary.js";
+  import { reason, sizeChange } from "#lib/features/updates/reason.js";
   import {
     listenUpdates,
     updatesCancel,
@@ -29,7 +29,7 @@
     type UpdateSource,
     type UpdatesEvent,
     type UpdatesSnapshot,
-  } from "$lib/ipc/updates";
+  } from "#lib/ipc/updates.js";
 
   type Filter = "available" | "hidden" | "pages";
 
