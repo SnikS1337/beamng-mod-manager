@@ -81,6 +81,7 @@ const listeners = new Set<Listener>();
 let mockSnapshot: UpdatesSnapshot = mockInitial();
 let mockModlandNeedsCheck = true;
 let mockSources: UpdateSource[] = mockSourceReports();
+const mockUnfollowed: UpdateFinding[] = [];
 
 function mockInitial(): UpdatesSnapshot {
   return {
@@ -301,6 +302,28 @@ export async function updatesUndoPage(suggestion: PageSuggestion): Promise<Updat
   if (!mockSnapshot.suggestions.some((item) => item.modId === suggestion.modId)) {
     mockSnapshot.suggestions = [...mockSnapshot.suggestions, suggestion];
   }
+  return clone(mockSnapshot);
+}
+
+/** «Это другой мод» для страницы, за которой программа уже следит. */
+export async function updatesUnfollow(modId: string, source: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_unfollow", { modId, source });
+  const index = mockSnapshot.findings.findIndex(
+    (item) => item.modId === modId && item.source === source,
+  );
+  if (index < 0) throw new Error("Программа не следит за этой страницей.");
+  mockUnfollowed.push(mockSnapshot.findings[index]);
+  mockSnapshot.findings = mockSnapshot.findings.filter((_, at) => at !== index);
+  return clone(mockSnapshot);
+}
+
+/** «Отменить» после «Это другой мод». */
+export async function updatesRefollow(modId: string, source: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_refollow", { modId, source });
+  const index = mockUnfollowed.findIndex((item) => item.modId === modId && item.source === source);
+  if (index < 0) throw new Error("Вернуть уже нечего.");
+  const [finding] = mockUnfollowed.splice(index, 1);
+  mockSnapshot.findings = [...mockSnapshot.findings, finding];
   return clone(mockSnapshot);
 }
 
