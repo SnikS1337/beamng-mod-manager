@@ -24,6 +24,34 @@ pub struct RepoInfo {
 }
 
 impl RepoInfo {
+    /// Сведения о моде из `modData` в db.json игры или из `mod_info/<ID>/info.json`
+    /// в самом архиве — там одно и то же. Мод из репозитория BeamNG несёт
+    /// `version_string`, `resource_id`, `title`, `username`; мод, оформленный автором
+    /// сам, — `version`, `name`, `author`.
+    pub fn from_mod_data(unique_id: &str, data: &Value) -> Self {
+        let text = |keys: &[&str]| {
+            keys.iter().find_map(|key| {
+                data.get(*key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+        };
+        RepoInfo {
+            unique_id: unique_id.to_string(),
+            version: text(&["version_string", "version"]),
+            resource_id: data.get("resource_id").and_then(number_or_string),
+            title: text(&["title", "name"]),
+            author: text(&["username", "author"]),
+            last_update: data
+                .get("last_update")
+                .and_then(Value::as_str)
+                .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+                .map(|date| date.fixed_offset()),
+        }
+    }
+
     pub fn page_url(&self) -> Option<String> {
         self.resource_id
             .map(|id| format!("https://beamng.com/resources/{id}/"))
@@ -403,30 +431,7 @@ fn parse_entry(key: &str, value: &Value) -> Result<GameModEntry, String> {
             .and_then(Value::as_str)
     });
     let repo = unique_id.map(|unique_id| {
-        let data = object.get("modData");
-        RepoInfo {
-            unique_id: unique_id.to_string(),
-            version: data
-                .and_then(|data| data.get("version_string"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            resource_id: data
-                .and_then(|data| data.get("resource_id"))
-                .and_then(number_or_string),
-            title: data
-                .and_then(|data| data.get("title"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            author: data
-                .and_then(|data| data.get("username"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            last_update: data
-                .and_then(|data| data.get("last_update"))
-                .and_then(Value::as_str)
-                .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-                .map(|date| date.fixed_offset()),
-        }
+        RepoInfo::from_mod_data(unique_id, object.get("modData").unwrap_or(&Value::Null))
     });
 
     Ok(GameModEntry {
@@ -469,6 +474,39 @@ fn result(
         outcome,
         not_in_db,
         message,
+    }
+}
+
+#[cfg(test)]
+mod repo_info_tests {
+    use super::*;
+
+    #[test]
+    fn repository_and_author_made_mod_info() {
+        // dummy.zip из репозитория BeamNG и hotw0.3.0.zip, оформленный автором.
+        let repo = RepoInfo::from_mod_data(
+            "M9EL2DOCR",
+            &serde_json::json!({
+                "tagid": "M9EL2DOCR", "title": "Crash Test Dummy", "version_string": "1.1",
+                "resource_id": 906, "username": "B25Mitch"
+            }),
+        );
+        assert_eq!(repo.version.as_deref(), Some("1.1"));
+        assert_eq!(repo.title.as_deref(), Some("Crash Test Dummy"));
+        assert_eq!(repo.author.as_deref(), Some("B25Mitch"));
+        assert_eq!(
+            repo.page_url().as_deref(),
+            Some("https://beamng.com/resources/906/")
+        );
+
+        let own = RepoInfo::from_mod_data(
+            "HANDSONTHEWHEEL",
+            &serde_json::json!({"name": "Hands on the Wheel", "version": "0.3.0", "author": "1Matzh"}),
+        );
+        assert_eq!(own.version.as_deref(), Some("0.3.0"));
+        assert_eq!(own.title.as_deref(), Some("Hands on the Wheel"));
+        assert_eq!(own.author.as_deref(), Some("1Matzh"));
+        assert_eq!(own.page_url(), None, "не из репозитория — страницы нет");
     }
 }
 

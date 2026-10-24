@@ -211,6 +211,28 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
     Ok(ArchiveInfo { title, author })
 }
 
+/// `mod_info/<ID>/info.json` из архива: так помечает мод репозиторий BeamNG (с номером
+/// страницы и версией), а иногда и сам автор. То же самое игра потом пишет в db.json,
+/// но читать архив можно сразу, не дожидаясь запуска игры. `None` — такой записи нет.
+pub fn mod_info(path: &Path) -> Option<(String, Value)> {
+    let index = zip_index::read_index(path).ok()?;
+    let entry = index.entries.iter().find_map(|entry| {
+        let parts: Vec<&str> = entry.name.split('/').collect();
+        match parts.as_slice() {
+            [root, id, file]
+                if root.eq_ignore_ascii_case("mod_info")
+                    && !id.is_empty()
+                    && file.eq_ignore_ascii_case("info.json") =>
+            {
+                Some((id.to_string(), entry.name.clone()))
+            }
+            _ => None,
+        }
+    })?;
+    let value = info_value(path, &entry.1)?;
+    value.is_object().then_some((entry.0, value))
+}
+
 fn info_value(path: &Path, entry: &str) -> Option<Value> {
     let mut archive = crate::zip_index::open_archive(path).ok()?;
     let mut info = archive.by_name(entry).ok()?;
@@ -474,6 +496,30 @@ mod tests {
         );
         let overview = read_overview(&path);
         assert_eq!(overview.title.as_deref(), Some("Ibishu Covet"));
+    }
+
+    #[test]
+    fn reads_mod_info_left_by_the_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("dummy.zip");
+        build_zip(
+            &path,
+            &[
+                ("vehicles/dummy/a.jbeam", b"x"),
+                (
+                    "mod_info/M9EL2DOCR/info.json",
+                    br#"{"tagid":"M9EL2DOCR","title":"Crash Test Dummy","version_string":"1.1","resource_id":906}"#,
+                ),
+                ("mod_info/M9EL2DOCR/icon.jpg", b"x"),
+            ],
+        );
+        let (id, value) = mod_info(&path).expect("mod_info есть");
+        assert_eq!(id, "M9EL2DOCR");
+        assert_eq!(value["resource_id"], 906);
+
+        let plain = temp.path().join("plain.zip");
+        build_zip(&plain, &[("vehicles/car/a.jbeam", b"x")]);
+        assert!(mod_info(&plain).is_none());
     }
 
     #[test]

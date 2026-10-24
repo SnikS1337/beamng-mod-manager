@@ -314,13 +314,20 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
     let known = state.previews.titles();
     let known_problems = state.previews.problems();
     let known_contents = state.previews.contents();
+    let known_infos = state.previews.mod_infos();
+    let mut infos: Vec<(String, serde_json::Value)> = Vec::new();
     let mut found: Vec<(String, Option<String>)> = Vec::new();
     let mut problems: Vec<(String, Option<String>)> = Vec::new();
     let mut contents: Vec<(String, Vec<String>)> = Vec::new();
     let mut written = 0usize;
     let mut flush = |found: &mut Vec<(String, Option<String>)>,
                      problems: &mut Vec<(String, Option<String>)>,
-                     contents: &mut Vec<(String, Vec<String>)>| {
+                     contents: &mut Vec<(String, Vec<String>)>,
+                     infos: &mut Vec<(String, serde_json::Value)>| {
+        if state.previews.put_mod_infos(infos).is_ok() {
+            written += infos.len();
+        }
+        infos.clear();
         if state.previews.put_titles(found).is_ok() {
             written += found.len();
         }
@@ -358,11 +365,21 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
                 incoming::content_keys(&index).into_iter().collect(),
             ));
         }
-        if found.len() + problems.len() + contents.len() >= 100 {
-            flush(&mut found, &mut problems, &mut contents);
+        // mod_info из архива — страница в репозитории BeamNG и версия ещё до запуска игры.
+        if !known_infos.contains_key(&target.key)
+            && !infos.iter().any(|(key, _)| *key == target.key)
+            && target.path.is_file()
+        {
+            let value = overview::mod_info(&target.path)
+                .map(|(id, data)| serde_json::json!({ "id": id, "data": data }))
+                .unwrap_or(serde_json::Value::Null);
+            infos.push((target.key.clone(), value));
+        }
+        if found.len() + problems.len() + contents.len() + infos.len() >= 100 {
+            flush(&mut found, &mut problems, &mut contents, &mut infos);
         }
     }
-    flush(&mut found, &mut problems, &mut contents);
+    flush(&mut found, &mut problems, &mut contents, &mut infos);
     written
 }
 
@@ -542,7 +559,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         }
     }
 
-    apply_repo_info(state, &db_read, &mods_dir);
+    apply_repo_info(state, &db_read, &disks_by_file);
 
     let installed_list = state.library.mods();
     let bindings = state.library.bindings();
@@ -826,22 +843,36 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
 fn apply_repo_info(
     state: &AppState,
     db: &bmm_game::db::GameDbReadResult,
-    _mods_dir: &std::path::Path,
+    disks_by_file: &HashMap<String, &DiskMod>,
 ) {
-    if db.unreadable {
-        return;
-    }
+    let infos = state.previews.mod_infos();
     let _batch = state.library.batch();
     for installed in state.library.mods() {
         if state.library.is_checking_declined(&installed.id) {
             continue;
         }
-        let Some(entry) = db.find(&installed.file_name) else {
+        // Что игра записала в db.json, иначе — mod_info из самого архива (игру с этим
+        // модом ещё не запускали).
+        let from_db = if db.unreadable {
+            None
+        } else {
+            db.find(&installed.file_name)
+                .and_then(|entry| entry.repo.clone())
+        };
+        let from_archive = || {
+            let disk = disks_by_file.get(&installed.file_name.to_lowercase())?;
+            let key = PreviewCache::key(&installed.file_name, disk.size_bytes, disk.modified_utc);
+            let value = infos.get(&key)?;
+            let id = value.get("id")?.as_str()?;
+            Some(bmm_game::db::RepoInfo::from_mod_data(
+                id,
+                value.get("data").unwrap_or(&serde_json::Value::Null),
+            ))
+        };
+        let Some(repo) = from_db.or_else(from_archive) else {
             continue;
         };
-        let Some(repo) = &entry.repo else {
-            continue;
-        };
+        let repo = &repo;
         let mut updated = installed.clone();
         if let Some(version) = &repo.version {
             updated.version = Some(version.clone());
@@ -1355,6 +1386,44 @@ mod tests {
     }
 
     #[test]
+    fn repository_page_and_version_come_from_the_archive_before_the_game_runs() {
+        // dummy.zip из скачанного набора: в имени нет версии, игру ещё не запускали
+        // (db.json без modData), но в архиве лежит mod_info от репозитория BeamNG.
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(
+            &mods.join("dummy.zip"),
+            &[
+                ("vehicles/dummy/a.jbeam", b"x"),
+                (
+                    "mod_info/M9EL2DOCR/info.json",
+                    br#"{"tagid":"M9EL2DOCR","title":"Crash Test Dummy","version_string":"1.1","resource_id":906,"username":"B25Mitch"}"#,
+                ),
+            ],
+        );
+        let state = test_state(&temp, &mods);
+        let first = load_snapshot(&state).unwrap();
+        let id = first.mods[0].id.clone();
+        assert_eq!(state.library.get_mod(&id).unwrap().version, None);
+
+        fill_titles(&state);
+        load_snapshot(&state).unwrap();
+        let installed = state.library.get_mod(&id).unwrap();
+        assert_eq!(installed.version.as_deref(), Some("1.1"));
+        assert_eq!(installed.name, "Crash Test Dummy");
+        let binding = state
+            .library
+            .bindings()
+            .into_iter()
+            .find(|binding| binding.mod_id == id)
+            .expect("страница в репозитории");
+        assert_eq!(binding.source, "beamng");
+        assert_eq!(binding.url.as_str(), "https://beamng.com/resources/906/");
+        assert!(binding.confirmed);
+    }
+
+    #[test]
     fn enabled_copies_are_marked_after_contents_are_read() {
         let temp = tempfile::tempdir().unwrap();
         let mods = temp.path().join("mods");
@@ -1518,7 +1587,7 @@ mod tests {
         state.library.upsert_mod(custom);
         state.library.set_checking_declined(&id, true);
 
-        apply_repo_info(&state, &GameModDb::new(&mods).read(), &mods);
+        apply_repo_info(&state, &GameModDb::new(&mods).read(), &HashMap::new());
 
         let after = state.library.get_mod(&id).unwrap();
         assert_eq!(after.name, "Моя трасса");
