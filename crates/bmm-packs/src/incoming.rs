@@ -2105,13 +2105,20 @@ mod tests {
                 ("vehicles/etk800/ev.jbeam", b"x"),
                 ("vehicles/pickup/ev.jbeam", b"x"),
                 ("vehicles/van/ev.jbeam", b"x"),
+                ("vehicles/coupe/ev.jbeam", b"x"),
+                ("vehicles/super/ev.jbeam", b"x"),
                 ("lua/ge/extensions/ev.lua", b"x"),
             ],
         );
         let specials = installed_with(
             "CJD_Specials.zip",
             true,
-            &["vehicles/etk800", "vehicles/pickup", "vehicles/van"],
+            &[
+                "vehicles/etk800",
+                "vehicles/pickup",
+                "vehicles/van",
+                "vehicles/coupe",
+            ],
             None,
         );
         let career = installed_with(

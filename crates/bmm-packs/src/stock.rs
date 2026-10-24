@@ -120,6 +120,10 @@ const VEHICLES: &[&str] = &[
     "weightpad",
     "woodcrate",
     "woodplanks",
+    // старые имена стандартных машин: моды-тюнинги до сих пор их несут
+    // (HighPowerCarPack — coupe и super рядом с barstow и etk800)
+    "coupe",
+    "super",
     // добавлено по содержимому игры 0.40.1 (content/vehicles)
     "anticut",
     "dino",
@@ -192,6 +196,7 @@ mod tests {
         assert!(is_stock_vehicle("percheron"));
         assert!(is_stock_vehicle("eu_trailers"));
         assert!(is_stock_vehicle("dumptruck"));
+        assert!(is_stock_vehicle("coupe"));
         assert!(!is_stock_vehicle("sandero1"));
         assert!(!is_stock_level("my_map"));
     }
