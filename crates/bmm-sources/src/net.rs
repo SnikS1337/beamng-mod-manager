@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -467,18 +468,41 @@ impl PoliteFetcher {
     }
 
     pub fn get(&self, source: &str, url: &Url) -> FetchResult {
-        self.fetch(source, url, None)
+        self.fetch(source, url, None, &NEVER)
     }
 
     pub fn post_form(&self, source: &str, url: &Url, form: &[(&str, &str)]) -> FetchResult {
+        self.post_form_cancellable(source, url, form, &NEVER)
+    }
+
+    /// Как [`Self::get`], но отмена (кнопка «Остановить», таймаут поиска) прерывает
+    /// ожидание очереди сайта, паузу между запросами и повторы. Уже отправленный запрос
+    /// дожидается ответа (до 30 с), но после него ничего больше не делается.
+    pub fn get_cancellable(&self, source: &str, url: &Url, cancel: &AtomicBool) -> FetchResult {
+        self.fetch(source, url, None, cancel)
+    }
+
+    pub fn post_form_cancellable(
+        &self,
+        source: &str,
+        url: &Url,
+        form: &[(&str, &str)],
+        cancel: &AtomicBool,
+    ) -> FetchResult {
         let form = form
             .iter()
             .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
             .collect();
-        self.fetch(source, url, Some(form))
+        self.fetch(source, url, Some(form), cancel)
     }
 
-    fn fetch(&self, source: &str, url: &Url, form: Option<Vec<(String, String)>>) -> FetchResult {
+    fn fetch(
+        &self,
+        source: &str,
+        url: &Url,
+        form: Option<Vec<(String, String)>>,
+        cancel: &AtomicBool,
+    ) -> FetchResult {
         let key = cache_key(url, form.as_deref());
         if let Some(response) = self.cached(&key) {
             return FetchResult::ok(response);
@@ -528,14 +552,30 @@ impl PoliteFetcher {
                 return FetchResult::failed(SourceStatus::NeedsHumanCheck, message);
             }
         }
-        let _guard = lock(&entry.gate);
+        // Очередь сайта ждём так, чтобы отмена её прерывала: иначе остановленный поиск
+        // стоял бы за чужим долгим запросом и потом всё равно ходил на сайт.
+        let _guard = loop {
+            if cancel.load(Ordering::Relaxed) {
+                return cancelled();
+            }
+            match entry.gate.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(CANCEL_POLL),
+            }
+        };
         if let Some(response) = self.cached(&key) {
             return FetchResult::ok(response);
         }
-        self.wait_for_slot(&entry, url);
+        if !self.wait_for_slot(&entry, url, cancel) {
+            return cancelled();
+        }
 
         let mut last_message = "Сайт не ответил.".to_string();
         for attempt in 0..=self.options.retries {
+            if cancel.load(Ordering::Relaxed) {
+                return cancelled();
+            }
             let result = match &form {
                 Some(form) => {
                     let pairs: Vec<(&str, &str)> = form
@@ -575,7 +615,9 @@ impl PoliteFetcher {
                             let wait = response
                                 .retry_after
                                 .unwrap_or_else(|| self.retry_backoff(attempt));
-                            std::thread::sleep(wait.min(self.options.max_backoff));
+                            if !pause(wait.min(self.options.max_backoff), cancel) {
+                                return cancelled();
+                            }
                             continue;
                         }
                     } else if matches!(response.status, 502 | 504 | 520..=524) {
@@ -587,7 +629,9 @@ impl PoliteFetcher {
                             let wait = response
                                 .retry_after
                                 .unwrap_or_else(|| self.retry_backoff(attempt));
-                            std::thread::sleep(wait.min(self.options.max_backoff));
+                            if !pause(wait.min(self.options.max_backoff), cancel) {
+                                return cancelled();
+                            }
                             continue;
                         }
                         break;
@@ -625,7 +669,9 @@ impl PoliteFetcher {
                     if attempt < self.options.retries
                         && matches!(error, FetchError::Timeout | FetchError::Network)
                     {
-                        std::thread::sleep(self.retry_backoff(attempt));
+                        if !pause(self.retry_backoff(attempt), cancel) {
+                            return cancelled();
+                        }
                         continue;
                     }
                     break;
@@ -635,7 +681,8 @@ impl PoliteFetcher {
         self.mark_failure(&entry, source, last_message)
     }
 
-    fn wait_for_slot(&self, entry: &HostEntry, url: &Url) {
+    /// Вежливая пауза между запросами к сайту. `false` — пока ждали, пришла отмена.
+    fn wait_for_slot(&self, entry: &HostEntry, url: &Url, cancel: &AtomicBool) -> bool {
         let last = {
             let inner = lock(&entry.inner);
             inner.last_request
@@ -645,9 +692,10 @@ impl PoliteFetcher {
             let target = last + self.options.pause + jitter;
             let now = Instant::now();
             if target > now {
-                std::thread::sleep(target - now);
+                return pause(target - now, cancel);
             }
         }
+        true
     }
 
     fn retry_backoff(&self, attempt: usize) -> Duration {
@@ -767,6 +815,30 @@ fn jitter_for(url: &Url, jitter: Duration) -> Duration {
         acc.wrapping_mul(31).wrapping_add(byte as u32)
     }));
     Duration::from_millis((mixed as u64) % (jitter.as_millis().max(1) as u64))
+}
+
+static NEVER: AtomicBool = AtomicBool::new(false);
+const CANCEL_POLL: Duration = Duration::from_millis(25);
+
+/// Ответ на отменённый запрос. Сбоем сайта не считается: ни счётчик ошибок, ни статус
+/// сайта он не трогает.
+fn cancelled() -> FetchResult {
+    FetchResult::failed(SourceStatus::Unavailable, "отменено".to_string())
+}
+
+/// Спит `duration`, просыпаясь, чтобы проверить отмену. `false` — отменили.
+fn pause(duration: Duration, cancel: &AtomicBool) -> bool {
+    let until = Instant::now() + duration;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        let now = Instant::now();
+        if now >= until {
+            return true;
+        }
+        std::thread::sleep((until - now).min(CANCEL_POLL));
+    }
 }
 
 /// Замок, переживший панику в другом потоке. Внутри — счётчики и кэш: после сбоя одного
@@ -1337,5 +1409,129 @@ mod tests {
         let second = second.expect("второй запрос не падает");
         assert_eq!(second.status, SourceStatus::Ok);
         assert_eq!(fetcher.status_of("site"), SourceStatus::Ok);
+    }
+
+    /// Сайт, который отвечает медленно или всё время перегружен.
+    struct SlowSite {
+        delay: Duration,
+        status: u16,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl PageFetcher for SlowSite {
+        fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(self.delay);
+            Ok(RawResponse {
+                status: self.status,
+                text: "<html>ok</html>".to_string(),
+                final_url: url.clone(),
+                retry_after: None,
+            })
+        }
+    }
+
+    fn slow(delay_ms: u64, status: u16) -> Arc<SlowSite> {
+        Arc::new(SlowSite {
+            delay: Duration::from_millis(delay_ms),
+            status,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    #[test]
+    fn cancelled_request_does_not_wait_behind_a_slow_one() {
+        let site = slow(600, 200);
+        let fetcher = Arc::new(PoliteFetcher::new(site.clone(), options()));
+        let busy = {
+            let fetcher = fetcher.clone();
+            std::thread::spawn(move || {
+                fetcher.get("site", &Url::parse("https://site.test/a").unwrap())
+            })
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stopper = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                cancel.store(true, Ordering::Relaxed);
+            })
+        };
+        let started = Instant::now();
+        let result =
+            fetcher.get_cancellable("site", &Url::parse("https://site.test/b").unwrap(), &cancel);
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(result.response.is_none());
+        stopper.join().unwrap();
+        assert_eq!(busy.join().unwrap().status, SourceStatus::Ok);
+        assert_eq!(
+            site.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "второй запрос не ушёл"
+        );
+        // Отмена — не сбой сайта.
+        assert_eq!(fetcher.status_of("site"), SourceStatus::Ok);
+    }
+
+    #[test]
+    fn cancel_stops_retries_of_an_overloaded_site() {
+        let site = slow(0, 503);
+        let mut opts = options();
+        opts.retries = 2;
+        opts.backoff = Duration::from_secs(5);
+        opts.max_backoff = Duration::from_secs(60);
+        let fetcher = PoliteFetcher::new(site.clone(), opts);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stopper = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(80));
+                cancel.store(true, Ordering::Relaxed);
+            })
+        };
+        let started = Instant::now();
+        let result =
+            fetcher.get_cancellable("site", &Url::parse("https://site.test/x").unwrap(), &cancel);
+        stopper.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(result.response.is_none());
+        assert_eq!(site.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cancel_cuts_the_polite_pause() {
+        let site = slow(0, 200);
+        let mut opts = options();
+        opts.pause = Duration::from_secs(5);
+        let fetcher = PoliteFetcher::new(site.clone(), opts);
+        assert_eq!(
+            fetcher
+                .get("site", &Url::parse("https://site.test/1").unwrap())
+                .status,
+            SourceStatus::Ok
+        );
+        let cancel = AtomicBool::new(true);
+        let started = Instant::now();
+        let result =
+            fetcher.get_cancellable("site", &Url::parse("https://site.test/2").unwrap(), &cancel);
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert!(result.response.is_none());
+        assert_eq!(site.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Без отмены пауза соблюдается, а кэш отвечает сразу.
+        assert_eq!(
+            fetcher
+                .get("site", &Url::parse("https://site.test/1").unwrap())
+                .status,
+            SourceStatus::Ok
+        );
     }
 }
