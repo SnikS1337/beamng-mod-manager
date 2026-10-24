@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, FixedOffset};
 
-use bmm_domain::library::{InstalledMod, LibraryStore, ModBinding, PageSearch};
+use bmm_domain::library::{CheckState, InstalledMod, LibraryStore, ModBinding, PageSearch};
 use bmm_domain::models::Listing;
 use bmm_sources::search::SearchService;
 
@@ -271,6 +271,73 @@ pub fn undo_page(
             rejected: false,
         }),
     );
+    true
+}
+
+/// Страница, за которой перестали следить, со всем, что о ней знали, — для «Отменить».
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unfollowed {
+    pub binding: ModBinding,
+    pub check: Option<CheckState>,
+    pub search: Option<PageSearch>,
+    pub dismissed: Option<String>,
+}
+
+/// «Это другой мод» для страницы, за которой уже следим (взятой программой сама или
+/// подтверждённой раньше). Привязка снимается вместе с проверками, найденное по ней
+/// обновление пропадает, а мод больше не ищется сам, чтобы та же ошибка не повторилась:
+/// страницу можно указать вручную.
+pub fn unfollow_page(
+    store: &dyn LibraryStore,
+    mod_id: &str,
+    source: &str,
+    now: DateTime<FixedOffset>,
+) -> Option<Unfollowed> {
+    let _gate = gate();
+    let binding = store.bindings().into_iter().find(|binding| {
+        binding.mod_id == mod_id && binding.source == source && binding.confirmed
+    })?;
+    let saved = Unfollowed {
+        check: store.get_check(mod_id, source),
+        search: store.get_page_search(mod_id),
+        dismissed: store.get_dismissed_update(mod_id),
+        binding,
+    };
+    store.remove_binding(mod_id, source);
+    store.set_dismissed_update(mod_id, None);
+    store.set_page_search(
+        mod_id,
+        Some(PageSearch {
+            at: now,
+            rejected: true,
+        }),
+    );
+    Some(saved)
+}
+
+/// «Отменить» после [`unfollow_page`]: возвращает страницу, проверки и пропуски как
+/// были. Если за это время на том же сайте привязали другую страницу, её не трогаем.
+pub fn refollow_page(store: &dyn LibraryStore, saved: &Unfollowed) -> bool {
+    let _gate = gate();
+    let binding = &saved.binding;
+    if store.get_mod(&binding.mod_id).is_none() {
+        return false;
+    }
+    if store.bindings().iter().any(|other| {
+        other.mod_id == binding.mod_id
+            && other.source == binding.source
+            && other.source_id != binding.source_id
+    }) {
+        return false;
+    }
+    if store.upsert_binding(binding.clone()).is_err() {
+        return false;
+    }
+    if let Some(check) = &saved.check {
+        store.save_check(check.clone());
+    }
+    store.set_page_search(&binding.mod_id, saved.search.clone());
+    store.set_dismissed_update(&binding.mod_id, saved.dismissed.as_deref());
     true
 }
 
@@ -836,5 +903,93 @@ mod tests {
         let (store, report, _) = mercedes_case(455_000_000);
         assert_eq!(report.followed, 1, "{report:?}");
         assert!(store.bindings()[0].confirmed);
+    }
+
+    fn followed_with_update(store: &InMemoryLibraryStore) {
+        let mut mine = installed("mb", "MB_w164_ken_3.0_f4rza.zip");
+        mine.version = None;
+        mine.size_bytes = Some(455_163_953);
+        store.upsert_mod(mine);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "mb".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "132573".to_string(),
+                url: Url::parse("https://modsgaming.test/132573").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        store.save_check(CheckState {
+            mod_id: "mb".to_string(),
+            source: "modsgaming".to_string(),
+            last_checked_utc: now(),
+            last_changed_utc: Some(now()),
+            last_version: None,
+            last_size: Some(347_110_113),
+            miss_count: 0,
+            last_game_version: None,
+            last_title: Some("Mercedes-Benz ML 3.6".to_string()),
+        });
+    }
+
+    #[test]
+    fn unfollow_removes_wrong_page_and_its_update_then_undo_brings_all_back() {
+        let store = InMemoryLibraryStore::new();
+        followed_with_update(&store);
+        store.set_dismissed_update("mb", Some("size:1"));
+        assert_eq!(crate::UpdateCheckService::pending(&store, true).len(), 1);
+
+        let saved = unfollow_page(&store, "mb", "modsgaming", now()).expect("следили");
+        assert!(store.bindings().is_empty());
+        assert!(store.get_check("mb", "modsgaming").is_none());
+        assert!(crate::UpdateCheckService::pending(&store, true).is_empty());
+        assert!(store.get_page_search("mb").unwrap().rejected);
+        // Сам этот мод больше не ищется — ошибка не повторится.
+        assert!(PageGuesser::due(&store, now() + TimeDelta::days(30)).is_empty());
+
+        assert!(refollow_page(&store, &saved));
+        assert_eq!(store.bindings(), vec![saved.binding.clone()]);
+        assert_eq!(store.get_check("mb", "modsgaming"), saved.check);
+        assert_eq!(store.get_dismissed_update("mb").as_deref(), Some("size:1"));
+        assert_eq!(store.get_page_search("mb"), saved.search);
+    }
+
+    #[test]
+    fn unfollow_needs_a_followed_page() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "a.zip"));
+        assert!(unfollow_page(&store, "a", "modsgaming", now()).is_none());
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "a".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "1".to_string(),
+                url: Url::parse("https://modsgaming.test/1").unwrap(),
+                confirmed: false,
+            })
+            .unwrap();
+        // Предложение снимается через «Это другой мод» для предложений, не здесь.
+        assert!(unfollow_page(&store, "a", "modsgaming", now()).is_none());
+        assert_eq!(store.bindings().len(), 1);
+    }
+
+    #[test]
+    fn refollow_keeps_a_newer_page_on_the_same_site() {
+        let store = InMemoryLibraryStore::new();
+        followed_with_update(&store);
+        let saved = unfollow_page(&store, "mb", "modsgaming", now()).unwrap();
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "mb".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "999".to_string(),
+                url: Url::parse("https://modsgaming.test/999").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        assert!(!refollow_page(&store, &saved));
+        assert_eq!(store.bindings()[0].source_id, "999");
+        store.remove_mod("mb");
+        assert!(!refollow_page(&store, &saved));
     }
 }

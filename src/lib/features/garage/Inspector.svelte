@@ -22,6 +22,7 @@
     onToggle,
     onDelete,
     onRestoreVersion,
+    onUnfollow,
     onClose,
   }: {
     details: ModDetails | null;
@@ -35,6 +36,8 @@
     onToggle: () => void;
     onDelete: () => void;
     onRestoreVersion: (version: VersionRow) => void;
+    /** «Это другой мод»: программа следит не за той страницей. */
+    onUnfollow?: (source: string) => void;
     onClose: () => void;
   } = $props();
 
@@ -180,6 +183,11 @@
     <div class="links">
       {#if details.binding}
         <button class="btn-glass" type="button" onclick={() => void openPage()}>Открыть страницу</button>
+        {#if details.binding.confirmed && onUnfollow}
+          <button class="btn-glass" type="button" onclick={() => onUnfollow?.(details!.binding!.source)}>
+            Это другой мод
+          </button>
+        {/if}
       {/if}
       {#if details.enabled || hasUpdate || problem}
         <button class="btn-glass" type="button" onclick={onToggle}>

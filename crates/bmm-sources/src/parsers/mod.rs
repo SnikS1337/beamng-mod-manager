@@ -109,4 +109,25 @@ mod tests {
         assert!(parse_listing_date("Oct 13, 2026 at 3:17 PM").is_some());
         assert!(parse_listing_date("Oct 13, 2026").is_some());
     }
+
+    #[test]
+    fn site_sizes_are_binary_megabytes_like_real_downloads() {
+        use bmm_domain::versioning::SizeComparer;
+        // Сверено 2026-10-24 со скачанными файлами: ModsGaming пишет «540.53 MB» у архива
+        // Nissan Laurel C33 в 566 788 675 байт, STMods — «222.78 МБ» у Dacia Sandero
+        // в 234 260 471 байт. В десятичных мегабайтах расхождение было бы ~5 % и
+        // программа говорила бы «Возможно, обновлён» про тот же самый файл.
+        let laurel = parse_size("540.53 MB").unwrap();
+        assert!(
+            !SizeComparer::differs(Some(laurel), Some(566_788_675)),
+            "{laurel}"
+        );
+        let dacia = parse_size("222,78 МБ").unwrap();
+        assert!(
+            !SizeComparer::differs(Some(dacia), Some(234_260_471)),
+            "{dacia}"
+        );
+        assert_eq!(parse_size("1 ГБ"), Some(1024 * 1024 * 1024));
+        assert_eq!(parse_size("512 КБ"), Some(512 * 1024));
+    }
 }

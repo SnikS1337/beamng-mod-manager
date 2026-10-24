@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listenUpdates } from "$lib/ipc/updates";
+  import { listenUpdates, updatesRefollow, updatesUnfollow } from "$lib/ipc/updates";
   import { isTauri } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { RefreshCw, Upload } from "@lucide/svelte";
@@ -183,6 +183,24 @@
       showToast(errorText(reason));
     } finally {
       fixing = false;
+    }
+  }
+
+  /** «Это другой мод» из панели мода: программа следила не за той страницей. */
+  async function unfollowSelected(source: string) {
+    const card = selected;
+    if (!card) return;
+    try {
+      await updatesUnfollow(card.id, source);
+      await load(true);
+      showToast(`Больше не следим за этой страницей «${trimName(card.name)}»`, {
+        undo: async () => {
+          await updatesRefollow(card.id, source);
+          await load(true);
+        },
+      });
+    } catch (reason) {
+      showToast(errorText(reason));
     }
   }
 
@@ -573,6 +591,7 @@
         updateVersion={selected?.updateVersion ?? null}
         {fixing}
         onFix={() => void fixSelected()}
+        onUnfollow={(source) => void unfollowSelected(source)}
         onToggle={() => {
           if (selected) void toggle(selected);
         }}

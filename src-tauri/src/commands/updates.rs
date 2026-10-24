@@ -433,6 +433,74 @@ pub async fn updates_reject_page(
     Ok(build_snapshot(&state))
 }
 
+/// Снятые «Это другой мод» страницы, которые ещё можно вернуть кнопкой «Отменить».
+static UNFOLLOWED: std::sync::Mutex<Vec<bmm_checks::Unfollowed>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn unfollowed() -> std::sync::MutexGuard<'static, Vec<bmm_checks::Unfollowed>> {
+    UNFOLLOWED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// «Это другой мод» для страницы, за которой уже следим.
+pub(crate) fn unfollow(state: &AppState, mod_id: &str, source: &str) -> Result<(), AppError> {
+    let saved = bmm_checks::unfollow_page(
+        state.library.as_ref(),
+        mod_id,
+        source,
+        Utc::now().fixed_offset(),
+    )
+    .ok_or_else(|| AppError::new("pages", "Программа не следит за этой страницей."))?;
+    let mut list = unfollowed();
+    list.retain(|item| !(item.binding.mod_id == mod_id && item.binding.source == source));
+    list.push(saved);
+    // Отменить можно только недавнее: хранить всё подряд незачем.
+    let excess = list.len().saturating_sub(16);
+    list.drain(..excess);
+    Ok(())
+}
+
+/// «Отменить» после «Это другой мод».
+pub(crate) fn refollow(state: &AppState, mod_id: &str, source: &str) -> Result<(), AppError> {
+    let saved = {
+        let mut list = unfollowed();
+        let index = list
+            .iter()
+            .position(|item| item.binding.mod_id == mod_id && item.binding.source == source)
+            .ok_or_else(|| AppError::new("pages", "Вернуть уже нечего."))?;
+        list.remove(index)
+    };
+    if bmm_checks::refollow_page(state.library.as_ref(), &saved) {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "pages",
+            "Страницу не вернуть: мод удалён или за ним уже следят по другой странице.",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn updates_unfollow(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+    source: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    unfollow(&state, &mod_id, &source)?;
+    Ok(build_snapshot(&state))
+}
+
+#[tauri::command]
+pub async fn updates_refollow(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+    source: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    refollow(&state, &mod_id, &source)?;
+    Ok(build_snapshot(&state))
+}
+
 #[tauri::command]
 pub async fn updates_undo_page(
     state: tauri::State<'_, Arc<AppState>>,
@@ -1108,5 +1176,58 @@ mod tests {
         assert_eq!(failed, None);
         // Поток продолжает работать после сбоя.
         assert_eq!(contained(|| "дальше"), Some("дальше"));
+    }
+
+    #[test]
+    fn unfollow_and_undo_from_the_window() {
+        let (_temp, state) = state();
+        let mod_id = "unfollow-test-mod";
+        state.library.upsert_mod(InstalledMod {
+            id: mod_id.to_string(),
+            name: "Mercedes-Benz ML".to_string(),
+            file_name: "mb.zip".to_string(),
+            version: None,
+            size_bytes: Some(455_163_953),
+            installed_at_utc: Utc::now().fixed_offset(),
+            enabled: true,
+        });
+        state
+            .library
+            .upsert_binding(ModBinding {
+                mod_id: mod_id.to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "132573".to_string(),
+                url: "https://modsgaming.ru/load/x/38-1-0-132573"
+                    .parse()
+                    .unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        state.library.save_check(CheckState {
+            mod_id: mod_id.to_string(),
+            source: "modsgaming".to_string(),
+            last_checked_utc: Utc::now().fixed_offset(),
+            last_changed_utc: None,
+            last_version: None,
+            last_size: Some(347_110_113),
+            miss_count: 0,
+            last_game_version: None,
+            last_title: None,
+        });
+        assert_eq!(build_snapshot(&state).findings.len(), 1);
+
+        unfollow(&state, mod_id, "modsgaming").unwrap();
+        assert!(build_snapshot(&state).findings.is_empty());
+        assert!(
+            unfollow(&state, mod_id, "modsgaming").is_err(),
+            "уже не следим"
+        );
+
+        refollow(&state, mod_id, "modsgaming").unwrap();
+        assert_eq!(build_snapshot(&state).findings.len(), 1);
+        assert!(
+            refollow(&state, mod_id, "modsgaming").is_err(),
+            "вернуть второй раз нечего"
+        );
     }
 }

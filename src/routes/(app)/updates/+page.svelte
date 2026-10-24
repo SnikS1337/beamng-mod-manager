@@ -11,7 +11,9 @@
     updatesDismiss,
     updatesFindPages,
     updatesOpenModland,
+    updatesRefollow,
     updatesRejectPage,
+    updatesUnfollow,
     updatesRestore,
     updatesSnapshot,
     updatesStart,
@@ -200,6 +202,19 @@
       toasts.show(`Страница «${suggestion.modName}» отклонена`, {
         undo: async () => {
           snapshot = await updatesUndoPage(suggestion);
+        },
+      });
+    } catch (reason) {
+      error = errorText(reason);
+    }
+  }
+
+  async function unfollow(finding: UpdateFinding) {
+    try {
+      snapshot = await updatesUnfollow(finding.modId, finding.source);
+      toasts.show(`Больше не следим за этой страницей «${finding.modName}»`, {
+        undo: async () => {
+          snapshot = await updatesRefollow(finding.modId, finding.source);
         },
       });
     } catch (reason) {
@@ -402,10 +417,12 @@
                 {:else if possible}
                   <button class="btn-primary" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                   <button class="link" type="button" onclick={() => void dismiss(finding)}>Версия не изменилась</button>
+                  <button class="link" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
                 {:else}
                   <button class="btn-primary" type="button" onclick={() => void openLink(finding.url)}>Обновить</button>
                   <button class="link" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                   <button class="link" type="button" onclick={() => void dismiss(finding)}>Пропустить эту версию</button>
+                  <button class="link" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
                 {/if}
               </div>
             </div>

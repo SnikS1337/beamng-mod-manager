@@ -25,3 +25,17 @@ describe("заглушка обновлений без Tauri", () => {
     expect(two.sites?.length).toBeGreaterThan(0);
   });
 });
+
+describe("«Это другой мод» для страницы, за которой следим", () => {
+  it("убирает обновление и возвращает его по «Отменить»", async () => {
+    const { updatesRefollow, updatesUnfollow } = await import("./updates");
+    const before = await updatesSnapshot();
+    const finding = before.findings[0];
+    const after = await updatesUnfollow(finding.modId, finding.source);
+    expect(after.findings.some((item) => item.modId === finding.modId)).toBe(false);
+    await expect(updatesUnfollow(finding.modId, finding.source)).rejects.toThrow();
+    const back = await updatesRefollow(finding.modId, finding.source);
+    expect(back.findings.some((item) => item.modId === finding.modId)).toBe(true);
+    await expect(updatesRefollow(finding.modId, finding.source)).rejects.toThrow();
+  });
+});
