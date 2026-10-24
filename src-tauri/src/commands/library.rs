@@ -808,7 +808,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         scan_warnings,
         db_read.warnings,
         sync_report.warning,
-        state.library.load_warnings().to_vec(),
+        library_warnings(state.library.load_warnings(), state.library.save_error()),
     );
     let many_enabled = (settings.active_mods_warn_above > 0
         && enabled as i32 > settings.active_mods_warn_above)
@@ -1284,6 +1284,16 @@ fn kind_of(mod_type: &str) -> &'static str {
     }
 }
 
+/// Предупреждения о файле библиотеки. Несохранённая библиотека — молча терять
+/// подписки и проверки нельзя: пишем об этом на главной.
+fn library_warnings(loaded: &[String], save_error: Option<String>) -> Vec<String> {
+    let mut all = loaded.to_vec();
+    if let Some(error) = save_error {
+        all.push(format!("Не получается сохранить данные программы: {error}"));
+    }
+    all
+}
+
 fn join_warnings(
     settings: Vec<String>,
     scan: Vec<String>,
@@ -1529,6 +1539,15 @@ mod tests {
         let main_after = after.mods.iter().find(|card| card.id == main.id).unwrap();
         assert_eq!(main_after.group.len(), 1);
         assert!(!main_after.group_conflict);
+    }
+
+    #[test]
+    fn unsaved_library_is_reported() {
+        assert!(library_warnings(&[], None).is_empty());
+        let warnings = library_warnings(&["старое".to_string()], Some("диск полон".to_string()));
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[1].contains("Не получается сохранить"));
+        assert!(warnings[1].contains("диск полон"));
     }
 
     #[test]

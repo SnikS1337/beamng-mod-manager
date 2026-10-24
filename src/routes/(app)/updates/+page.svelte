@@ -17,11 +17,13 @@
     updatesRefollow,
     updatesRejectPage,
     updatesUnfollow,
+    updatesForgetLost,
     updatesRestore,
     updatesSnapshot,
     updatesStart,
     updatesUndoPage,
     type PageSuggestion,
+    type LostPage,
     type UpdateFinding,
     type UpdateProgress,
     type UpdateSource,
@@ -52,7 +54,7 @@
   const counts = $derived({
     available: snapshot.findings.length,
     hidden: snapshot.hidden.length,
-    pages: snapshot.suggestions.length,
+    pages: snapshot.suggestions.length + (snapshot.lost?.length ?? 0),
   });
 
   onMount(() => {
@@ -134,13 +136,14 @@
     }
     if (event.phase === "pages") filter = "pages";
     if (found > 0) toasts.show(`Нашли новые страницы (${found})`);
+    else if (event.phase === "pages" && !event.cancelled) toasts.show("Новых страниц не нашли");
   }
 
   // Панель «Проверка»: состояние сайтов и время последней проверки — из снимка.
   async function refreshSites() {
     try {
       const fresh = await updatesSnapshot();
-      snapshot = { ...snapshot, sites: fresh.sites, lastChecked: fresh.lastChecked };
+      snapshot = { ...snapshot, sites: fresh.sites, lastChecked: fresh.lastChecked, lost: fresh.lost };
     } catch {
       // Панель просто останется прежней.
     }
@@ -246,6 +249,24 @@
           snapshot = await updatesRefollow(finding.modId, finding.source);
         },
       });
+    } catch (reason) {
+      error = errorText(reason);
+    }
+  }
+
+  /** «Страница пропала»: искать новую (сразу запускаем поиск) или просто перестать следить. */
+  async function forgetLost(page: LostPage, searchAgain: boolean) {
+    try {
+      snapshot = await updatesForgetLost(page.modId, page.source, searchAgain);
+      if (searchAgain) {
+        await findPages();
+      } else {
+        toasts.show(`Больше не следим за «${page.modName}»`, {
+          undo: async () => {
+            snapshot = await updatesRefollow(page.modId, page.source);
+          },
+        });
+      }
     } catch (reason) {
       error = errorText(reason);
     }
@@ -413,7 +434,7 @@
           <p>Скрытых версий нет</p>
           <span>Пропущенные версии появятся здесь — их можно вернуть в список.</span>
         </div>
-      {:else if filter === "pages" && snapshot.suggestions.length === 0}
+      {:else if filter === "pages" && counts.pages === 0}
         <div class="state">
           <p>Решать нечего</p>
           <span>
@@ -456,6 +477,25 @@
           </article>
         {/each}
       {:else}
+        {#each snapshot.lost ?? [] as page (page.modId + page.source)}
+          <article class="card compact">
+            <div class="photo" style={page.previewUrl ? `background-image:url('${page.previewUrl}')` : `background:${placeholder(page.modId)}`}></div>
+            <div class="content">
+              <span class="chip"><i></i>Страница пропала</span>
+              <h2>{page.modName}</h2>
+              <p class="why">
+                На {sourceName(page.source)} этой страницы нет уже несколько проверок: мод удалили или перенесли.
+                Обновлений по ней больше не будет.
+              </p>
+              <p class="where url" title={page.url}>{page.url}</p>
+              <div class="actions">
+                <button class="btn-primary" type="button" onclick={() => void forgetLost(page, true)}>Найти новую страницу</button>
+                <button class="link" type="button" onclick={() => void openLink(page.url)}>Открыть старую</button>
+                <button class="link" type="button" onclick={() => void forgetLost(page, false)}>Перестать следить</button>
+              </div>
+            </div>
+          </article>
+        {/each}
         {#each snapshot.suggestions as suggestion (suggestion.modId + suggestion.source)}
           <article class="card compact">
             <div class="photo" style={`background:${placeholder(suggestion.modId)}`}></div>

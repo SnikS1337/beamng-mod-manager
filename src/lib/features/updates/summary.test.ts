@@ -85,4 +85,11 @@ describe("checkSummary", () => {
             "Новых версий нет. Проверили не всё — остальное в следующий раз",
         );
     });
+
+  it("сообщает, что сайт изменился или страницы пропали", () => {
+    const changed = source({ displayName: "STMods", layoutChanged: true, missing: 2 });
+    expect(checkSummary({ ...base, sources: [changed] }).text).toBe(
+      "Новых версий нет. STMods: сайт изменился, часть модов не прочитали. Страницы пропали с сайта: 2",
+    );
+  });
 });
