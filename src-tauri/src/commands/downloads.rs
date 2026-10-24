@@ -11,6 +11,32 @@ use tauri::{AppHandle, Emitter};
 use crate::state::AppState;
 
 const STABLE_AFTER: Duration = Duration::from_millis(1500);
+/// Сколько «Загрузки» смотрим после «Обновить», даже если наблюдение выключено в настройках:
+/// человек сам пошёл за новой версией, и подхватить её — то, чего он ждёт.
+const EXPECT_FOR: Duration = Duration::from_secs(30 * 60);
+
+/// До какого момента (мс от начала эпохи) ждём скачанное обновление.
+static EXPECT_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|time| time.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn expecting() -> bool {
+    now_millis() < EXPECT_UNTIL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// «Обновить» открыл страницу мода: следующие полчаса смотрим «Загрузки».
+#[tauri::command]
+pub fn downloads_expect() {
+    EXPECT_UNTIL.store(
+        now_millis() + EXPECT_FOR.as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
 
 #[derive(Debug, Serialize, Clone)]
 struct DownloadReady {
@@ -94,7 +120,7 @@ pub fn spawn(app: AppHandle, state: Arc<AppState>) {
         loop {
             std::thread::sleep(Duration::from_millis(600));
             let settings = state.settings.load().settings;
-            let folders = watch_folders(&settings);
+            let folders = watch_folders(&settings, expecting());
             for path in scanner.scan(&folders, Instant::now()) {
                 let _ = app.emit(
                     "incoming://download",
@@ -107,9 +133,9 @@ pub fn spawn(app: AppHandle, state: Arc<AppState>) {
     });
 }
 
-fn watch_folders(settings: &bmm_domain::settings::AppSettings) -> Vec<PathBuf> {
+fn watch_folders(settings: &bmm_domain::settings::AppSettings, expecting: bool) -> Vec<PathBuf> {
     let mut folders: Vec<PathBuf> = Vec::new();
-    if settings.allow_downloads {
+    if settings.allow_downloads || expecting {
         if let Some(downloads) = downloads_folder() {
             folders.push(downloads);
         }
@@ -250,6 +276,32 @@ mod tests {
                 .scan(&[temp.path().to_path_buf(), missing], Instant::now())
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn downloads_are_watched_when_allowed_or_after_update_click() {
+        let off = bmm_domain::settings::AppSettings::default();
+        assert!(!off.allow_downloads);
+        let Some(downloads) = downloads_folder() else {
+            return; // нет папки «Загрузки» в этом окружении
+        };
+        assert!(!watch_folders(&off, false).contains(&downloads));
+        assert!(watch_folders(&off, true).contains(&downloads));
+        let on = bmm_domain::settings::AppSettings {
+            allow_downloads: true,
+            ..off
+        };
+        assert!(watch_folders(&on, false).contains(&downloads));
+    }
+
+    #[test]
+    fn update_click_opens_a_half_hour_window() {
+        EXPECT_UNTIL.store(0, std::sync::atomic::Ordering::Relaxed);
+        assert!(!expecting());
+        downloads_expect();
+        assert!(expecting());
+        let until = EXPECT_UNTIL.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(until >= now_millis() + 29 * 60 * 1000);
     }
 
     #[cfg(windows)]

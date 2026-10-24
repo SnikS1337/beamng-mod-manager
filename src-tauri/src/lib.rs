@@ -236,6 +236,7 @@ pub fn run() {
             commands::updates::updates_unfollow,
             commands::updates::updates_refollow,
             commands::updates::mod_bind_page,
+            commands::downloads::downloads_expect,
             commands::updates::updates_open_modland,
             commands::settings::settings_load,
             commands::settings::settings_save,

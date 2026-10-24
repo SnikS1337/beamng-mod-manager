@@ -215,3 +215,8 @@ function mockArchive(path: string): IncomingArchiveDto {
     items,
   };
 }
+
+/** «Обновить» открыл страницу мода: программа полчаса смотрит «Загрузки», чтобы подхватить архив. */
+export async function expectDownload(): Promise<void> {
+  if (isTauri()) await invoke("downloads_expect").catch(() => {});
+}
