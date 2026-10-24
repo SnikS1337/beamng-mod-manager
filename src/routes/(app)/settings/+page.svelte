@@ -282,7 +282,13 @@
       return;
     }
     try {
-      const picked = await open({ directory: true, multiple: false, title: "Выбрать папку" });
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: field === "modsFolder" ? "Папка модов (…\\mods)" : "Папка пользователя игры",
+        // Открываем там, где папка уже выбрана, а не в последней случайной.
+        defaultPath: draft[field] || undefined,
+      });
       if (typeof picked === "string") {
         draft[field] = picked;
         mark();
