@@ -30,6 +30,7 @@
   import { isArchivePath } from "$lib/ipc/incoming";
   import { incomingQueue } from "$lib/features/incoming/queue.svelte";
   import { toasts } from "$lib/shell/toasts.svelte";
+  import { updatesBadge } from "$lib/shell/updatesBadge.svelte";
   import DeletedInspector from "./DeletedInspector.svelte";
   import Inspector from "./Inspector.svelte";
   import ModGrid from "./ModGrid.svelte";
@@ -183,6 +184,7 @@
     fixing = true;
     try {
       await modFixPackaging(selected.id);
+      updatesBadge.refresh();
       showToast("Архив переупакован: игра теперь его загрузит");
       await load(true);
     } catch (reason) {
@@ -198,10 +200,12 @@
     if (!card) return;
     try {
       await updatesUnfollow(card.id, source);
+      updatesBadge.refresh();
       await load(true);
       showToast(`Больше не следим за этой страницей «${trimName(card.name)}»`, {
         undo: async () => {
           await updatesRefollow(card.id, source);
+          updatesBadge.refresh();
           await load(true);
         },
       });
@@ -216,6 +220,7 @@
     if (!card) return "Мод не выбран.";
     try {
       await modBindPage(card.id, url);
+      updatesBadge.refresh();
       await load(true);
       showToast(`Следим за страницей «${trimName(card.name)}»`);
       return null;

@@ -13,12 +13,20 @@ class UpdatesBadge {
   start(): void {
     if (this.started) return;
     this.started = true;
+    this.refresh();
+    void listenUpdates((event) => this.onEvent(event));
+    // Поставили обновление или сняли страницу — число на значке меняется сразу.
+    if (typeof window !== "undefined") {
+      window.addEventListener("bmm:library-changed", () => this.refresh());
+    }
+  }
+
+  refresh(): void {
     void updatesSnapshot()
       .then((snapshot) => {
         this.available = snapshot.findings.length;
       })
       .catch(() => {});
-    void listenUpdates((event) => this.onEvent(event));
   }
 
   private onEvent(event: UpdatesEvent): void {

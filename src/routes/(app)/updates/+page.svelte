@@ -54,8 +54,23 @@
     void listenUpdates(onEvent).then((stop) => {
       unlisten = stop;
     });
-    return () => unlisten?.();
+    // Обновление поставили (из «Загрузок» или вручную) — пункт должен исчезнуть сразу.
+    const onLibraryChanged = () => void refresh();
+    window.addEventListener("bmm:library-changed", onLibraryChanged);
+    return () => {
+      unlisten?.();
+      window.removeEventListener("bmm:library-changed", onLibraryChanged);
+    };
   });
+
+  /** Перечитать список без заставки загрузки. */
+  async function refresh() {
+    try {
+      snapshot = await updatesSnapshot();
+    } catch (reason) {
+      error = errorText(reason);
+    }
+  }
 
   onDestroy(() => {
     unlisten?.();
