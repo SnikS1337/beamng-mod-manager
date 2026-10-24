@@ -981,11 +981,11 @@ mod tests {
     }
 
     #[test]
-    fn blocks_executable_and_bad_names() {
+    fn blocks_dangerous_paths_and_bad_names() {
         let temp = tempfile::tempdir().unwrap();
         let installer = installer(&temp);
         let bad = temp.path().join("bad.zip");
-        zip(&bad, &[("setup.exe", b"x")]);
+        zip(&bad, &[("../evil.lua", b"x")]);
         let result = installer.install_from_path(&bad, "bad.zip", InstallOptions::default());
         assert_eq!(result.error, Some(InstallError::Blocked));
         assert!(
@@ -996,6 +996,47 @@ mod tests {
         );
         let result = installer.install_from_path(&bad, "CON.zip", InstallOptions::default());
         assert_eq!(result.error, Some(InstallError::BadName));
+    }
+
+    #[test]
+    fn mod_with_windows_scripts_installs_when_the_user_chose_it() {
+        // Maserati GranTurismo (Flanje): tools/*.bat для Spotify. Решение — за пользователем.
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let source = temp.path().join("Maserati_Granturismo.zip");
+        zip(
+            &source,
+            &[
+                ("vehicles/maserati/a.jbeam", b"x"),
+                ("tools/Start_Spotify_Remote.bat", b"x"),
+            ],
+        );
+        let refused = installer.install_from_path(
+            &source,
+            "Maserati_Granturismo.zip",
+            InstallOptions::default(),
+        );
+        assert_eq!(
+            refused.error,
+            Some(InstallError::HasWarnings),
+            "без согласия не ставим"
+        );
+        let result = installer.install_from_path(
+            &source,
+            "Maserati_Granturismo.zip",
+            InstallOptions {
+                allow_warnings: true,
+                ..InstallOptions::default()
+            },
+        );
+        assert_eq!(result.error, None);
+        assert!(
+            installer
+                .layout()
+                .mods_dir
+                .join("Maserati_Granturismo.zip")
+                .is_file()
+        );
     }
 
     #[test]

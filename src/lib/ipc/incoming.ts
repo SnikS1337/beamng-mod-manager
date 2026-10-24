@@ -144,12 +144,11 @@ function mockArchive(path: string): IncomingArchiveDto {
     });
   }
   if (lower.includes("exe")) {
-    blocked = true;
     findings.push({
-      severity: "block",
+      severity: "warning",
       code: "executable",
-      message: "Исполняемый файл или скрипт Windows: в модах BeamNG их не бывает.",
-      entry: "setup.exe",
+      message: "Сомнительные файлы: программы или скрипты Windows. Игра их не запускает — ставьте, если доверяете источнику.",
+      entry: "tools/setup.exe",
     });
   }
 

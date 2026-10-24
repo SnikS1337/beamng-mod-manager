@@ -1650,7 +1650,7 @@ mod tests {
             &source,
             &[
                 ("Wrapper/vehicles/car/a.jbeam", b"x"),
-                ("Wrapper/setup.exe", b"x"),
+                ("Wrapper/../../evil.lua", b"x"),
             ],
         );
         let analysis = analyze(
