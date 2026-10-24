@@ -63,12 +63,11 @@ impl PreviewCache {
             if !meta.is_file() {
                 continue;
             }
-            if meta.len() > PREVIEW_STALE_BYTES {
-                if let Some(small) = fs::read(&path).ok().and_then(|bytes| shrink(&bytes)) {
-                    if let Ok((path, extension)) = self.store(key, "jpg", &small) {
-                        return Some(CachedPreview::Image { path, extension });
-                    }
-                }
+            if meta.len() > PREVIEW_STALE_BYTES
+                && let Some(small) = fs::read(&path).ok().and_then(|bytes| shrink(&bytes))
+                && let Ok((path, extension)) = self.store(key, "jpg", &small)
+            {
+                return Some(CachedPreview::Image { path, extension });
             }
             return Some(CachedPreview::Image {
                 path,

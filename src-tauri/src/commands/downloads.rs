@@ -135,10 +135,10 @@ pub fn spawn(app: AppHandle, state: Arc<AppState>) {
 
 fn watch_folders(settings: &bmm_domain::settings::AppSettings, expecting: bool) -> Vec<PathBuf> {
     let mut folders: Vec<PathBuf> = Vec::new();
-    if settings.allow_downloads || expecting {
-        if let Some(downloads) = downloads_folder() {
-            folders.push(downloads);
-        }
+    if (settings.allow_downloads || expecting)
+        && let Some(downloads) = downloads_folder()
+    {
+        folders.push(downloads);
     }
     for folder in &settings.watch_folders {
         folders.push(PathBuf::from(folder));

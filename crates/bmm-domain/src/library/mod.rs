@@ -156,12 +156,11 @@ impl Inner {
             return Err(LibraryError::NoMod(binding.mod_id));
         }
         let key = (binding.mod_id.clone(), binding.source.clone());
-        if let Some(existing) = self.bindings.get(&key) {
-            if existing == &binding
-                && !(binding.confirmed && self.declined.contains(&binding.mod_id))
-            {
-                return Ok(false);
-            }
+        if let Some(existing) = self.bindings.get(&key)
+            && existing == &binding
+            && !(binding.confirmed && self.declined.contains(&binding.mod_id))
+        {
+            return Ok(false);
         }
         let confirmed = binding.confirmed;
         let mod_id = binding.mod_id.clone();
