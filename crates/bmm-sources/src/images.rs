@@ -13,6 +13,8 @@ use bmm_domain::atomic;
 use crate::net::PageFetcher;
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+/// Картинки поиска копятся с каждым запросом; больше этого — старые уходят.
+pub const DEFAULT_LIMIT_BYTES: u64 = 300 * 1024 * 1024;
 const USER_AGENT: &str = "BeamModManager/0.4 (personal use; update checks)";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,10 +69,53 @@ impl RemoteImageCache {
         &self.root
     }
 
+    /// Оставляет в папке не больше `max_bytes`: первыми уходят давно не нужные
+    /// (время изменения обновляется при каждом показе картинки). Возвращает, сколько удалено.
+    pub fn trim(&self, max_bytes: u64) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.root) else {
+            return 0;
+        };
+        let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let metadata = entry.metadata().ok()?;
+                metadata.is_file().then(|| {
+                    (
+                        metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+                        metadata.len(),
+                        entry.path(),
+                    )
+                })
+            })
+            .collect();
+        let mut total: u64 = files.iter().map(|(_, size, _)| size).sum();
+        if total <= max_bytes {
+            return 0;
+        }
+        files.sort_by_key(|(modified, _, _)| *modified);
+        let mut removed = 0;
+        for (_, size, path) in files {
+            if total <= max_bytes {
+                break;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(size);
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     pub fn cached(&self, url: &Url) -> Option<RemoteImage> {
         let key = key_of(url);
         for extension in ["jpg", "jpeg", "png", "webp"] {
-            if self.root.join(format!("{key}.{extension}")).is_file() {
+            let path = self.root.join(format!("{key}.{extension}"));
+            if path.is_file() {
+                // Нужна снова — в конец очереди на удаление.
+                let _ = std::fs::File::options()
+                    .append(true)
+                    .open(&path)
+                    .and_then(|file| file.set_modified(std::time::SystemTime::now()));
                 return Some(RemoteImage {
                     key,
                     extension: extension.to_string(),
@@ -235,6 +280,25 @@ mod tests {
         fn get_bytes(&self, _url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
             Ok(self.0.clone())
         }
+    }
+
+    #[test]
+    fn trim_drops_least_recently_used_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = RemoteImageCache::new(temp.path());
+        let old = std::time::SystemTime::now() - Duration::from_secs(3600);
+        for (index, name) in ["a.jpg", "b.jpg", "c.jpg"].iter().enumerate() {
+            let path = temp.path().join(name);
+            std::fs::write(&path, vec![0u8; 100]).unwrap();
+            let file = std::fs::File::options().append(true).open(&path).unwrap();
+            file.set_modified(old + Duration::from_secs(index as u64 * 60))
+                .unwrap();
+        }
+        assert_eq!(cache.trim(1000), 0, "под пределом ничего не трогаем");
+        assert_eq!(cache.trim(200), 1);
+        assert!(!temp.path().join("a.jpg").exists(), "ушла самая старая");
+        assert!(temp.path().join("c.jpg").exists());
+        assert_eq!(RemoteImageCache::new(temp.path().join("нет")).trim(0), 0);
     }
 
     #[test]
