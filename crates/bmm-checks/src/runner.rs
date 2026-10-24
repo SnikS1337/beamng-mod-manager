@@ -14,6 +14,7 @@ use chrono::{DateTime, FixedOffset, TimeDelta};
 use url::Url;
 
 use bmm_domain::library::LibraryStore;
+use bmm_domain::versioning::{VersionComparer, VersionOrder};
 use bmm_sources::sources::{ModSource, SourceError, SourceStatus};
 
 use crate::options::UpdateCheckOptions;
@@ -582,12 +583,24 @@ impl Worker<'_, '_> {
             page += 1;
         }
 
-        // 2. Знакомство: версия есть в ленте, прошлых данных нет — карточка не нужна.
+        // 2. Знакомство: версия есть в ленте, прошлых данных нет — карточка не нужна,
+        // если версия совпала с установленной. Иначе это возможное обновление, и для
+        // решения нужен размер файла — его даёт только карточка (лента STMods без
+        // размера: rls 2.8.0-alpha2 против «2.8.0» был бы обновлением вслепую).
         let mut card_candidates: Vec<TrackedBinding> = Vec::new();
         for binding in &due_here {
             if binding.last_version.is_none()
                 && let Some(entry) = entries.get(&binding.source_id)
                 && entry.version.is_some()
+                && (entry.size_bytes.is_some()
+                    || VersionComparer::compare(
+                        self.request
+                            .store
+                            .get_mod(&binding.mod_id)
+                            .and_then(|installed| installed.version)
+                            .as_deref(),
+                        entry.version.as_deref(),
+                    ) == VersionOrder::Same)
             {
                 UpdateCheckService::apply_feed_baseline(
                     self.request.store,
@@ -1568,16 +1581,62 @@ mod tests {
                 None,
             ));
         }
+        site.set_card(l("x", "m7", Some("2.0"), Some(50 * 1024 * 1024)));
         let report = run_simple(
             &store,
             &sources(&site),
             now(),
             UpdateCheckOptions::default(),
         );
-        assert_eq!(site.card_calls(), 0);
+        // Карточка — только у того, чья версия в ленте другая: нужен размер для решения.
+        assert_eq!(site.card_calls(), 1);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].mod_id, "m7");
         assert!(report.complete());
+    }
+
+    #[test]
+    fn first_check_opens_card_when_feed_version_differs() {
+        // rls_career_overhaul_v2.8.0_alpha2.zip: лента STMods даёт «2.8.0» без размера.
+        // Без карточки это было «обновление» вслепую; с карточкой размер тот же — не обновление.
+        let mb = 1024 * 1024;
+        let store = InMemoryLibraryStore::new();
+        let site = Site::new("x");
+        store.upsert_mod(InstalledMod {
+            id: "rls".to_string(),
+            name: "rls career overhaul".to_string(),
+            file_name: "rls_career_overhaul_v2.8.0_alpha2.zip".to_string(),
+            version: Some("2.8.0-alpha2".to_string()),
+            size_bytes: Some(368 * mb),
+            installed_at_utc: now() - TimeDelta::days(3),
+            enabled: true,
+        });
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "rls".to_string(),
+                source: "x".to_string(),
+                source_id: "rls".to_string(),
+                url: Url::parse(&u("x", "rls")).unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        site.feed
+            .lock()
+            .unwrap()
+            .push(l("x", "rls", Some("2.8.0"), None));
+        site.set_card(l("x", "rls", Some("2.8.0"), Some(368 * mb)));
+        let report = run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(site.card_calls(), 1);
+        assert_eq!(
+            store.get_check("rls", "x").unwrap().last_size,
+            Some(368 * mb)
+        );
+        assert!(report.findings.is_empty(), "{:?}", report.findings);
     }
 
     #[test]
