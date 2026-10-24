@@ -11,7 +11,7 @@ thiserror.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2", features = ["serde"] }
 fancy-regex = "0.14"
-json5 = "0.4"
+json5.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

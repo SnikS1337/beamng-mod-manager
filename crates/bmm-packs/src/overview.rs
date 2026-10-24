@@ -297,6 +297,32 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
 
+    /// info.json модов пишут руками: комментарии, запятые в конце, ключи без
+    /// кавычек, BOM, NaN, огромные числа. Тест фиксирует, что разбор это
+    /// переживает, и ловит изменения поведения при обновлении json5.
+    #[test]
+    fn json5_reads_hand_written_info_files() {
+        let ok = |text: &str| json5::from_str::<Value>(text).expect(text);
+        assert_eq!(
+            ok("{ // c\n \"Name\": \"A\", /* b */ Brand: 'B', }")["Brand"],
+            "B"
+        );
+        assert_eq!(ok("\u{feff}{\"Name\": \"A\"}")["Name"], "A");
+        assert_eq!(
+            ok("{\r\n\"Years\": {\"min\": 1990, \"max\": 2000,},\r\n}\r\n")["Years"]["max"],
+            2000
+        );
+        assert_eq!(ok("{\"d\": \"a\\\nb\", \"t\": \"a\tb\"}")["d"], "ab");
+        assert!(ok("{\"a\": NaN, \"b\": Infinity}")["a"].is_null());
+        assert_eq!(ok("{\"a\": .5, \"c\": 0x1F, \"d\": +3}")["c"], 31);
+        assert!(ok("{\"e\": 12345678901234567890}")["e"].is_number());
+        assert_eq!(ok("{\"a\": 1, \"a\": 2}")["a"], 2);
+        assert_eq!(ok("{\"a\": \"\\ud83d\\ude00\"}")["a"], "😀");
+        for broken in ["", "  \n", "{\"d\": \"a\nb\"}", "{\"a\": 1} x"] {
+            assert!(json5::from_str::<Value>(broken).is_err(), "{broken:?}");
+        }
+    }
+
     fn build_zip(path: &Path, files: &[(&str, &[u8])]) {
         let file = File::create(path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
