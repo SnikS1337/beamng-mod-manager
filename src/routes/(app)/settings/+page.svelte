@@ -62,7 +62,11 @@
     { id: "modsgaming", label: "ModsGaming", note: "Русский каталог, картинки со страницы" },
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
   ];
-  let activeSection = $state<SectionId>("appearance");
+  // `/settings?section=folders` — ссылки вроде «Не нашли папку с модами» ведут сразу к нужному.
+  const requested = new URLSearchParams(globalThis.location?.search ?? "").get("section");
+  let activeSection = $state<SectionId>(
+    SECTIONS.find((section) => section.id === requested)?.id ?? "appearance",
+  );
   let sectionsEl = $state<HTMLDivElement | null>(null);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let revision = 0;

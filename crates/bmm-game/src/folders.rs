@@ -84,6 +84,46 @@ pub fn find_mods_folders(user_root: &Path) -> Vec<PathBuf> {
     result
 }
 
+/// Где может стоять игра: папка запущенной игры и библиотеки Steam. По их
+/// `startup.ini` находится перенесённая папка пользователя.
+pub fn game_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = crate::process::running_game_dir().into_iter().collect();
+    let steam_roots = ["ProgramFiles(x86)", "ProgramFiles"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(|base| PathBuf::from(base).join("Steam"));
+    for steam in steam_roots {
+        let vdf = steam.join("steamapps").join("libraryfolders.vdf");
+        let mut libraries = vec![steam.clone()];
+        if let Ok(text) = fs::read_to_string(&vdf) {
+            libraries.extend(steam_libraries(&text));
+        }
+        for library in libraries {
+            let game = library
+                .join("steamapps")
+                .join("common")
+                .join("BeamNG.drive");
+            if game.is_dir() && !dirs.iter().any(|known| same_path(known, &game)) {
+                dirs.push(game);
+            }
+        }
+    }
+    dirs
+}
+
+/// Пути библиотек из `libraryfolders.vdf`: строки `"path"  "D:\\SteamLibrary"`.
+pub fn steam_libraries(vdf: &str) -> Vec<PathBuf> {
+    vdf.lines()
+        .filter_map(|line| {
+            let mut parts = line.split('"').filter(|part| !part.trim().is_empty());
+            if !parts.next()?.eq_ignore_ascii_case("path") {
+                return None;
+            }
+            Some(PathBuf::from(parts.next()?.replace("\\\\", "\\")))
+        })
+        .collect()
+}
+
 pub fn auto_detect(game_dirs: &[PathBuf], user_roots: &[PathBuf]) -> Option<PathBuf> {
     let mut roots: Vec<PathBuf> = game_dirs
         .iter()
@@ -294,6 +334,30 @@ fn same_path(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn steam_library_paths_are_read() {
+        let vdf = r#""libraryfolders"
+{
+	"0"
+	{
+		"path"		"C:\\Program Files (x86)\\Steam"
+		"label"		""
+	}
+	"1"
+	{
+		"path"		"D:\\SteamLibrary"
+	}
+}"#;
+        assert_eq!(
+            steam_libraries(vdf),
+            vec![
+                PathBuf::from(r"C:\Program Files (x86)\Steam"),
+                PathBuf::from(r"D:\SteamLibrary")
+            ]
+        );
+        assert!(steam_libraries("").is_empty());
+    }
     use super::*;
     use std::fs;
 

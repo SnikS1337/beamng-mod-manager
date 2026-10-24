@@ -848,7 +848,7 @@ pub(crate) fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option
     }
 
     let roots = folders::default_user_roots();
-    if let Some(found) = folders::auto_detect(&[], &roots) {
+    if let Some(found) = folders::auto_detect(&folders::game_dirs(), &roots) {
         return (Some(found), None);
     }
     (None, Some("Папка игры не выбрана.".to_string()))
