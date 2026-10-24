@@ -597,7 +597,7 @@
             <p>{emptyTitle()}</p>
             <span>{emptyText()}</span>
             {#if snapshot.folderError}
-              <a href="/settings">Открыть настройки</a>
+              <a href="/settings?section=folders">Выбрать папку</a>
             {:else if query}
               <button type="button" onclick={() => (query = "")}>Сбросить поиск</button>
             {:else if filter !== "all"}
