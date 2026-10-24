@@ -7,6 +7,7 @@
   import {
     libraryLoad,
     listenLibraryTitles,
+    modBindPage,
     modFixPackaging,
     modDelete,
     modDetails,
@@ -201,6 +202,20 @@
       });
     } catch (reason) {
       showToast(errorText(reason));
+    }
+  }
+
+  /** «Указать страницу» из панели мода. Возвращает причину отказа для поля ввода. */
+  async function bindSelected(url: string): Promise<string | null> {
+    const card = selected;
+    if (!card) return "Мод не выбран.";
+    try {
+      await modBindPage(card.id, url);
+      await load(true);
+      showToast(`Следим за страницей «${trimName(card.name)}»`);
+      return null;
+    } catch (reason) {
+      return errorText(reason);
     }
   }
 
@@ -592,6 +607,7 @@
         {fixing}
         onFix={() => void fixSelected()}
         onUnfollow={(source) => void unfollowSelected(source)}
+        onBindPage={bindSelected}
         onToggle={() => {
           if (selected) void toggle(selected);
         }}

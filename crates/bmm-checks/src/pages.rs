@@ -415,6 +415,53 @@ pub fn bind_page(
     true
 }
 
+/// «Указать страницу»: человек вставил ссылку на страницу мода. Страница открывается
+/// сразу — так видно, что это действительно страница мода, и версия с размером
+/// известны без следующей проверки. Возвращает прочитанную запись или понятную причину.
+pub fn bind_url(
+    store: &dyn LibraryStore,
+    sources: &[std::sync::Arc<dyn bmm_sources::sources::ModSource>],
+    mod_id: &str,
+    url: &str,
+    cancel: &AtomicBool,
+    now: DateTime<FixedOffset>,
+) -> Result<Listing, String> {
+    let url = url::Url::parse(url.trim())
+        .map_err(|_| "Это не ссылка. Скопируйте адрес страницы мода из браузера.".to_string())?;
+    let source = sources
+        .iter()
+        .find(|source| source.owns(&url))
+        .ok_or_else(|| {
+            "Этот сайт программа не знает: подойдут STMods, ModsGaming, Modland и репозиторий BeamNG."
+                .to_string()
+        })?;
+    if !source.is_mod_page(&url) {
+        return Err(format!(
+            "Это не страница мода на {}: откройте сам мод и скопируйте его адрес.",
+            source.display_name()
+        ));
+    }
+    if store.get_mod(mod_id).is_none() {
+        return Err("Мод не найден. Обновите список.".to_string());
+    }
+    let listing = match source.listing(&url, cancel) {
+        Ok(Some(listing)) => listing,
+        Ok(None) => {
+            return Err(format!(
+                "На {} по этой ссылке нет мода: страница удалена или адрес неполный.",
+                source.display_name()
+            ));
+        }
+        Err(error) => {
+            return Err(format!("Страница не открылась: {}", error.message));
+        }
+    };
+    if !bind_page(store, mod_id, &listing, None, true, now) {
+        return Err("Мод не найден. Обновите список.".to_string());
+    }
+    Ok(listing)
+}
+
 /// Мод без привязок, для которого поиск страницы уже не имеет смысла.
 pub fn is_awaiting_manual(store: &dyn LibraryStore, installed: &InstalledMod) -> bool {
     store.is_checking_declined(&installed.id)
@@ -991,5 +1038,80 @@ mod tests {
         assert_eq!(store.bindings()[0].source_id, "999");
         store.remove_mod("mb");
         assert!(!refollow_page(&store, &saved));
+    }
+
+    fn detail_site(detail: Listing) -> Arc<DetailSite> {
+        Arc::new(DetailSite {
+            found: detail.clone(),
+            detail,
+            detail_calls: AtomicUsize::new(0),
+        })
+    }
+
+    #[test]
+    fn manual_page_is_opened_and_followed_with_its_version() {
+        let store = InMemoryLibraryStore::new();
+        let mut mine = installed("mb", "MB_w164_ken_3.0_f4rza.zip");
+        mine.version = Some("3.0".to_string());
+        store.upsert_mod(mine);
+        // Отказ «Это другой мод» не мешает указать страницу вручную.
+        store.set_page_search(
+            "mb",
+            Some(PageSearch {
+                at: now(),
+                rejected: true,
+            }),
+        );
+        let mut page = listing("w164", "Mercedes-Benz M-Class W164 3.0");
+        page.mod_version = Some("3.0".to_string());
+        page.size_bytes = Some(455_000_000);
+        let site = detail_site(page.clone());
+        let sources: Vec<Arc<dyn ModSource>> = vec![site.clone()];
+
+        let got = bind_url(
+            &store,
+            &sources,
+            "mb",
+            " https://modsgaming.test/w164 ",
+            &AtomicBool::new(false),
+            now(),
+        )
+        .unwrap();
+        assert_eq!(got.source_id, "w164");
+        let bindings = store.bindings();
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].confirmed);
+        let check = store
+            .get_check("mb", "modsgaming")
+            .expect("проверено сразу");
+        assert_eq!(check.last_version.as_deref(), Some("3.0"));
+        assert!(crate::UpdateCheckService::pending(&store, true).is_empty());
+    }
+
+    #[test]
+    fn manual_page_explains_what_is_wrong() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "a.zip"));
+        let site = detail_site(listing("real", "Some Car"));
+        let sources: Vec<Arc<dyn ModSource>> = vec![site];
+        let bind = |url: &str| {
+            bind_url(&store, &sources, "a", url, &AtomicBool::new(false), now()).unwrap_err()
+        };
+        assert!(bind("не ссылка").contains("не ссылка"));
+        assert!(bind("https://unknown.example/mod").contains("не знает"));
+        assert!(bind("https://modsgaming.test/").contains("не страница мода"));
+        assert!(bind("https://modsgaming.test/missing").contains("нет мода"));
+        assert!(
+            bind_url(
+                &store,
+                &[] as &[Arc<dyn ModSource>],
+                "a",
+                "https://modsgaming.test/real",
+                &AtomicBool::new(false),
+                now()
+            )
+            .is_err()
+        );
+        assert!(store.bindings().is_empty());
     }
 }

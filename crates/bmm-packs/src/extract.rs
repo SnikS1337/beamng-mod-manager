@@ -156,10 +156,7 @@ fn extract_with_tar(
     })?;
 
     let mut child = Command::new(tar)
-        .arg("-xf")
-        .arg(archive)
-        .arg("-C")
-        .arg(destination)
+        .args(tar_args(archive, destination))
         .current_dir(destination)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -258,6 +255,18 @@ fn extract_with_tar(
         ));
     }
     Ok(())
+}
+
+/// Аргументы распаковщика. Пути — полные: распаковщик запускается из папки назначения,
+/// и относительный путь к архиву указывал бы уже не туда («архив повреждён»).
+fn tar_args(archive: &Path, destination: &Path) -> Vec<std::ffi::OsString> {
+    let full = |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    vec![
+        "-xf".into(),
+        full(archive).into_os_string(),
+        "-C".into(),
+        full(destination).into_os_string(),
+    ]
 }
 
 fn tar_path() -> Option<PathBuf> {
@@ -545,5 +554,15 @@ mod tests {
         assert_eq!(budget.remaining(), 6);
         assert!(budget.add(7).is_err());
         assert_eq!(budget.remaining(), 0);
+    }
+
+    #[test]
+    fn unpacker_gets_full_paths_even_for_relative_ones() {
+        let args = tar_args(Path::new("pack dir/Audi Car Pack 1.7z"), Path::new("out"));
+        assert_eq!(args[0], "-xf");
+        assert!(Path::new(&args[1]).is_absolute(), "{args:?}");
+        assert!(Path::new(&args[1]).ends_with("pack dir/Audi Car Pack 1.7z"));
+        assert_eq!(args[2], "-C");
+        assert!(Path::new(&args[3]).is_absolute(), "{args:?}");
     }
 }

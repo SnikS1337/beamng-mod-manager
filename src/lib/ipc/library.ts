@@ -406,3 +406,14 @@ export async function listenLibraryTitles(handler: () => void): Promise<Unlisten
 export async function modFixPackaging(id: string): Promise<void> {
   if (isTauri()) await invoke("mod_fix_packaging", { id });
 }
+
+/** «Указать страницу»: следить за модом по ссылке, которую вставил человек. */
+export async function modBindPage(id: string, url: string): Promise<void> {
+  if (isTauri()) {
+    await invoke("mod_bind_page", { modId: id, url });
+    return;
+  }
+  if (!/^https?:\/\/\S+\/\S+/.test(url.trim())) {
+    throw new Error("Это не ссылка. Скопируйте адрес страницы мода из браузера.");
+  }
+}
