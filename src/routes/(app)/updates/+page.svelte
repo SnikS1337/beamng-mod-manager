@@ -5,6 +5,7 @@
   import { sourceName } from "$lib/ipc/search";
   import { formatAgo, formatSize, formatWhen, plural } from "$lib/features/garage/format";
   import { toasts } from "$lib/shell/toasts.svelte";
+  import { checkSummary } from "$lib/features/updates/summary";
   import { reason, sizeChange } from "$lib/features/updates/reason";
   import {
     listenUpdates,
@@ -127,8 +128,9 @@
     progress = null;
     if (event.phase === "done" || event.phase === "pages") void refreshSites();
     if (event.phase === "done") {
-      offerForce = !event.cancelled && event.requests === 0;
-      if (offerForce) toasts.show("Всё проверено недавно. Нажмите ещё раз, чтобы проверить заново");
+      const summary = checkSummary(event);
+      offerForce = summary.offerForce;
+      if (summary.text) toasts.show(summary.text);
     }
     if (event.phase === "pages") filter = "pages";
     if (found > 0) toasts.show(`Нашли новые страницы (${found})`);

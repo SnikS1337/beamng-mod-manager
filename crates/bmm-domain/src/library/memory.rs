@@ -1,3 +1,4 @@
+use chrono::{DateTime, FixedOffset};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -102,6 +103,14 @@ impl LibraryStore for InMemoryLibraryStore {
 
     fn source_statuses(&self) -> BTreeMap<String, SourceStatus> {
         self.inner.lock().unwrap().statuses.clone()
+    }
+
+    fn last_run(&self) -> Option<DateTime<FixedOffset>> {
+        self.inner.lock().unwrap().last_run
+    }
+
+    fn set_last_run(&self, at: DateTime<FixedOffset>) {
+        self.inner.lock().unwrap().last_run = Some(at);
     }
 
     fn get_dismissed_update(&self, mod_id: &str) -> Option<String> {

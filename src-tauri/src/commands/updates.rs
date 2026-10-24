@@ -744,6 +744,7 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
     let last_checked = checks
         .iter()
         .map(|check| check.last_checked_utc)
+        .chain(store.last_run())
         .max()
         .map(|at| at.to_rfc3339());
     let statuses = store.source_statuses();
@@ -1344,5 +1345,13 @@ mod tests {
         let snapshot = build_snapshot(&state);
         assert!(snapshot.sites.is_empty(), "без сайтов в тестовом окружении");
         assert_eq!(snapshot.last_checked, None);
+
+        // Все моды отложены — записей о проверке нет, но время нажатия видно.
+        let at = chrono::DateTime::parse_from_rfc3339("2026-10-24T10:00:00+00:00").unwrap();
+        state.library.set_last_run(at);
+        assert_eq!(
+            build_snapshot(&state).last_checked.as_deref(),
+            Some("2026-10-24T10:00:00+00:00")
+        );
     }
 }
