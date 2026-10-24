@@ -120,6 +120,24 @@ const VEHICLES: &[&str] = &[
     "weightpad",
     "woodcrate",
     "woodplanks",
+    // добавлено по содержимому игры 0.40.1 (content/vehicles)
+    "anticut",
+    "dino",
+    "dumptruck",
+    "engine_props",
+    "eu_trailers",
+    "marble_block",
+    "percheron",
+    "rallyflags",
+    "rallysigns",
+    "rallytape",
+    "rock_pile",
+    "roof_crush_tester",
+    "simple_traffic",
+    "spikestrip",
+    "trampoline",
+    "trashbin",
+    "tv",
 ];
 
 const LEVELS: &[&str] = &[
@@ -145,6 +163,8 @@ const LEVELS: &[&str] = &[
     "smallgrid",
     "utah",
     "west_coast_usa",
+    "showroom_v2_lighting_simple",
+    "template",
 ];
 
 pub fn is_stock_vehicle(folder: &str) -> bool {
@@ -168,6 +188,10 @@ mod tests {
         assert!(is_stock_vehicle("Pessima"));
         assert!(is_stock_vehicle("containerTrailer"));
         assert!(is_stock_level("west_coast_usa"));
+        // Есть в игре 0.40.1, раньше не было в списке.
+        assert!(is_stock_vehicle("percheron"));
+        assert!(is_stock_vehicle("eu_trailers"));
+        assert!(is_stock_vehicle("dumptruck"));
         assert!(!is_stock_vehicle("sandero1"));
         assert!(!is_stock_level("my_map"));
     }
