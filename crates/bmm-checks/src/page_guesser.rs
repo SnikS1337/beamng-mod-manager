@@ -27,6 +27,8 @@ pub const PER_RUN: usize = 60;
 pub const MIN_NAME: f64 = 0.8;
 /// Вторая страница того же сайта ближе этого к лучшей — непонятно, какая из них.
 pub const AMBIGUOUS: f64 = 0.05;
+/// Прибавка, если автор страницы написан в имени файла мода.
+pub const AUTHOR_IN_FILE_BONUS: f64 = 0.15;
 /// Минимальное отношение размеров установленного мода и страницы.
 pub const SIZE_MIN_RATIO: f64 = 0.85;
 /// Название, с которым следить можно без вопроса (при одном подтверждающем признаке).
@@ -132,6 +134,7 @@ impl PageGuesser {
 
         let installed_version = installed.version.clone().or_else(|| guess.version.clone());
         let author = author_key(guess.author.as_deref());
+        let file_key = author_key(Some(&installed.file_name));
 
         let mut seen: HashSet<(String, String)> = HashSet::new();
         let mut fits: Vec<PageGuess> = Vec::new();
@@ -194,7 +197,17 @@ impl PageGuesser {
                 }
                 _ => false,
             };
-            let other_author = !authors_overlap(archive_author, listing.author.as_deref());
+            // Автор страницы прямо в имени файла («NissanSkylineER34_Ketinside.zip») —
+            // сильный признак: две страницы «Nissan Skyline (ER34)» разных авторов
+            // иначе спорили бы друг с другом, и мод остался бы без страницы.
+            let listing_author = author_key(listing.author.as_deref());
+            let author_in_file =
+                listing_author.chars().count() >= 4 && file_key.contains(listing_author.as_str());
+            if author_in_file {
+                score += AUTHOR_IN_FILE_BONUS;
+            }
+            let other_author =
+                !author_in_file && !authors_overlap(archive_author, listing.author.as_deref());
             let certain = similarity >= CERTAIN_NAME
                 && tokens >= 2
                 && !other_author
@@ -359,6 +372,48 @@ mod tests {
         )
         .unwrap();
         assert!(guess.certain);
+    }
+
+    #[test]
+    fn author_in_file_name_settles_two_pages_with_the_same_title() {
+        // Реальный случай: два «Nissan Skyline (ER34)» на STMods, в архиве автор «ACM».
+        let ketinside = listing(
+            "stmods",
+            "er34-k",
+            "Nissan Skyline (ER34) версия 2.0",
+            Some("Ketinside"),
+            None,
+            PriceStatus::Free,
+        );
+        let other = listing(
+            "stmods",
+            "er34-m",
+            "Nissan Skyline (ER34) версия 1.1",
+            Some("Для MotorSports"),
+            None,
+            PriceStatus::Free,
+        );
+        let mine = installed("er34", "NissanSkylineER34_Ketinside.zip", None, None);
+        let guess = PageGuesser::pick_with_author(
+            &mine,
+            Some("Nissan Skyline ER34"),
+            Some("ACM"),
+            &[other.clone(), ketinside.clone()],
+        )
+        .expect("страница автора из имени файла");
+        assert_eq!(guess.listing.source_id, "er34-k");
+
+        // Без автора в имени файла — двусмысленно, не гадаем.
+        let plain = installed("er34", "NissanSkylineER34.zip", None, None);
+        assert!(
+            PageGuesser::pick_with_author(
+                &plain,
+                Some("Nissan Skyline ER34"),
+                Some("ACM"),
+                &[other, ketinside]
+            )
+            .is_none()
+        );
     }
 
     #[test]
