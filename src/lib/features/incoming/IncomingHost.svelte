@@ -438,7 +438,7 @@
 {#if dialogOpen}
   <button class="backdrop" type="button" aria-label="Закрыть окно проверки" onclick={close}></button>
   <div
-    class="dialog glass liquid-edge"
+    class="dialog glass"
     role="dialog"
     aria-modal="true"
     aria-labelledby="incoming-title"
@@ -549,7 +549,7 @@
     z-index: 50;
     display: grid;
     place-items: center;
-    background: rgba(6, 10, 20, 0.45);
+    background: color-mix(in oklab, var(--background) 55%, transparent);
     pointer-events: none;
   }
 
@@ -560,7 +560,7 @@
     gap: 4px;
     width: min(420px, calc(100vw - 48px));
     padding: 32px 24px;
-    border-radius: 32px;
+    border-radius: 14px;
     color: var(--foreground);
     animation: drop-in 0.35s ease-out;
   }
@@ -587,7 +587,7 @@
     z-index: 55;
     border: 0;
     padding: 0;
-    background: rgba(6, 10, 20, 0.62);
+    background: var(--overlay);
     cursor: default;
   }
 
@@ -602,7 +602,7 @@
     width: min(600px, calc(100vw - 48px));
     max-height: min(760px, calc(100vh - 72px));
     padding: 24px 26px 22px;
-    border-radius: 28px;
+    border-radius: 14px;
     color: var(--foreground);
     transform: translate(-50%, -50%);
     animation: dialog-in 0.34s ease-out;
@@ -639,7 +639,7 @@
     width: 30px;
     height: 30px;
     border: 1px solid var(--glass-border);
-    border-radius: 999px;
+    border-radius: 8px;
     background: transparent;
     color: var(--muted-foreground);
     font-size: 19px;
@@ -660,7 +660,7 @@
     overflow: hidden;
     height: 3px;
     margin: 8px 2px 4px;
-    border-radius: 999px;
+    border-radius: 8px;
     background: color-mix(in oklab, var(--foreground) 10%, transparent);
   }
 
@@ -701,12 +701,12 @@
     flex: none;
     padding: 15px 16px 13px;
     border: 1px solid var(--glass-border);
-    border-radius: 18px;
+    border-radius: 10px;
     background: color-mix(in oklab, var(--foreground) 4%, transparent);
   }
 
   .item.blocked {
-    border-color: color-mix(in oklab, oklch(0.75 0.16 25) 32%, transparent);
+    border-color: color-mix(in oklab, var(--danger) 40%, transparent);
   }
 
   .item-head {
@@ -770,11 +770,11 @@
   }
 
   .checks li.blocked {
-    color: oklch(0.78 0.14 25);
+    color: var(--danger);
   }
 
   .checks li.blocked .mark {
-    color: oklch(0.75 0.16 25);
+    color: var(--danger);
   }
 
   .check {
@@ -840,7 +840,7 @@
 
   footer button {
     height: 34px;
-    border-radius: 999px;
+    border-radius: 8px;
     font-size: 12px;
     font-weight: 600;
     cursor: default;
