@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isShortcut } from "#lib/shell/keys.js";
   import { groupMembers, isShown, visibleCards } from "./duplicates";
   import { onMount } from "svelte";
   import {
@@ -476,13 +477,13 @@
   }
 
   function onkeydown(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+    if (isShortcut(event, "f")) {
       event.preventDefault();
       searchEl?.focus();
       searchEl?.select();
       return;
     }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    if (isShortcut(event, "z")) {
       event.preventDefault();
       void undoToast();
       return;

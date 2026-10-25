@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isShortcut } from "./keys";
   import { tick } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -48,7 +49,7 @@
   });
 
   function onWindowKey(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    if (isShortcut(event, "k")) {
       event.preventDefault();
       palette.toggle();
     }
