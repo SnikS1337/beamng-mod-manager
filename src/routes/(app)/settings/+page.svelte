@@ -58,7 +58,7 @@
   const SOURCES = [
     { id: "modland", label: "Modland", note: "Иногда просит подтвердить, что вы человек" },
     { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
-    { id: "modsgaming", label: "ModsGaming", note: "Русский каталог, картинки со страницы" },
+    { id: "modsgaming", label: "ModsGaming", note: "Русский каталог модов" },
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
   ];
   // `/settings?section=folders` — ссылки вроде «Не нашли папку с модами» ведут сразу к нужному.
@@ -172,15 +172,15 @@
       case "upToDate":
         return "Установлена последняя версия";
       case "downloading":
-        return `Скачиваем ${Math.round(updateProgress * 100)}%`;
+        return `Скачиваем… ${Math.round(updateProgress * 100)}%`;
       case "readyToRestart":
-        return `Версия ${appUpdate?.state.manifest?.version ?? ""} готова`;
+        return `Версия ${appUpdate?.state.manifest?.version ?? ""} скачана — перезапустите программу`;
       case "failed":
         return appUpdate?.state.error ?? "Не удалось проверить обновление";
       case "checking":
         return "Проверяем обновление…";
       default:
-        return "Проверить обновления программы";
+        return "Новые версии программы берём с GitHub";
     }
   }
 
@@ -347,7 +347,6 @@
   <header class="head">
     <div>
       <h1 class="display">Настройки</h1>
-      <p>изменения сохраняются сами</p>
     </div>
     <div class="head-actions">
       <span class="save-state">
@@ -357,8 +356,8 @@
           : saving
             ? "Сохраняем…"
             : dirty
-              ? "Сохраняем изменения…"
-              : message ?? "Все изменения сохранены"}
+              ? "Сохраняем…"
+              : message ?? "Сохраняется само"}
       </span>
     </div>
   </header>
@@ -512,7 +511,10 @@
       </div>
 
       <div class="row">
-        <label for="mods-folder">Папка модов</label>
+        <div class="row-text">
+          <label for="mods-folder">Папка модов</label>
+          <small>Папка mods внутри папки пользователя игры.</small>
+        </div>
         <div class="path-row">
           <input id="mods-folder" readonly value={draft.modsFolder ?? ""} placeholder="не выбрана" title={draft.modsFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("modsFolder")}>
@@ -530,7 +532,10 @@
       </div>
 
       <div class="row">
-        <label for="user-folder">Папка пользователя игры</label>
+        <div class="row-text">
+          <label for="user-folder">Папка пользователя игры</label>
+          <small>Где игра хранит настройки и моды. Обычно находится сама.</small>
+        </div>
         <div class="path-row">
           <input id="user-folder" readonly value={draft.userFolder ?? ""} placeholder="определяется автоматически" title={draft.userFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("userFolder")}>
@@ -552,11 +557,14 @@
         <section id="settings-mods" class="block">
           <div class="block-head">
             <h2 class="display">Моды и загрузки</h2>
-        <span>копии, предупреждения и наблюдение за папками</span>
+        <span>прежние версии, предупреждения, скачанные архивы</span>
       </div>
 
       <div class="row">
-        <label for="keep-backups">Сколько копий хранить</label>
+        <div class="row-text">
+          <label for="keep-backups">Сколько прежних версий хранить</label>
+          <small>При обновлении или исправлении старый файл мода уходит в копии.</small>
+        </div>
         <input
           id="keep-backups"
           class="number"
@@ -569,22 +577,28 @@
       </div>
 
       <div class="row">
-        <label for="warn-above">Предупреждать, если включено больше</label>
-        <input
-          id="warn-above"
-          class="number"
-          type="number"
-          min="0"
-          max="1000"
-          bind:value={draft.activeModsWarnAbove}
-          oninput={mark}
-        />
+        <div class="row-text">
+          <label for="warn-above">Предупреждать, если включено больше</label>
+          <small>Много модов — игра дольше грузится. 0 — не предупреждать.</small>
+        </div>
+        <div class="unit">
+          <input
+            id="warn-above"
+            class="number"
+            type="number"
+            min="0"
+            max="1000"
+            bind:value={draft.activeModsWarnAbove}
+            oninput={mark}
+          />
+          <span>модов</span>
+        </div>
       </div>
 
       <div class="switch-row">
         <div>
           <b>Скачанные моды</b>
-          <small>Предлагать установку архивов из «Загрузок» и наблюдаемых папок.</small>
+          <small>Новый архив в «Загрузках» или в папках ниже — программа предложит его установить.</small>
         </div>
         <Switch
           size="lg"
@@ -600,7 +614,7 @@
       </div>
 
       <div class="row">
-        <span class="label">Наблюдать за папками</span>
+        <span class="label">Ещё папки со скачанными модами</span>
         <div class="watch">
           {#each draft.watchFolders as folder (folder)}
             <div class="watch-row">
@@ -622,11 +636,14 @@
         <section id="settings-updates" class="block">
           <div class="block-head">
             <h2 class="display">Обновления</h2>
-        <span>как часто проверять сайты</span>
+        <span>когда и сколько проверять</span>
       </div>
 
       <div class="row">
-        <label for="ttl">Проверять не чаще чем раз в</label>
+        <div class="row-text">
+          <label for="ttl">Не перепроверять мод чаще, чем раз в</label>
+          <small>Недавно проверенные моды пропускаются — проверка быстрее.</small>
+        </div>
         <div class="unit">
           <input
             id="ttl"
@@ -642,20 +659,29 @@
       </div>
 
       <div class="row">
-        <label for="cards">Карточек с сайта за проверку</label>
-        <input
-          id="cards"
-          class="number"
-          type="number"
-          min="5"
-          max="500"
-          bind:value={draft.maxCardChecksPerSource}
-          oninput={mark}
-        />
+        <div class="row-text">
+          <label for="cards">Страниц с одного сайта за проверку</label>
+          <small>Остальные проверятся в следующий раз — так сайт не закроет доступ.</small>
+        </div>
+        <div class="unit">
+          <input
+            id="cards"
+            class="number"
+            type="number"
+            min="5"
+            max="500"
+            bind:value={draft.maxCardChecksPerSource}
+            oninput={mark}
+          />
+          <span>шт.</span>
+        </div>
       </div>
 
       <div class="row">
-        <label for="auto-every">Автопроверка каждые</label>
+        <div class="row-text">
+          <label for="auto-every">Проверять, пока программа открыта, каждые</label>
+          <small>0 — только при запуске и по кнопке.</small>
+        </div>
         <div class="unit">
           <input
             id="auto-every"
@@ -666,14 +692,14 @@
             bind:value={draft.autoCheckEveryHours}
             oninput={mark}
           />
-          <span>ч (0 — выключена)</span>
+          <span>ч</span>
         </div>
       </div>
 
       <div class="switch-row">
         <div>
           <b>Проверять при запуске</b>
-          <small>Сразу после открытия программы сверять версии модов с сайтами.</small>
+          <small>Сразу после открытия сверять версии модов с сайтами.</small>
         </div>
         <Switch
           size="lg"
@@ -690,7 +716,7 @@
       <div class="switch-row">
         <div>
           <b>Обновления программы</b>
-          <small>Проверять новые версии самого менеджера на GitHub.</small>
+          <small>Проверять новые версии самой программы на GitHub.</small>
         </div>
         <Switch
           size="lg"
@@ -710,7 +736,7 @@
         <section id="settings-sites" class="block">
           <div class="block-head">
             <h2 class="display">Сайты</h2>
-        <span>где искать моды</span>
+        <span>где искать моды и обновления</span>
       </div>
       <div class="switch-list">
         {#each SOURCES as source (source.id)}
@@ -802,11 +828,6 @@
     line-height: 1.05;
   }
 
-  .head p {
-    margin: 3px 0 0;
-    color: var(--muted-foreground);
-    font-size: 13px;
-  }
 
   .save-state {
     display: inline-flex;
@@ -1232,6 +1253,20 @@
   .path-row input:focus {
     border-color: var(--accent-brand);
     outline: none;
+  }
+
+  .row-text {
+    display: flex;
+    flex: 1 1 260px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .row-text small {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    line-height: 1.4;
   }
 
   .unit {
