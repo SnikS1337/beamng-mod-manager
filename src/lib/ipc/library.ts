@@ -276,14 +276,6 @@ export async function libraryLoad(): Promise<LibrarySnapshot> {
   return mockLibrary;
 }
 
-export async function libraryRefresh(): Promise<LibrarySnapshot> {
-  if (isTauri()) {
-    return invoke<LibrarySnapshot>("library_refresh");
-  }
-  mockLibrary ??= mockSnapshot();
-  return mockLibrary;
-}
-
 export async function modToggle(id: string, enabled: boolean): Promise<ToggleResult> {
   if (isTauri()) {
     return invoke<ToggleResult>("mod_toggle", { id, enabled });

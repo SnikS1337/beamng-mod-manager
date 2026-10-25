@@ -91,7 +91,6 @@
   --warning-border: rgb(196 140 30 / 0.45);
   --danger: #c93b30;
   --danger-soft: rgb(255 107 94 / 0.12);
-  --info: #2f6fd0;
 
   --kind-vehicle: #b45a12;
   --kind-map: #1d8a5a;
@@ -105,7 +104,6 @@
   --popover-foreground: var(--foreground);
   --primary: var(--accent-brand);
   --primary-foreground: var(--accent-brand-contrast);
-  --primary-glow: transparent;
   --secondary: var(--surface-3);
   --secondary-foreground: var(--foreground);
   --muted: var(--surface-3);
@@ -114,14 +112,7 @@
   --destructive: var(--danger);
   --input: var(--border-strong);
   --ring: var(--accent-brand);
-  --glass-fill: var(--surface);
-  --glass-fill-strong: var(--surface-2);
   --glass-border: var(--border);
-  --glass-highlight: transparent;
-  --glass-shadow: var(--shadow-1);
-  --drop-fill: var(--surface);
-  --drop-glow: var(--accent-brand-soft);
-  --panel-solid: var(--surface);
   --grid-line: rgb(22 24 28 / 0.04);
 
   --font-sans: "Manrope", "Segoe UI", system-ui, sans-serif;
@@ -162,7 +153,6 @@
   --warning-border: rgb(242 181 68 / 0.4);
   --danger: #ff8a7e;
   --danger-soft: rgb(255 107 94 / 0.12);
-  --info: #7cb8ff;
 
   --kind-vehicle: #ffb27a;
   --kind-map: #7fd1a8;
@@ -297,10 +287,6 @@ textarea {
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-1);
-}
-
-.glass-strong {
-  background: var(--surface-2);
 }
 
 .glass[role="dialog"],

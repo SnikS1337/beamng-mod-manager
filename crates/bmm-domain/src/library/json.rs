@@ -34,8 +34,6 @@ struct State {
 
 pub struct JsonLibraryStore {
     path: PathBuf,
-    #[allow(dead_code)]
-    now: Clock,
     state: Mutex<State>,
     load_warnings: Vec<String>,
 }
@@ -46,7 +44,6 @@ impl JsonLibraryStore {
         let (inner, warnings, save_blocked) = load(&path, &now);
         Self {
             path,
-            now,
             state: Mutex::new(State {
                 inner,
                 batch: 0,

@@ -5,7 +5,7 @@
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { onDestroy, onMount } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
-  import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
+  import { formatAgo, formatWhen, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { checkSummary } from "#lib/features/updates/summary.js";
   import { motion } from "#lib/shell/motion.svelte.js";
