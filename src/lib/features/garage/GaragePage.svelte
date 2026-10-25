@@ -1114,11 +1114,15 @@
     border-bottom: 1px solid var(--border);
   }
 
+  /* Число в чипе — другим шрифтом; выравниваем по базовой линии, а не по центру,
+     иначе оно стоит выше слова. line-height = высота без рамки — текст по центру. */
   .chip {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: 6px;
     height: 30px;
+    line-height: 28px;
+    box-sizing: border-box;
     padding: 0 12px;
     border: 1px solid var(--border-strong);
     border-radius: 15px;
