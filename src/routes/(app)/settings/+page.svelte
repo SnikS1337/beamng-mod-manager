@@ -736,23 +736,6 @@
       </div>
       <div class="switch-row">
         <div>
-          <b>Привлекать внимание к обновлениям</b>
-          <small>Если окно свёрнуто, значок на панели задач мигнёт, когда фоновая проверка найдёт новые версии.</small>
-        </div>
-        <Switch
-          size="lg"
-          checked={draft.attentionOnUpdates}
-          onCheckedChange={(value) => {
-            if (draft) {
-              draft.attentionOnUpdates = value;
-              mark();
-            }
-          }}
-          aria-label="Привлекать внимание к новым обновлениям"
-        />
-      </div>
-      <div class="switch-row">
-        <div>
           <b>Обновления программы</b>
           <small>Проверять новые версии самой программы на GitHub.</small>
         </div>

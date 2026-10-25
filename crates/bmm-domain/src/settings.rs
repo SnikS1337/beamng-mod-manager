@@ -74,8 +74,6 @@ pub struct AppSettings {
     pub auto_check_every_hours: i32,
     /// Проверять обновления и для модов, которые сейчас выключены.
     pub check_disabled_mods: bool,
-    /// Мигнуть значком на панели задач, если обновления нашлись без фокуса.
-    pub attention_on_updates: bool,
     pub disabled_sources: Vec<String>,
     pub keep_backups: i32,
     pub max_card_checks_per_source: i32,
@@ -107,7 +105,6 @@ impl Default for AppSettings {
             check_app_updates: true,
             auto_check_every_hours: 0,
             check_disabled_mods: true,
-            attention_on_updates: true,
             disabled_sources: vec!["modland".to_string()],
             keep_backups: 3,
             max_card_checks_per_source: 150,
@@ -145,7 +142,6 @@ impl AppSettings {
                 self.auto_check_every_hours.clamp(1, 168)
             },
             check_disabled_mods: self.check_disabled_mods,
-            attention_on_updates: self.attention_on_updates,
             disabled_sources: normalized_sources(&self.disabled_sources),
             keep_backups: self.keep_backups.clamp(1, 20),
             max_card_checks_per_source: self.max_card_checks_per_source.clamp(5, 500),
