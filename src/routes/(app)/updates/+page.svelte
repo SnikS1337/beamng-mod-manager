@@ -1,7 +1,7 @@
 <script lang="ts">
   import { openExternal } from "#lib/shell/openExternal.js";
   import { page } from "$app/state";
-  import Car from "phosphor-svelte/lib/Car";
+  import Package from "phosphor-svelte/lib/Package";
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { onDestroy, onMount } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
@@ -358,10 +358,10 @@
 
   function whereText(finding: UpdateFinding): string {
     const parts = [sourceName(finding.source)];
-    if (finding.noticedAt) parts.push(`новую версию заметили ${formatAgo(finding.noticedAt)}`);
+    if (finding.noticedAt) parts.push(`замечено ${formatAgo(finding.noticedAt)}`);
     const size = sizeChange(finding);
-    if (finding.status === "likely" && size) parts.push(`размер ${size}`);
-    return parts.join(", ") + ".";
+    if (finding.status === "likely" && size) parts.push(size);
+    return parts.join(" · ");
   }
 
   function siteRows(): { id: string; name: string; tone: string; text: string }[] {
@@ -373,7 +373,7 @@
       if (site.status === "off") return { id: site.id, name: site.displayName, tone: "off", text: "выключен" };
       if (human) return { id: site.id, name: site.displayName, tone: "warn", text: "просит проверку" };
       if (down) return { id: site.id, name: site.displayName, tone: "bad", text: now?.note ?? "не отвечает" };
-      if (site.tracked === 0) return { id: site.id, name: site.displayName, tone: "off", text: "нет модов" };
+      if (site.tracked === 0) return { id: site.id, name: site.displayName, tone: "off", text: "ни одного мода" };
       return {
         id: site.id,
         name: site.displayName,
@@ -442,7 +442,7 @@
         {#each filter === "available" ? snapshot.findings : snapshot.hidden as finding (finding.modId)}
           {@const possible = finding.status !== "likely"}
           <article class="card">
-            <div class="photo">{#if finding.previewUrl}<img src={finding.previewUrl} alt="" loading="lazy" />{:else}<Car size={48} weight="thin" />{/if}</div>
+            <div class="photo">{#if finding.previewUrl}<img src={finding.previewUrl} alt="" loading="lazy" />{:else}<Package size={48} weight="thin" />{/if}</div>
             <div class="content">
               <div class="head">
                 <h2>{finding.modName}</h2>
@@ -457,7 +457,7 @@
               {#if finding.installedVersion && finding.latestVersion && !possible}
                 <p class="versions mono"><s>{finding.installedVersion}</s> → <b>{finding.latestVersion}</b></p>
               {:else if finding.latestVersion && !possible}
-                <p class="versions mono"><b>{finding.latestVersion}</b></p>
+                <p class="versions mono"><b>→ {finding.latestVersion}</b></p>
               {/if}
               <p class="why">{reason(finding)}</p>
               <p class="where">{whereText(finding)}</p>
@@ -482,7 +482,7 @@
       {:else}
         {#each snapshot.lost ?? [] as page (page.modId + page.source)}
           <article class="card compact">
-            <div class="photo">{#if page.previewUrl}<img src={page.previewUrl} alt="" loading="lazy" />{:else}<Car size={48} weight="thin" />{/if}</div>
+            <div class="photo">{#if page.previewUrl}<img src={page.previewUrl} alt="" loading="lazy" />{:else}<Package size={48} weight="thin" />{/if}</div>
             <div class="content">
               <div class="head"><h2>{page.modName}</h2><span class="chip lost">Страница пропала</span></div>
               <p class="why">
@@ -500,7 +500,7 @@
         {/each}
         {#each snapshot.suggestions as suggestion (suggestion.modId + suggestion.source)}
           <article class="card compact">
-            <div class="photo"><Car size={48} weight="thin" /></div>
+            <div class="photo"><Package size={48} weight="thin" /></div>
             <div class="content">
               <div class="head"><h2>{suggestion.modName}</h2><span class="chip possible">Это его страница?</span></div>
               <p class="why">
@@ -526,7 +526,7 @@
         {:else if autoProgress}
           Проверка при запуске: {progressText(autoProgress)}
         {:else if snapshot.lastChecked}
-          Последняя {formatWhen(snapshot.lastChecked)}. Окно можно закрыть: найденное сохранится.
+          Последняя проверка {formatWhen(snapshot.lastChecked)}. Окно можно закрыть: найденное сохранится.
         {:else}
           Ещё не проверяли. Проверим моды, за которыми следим на сайтах.
         {/if}
@@ -540,7 +540,7 @@
           {offerForce ? "Всё равно проверить" : "Проверить сейчас"}
         </button>
         <button class="btn-glass wide" type="button" onclick={() => void findPages()}>
-          Найти страницы модам без них
+          Найти страницы для остальных модов
         </button>
       {/if}
 

@@ -8,7 +8,8 @@
   import Copy from "phosphor-svelte/lib/Copy";
   import { Switch } from "#lib/components/ui/switch/index.js";
   import { modPreview, type ModCardDto } from "#lib/ipc/library.js";
-  import { addonHint, copiesBadge } from "./duplicates";
+  import { copiesBadge } from "./duplicates";
+  import { addonCaption, compatNote, versionLine } from "./cardText";
   import { formatSize, plural } from "./format";
   import { typeLabel, typeTag } from "./view";
   import { modStatus } from "./status";
@@ -81,14 +82,9 @@
     onselect(mod.id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
   }
 
-  // Версия на карточке: «1.0 → 1.2», если на сайте новее.
-  const versionText = $derived(
-    mod.update !== "none" && mod.updateVersion && mod.updateVersion !== mod.version
-      ? mod.version
-        ? `${mod.version} → ${mod.updateVersion}`
-        : `→ ${mod.updateVersion}`
-      : mod.version,
-  );
+  const version = $derived(versionLine(mod));
+  const compat = $derived(compatNote(mod));
+  const caption = $derived(addonCaption(mod));
 </script>
 
 <div
@@ -113,8 +109,8 @@
     {#if addon}
       {@const Icon = icon}
       <span class="addon-label">
-        <Icon size={30} weight="duotone" />
-        <span>{addonHint(mod)}</span>
+        <Icon size={34} weight="duotone" />
+        {#if caption}<span>{caption}</span>{/if}
       </span>
     {:else if preview}
       <img
@@ -151,16 +147,14 @@
     <div class="text">
       <p class="name">{mod.name}</p>
       <p class="meta">
-        {#if versionText}
-          <span class="mono version" class:fresh={versionText !== mod.version}>{versionText}</span>
+        {#if version}
+          <span class="mono version" class:fresh={version.fresh}>{version.text}</span>
         {/if}
         <span>{formatSize(mod.sizeBytes)}</span>
         {#if mod.deleted}
           <span>{mod.copies > 1 ? `${mod.copies} ${plural(mod.copies, "копия", "копии", "копий")}` : "копия"}</span>
-        {:else if mod.unchecked && mod.update === "none"}
-          <span title="Страница мода не указана — обновления не проверяются">не проверяется</span>
-        {:else if mod.compat.differs}
-          <span class="compat" title="Мод сделан для другой версии игры">{mod.compat.modFor}</span>
+        {:else if compat}
+          <span class="compat" title={compat.title}>{compat.text}</span>
         {/if}
       </p>
     </div>

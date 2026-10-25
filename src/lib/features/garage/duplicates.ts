@@ -43,10 +43,3 @@ export function duplicateExplain(duplicate: DuplicateOf): { title: string; text:
         text: `Те же машины, карты или скрипт, что в ${other}. В списке они показаны одной карточкой.`,
       };
 }
-
-/** Подпись карточки дополнения: не машина и не карта — картинку не показываем. */
-export function addonHint(card: ModCardDto): string {
-  if (card.kind === "script") return "Скрипт или приложение";
-  if (card.kind === "sound") return "Звук";
-  return "Дополнение";
-}

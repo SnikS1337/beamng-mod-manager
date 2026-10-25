@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModCardDto } from "#lib/ipc/library.js";
 import {
-  addonHint,
   copiesBadge,
   duplicateBadge,
   duplicateExplain,
@@ -67,10 +66,5 @@ describe("группы копий", () => {
     expect(duplicateBadge({ id: "w", name: "", exact: false })).toBe("Другая версия");
     expect(duplicateExplain({ id: "w", name: "weather fx", exact: true }).text).toContain("«weather fx»");
     expect(duplicateExplain({ id: "w", name: "", exact: false }).text).toContain("другой мод");
-  });
-
-  it("дополнения подписаны по типу", () => {
-    expect(addonHint(card("a", { kind: "script" }))).toBe("Скрипт или приложение");
-    expect(addonHint(card("b", { kind: "unknown" }))).toBe("Дополнение");
   });
 });
