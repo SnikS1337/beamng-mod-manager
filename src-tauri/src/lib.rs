@@ -207,9 +207,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::app::app_bootstrap,
             commands::library::library_load,
-            commands::library::library_refresh,
             commands::library::mod_toggle,
             commands::library::mod_details,
             commands::library::mod_preview,

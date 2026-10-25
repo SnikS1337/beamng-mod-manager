@@ -1,6 +1,6 @@
 use std::fs;
 
-use bmm_domain::clock::{Clock, system_clock};
+use bmm_domain::clock::system_clock;
 use bmm_domain::library::{
     CheckState, InstalledMod, JsonLibraryStore, LibraryStore, ModBinding, SourceStatus,
 };
@@ -208,10 +208,4 @@ fn memory_and_json_stores_agree_on_entities() {
         memory.is_checking_declined("a"),
         json.is_checking_declined("a")
     );
-}
-
-#[allow(dead_code)]
-fn fixed_clock() -> Clock {
-    let moment = moment();
-    std::sync::Arc::new(move || moment)
 }

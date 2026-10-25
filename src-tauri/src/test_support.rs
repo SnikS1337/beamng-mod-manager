@@ -456,25 +456,12 @@ fn reads_arguments_from_object_literals() {
 }
 
 #[test]
-fn errors_and_startup_info_keep_their_shape() {
+fn errors_keep_their_shape() {
     // Ошибку окно показывает по `message`, а решает по `code`.
     let error = crate::error::AppError::new("move", "Файл занят");
     assert_matches_ts(
         &serde_json::to_value(&error).unwrap(),
         "types.ts",
         "AppError",
-    );
-    let boot = crate::commands::app::BootstrapDto {
-        app_version: "1.0.4".to_string(),
-        os: "windows",
-        arch: "aarch64",
-        data_dir: "C:/data".to_string(),
-        settings_exists: true,
-        library_exists: false,
-    };
-    assert_matches_ts(
-        &serde_json::to_value(&boot).unwrap(),
-        "types.ts",
-        "BootstrapDto",
     );
 }

@@ -29,9 +29,7 @@ class Appearance {
       (this.settings.mode === "system" &&
         window.matchMedia("(prefers-color-scheme: dark)").matches);
     root.classList.toggle("dark", dark);
-    root.classList.toggle("no-glass", !this.settings.liquidGlass);
     root.classList.toggle("no-motion", !this.settings.uiAnimations);
-    root.classList.toggle("no-background", !this.settings.animatedBackground);
     for (const theme of THEMES) {
       root.classList.toggle(`theme-${theme}`, this.settings.theme === theme);
     }

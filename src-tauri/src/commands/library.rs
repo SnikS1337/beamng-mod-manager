@@ -459,14 +459,6 @@ pub(crate) fn archive_title_of(state: &AppState, mod_id: &str) -> Option<String>
 }
 
 #[tauri::command]
-pub async fn library_refresh(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<LibrarySnapshot, AppError> {
-    library_load(app, state).await
-}
-
-#[tauri::command]
 pub async fn mod_toggle(
     state: tauri::State<'_, Arc<AppState>>,
     id: String,
