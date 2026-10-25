@@ -7,6 +7,7 @@
   import { formatSize } from "./format";
   import { modStatus } from "./status";
   import { typeLabel, typeTag } from "./view";
+  import { flowName, motion } from "#lib/shell/motion.svelte.js";
 
   let {
     items,
@@ -49,6 +50,15 @@
       onselect(id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
     }
   }
+
+  // Высота до снимка нового вида: иначе список досчитывает строки посреди перехода.
+  $effect(() => {
+    const el = viewport;
+    if (!el) return;
+    return motion.measure(() => {
+      height = el.clientHeight;
+    });
+  });
 </script>
 
 <div class="list">
@@ -62,7 +72,7 @@
     <span class="end">Вкл.</span>
   </div>
   <div
-    class="scroll-area viewport"
+    class="scroll-area viewport flow-mods"
     role="grid"
     aria-label="Моды"
     bind:this={viewport}
@@ -75,11 +85,13 @@
         {@const status = modStatus(mod)}
         {@const copies = copiesBadge(mod)}
         {@const version = versionLine(mod)}
+        <!-- Та же метка перехода, что у карточки: при смене вида карточка
+             перетекает в строку, при фильтре строки переезжают. -->
         <div
-          class="row"
+          class="row flow-card"
           class:selected={selectedIds.includes(mod.id)}
           class:sleeping={!mod.enabled && !mod.deleted}
-          style={`top:${(start + offset) * ROW}px`}
+          style={`top:${(start + offset) * ROW}px; --flow:${flowName(mod.id)}`}
           data-mod-id={mod.id}
           role="row"
           tabindex="0"

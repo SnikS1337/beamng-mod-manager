@@ -645,6 +645,25 @@ html.flow-route::view-transition-new(page) {
   animation: flow-page-in var(--dur-3) var(--ease-out) 60ms both;
 }
 
+/* Смена вида (сетка ↔ список): старый быстро гаснет, новый поднимается. */
+html.flow-view .flow-mods {
+  view-transition-name: mods;
+  view-transition-group: nearest;
+}
+
+html.flow-view::view-transition-old(page),
+html.flow-view::view-transition-new(page) {
+  animation: none;
+}
+
+html.flow-view::view-transition-old(mods) {
+  animation: flow-fade-out var(--dur-1) var(--ease-out) both;
+}
+
+html.flow-view::view-transition-new(mods) {
+  animation: flow-page-in var(--dur-3) var(--ease-out) both;
+}
+
 /* Внутри раздела страница не мигает: двигаются карточки и панель. */
 html.flow-garage::view-transition-old(page),
 html.flow-garage::view-transition-new(page) {
