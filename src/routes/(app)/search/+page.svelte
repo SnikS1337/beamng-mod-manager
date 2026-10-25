@@ -559,10 +559,13 @@
         {/each}
       </div>
     {:else}
-      <p class="sub">Modland, STMods, ModsGaming и репозиторий BeamNG — сразу, одним запросом.</p>
+      <p class="sub">Modland, STMods и ModsGaming — сразу, одним запросом.</p>
     {/if}
     <p class="note">
       Платные моды не скачиваются: вместо «Скачать» — «Купить у автора».
+    </p>
+    <p class="note">
+      Репозиторий BeamNG используется для проверки обновлений, а не для поиска.
     </p>
     <a class="link" href="/settings">Включить или выключить сайты</a>
   </aside>
