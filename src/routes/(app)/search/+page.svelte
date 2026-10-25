@@ -430,7 +430,7 @@
                       >
                         Скачать
                       </button>
-                    {:else}
+                    {:else if !hasPaid(listing)}
                       <button
                         class="action"
                         type="button"
@@ -828,8 +828,10 @@
     gap: 6px;
   }
 
+  /* Узкая карточка: кнопки уходят под название, а не сжимают его до «BM…». */
   .listing {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: 8px;
     padding: 8px 10px;
@@ -840,7 +842,7 @@
 
   .listing-main {
     display: flex;
-    flex: 1;
+    flex: 1 1 150px;
     flex-direction: column;
     gap: 1px;
     min-width: 0;
@@ -882,6 +884,7 @@
     flex: none;
     align-items: center;
     gap: 4px;
+    margin-left: auto;
   }
 
   .action {
@@ -1069,7 +1072,10 @@
   }
 
   .site-row b {
+    overflow: hidden;
     font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .dot {
