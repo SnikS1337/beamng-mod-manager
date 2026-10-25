@@ -128,12 +128,6 @@ impl SettingsStore {
                 defaults.check_disabled_mods,
                 &mut warnings,
             ),
-            attention_on_updates: bool_field(
-                root,
-                "AttentionOnUpdates",
-                defaults.attention_on_updates,
-                &mut warnings,
-            ),
             disabled_sources,
             keep_backups: int_field(root, "KeepBackups", defaults.keep_backups, &mut warnings),
             max_card_checks_per_source: int_field(
@@ -528,7 +522,6 @@ mod tests {
         let store = store_with(dir.path(), r#"{ "CheckTtlHours": 6 }"#);
         let settings = store.load().settings;
         assert!(settings.check_disabled_mods);
-        assert!(settings.attention_on_updates);
     }
 
     #[test]
@@ -544,7 +537,6 @@ mod tests {
             check_app_updates: false,
             auto_check_every_hours: 24,
             check_disabled_mods: false,
-            attention_on_updates: false,
             disabled_sources: vec!["stmods".to_string()],
             keep_backups: 8,
             max_card_checks_per_source: 200,

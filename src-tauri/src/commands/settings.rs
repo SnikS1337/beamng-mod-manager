@@ -21,7 +21,6 @@ pub struct SettingsDto {
     pub check_app_updates: bool,
     pub auto_check_every_hours: i32,
     pub check_disabled_mods: bool,
-    pub attention_on_updates: bool,
     pub disabled_sources: Vec<String>,
     pub keep_backups: i32,
     pub max_card_checks_per_source: i32,
@@ -48,7 +47,6 @@ impl SettingsDto {
             check_app_updates: settings.check_app_updates,
             auto_check_every_hours: settings.auto_check_every_hours,
             check_disabled_mods: settings.check_disabled_mods,
-            attention_on_updates: settings.attention_on_updates,
             disabled_sources: settings.disabled_sources.clone(),
             keep_backups: settings.keep_backups,
             max_card_checks_per_source: settings.max_card_checks_per_source,
@@ -86,7 +84,6 @@ impl SettingsDto {
         settings.check_app_updates = self.check_app_updates;
         settings.auto_check_every_hours = self.auto_check_every_hours;
         settings.check_disabled_mods = self.check_disabled_mods;
-        settings.attention_on_updates = self.attention_on_updates;
         settings.disabled_sources = self.disabled_sources.clone();
         settings.keep_backups = self.keep_backups;
         settings.max_card_checks_per_source = self.max_card_checks_per_source;

@@ -8,9 +8,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::Serialize;
-use tauri::{
-    AppHandle, Emitter, Manager, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use bmm_checks::runner::SourceRunReport;
 use bmm_checks::{
@@ -1247,15 +1245,6 @@ fn contained<T>(step: impl FnOnce() -> T) -> Option<T> {
     std::panic::catch_unwind(AssertUnwindSafe(step)).ok()
 }
 
-fn should_attention(
-    new_findings: usize,
-    setting_enabled: bool,
-    focused: bool,
-    minimized: bool,
-) -> bool {
-    setting_enabled && new_findings > 0 && (!focused || minimized)
-}
-
 /// Проверка при запуске и по расписанию. Итог уходит в окно событием `updates://event`
 /// с фазой `auto`: значок на «Обновлениях» и тост появляются без открытия раздела.
 pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
@@ -1333,19 +1322,6 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                     .iter()
                     .map(|source| (source.id().to_string(), source.display_name().to_string()))
                     .collect();
-                if let Some(window) = app.get_webview_window("main") {
-                    let focused = window.is_focused().unwrap_or(false);
-                    let minimized = window.is_minimized().unwrap_or(false);
-                    if should_attention(
-                        report.new_findings.len(),
-                        settings.attention_on_updates,
-                        focused,
-                        minimized,
-                    ) {
-                        let _ =
-                            window.request_user_attention(Some(UserAttentionType::Informational));
-                    }
-                }
                 let event = done_event(
                     AUTO_REQUEST_ID,
                     build_snapshot(&state),
@@ -1376,15 +1352,6 @@ mod tests {
     use bmm_domain::settings::AppSettings;
     use bmm_domain::settings_store::SettingsStore;
     use bmm_packs::cache::PreviewCache;
-
-    #[test]
-    fn attention_only_for_new_findings_while_window_is_not_in_front() {
-        assert!(should_attention(2, true, false, false));
-        assert!(should_attention(2, true, true, true));
-        assert!(!should_attention(0, true, false, false));
-        assert!(!should_attention(2, false, false, false));
-        assert!(!should_attention(2, true, true, false));
-    }
 
     fn state() -> (tempfile::TempDir, AppState) {
         let temp = tempfile::tempdir().unwrap();
