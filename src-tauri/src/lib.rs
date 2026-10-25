@@ -3,6 +3,8 @@ mod commands;
 mod error;
 mod named_mutex;
 mod state;
+#[cfg(test)]
+mod test_support;
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};

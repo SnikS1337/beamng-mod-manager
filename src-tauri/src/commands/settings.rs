@@ -119,6 +119,16 @@ pub async fn settings_save(
     state: tauri::State<'_, Arc<AppState>>,
     settings: SettingsDto,
 ) -> Result<SettingsDto, AppError> {
+    save_settings(&state, &settings)
+}
+
+/// Сохранить то, что пришло из окна, поверх текущих настроек. Поля, которых в окне
+/// нет (размер окна, отказ от медленной проверки), не трогаются. Возвращает то, что
+/// реально легло на диск — после приведения к допустимым значениям.
+pub(crate) fn save_settings(
+    state: &AppState,
+    settings: &SettingsDto,
+) -> Result<SettingsDto, AppError> {
     let mut current = state.settings.load().settings;
     settings.apply_to(&mut current);
     state
@@ -137,6 +147,7 @@ pub async fn settings_save(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmm_domain::settings_store::SettingsStore;
 
     #[test]
     fn every_setting_survives_the_window_round_trip() {
@@ -170,6 +181,77 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&restored).unwrap(),
             serde_json::to_value(&changed).unwrap()
+        );
+    }
+
+    #[test]
+    fn window_and_rust_agree_on_settings_fields() {
+        // Переименованное с одной стороны поле молча не сохранялось бы.
+        let dto = SettingsDto::from_settings(&AppSettings::default());
+        crate::test_support::assert_matches_ts(
+            &serde_json::to_value(&dto).unwrap(),
+            "settings.ts",
+            "SettingsDto",
+        );
+    }
+
+    #[test]
+    fn save_keeps_fields_the_window_does_not_know() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_support::test_state(&temp, temp.path());
+        let mut stored = state.settings.load().settings;
+        stored.window_width = 1600;
+        stored.window_height = 900;
+        stored.window_maximized = true;
+        stored.slow_offer_declined = true;
+        state.settings.save(&stored).unwrap();
+
+        let mut dto = SettingsDto::from_settings(&stored);
+        dto.theme = "forest".to_string();
+        save_settings(&state, &dto).unwrap();
+
+        let saved = state.settings.load().settings;
+        assert_eq!(saved.theme, BackgroundTheme::Forest);
+        assert_eq!((saved.window_width, saved.window_height), (1600, 900));
+        assert!(saved.window_maximized);
+        assert!(saved.slow_offer_declined);
+    }
+
+    #[test]
+    fn save_returns_what_really_landed_on_disk() {
+        // Число в окне можно стереть или ввести мимо границ: на диск попадает
+        // допустимое, и окно сразу показывает именно его, а не введённое.
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_support::test_state(&temp, temp.path());
+        let mut dto = SettingsDto::from_settings(&state.settings.load().settings);
+        dto.check_ttl_hours = -5;
+        dto.keep_backups = 0;
+        dto.max_card_checks_per_source = 100_000;
+        dto.active_mods_warn_above = 5000;
+        dto.auto_check_every_hours = -3;
+        dto.disabled_sources = vec![
+            " Modland ".to_string(),
+            "modland".to_string(),
+            String::new(),
+        ];
+        dto.theme = "незнакомая".to_string();
+        dto.mode = String::new();
+
+        let back = save_settings(&state, &dto).unwrap();
+        assert_eq!(back.check_ttl_hours, 1);
+        assert_eq!(back.keep_backups, 1);
+        assert_eq!(back.max_card_checks_per_source, 500);
+        assert_eq!(back.active_mods_warn_above, 1000);
+        assert_eq!(back.auto_check_every_hours, 0);
+        assert_eq!(back.disabled_sources, vec!["modland".to_string()]);
+        assert_eq!((back.theme.as_str(), back.mode.as_str()), ("night", "dark"));
+
+        // И после перезапуска — то же самое.
+        let reopened = SettingsStore::with_system_clock(state.paths.settings());
+        let again = SettingsDto::from_settings(&reopened.load().settings);
+        assert_eq!(
+            serde_json::to_value(&again).unwrap(),
+            serde_json::to_value(&back).unwrap()
         );
     }
 
