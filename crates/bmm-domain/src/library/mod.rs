@@ -99,6 +99,11 @@ pub trait LibraryStore: Send + Sync {
     fn set_source_status(&self, source: &str, status: SourceStatus);
     fn source_statuses(&self) -> BTreeMap<String, SourceStatus>;
 
+    /// Когда закончилась последняя (не прерванная) проверка обновлений — даже если
+    /// все моды были отложены и сайты не опрашивались.
+    fn last_run(&self) -> Option<DateTime<FixedOffset>>;
+    fn set_last_run(&self, at: DateTime<FixedOffset>);
+
     fn get_dismissed_update(&self, mod_id: &str) -> Option<String>;
     fn set_dismissed_update(&self, mod_id: &str, key: Option<&str>);
     fn file_history(&self, mod_id: &str) -> Vec<String>;
@@ -119,6 +124,7 @@ pub(crate) struct Inner {
     pub(crate) history: HashMap<String, Vec<String>>,
     pub(crate) declined: HashSet<String>,
     pub(crate) page_searches: HashMap<String, PageSearch>,
+    pub(crate) last_run: Option<DateTime<FixedOffset>>,
 }
 
 impl Inner {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UpdateFinding } from "$lib/ipc/updates";
+import type { UpdateFinding } from "#lib/ipc/updates.js";
 import { reason } from "./reason";
 
 const MB = 1024 * 1024;
@@ -41,7 +41,10 @@ describe("причина находки", () => {
 
   it("версия выше — обновление", () => {
     expect(reason(finding({ status: "likely", installedVersion: "1.0", latestVersion: "1.1" }))).toBe(
-      "Версия на сайте выше установленной.",
+      "На сайте вышла новая версия.",
+    );
+    expect(reason(finding({ status: "likely", installedVersion: null, latestVersion: "0.1" }))).toBe(
+      "На сайте вышла версия новее вашего файла.",
     );
   });
 });

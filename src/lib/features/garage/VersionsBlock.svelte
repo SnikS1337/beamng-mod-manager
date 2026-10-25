@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
-  import { modVersions, type VersionRow } from "$lib/ipc/library";
+  import { Button } from "#lib/components/ui/button/index.js";
+  import { modVersions, type VersionRow } from "#lib/ipc/library.js";
   import { formatDateTime, formatSize } from "./format";
 
   let {
@@ -54,15 +54,15 @@
 
 <style>
   section {
-    padding-top: 12px;
+    padding-top: 18px;
   }
 
   h3 {
     margin: 0 0 8px;
-    color: var(--muted-foreground);
-    font-size: 9.5px;
-    font-weight: 650;
-    letter-spacing: 0.1em;
+    color: var(--faint-foreground);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
@@ -79,8 +79,8 @@
     gap: 8px;
     padding: 7px 9px;
     border: 1px solid var(--border);
-    border-radius: 12px;
-    background: color-mix(in oklab, var(--foreground) 3%, transparent);
+    border-radius: 8px;
+    background: var(--surface-2);
   }
 
   .text {
@@ -88,7 +88,7 @@
     min-width: 0;
     flex-direction: column;
     gap: 2px;
-    font-size: 10.5px;
+    font-size: 13px;
   }
 
   .text b {
@@ -97,12 +97,12 @@
 
   .text span {
     color: var(--muted-foreground);
-    font-size: 9.5px;
+    font-size: 11.5px;
   }
 
   .muted {
     margin: 0;
     color: var(--muted-foreground);
-    font-size: 10.5px;
+    font-size: 13px;
   }
 </style>

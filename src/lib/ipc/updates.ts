@@ -54,12 +54,22 @@ export interface UpdateProgress {
   total: number;
 }
 
+/** Страница, которой несколько проверок подряд нет на сайте. */
+export interface LostPage {
+  modId: string;
+  modName: string;
+  source: string;
+  url: string;
+  previewUrl?: string | null;
+}
+
 export interface UpdatesSnapshot {
   findings: UpdateFinding[];
   hidden: UpdateFinding[];
   suggestions: PageSuggestion[];
   sites?: UpdateSite[];
   lastChecked?: string | null;
+  lost?: LostPage[];
 }
 
 export interface UpdatesEvent extends UpdatesSnapshot {
@@ -85,6 +95,14 @@ const mockUnfollowed: UpdateFinding[] = [];
 
 function mockInitial(): UpdatesSnapshot {
   return {
+    lost: [
+      {
+        modId: "mock-lost",
+        modName: "Gavril Roamer Classic",
+        source: "stmods",
+        url: "https://stmods.org/beamng_drive/mods/roamer_classic/",
+      },
+    ],
     findings: [
       {
         modId: "mock-1",
@@ -317,6 +335,22 @@ export async function updatesUnfollow(modId: string, source: string): Promise<Up
   return clone(mockSnapshot);
 }
 
+/** «Страница пропала»: перестать следить; `searchAgain` — разрешить искать новую сразу. */
+export async function updatesForgetLost(
+  modId: string,
+  source: string,
+  searchAgain: boolean,
+): Promise<UpdatesSnapshot> {
+  if (isTauri()) {
+    return invoke<UpdatesSnapshot>("updates_forget_lost", { modId, source, searchAgain });
+  }
+  const lost = mockSnapshot.lost ?? [];
+  const page = lost.find((item) => item.modId === modId && item.source === source);
+  if (!page) throw new Error("Программа не следит за этой страницей.");
+  mockSnapshot.lost = lost.filter((item) => item !== page);
+  return clone(mockSnapshot);
+}
+
 /** «Отменить» после «Это другой мод». */
 export async function updatesRefollow(modId: string, source: string): Promise<UpdatesSnapshot> {
   if (isTauri()) return invoke<UpdatesSnapshot>("updates_refollow", { modId, source });
@@ -381,5 +415,6 @@ function clone(snapshot: UpdatesSnapshot): UpdatesSnapshot {
     suggestions: snapshot.suggestions.map((item) => ({ ...item })),
     sites: snapshot.sites?.map((item) => ({ ...item })),
     lastChecked: snapshot.lastChecked ?? null,
+    lost: snapshot.lost?.map((item) => ({ ...item })),
   };
 }

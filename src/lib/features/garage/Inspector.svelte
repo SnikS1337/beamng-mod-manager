@@ -1,17 +1,21 @@
 <script lang="ts">
-  import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-  import { sourceName } from "$lib/ipc/search";
+  import { openExternal } from "#lib/shell/openExternal.js";
+  import { openPath } from "@tauri-apps/plugin-opener";
+  import { sourceName } from "#lib/ipc/search.js";
   import {
     modPreview,
     type ModDetails,
     type DuplicateOf,
+    type ModCardDto,
     type PackagingProblem,
     type VersionRow,
-  } from "$lib/ipc/library";
-  import { expectDownload } from "$lib/ipc/incoming";
-  import { toasts } from "$lib/shell/toasts.svelte";
-  import { safeExternalUrl } from "$lib/url";
-  import { formatDate, formatSize, kindLabel, plural } from "./format";
+  } from "#lib/ipc/library.js";
+  import { expectDownload } from "#lib/ipc/incoming.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
+  import X from "phosphor-svelte/lib/X";
+  import Car from "phosphor-svelte/lib/Car";
+  import { formatDate, formatSize, groupDigits, plural } from "./format";
+  import { typeLabel, type TypeTag } from "./view";
   import VersionsBlock from "./VersionsBlock.svelte";
   import { duplicateExplain } from "./duplicates";
 
@@ -21,11 +25,16 @@
     canDelete,
     problem = null,
     duplicateOf = null,
+    group = [],
+    addon = false,
+    tag = "mod",
     fixing = false,
     update = "none",
     updateVersion = null,
     onFix,
     onShowMod,
+    onKeepOnly,
+    onDeleteCard,
     onToggle,
     onDelete,
     onRestoreVersion,
@@ -38,14 +47,24 @@
     loading: boolean;
     canDelete: boolean;
     problem?: PackagingProblem | null;
-    /** Повторяет другой включённый мод. */
+    /** Повторяет другой мод (основной в группе). */
     duplicateOf?: DuplicateOf | null;
+    /** Основной и его копии, если это основной мод группы. */
+    group?: ModCardDto[];
+    /** Дополнение (не машина и не карта): без картинки, как в списке. */
+    addon?: boolean;
+    /** Метка типа — та же, что на карточке. */
+    tag?: TypeTag;
     fixing?: boolean;
     update?: string;
     updateVersion?: string | null;
     onFix?: () => void;
-    /** Открыть другой мод из пары повторов. */
+    /** Открыть другой мод из группы копий. */
     onShowMod?: (id: string) => void;
+    /** Оставить включённой только эту копию. */
+    onKeepOnly?: (card: ModCardDto) => void;
+    /** Удалить копию (с «Отменить»). */
+    onDeleteCard?: (card: ModCardDto) => void;
     onToggle: () => void;
     onDelete: () => void;
     onRestoreVersion: (version: VersionRow) => void;
@@ -107,8 +126,8 @@
 
   $effect(() => {
     const id = details?.id;
-    preview = details?.previewUrl ?? null;
-    if (!id || preview) return;
+    preview = addon ? null : (details?.previewUrl ?? null);
+    if (!id || preview || addon) return;
     void modPreview(id)
       .then((url) => {
         if (details?.id === id) preview = url;
@@ -116,33 +135,11 @@
       .catch(() => {});
   });
 
-  const hue = $derived(details ? hashHue(details.id) : 210);
-  const placeholder = $derived(
-    `radial-gradient(120% 90% at 18% 0%, hsl(${hue} 85% 68% / 0.8), transparent 62%), linear-gradient(135deg, hsl(${hue} 38% 28%), hsl(${(hue + 58) % 360} 42% 16%))`,
-  );
-
-  function hashHue(id: string): number {
-    let hash = 0;
-    for (let index = 0; index < id.length; index += 1) {
-      hash = (hash * 31 + id.charCodeAt(index)) % 360;
-    }
-    return hash;
-  }
-
   const hasUpdate = $derived(update !== "none" && !!details?.binding);
 
   async function openPage() {
     if (!details?.binding) return;
-    const url = safeExternalUrl(details.binding.url);
-    if (!url) {
-      toasts.show("Ссылка не открывается");
-      return;
-    }
-    try {
-      await openUrl(url);
-    } catch {
-      // В браузере и без прав просто ничего не делаем.
-    }
+    if (!(await openExternal(details.binding.url))) return;
     if (hasUpdate) {
       await expectDownload();
       toasts.show(
@@ -161,22 +158,63 @@
   }
 </script>
 
-<aside class="inspector glass liquid-edge scroll-area">
-  <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>×</button>
+<aside class="inspector scroll-area" aria-label="Выбранный мод">
+  <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>
+    <X size={15} weight="bold" />
+  </button>
 
   {#if loading && !details}
-    <div class="skeleton"></div>
+    <div class="skeleton hero-skeleton"></div>
+    <div class="skeleton line-skeleton"></div>
   {:else if details}
-    <div class="hero" style={preview ? undefined : `background:${placeholder}`}>
-      {#if preview}
-        <img src={preview} alt="" />
-      {:else}
-        <span>{kindLabel(details.kind)}</span>
-      {/if}
-    </div>
+    {#key details.id}
+      <div class="hero" class:addon>
+        {#if preview}
+          <img src={preview} alt="" />
+        {:else}
+          <span class="hero-icon"><Car size={56} weight="thin" /></span>
+        {/if}
+        <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+      </div>
+    {/key}
 
-    <h2>{details.name}</h2>
+    <h2 class="display">{details.name}</h2>
     <p class="file" title={details.fileName}>{details.fileName}</p>
+
+    {#if group.length > 1}
+      {@const enabledCount = group.filter((item) => item.enabled).length}
+      <section class="copies" class:conflict={enabledCount > 1}>
+        <h3>В группе {group.length} {plural(group.length, "файл", "файла", "файлов")}</h3>
+        <p>
+          {enabledCount > 1
+            ? `Включено ${enabledCount} — игра загрузит все, и чьи файлы победят, неизвестно. Оставьте одну.`
+            : "В списке показан самый свежий. Остальные — здесь."}
+        </p>
+        <ul>
+          {#each group as item (item.id)}
+            <li class:current={item.id === details.id}>
+              <div class="copy-text">
+                <b>{item.fileName}</b>
+                <span>
+                  {item.version ? `${item.version} · ` : ""}{formatSize(item.sizeBytes)} · {item.enabled ? "включён" : "выключен"}
+                </span>
+              </div>
+              <div class="copy-actions">
+                {#if onKeepOnly && !(item.enabled && enabledCount === 1)}
+                  <button class="link" type="button" onclick={() => onKeepOnly?.(item)}>Только эта</button>
+                {/if}
+                {#if onShowMod && item.id !== details.id}
+                  <button class="link" type="button" onclick={() => onShowMod?.(item.id)}>Открыть</button>
+                {/if}
+                {#if onDeleteCard && !item.fromGameRepo && item.id !== details.id}
+                  <button class="link danger" type="button" onclick={() => onDeleteCard?.(item)}>Удалить</button>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
 
     <!-- Одно главное действие по состоянию (legacy): исправить, обновить или включить. -->
     {#if problem}
@@ -189,15 +227,14 @@
           </button>
         {/if}
       </section>
-    {:else if duplicateOf && details.enabled}
+    {:else if duplicateOf}
       {@const explain = duplicateExplain(duplicateOf)}
       <section class="problem">
         <h3>{explain.title}</h3>
         <p>{explain.text}</p>
-        <button class="btn-primary wide" type="button" onclick={onToggle}>Выключить этот мод</button>
         {#if onShowMod}
           <button class="btn-glass wide" type="button" onclick={() => onShowMod?.(duplicateOf.id)}>
-            Показать {duplicateOf.name ? `«${duplicateOf.name}»` : "другой"}
+            К основной карточке
           </button>
         {/if}
       </section>
@@ -224,15 +261,9 @@
         </div>
       {/if}
       {#if details.binding}
-        <div>
-          <span>Следим на</span>
-          <b>{sourceName(details.binding.source)}</b>
-        </div>
+        <div><span>Следим на</span><b>{sourceName(details.binding.source)}</b></div>
       {:else}
-        <div>
-          <span>Проверка страницы</span>
-          <b>не проверяется</b>
-        </div>
+        <div><span>Обновления</span><b title="Укажите страницу мода — и программа будет проверять обновления">не проверяются</b></div>
       {/if}
     </div>
 
@@ -249,8 +280,8 @@
             {#if details.archive.levels.length > 0}
               <div><span>{details.archive.levels.length > 1 ? "Карты" : "Карта"}</span><b>{details.archive.levels.slice(0, 3).join(", ")}{details.archive.levels.length > 3 ? ` и ещё ${details.archive.levels.length - 3}` : ""}</b></div>
             {/if}
-            <div><span>{details.archive.hasScripts ? "Скрипты" : "Скриптов"}</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} ${plural(details.archive.luaFiles, "файл", "файла", "файлов")} Lua` : "нет"}</b></div>
-            <div><span>Файлов</span><b>{details.archive.files.toLocaleString("ru-RU")} · {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
+            <div><span>Скрипты</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} ${plural(details.archive.luaFiles, "файл", "файла", "файлов")} Lua` : "нет"}</b></div>
+            <div><span>Файлов</span><b>{groupDigits(details.archive.files)} · {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
             {#each details.archive.warnings as warning}
               <p class="warn">{warning}</p>
             {/each}
@@ -328,47 +359,66 @@
 </aside>
 
 <style>
-  /* Правая панель legacy: стекло, радиус 32, ширина 328, фото, название 24/700,
-     одно главное действие, блоки данных на светлой подложке. */
+  /* Панель справа: на всю высоту, плоская, отделена кромкой — как в макете. */
   .inspector {
     position: relative;
     min-width: 0;
     height: 100%;
+    box-sizing: border-box;
     overflow-y: auto;
-    border-radius: 32px;
-    padding: 16px 18px 20px;
-    background: var(--glass-fill-strong);
+    padding: 20px;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    animation: panel-in var(--dur-3) var(--ease-out) both;
+  }
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   .close {
     position: absolute;
-    top: 24px;
-    right: 26px;
+    top: 28px;
+    right: 28px;
     z-index: 2;
     display: grid;
     place-items: center;
     width: 30px;
     height: 30px;
-    border: 1px solid rgb(255 255 255 / 0.2);
-    border-radius: 999px;
-    background: rgb(10 14 26 / 0.7);
-    color: rgb(255 255 255 / 0.85);
-    font-size: 18px;
-    line-height: 1;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--background) 80%, transparent);
+    color: var(--foreground);
     cursor: default;
   }
 
   .close:hover {
-    color: white;
+    background: var(--surface-3);
   }
 
   .hero {
     position: relative;
-    height: 150px;
+    height: 190px;
     margin-bottom: 16px;
-    border-radius: 20px;
     overflow: hidden;
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+    border-radius: 10px;
+    background: var(--surface-2);
+    animation: fade-in var(--dur-3) var(--ease-out) both;
+  }
+
+  .hero.addon {
+    background: repeating-linear-gradient(
+      135deg,
+      var(--surface-2) 0 12px,
+      color-mix(in oklab, var(--surface-2) 70%, var(--surface-3)) 12px 24px
+    );
   }
 
   .hero img {
@@ -377,30 +427,31 @@
     object-fit: cover;
   }
 
-  .hero span {
+  .hero-icon {
     position: absolute;
     inset: 0;
     display: grid;
     place-items: center;
-    color: rgb(255 255 255 / 0.25);
-    font-size: 18px;
-    font-weight: 650;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    color: var(--faint-foreground);
+    opacity: 0.6;
+  }
+
+  .hero .kind-tag {
+    position: absolute;
+    top: 12px;
+    left: 12px;
   }
 
   h2 {
     margin: 0;
-    font-size: 24px;
-    font-weight: 700;
-    line-height: 1.15;
-    letter-spacing: -0.02em;
+    font-size: 25px;
+    line-height: 1.1;
   }
 
   .file {
-    margin: 5px 0 16px;
+    margin: 4px 0 16px;
     overflow: hidden;
-    color: color-mix(in oklab, var(--foreground) 60%, transparent);
+    color: var(--faint-foreground);
     font-size: 12.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -408,25 +459,22 @@
 
   .wide {
     width: 100%;
-    height: 42px;
-    font-size: 14px;
+    height: 40px;
   }
 
   .explain {
     margin: 8px 2px 0;
-    color: color-mix(in oklab, var(--foreground) 66%, transparent);
+    color: var(--muted-foreground);
     font-size: 12.5px;
-    line-height: 1.4;
-    text-align: center;
+    line-height: 1.45;
   }
 
   .facts {
     display: flex;
     flex-direction: column;
     margin-top: 16px;
-    padding: 4px 14px;
-    border-radius: 16px;
-    background: color-mix(in oklab, var(--foreground) 7%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 10px;
   }
 
   section .facts {
@@ -437,18 +485,18 @@
     display: flex;
     justify-content: space-between;
     gap: 14px;
-    padding: 9px 0;
-    color: color-mix(in oklab, var(--foreground) 64%, transparent);
+    padding: 9px 12px;
+    color: var(--muted-foreground);
     font-size: 13px;
   }
 
   .facts div + div {
-    border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+    border-top: 1px solid var(--border);
   }
 
   .facts b {
     color: var(--foreground);
-    font-weight: 550;
+    font-weight: 600;
     text-align: right;
   }
 
@@ -456,35 +504,130 @@
     color: var(--warning);
   }
 
+  .facts p {
+    margin: 0;
+    padding: 9px 12px;
+  }
+
   section {
     padding-top: 18px;
   }
 
   h3 {
-    margin: 0 0 8px 2px;
-    font-size: 13px;
-    font-weight: 650;
+    margin: 0 0 8px;
+    color: var(--faint-foreground);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
-  .problem {
-    padding: 14px;
-    border: 1px solid oklch(0.66 0.19 25 / 0.45);
-    border-radius: 16px;
-    background: oklch(0.66 0.19 25 / 0.1);
+  .copies {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 4px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
   }
 
-  .problem h3 {
+  .copies.conflict {
+    border-color: color-mix(in oklab, var(--danger) 50%, transparent);
+    background: var(--danger-soft);
+  }
+
+  .copies h3 {
     margin: 0;
   }
 
-  .problem p {
-    margin: 6px 0 12px;
+  .copies p {
+    margin: 0;
+    color: var(--muted-foreground);
     font-size: 12.5px;
     line-height: 1.45;
   }
 
+  .copies ul {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .copies li {
+    display: grid;
+    gap: 4px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+
+  .copies li.current {
+    border-color: var(--accent-brand);
+  }
+
+  .copy-text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .copy-text b {
+    overflow: hidden;
+    font-size: 12.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .copy-text span {
+    color: var(--muted-foreground);
+    font-size: 11.5px;
+  }
+
+  .copy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .copy-actions .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-brand-text);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: default;
+  }
+
+  .copy-actions .link:hover {
+    text-decoration: underline;
+  }
+
+  .copy-actions .danger {
+    color: var(--danger);
+  }
+
+  .problem {
+    padding: 14px;
+    border: 1px solid var(--warning-border);
+    border-radius: 10px;
+    background: var(--warning-soft);
+  }
+
+  .problem h3 {
+    margin: 0;
+    color: var(--warning);
+  }
+
+  .problem p {
+    margin: 6px 0 12px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
   .warn {
-    margin: 4px 0 8px;
     color: var(--warning);
     font-size: 12.5px;
     line-height: 1.4;
@@ -505,8 +648,7 @@
   .links :global(.btn-glass) {
     flex: 1 1 auto;
     height: 34px;
-    padding: 0 14px;
-    font-size: 12.5px;
+    font-size: 13px;
   }
 
   .bind {
@@ -515,8 +657,9 @@
     gap: 8px;
     margin-top: 18px;
     padding: 14px;
-    border-radius: 18px;
-    background: color-mix(in oklab, var(--foreground) 5%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
   }
 
   .bind span {
@@ -527,9 +670,9 @@
   .bind input {
     height: 36px;
     padding: 0 12px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--panel-solid);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
     color: var(--foreground);
     font-size: 13px;
     outline: none;
@@ -537,12 +680,12 @@
   }
 
   .bind input:focus {
-    border-color: var(--ring);
+    border-color: var(--accent-brand);
   }
 
   .bind-error {
     margin: 0;
-    color: var(--destructive);
+    color: var(--danger);
     font-size: 12.5px;
     line-height: 1.4;
   }
@@ -561,8 +704,8 @@
     display: flex;
     align-items: baseline;
     gap: 10px;
-    margin: 14px 2px 0;
-    color: color-mix(in oklab, var(--foreground) 55%, transparent);
+    margin: 16px 0 0;
+    color: var(--faint-foreground);
     font-size: 12.5px;
   }
 
@@ -570,31 +713,25 @@
     padding: 0;
     border: 0;
     background: transparent;
-    color: #ff8f84;
+    color: var(--danger);
     font-size: 13px;
-    font-weight: 600;
-    text-decoration: underline;
-    text-underline-offset: 3px;
+    font-weight: 700;
     cursor: default;
   }
 
-  .skeleton {
-    height: 260px;
-    margin: 10px 0;
-    border-radius: 20px;
-    background: color-mix(in oklab, var(--foreground) 6%, transparent);
-    animation: pulse 1.6s ease-in-out infinite;
+  .delete button:hover {
+    text-decoration: underline;
   }
 
-  @keyframes pulse {
-    50% {
-      opacity: 0.5;
-    }
+  .hero-skeleton {
+    height: 190px;
+    border-radius: 10px;
   }
 
-  @media (max-width: 900px) {
-    .inspector {
-      display: none;
-    }
+  .line-skeleton {
+    height: 28px;
+    width: 70%;
+    margin-top: 16px;
+    border-radius: 6px;
   }
 </style>

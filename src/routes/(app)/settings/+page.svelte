@@ -1,27 +1,26 @@
 <script lang="ts">
+  import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import {
-    Check,
-    Cpu,
-    Download,
-    FolderOpen,
-    Globe,
-    Monitor,
-    Moon,
-    Package,
-    Palette,
-    Plus,
-    RefreshCw,
-    RotateCcw,
-    Sun,
-    X,
-  } from "@lucide/svelte";
+  import Check from "phosphor-svelte/lib/Check";
+  import Cpu from "phosphor-svelte/lib/Cpu";
+  import Download from "phosphor-svelte/lib/DownloadSimple";
+  import FolderOpen from "phosphor-svelte/lib/FolderOpen";
+  import Globe from "phosphor-svelte/lib/Globe";
+  import Monitor from "phosphor-svelte/lib/Monitor";
+  import Moon from "phosphor-svelte/lib/Moon";
+  import Package from "phosphor-svelte/lib/Package";
+  import Palette from "phosphor-svelte/lib/Palette";
+  import Plus from "phosphor-svelte/lib/Plus";
+  import RefreshCw from "phosphor-svelte/lib/ArrowsClockwise";
+  import RotateCcw from "phosphor-svelte/lib/ArrowCounterClockwise";
+  import Sun from "phosphor-svelte/lib/Sun";
+  import X from "phosphor-svelte/lib/X";
   import { isTauri } from "@tauri-apps/api/core";
-  import { Switch } from "$lib/components/ui/switch";
-  import { appearance } from "$lib/shell/appearance.svelte";
-  import { type SettingsDto } from "$lib/ipc/settings";
+  import { Switch } from "#lib/components/ui/switch/index.js";
+  import { appearance } from "#lib/shell/appearance.svelte.js";
+  import { type SettingsDto } from "#lib/ipc/settings.js";
   import {
     appUpdateCancel,
     appUpdateCheck,
@@ -30,17 +29,18 @@
     appUpdateState,
     listenAppUpdateProgress,
     type AppUpdateSnapshot,
-  } from "$lib/ipc/appUpdate";
+  } from "#lib/ipc/appUpdate.js";
 
   type Theme = SettingsDto["theme"];
   type Mode = SettingsDto["mode"];
 
-  const THEMES: { id: Theme; label: string; desc: string }[] = [
-    { id: "night", label: "Ночь", desc: "синий, сиреневый" },
-    { id: "deep", label: "Глубина", desc: "бирюзовый, синий" },
-    { id: "dusk", label: "Закат", desc: "сливовый, янтарь" },
-    { id: "forest", label: "Лес", desc: "изумрудный, золото" },
-    { id: "graphite", label: "Графит", desc: "серый, голубой" },
+  // Акцент. Имена тем прежние, чтобы сохранённые настройки не сбросились.
+  const THEMES: { id: Theme; label: string; desc: string; color: string }[] = [
+    { id: "night", label: "Оранжевый", desc: "как в BeamNG", color: "#ff7a1a" },
+    { id: "deep", label: "Синий", desc: "спокойный", color: "#3d8bff" },
+    { id: "dusk", label: "Красный", desc: "гоночный", color: "#ff4f4f" },
+    { id: "forest", label: "Зелёный", desc: "мягкий", color: "#33c47c" },
+    { id: "graphite", label: "Графит", desc: "без цвета", color: "#dcdfe3" },
   ];
   const MODES: { id: Mode; label: string; icon: typeof Moon }[] = [
     { id: "dark", label: "Тёмная", icon: Moon },
@@ -59,17 +59,24 @@
   const SOURCES = [
     { id: "modland", label: "Modland", note: "Иногда просит подтвердить, что вы человек" },
     { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
-    { id: "modsgaming", label: "ModsGaming", note: "Русский каталог; картинки со страницы" },
+    { id: "modsgaming", label: "ModsGaming", note: "Русский каталог модов" },
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
   ];
-  let activeSection = $state<SectionId>("appearance");
+  // `/settings?section=folders` — ссылки вроде «Не нашли папку с модами» ведут сразу к нужному.
+  const requested = new URLSearchParams(globalThis.location?.search ?? "").get("section");
+  let activeSection = $state<SectionId>(
+    SECTIONS.find((section) => section.id === requested)?.id ?? "appearance",
+  );
   let sectionsEl = $state<HTMLDivElement | null>(null);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let revision = 0;
 
   function selectSection(id: SectionId) {
-    activeSection = id;
-    if (sectionsEl) sectionsEl.scrollTop = 0;
+    if (id === activeSection) return;
+    void motion.run(() => {
+      activeSection = id;
+      if (sectionsEl) sectionsEl.scrollTop = 0;
+    }, "flow-section");
   }
   let draft = $state<SettingsDto | null>(null);
   let loading = $state(true);
@@ -169,15 +176,15 @@
       case "upToDate":
         return "Установлена последняя версия";
       case "downloading":
-        return `Скачиваем ${Math.round(updateProgress * 100)}%`;
+        return `Скачиваем… ${Math.round(updateProgress * 100)}%`;
       case "readyToRestart":
-        return `Версия ${appUpdate?.state.manifest?.version ?? ""} готова`;
+        return `Версия ${appUpdate?.state.manifest?.version ?? ""} скачана — перезапустите программу`;
       case "failed":
         return appUpdate?.state.error ?? "Не удалось проверить обновление";
       case "checking":
         return "Проверяем обновление…";
       default:
-        return "Проверить обновления программы";
+        return "Новые версии программы берём с GitHub";
     }
   }
 
@@ -233,38 +240,31 @@
     }
   }
 
-  let lastPreset = $state<"beauty" | "fast">("beauty");
-
   const preset = $derived(
-    draft?.liquidGlass && draft.animatedBackground && draft.uiAnimations && draft.fireflies
+    draft?.uiAnimations && draft.animatedBackground
       ? "beauty"
-      : draft &&
-          !draft.liquidGlass &&
-          !draft.animatedBackground &&
-          !draft.uiAnimations &&
-          !draft.fireflies
+      : draft && !draft.uiAnimations && !draft.animatedBackground
         ? "fast"
         : null,
   );
 
+  // Набор, к которому вернуться, если движение поменяли вручную.
+  let lastPreset = $state<"beauty" | "fast">("beauty");
   $effect(() => {
     if (preset) lastPreset = preset;
   });
 
   function applyPreset(kind: "beauty" | "fast") {
     if (!draft) return;
-    const on = kind === "beauty";
     lastPreset = kind;
-    draft.liquidGlass = on;
-    draft.animatedBackground = on;
+    const on = kind === "beauty";
     draft.uiAnimations = on;
-    draft.fireflies = on;
-    draft.backgroundTilt = false;
+    draft.animatedBackground = on;
     mark();
   }
 
   function setFlag(
-    key: "liquidGlass" | "animatedBackground" | "uiAnimations" | "fireflies" | "backgroundTilt",
+    key: "uiAnimations" | "animatedBackground",
     value: boolean,
   ) {
     if (!draft) return;
@@ -290,7 +290,13 @@
       return;
     }
     try {
-      const picked = await open({ directory: true, multiple: false, title: "Выбрать папку" });
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: field === "modsFolder" ? "Папка модов (…\\mods)" : "Папка пользователя игры",
+        // Открываем там, где папка уже выбрана, а не в последней случайной.
+        defaultPath: draft[field] || undefined,
+      });
       if (typeof picked === "string") {
         draft[field] = picked;
         mark();
@@ -344,8 +350,7 @@
 <div class="settings-page">
   <header class="head">
     <div>
-      <h1>Настройки</h1>
-      <p>изменения сохраняются сами</p>
+      <h1 class="display">Настройки</h1>
     </div>
     <div class="head-actions">
       <span class="save-state">
@@ -355,8 +360,8 @@
           : saving
             ? "Сохраняем…"
             : dirty
-              ? "Сохраняем изменения…"
-              : message ?? "Все изменения сохранены"}
+              ? "Сохраняем…"
+              : message ?? "Сохраняется само"}
       </span>
     </div>
   </header>
@@ -366,10 +371,10 @@
   {/if}
 
   {#if loading || !draft}
-    <div class="state glass liquid-edge"><p>Загружаем настройки…</p></div>
+    <div class="state"><p>Загружаем настройки…</p></div>
   {:else}
     <div class="settings-layout">
-      <nav class="settings-side glass liquid-edge" aria-label="Разделы настроек">
+      <nav class="settings-side" aria-label="Разделы настроек">
         {#each SECTIONS as section (section.id)}
           {@const Icon = section.icon}
           <button
@@ -377,17 +382,17 @@
             class:active={activeSection === section.id}
             onclick={() => selectSection(section.id)}
           >
-            <Icon size={16} strokeWidth={1.8} />
+            <Icon size={16} />
             <span>{section.label}</span>
           </button>
         {/each}
       </nav>
-      <div class="settings-sections" bind:this={sectionsEl}>
+      <div class="settings-sections flow-section-body" bind:this={sectionsEl}>
         {#if activeSection === "appearance"}
-        <section id="settings-appearance" class="block glass liquid-edge">
+        <section id="settings-appearance" class="block">
           <div class="block-head">
-            <h2>Внешний вид</h2>
-            <span>тема, панели и движение</span>
+            <h2 class="display">Внешний вид</h2>
+            <span>тема, акцент и движение</span>
           </div>
 
       <div class="appearance-grid">
@@ -399,8 +404,8 @@
               class:active={preset === "beauty"}
               onclick={() => applyPreset("beauty")}
             >
-              <b>Красиво</b>
-              <small>полупрозрачные панели, живой фон, анимации и огоньки</small>
+              <b>Живо</b>
+              <small>плавные переходы и мягкий свет фона</small>
             </button>
             <button
               type="button"
@@ -408,14 +413,15 @@
               onclick={() => applyPreset("fast")}
             >
               <b>Быстро</b>
-              <small>плотные панели, без анимаций</small>
+              <small>без движения — для слабых компьютеров</small>
             </button>
           </div>
+
           {#if preset === null}
             <p class="preset-note">
-              Движение поменяно вручную.
+              Движение настроено вручную.
               <button type="button" onclick={() => applyPreset(lastPreset)}>
-                Вернуть как в наборе
+                Вернуть «{lastPreset === "beauty" ? "Живо" : "Быстро"}»
               </button>
             </p>
           {/if}
@@ -424,20 +430,8 @@
           <div class="switch-list">
             <div class="switch-row">
               <div>
-                <b>Полупрозрачные панели</b>
-                <small>Сквозь панели виден цветной фон. Выключено — плотные панели.</small>
-              </div>
-              <Switch
-                size="lg"
-                checked={draft.liquidGlass}
-                onCheckedChange={(value) => setFlag("liquidGlass", value)}
-                aria-label="Полупрозрачные панели"
-              />
-            </div>
-            <div class="switch-row">
-              <div>
                 <b>Анимации интерфейса</b>
-                <small>Капля-выбор, появление и подъём карточек.</small>
+                <small>Плавные переходы между разделами; карточки переезжают на новые места, панели выезжают.</small>
               </div>
               <Switch
                 size="lg"
@@ -448,75 +442,48 @@
             </div>
             <div class="switch-row">
               <div>
-                <b>Анимированный фон</b>
-                <small>По фону медленно плывут пятна света и цветная полоса.</small>
+                <b>Живой фон</b>
+                <small>Мягкий свет акцентного цвета медленно движется по фону.</small>
               </div>
               <Switch
                 size="lg"
                 checked={draft.animatedBackground}
                 onCheckedChange={(value) => setFlag("animatedBackground", value)}
-                aria-label="Анимированный фон"
-              />
-            </div>
-            <div class="switch-row">
-              <div>
-                <b>Огоньки</b>
-                <small>Над фоном плавают светлые точки, на кромках стекла вспыхивают искры.</small>
-              </div>
-              <Switch
-                size="lg"
-                checked={draft.fireflies}
-                onCheckedChange={(value) => setFlag("fireflies", value)}
-                aria-label="Огоньки"
-              />
-            </div>
-            <div class="switch-row">
-              <div>
-                <b>Наклон фона</b>
-                <small>Фон слегка следует за мышкой.</small>
-              </div>
-              <Switch
-                size="lg"
-                checked={draft.backgroundTilt}
-                onCheckedChange={(value) => setFlag("backgroundTilt", value)}
-                aria-label="Наклон фона"
+                aria-label="Живой фон"
               />
             </div>
           </div>
         </div>
 
         <div class="appearance-right">
-          <span class="group-title">Оформление</span>
-          <div class="settings-subcard">
-            <div class="subcard-title">Тема</div>
-            <p class="hint">Светлая или тёмная тема.</p>
-            <div class="choices">
-              {#each MODES as mode (mode.id)}
-                {@const ModeIcon = mode.icon}
-                <button
-                  type="button"
-                  class:active={draft.mode === mode.id}
-                  onclick={() => {
-                    if (draft) {
-                      draft.mode = mode.id;
-                      mark();
-                    }
-                  }}
-                >
-                  <ModeIcon size={14} strokeWidth={1.8} />
-                  {mode.label}
-                </button>
-              {/each}
-            </div>
+          <span class="group-title">Тема</span>
+          <div class="choices">
+            {#each MODES as mode (mode.id)}
+              {@const ModeIcon = mode.icon}
+              <button
+                type="button"
+                class:active={draft.mode === mode.id}
+                onclick={() => {
+                  if (draft) {
+                    draft.mode = mode.id;
+                    mark();
+                  }
+                }}
+              >
+                <ModeIcon size={14} />
+                {mode.label}
+              </button>
+            {/each}
           </div>
 
-          <span class="group-title">Фон</span>
+          <span class="group-title">Акцент</span>
           <div class="theme-grid">
             {#each THEMES as theme (theme.id)}
               <button
                 type="button"
-                class="swatch {theme.id}"
+                class="swatch"
                 class:active={draft.theme === theme.id}
+                aria-pressed={draft.theme === theme.id}
                 onclick={() => {
                   if (draft) {
                     draft.theme = theme.id;
@@ -524,12 +491,15 @@
                   }
                 }}
               >
-                <span class="tone"></span>
-                {#if draft.theme === theme.id}
-                  <span class="chosen"><Check size={13} strokeWidth={2.4} /></span>
-                {/if}
-                <b>{theme.label}</b>
-                <small>{theme.desc}</small>
+                <span class="tone" style={`background:${theme.color}`}>
+                  {#if draft.theme === theme.id}
+                    <Check size={13} weight="bold" />
+                  {/if}
+                </span>
+                <span class="swatch-text">
+                  <b>{theme.label}</b>
+                  <small>{theme.desc}</small>
+                </span>
               </button>
             {/each}
           </div>
@@ -538,22 +508,19 @@
     </section>
         {/if}
         {#if activeSection === "folders"}
-        <section id="settings-folders" class="block glass liquid-edge">
+        <section id="settings-folders" class="block">
           <div class="block-head">
-            <h2>Папки</h2>
+            <h2 class="display">Папки</h2>
         <span>моды и данные игры</span>
       </div>
 
       <div class="row">
-        <label for="mods-folder">Папка модов</label>
+        <div class="row-text">
+          <label for="mods-folder">Папка модов</label>
+          <small>Папка mods внутри папки пользователя игры.</small>
+        </div>
         <div class="path-row">
-          <input
-            id="mods-folder"
-            readonly
-            value={draft.modsFolder ?? ""}
-            placeholder="не выбрана"
-            title={draft.modsFolder ?? ""}
-          />
+          <input id="mods-folder" readonly value={draft.modsFolder ?? ""} placeholder="не выбрана" title={draft.modsFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("modsFolder")}>
             <FolderOpen size={13} />
             Выбрать
@@ -569,15 +536,12 @@
       </div>
 
       <div class="row">
-        <label for="user-folder">Папка пользователя игры</label>
+        <div class="row-text">
+          <label for="user-folder">Папка пользователя игры</label>
+          <small>Где игра хранит настройки и моды. Обычно находится сама.</small>
+        </div>
         <div class="path-row">
-          <input
-            id="user-folder"
-            readonly
-            value={draft.userFolder ?? ""}
-            placeholder="определяется автоматически"
-            title={draft.userFolder ?? ""}
-          />
+          <input id="user-folder" readonly value={draft.userFolder ?? ""} placeholder="определяется автоматически" title={draft.userFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("userFolder")}>
             <FolderOpen size={13} />
             Выбрать
@@ -594,14 +558,17 @@
     </section>
         {/if}
         {#if activeSection === "mods"}
-        <section id="settings-mods" class="block glass liquid-edge">
+        <section id="settings-mods" class="block">
           <div class="block-head">
-            <h2>Моды и загрузки</h2>
-        <span>копии, предупреждения и наблюдение за папками</span>
+            <h2 class="display">Моды и загрузки</h2>
+        <span>прежние версии, предупреждения, скачанные архивы</span>
       </div>
 
       <div class="row">
-        <label for="keep-backups">Сколько копий хранить</label>
+        <div class="row-text">
+          <label for="keep-backups">Сколько прежних версий хранить</label>
+          <small>При обновлении или исправлении старый файл мода уходит в копии.</small>
+        </div>
         <input
           id="keep-backups"
           class="number"
@@ -614,22 +581,28 @@
       </div>
 
       <div class="row">
-        <label for="warn-above">Предупреждать, если включено больше модов</label>
-        <input
-          id="warn-above"
-          class="number"
-          type="number"
-          min="0"
-          max="1000"
-          bind:value={draft.activeModsWarnAbove}
-          oninput={mark}
-        />
+        <div class="row-text">
+          <label for="warn-above">Предупреждать, если включено больше</label>
+          <small>Много модов — игра дольше грузится. 0 — не предупреждать.</small>
+        </div>
+        <div class="unit">
+          <input
+            id="warn-above"
+            class="number"
+            type="number"
+            min="0"
+            max="1000"
+            bind:value={draft.activeModsWarnAbove}
+            oninput={mark}
+          />
+          <span>модов</span>
+        </div>
       </div>
 
       <div class="switch-row">
         <div>
           <b>Скачанные моды</b>
-          <small>Предлагать установку архивов из «Загрузок» и наблюдаемых папок.</small>
+          <small>Новый архив в «Загрузках» или в папках ниже — программа предложит его установить.</small>
         </div>
         <Switch
           size="lg"
@@ -645,7 +618,7 @@
       </div>
 
       <div class="row">
-        <span class="label">Наблюдать за папками</span>
+        <span class="label">Ещё папки со скачанными модами</span>
         <div class="watch">
           {#each draft.watchFolders as folder (folder)}
             <div class="watch-row">
@@ -664,14 +637,17 @@
     </section>
         {/if}
         {#if activeSection === "updates"}
-        <section id="settings-updates" class="block glass liquid-edge">
+        <section id="settings-updates" class="block">
           <div class="block-head">
-            <h2>Обновления</h2>
-        <span>как часто проверять сайты</span>
+            <h2 class="display">Обновления</h2>
+        <span>когда и сколько проверять</span>
       </div>
 
       <div class="row">
-        <label for="ttl">Проверять не чаще чем раз в</label>
+        <div class="row-text">
+          <label for="ttl">Не перепроверять мод чаще, чем раз в</label>
+          <small>Недавно проверенные моды пропускаются — проверка быстрее.</small>
+        </div>
         <div class="unit">
           <input
             id="ttl"
@@ -687,20 +663,29 @@
       </div>
 
       <div class="row">
-        <label for="cards">Карточек с сайта за проверку</label>
-        <input
-          id="cards"
-          class="number"
-          type="number"
-          min="5"
-          max="500"
-          bind:value={draft.maxCardChecksPerSource}
-          oninput={mark}
-        />
+        <div class="row-text">
+          <label for="cards">Страниц с одного сайта за проверку</label>
+          <small>Остальные проверятся в следующий раз — так сайт не закроет доступ.</small>
+        </div>
+        <div class="unit">
+          <input
+            id="cards"
+            class="number"
+            type="number"
+            min="5"
+            max="500"
+            bind:value={draft.maxCardChecksPerSource}
+            oninput={mark}
+          />
+          <span>шт.</span>
+        </div>
       </div>
 
       <div class="row">
-        <label for="auto-every">Автопроверка каждые</label>
+        <div class="row-text">
+          <label for="auto-every">Проверять, пока программа открыта, каждые</label>
+          <small>0 — только при запуске и по кнопке.</small>
+        </div>
         <div class="unit">
           <input
             id="auto-every"
@@ -711,14 +696,14 @@
             bind:value={draft.autoCheckEveryHours}
             oninput={mark}
           />
-          <span>ч (0 — выключена)</span>
+          <span>ч</span>
         </div>
       </div>
 
       <div class="switch-row">
         <div>
           <b>Проверять при запуске</b>
-          <small>Сразу после открытия программы сверять версии модов с сайтами.</small>
+          <small>Сразу после открытия сверять версии модов с сайтами.</small>
         </div>
         <Switch
           size="lg"
@@ -752,10 +737,10 @@
     </section>
         {/if}
         {#if activeSection === "sites"}
-        <section id="settings-sites" class="block glass liquid-edge">
+        <section id="settings-sites" class="block">
           <div class="block-head">
-            <h2>Сайты</h2>
-        <span>где искать моды</span>
+            <h2 class="display">Сайты</h2>
+        <span>где искать моды и обновления</span>
       </div>
       <div class="switch-list">
         {#each SOURCES as source (source.id)}
@@ -777,9 +762,9 @@
     </section>
         {/if}
         {#if activeSection === "program"}
-        <section id="settings-program" class="block glass liquid-edge">
+        <section id="settings-program" class="block">
           <div class="block-head">
-            <h2>Программа</h2>
+            <h2 class="display">Программа</h2>
         <span>версия {appUpdate?.currentVersion ?? "1.0.0"}</span>
       </div>
       <div class="update-row">
@@ -828,438 +813,491 @@
   .settings-page {
     display: flex;
     flex-direction: column;
-    gap: 13px;
     height: 100%;
     min-height: 0;
-    overflow: hidden;
-    padding-bottom: 10px;
   }
 
   .head {
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 4px 4px 0;
+    padding: 18px 150px 14px 24px;
+    border-bottom: 1px solid var(--border);
   }
 
   h1 {
     margin: 0;
-    font-size: 26px;
-    font-weight: 650;
-    letter-spacing: -0.02em;
+    font-size: 30px;
+    line-height: 1.05;
   }
 
-  .head p {
-    margin: 4px 0 0;
-    color: var(--muted-foreground);
-    font-size: 12.5px;
-  }
-
-  .head-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
 
   .save-state {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     color: var(--muted-foreground);
     font-size: 12.5px;
   }
 
   .save-dot {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: oklch(0.72 0.14 150);
+    background: var(--ok);
+    transition: background-color var(--dur-2) var(--ease-out);
   }
 
   .save-dot.busy {
-    background: color-mix(in oklab, var(--primary) 80%, white 10%);
-    animation: save-pulse 1.1s ease-in-out infinite;
+    background: #f2b544;
   }
 
   .save-dot.failed {
-    background: oklch(0.68 0.19 25);
+    background: var(--danger);
   }
 
-  @keyframes save-pulse {
-    50% {
-      opacity: 0.35;
-    }
+  .banner {
+    margin: 12px 24px 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
   }
 
   .banner.error {
-    padding: 9px 12px;
-    border: 1px solid color-mix(in oklab, oklch(0.75 0.16 25) 35%, transparent);
-    border-radius: 12px;
-    background: color-mix(in oklab, oklch(0.75 0.16 25) 10%, transparent);
-    color: oklch(0.82 0.12 25);
-    font-size: 10.5px;
+    border: 1px solid color-mix(in oklab, var(--danger) 45%, transparent);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .state {
+    display: grid;
+    place-content: center;
+    min-height: 240px;
+    color: var(--muted-foreground);
+  }
+
+  .settings-layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+  }
+
+  .settings-side {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 16px 12px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .settings-side button {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 38px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+    cursor: default;
+    transition:
+      background-color var(--dur-2) var(--ease-out),
+      color var(--dur-2) var(--ease-out);
+  }
+
+  .settings-side button:hover {
+    background: var(--surface-2);
+    color: var(--foreground);
+  }
+
+  .settings-side button.active {
+    background: var(--surface-3);
+    color: var(--foreground);
+    box-shadow: inset 3px 0 0 var(--accent-brand);
+  }
+
+  .settings-sections {
+    min-width: 0;
+    overflow-y: auto;
+    padding: 24px;
   }
 
   .block {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 16px 18px;
-    border-radius: 18px;
+    gap: 8px;
+    max-width: 920px;
+    animation: rise-in var(--dur-3) var(--ease-out) both;
   }
 
   .block-head {
     display: flex;
     align-items: baseline;
-    gap: 10px;
+    gap: 12px;
+    margin-bottom: 12px;
   }
 
   .block-head h2 {
     margin: 0;
-    font-size: 14px;
-    font-weight: 630;
+    font-size: 22px;
   }
 
   .block-head span {
-    color: var(--muted-foreground);
-    font-size: 9.5px;
+    color: var(--faint-foreground);
+    font-size: 13px;
   }
 
-  .row {
-    display: grid;
-    grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
-    align-items: center;
-    gap: 12px;
-  }
-
-  .row > label,
-  .row > .label {
-    color: var(--muted-foreground);
+  .group-title {
+    display: block;
+    margin: 14px 0 8px;
+    color: var(--faint-foreground);
     font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .appearance-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.12fr) minmax(300px, 0.88fr);
-    align-items: start;
-    gap: 22px;
-  }
-
-  .appearance-left,
-  .appearance-right {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
-  }
-
-  .group-title {
-    color: var(--muted-foreground);
-    font-size: 9px;
-    font-weight: 650;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 8px 32px;
   }
 
   .presets {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
   }
 
   .presets button {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: 3px;
-    padding: 10px 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: 13px;
-    background: color-mix(in oklab, var(--foreground) 4%, transparent);
+    padding: 12px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface);
     color: var(--foreground);
     text-align: left;
     cursor: default;
+    transition:
+      border-color var(--dur-2) var(--ease-out),
+      background-color var(--dur-2) var(--ease-out);
   }
 
-  .presets button b {
-    font-size: 11.5px;
-    font-weight: 600;
-  }
-
-  .presets button small {
-    color: var(--muted-foreground);
-    font-size: 9px;
-    line-height: 1.35;
+  .presets button:hover {
+    background: var(--surface-2);
   }
 
   .presets button.active {
-    border-color: color-mix(in oklab, var(--primary) 55%, transparent);
-    background: color-mix(in oklab, var(--primary) 11%, transparent);
+    border-color: var(--accent-brand);
+    box-shadow: inset 0 0 0 1px var(--accent-brand);
+  }
+
+  .presets b {
+    font-size: 14.5px;
+    font-weight: 800;
+  }
+
+  .presets small,
+  .switch-row small {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    line-height: 1.4;
   }
 
   .preset-note {
-    margin: 0;
+    margin: 8px 0 0;
     color: var(--muted-foreground);
-    font-size: 9.5px;
-    line-height: 1.4;
+    font-size: 12.5px;
   }
 
   .preset-note button {
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--primary);
+    color: var(--accent-brand-text);
     font: inherit;
-    text-decoration: underline;
-    text-underline-offset: 2px;
+    font-weight: 700;
     cursor: default;
+  }
+
+  .preset-note button:hover {
+    text-decoration: underline;
   }
 
   .switch-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
   }
 
   .switch-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 9px 12px;
-    border: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
-    border-radius: 13px;
-    background: color-mix(in oklab, var(--foreground) 3%, transparent);
+    gap: 16px;
+    padding: 12px 14px;
+  }
+
+  .switch-row + .switch-row {
+    border-top: 1px solid var(--border);
+  }
+
+  .block > .switch-row {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  .block > .switch-row + .switch-row {
+    margin-top: 0;
+  }
+
+  .switch-row div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
   }
 
   .switch-row b {
-    display: block;
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-
-  .switch-row small {
-    display: block;
-    margin-top: 2px;
-    color: var(--muted-foreground);
-    font-size: 9px;
-    line-height: 1.4;
-  }
-
-  .switch-row :global([data-slot="switch"]) {
-    flex: none;
-  }
-
-  .settings-subcard {
-    padding: 12px;
-    border: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
-    border-radius: 14px;
-    background: color-mix(in oklab, var(--foreground) 3%, transparent);
-  }
-
-  .subcard-title {
-    margin-bottom: 3px;
-    font-size: 10.5px;
-    font-weight: 620;
-  }
-
-  @media (max-width: 1150px) {
-    .appearance-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
+    font-size: 14px;
+    font-weight: 700;
   }
 
   .choices {
     display: flex;
     flex-wrap: wrap;
-    gap: 5px;
+    gap: 6px;
   }
 
   .choices button {
-    height: 27px;
-    padding: 0 11px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    background: transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
     color: var(--muted-foreground);
-    font-size: 10px;
+    font-size: 13.5px;
+    font-weight: 600;
     cursor: default;
   }
 
   .choices button.active {
-    background: color-mix(in oklab, var(--primary) 15%, transparent);
-    color: var(--foreground);
-    border-color: color-mix(in oklab, var(--primary) 45%, transparent);
+    border-color: var(--foreground);
+    background: var(--foreground);
+    color: var(--background);
   }
 
   .theme-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 8px;
   }
 
   .swatch {
-    position: relative;
-    display: block;
-    height: 64px;
-    padding: 0;
-    overflow: hidden;
-    border: 1px solid var(--glass-border);
-    border-radius: 13px;
-    background: transparent;
-    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--foreground);
     text-align: left;
     cursor: default;
+    transition: border-color var(--dur-2) var(--ease-out);
   }
 
-  .swatch .tone {
-    position: absolute;
-    inset: 0;
-  }
-
-  .swatch::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(to top, rgb(5 8 16 / 0.8), transparent 68%);
-  }
-
-  .swatch.night .tone {
-    background: linear-gradient(135deg, #3d3580, #1b4b63);
-  }
-  .swatch.deep .tone {
-    background: linear-gradient(135deg, #2c3e92, #14606b);
-  }
-  .swatch.dusk .tone {
-    background: linear-gradient(135deg, #a5366f, #c46b35);
-  }
-  .swatch.forest .tone {
-    background: linear-gradient(135deg, #236544, #4b7a35);
-  }
-  .swatch.graphite .tone {
-    background: linear-gradient(135deg, #4c4f58, #2d3038);
-  }
-
-  .swatch b,
-  .swatch small {
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    z-index: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-shadow: 0 1px 8px rgb(0 0 0 / 0.5);
-  }
-
-  .swatch b {
-    bottom: 18px;
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-
-  .swatch small {
-    bottom: 7px;
-    color: rgb(255 255 255 / 0.68);
-    font-size: 8px;
+  .swatch:hover {
+    border-color: var(--faint-foreground);
   }
 
   .swatch.active {
-    border-color: color-mix(in oklab, var(--primary) 80%, white 10%);
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 55%, transparent);
+    border-color: var(--accent-brand);
   }
 
-  .chosen {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 2;
+  .tone {
     display: grid;
+    flex: none;
     place-items: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 999px;
-    background: rgb(8 12 24 / 0.5);
-    color: #fff;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    color: #111;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.15);
+  }
+
+  .swatch-text {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .swatch-text b {
+    font-size: 13.5px;
+    font-weight: 700;
+  }
+
+  .swatch-text small {
+    color: var(--faint-foreground);
+    font-size: 11.5px;
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  .row label,
+  .row .label {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .path-row {
+    display: flex;
+    flex: 1 1 420px;
+    gap: 6px;
+  }
+
+  .path-row input {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--foreground);
+    font-size: 13px;
+    user-select: text;
+  }
+
+  .path-row input::placeholder {
+    color: var(--faint-foreground);
+  }
+
+  .path-row button,
+  .update-actions button,
+  .add,
+  .watch-row button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--foreground);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: default;
+    transition: background-color var(--dur-1) var(--ease-out);
+  }
+
+  .path-row button:hover:not(:disabled),
+  .update-actions button:hover:not(:disabled),
+  .add:hover {
+    background: var(--surface-3);
+  }
+
+  .path-row button:disabled,
+  .update-actions button:disabled {
+    opacity: 0.5;
+  }
+
+  .update-actions .primary-small {
+    border-color: var(--accent-brand);
+    background: var(--accent-brand);
+    color: var(--accent-brand-contrast);
+  }
+
+  .update-actions .primary-small:hover:not(:disabled) {
+    background: var(--accent-brand-hover);
   }
 
   .number {
-    width: 86px;
-    height: 28px;
-    padding: 0 9px;
-    border: 1px solid var(--glass-border);
-    border-radius: 9px;
-    background: color-mix(in oklab, var(--foreground) 4%, transparent);
+    width: 90px;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
     color: var(--foreground);
-    font-size: 11px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    user-select: text;
+  }
+
+  .number:focus,
+  .path-row input:focus {
+    border-color: var(--accent-brand);
+    outline: none;
+  }
+
+  .row-text {
+    display: flex;
+    flex: 1 1 260px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .row-text small {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    line-height: 1.4;
   }
 
   .unit {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     color: var(--muted-foreground);
-    font-size: 10px;
-  }
-
-  .path-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .path-row input {
-    min-width: 0;
-    flex: 1;
-    height: 29px;
-    padding: 0 10px;
-    border: 1px solid var(--glass-border);
-    border-radius: 9px;
-    background: color-mix(in oklab, var(--foreground) 4%, transparent);
-    color: var(--muted-foreground);
-    font-size: 10.5px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .path-row button,
-  .watch button,
-  .add {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 28px;
-    padding: 0 10px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--foreground);
-    font-size: 9.5px;
-    cursor: default;
-  }
-
-  .path-row button:disabled {
-    opacity: 0.45;
+    font-size: 13px;
   }
 
   .watch {
     display: flex;
+    flex: 1 1 420px;
     flex-direction: column;
-    gap: 5px;
-    align-items: flex-start;
+    gap: 6px;
   }
 
   .watch-row {
     display: flex;
     align-items: center;
-    gap: 6px;
-    max-width: 100%;
-    padding: 4px 4px 4px 10px;
-    border: 1px solid var(--glass-border);
-    border-radius: 9px;
-    color: var(--muted-foreground);
-    font-size: 10px;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 6px 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+    font-size: 13px;
   }
 
   .watch-row span {
@@ -1269,27 +1307,35 @@
   }
 
   .watch-row button {
-    width: 22px;
-    height: 22px;
-    justify-content: center;
-    padding: 0;
+    height: 26px;
+    padding: 0 8px;
+  }
+
+  .add {
+    align-self: flex-start;
   }
 
   .hint {
-    margin: 0;
-    color: var(--muted-foreground);
-    font-size: 9.5px;
+    margin: 10px 2px 0;
+    color: var(--faint-foreground);
+    font-size: 12.5px;
   }
 
   .update-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 14px;
+    gap: 12px 24px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
   }
 
   .update-main {
     display: flex;
+    flex: 1 1 320px;
     flex-direction: column;
     gap: 4px;
     min-width: 0;
@@ -1297,328 +1343,51 @@
 
   .update-main p {
     margin: 0;
-    color: var(--foreground);
-    font-size: 11px;
+    font-size: 14px;
+    font-weight: 700;
   }
 
   .update-main span {
     color: var(--muted-foreground);
-    font-size: 9.5px;
-    line-height: 1.4;
+    font-size: 12.5px;
+    line-height: 1.45;
   }
 
-  .update-error {
-    color: oklch(0.82 0.12 25);
+  .update-main .update-error {
+    color: var(--danger);
   }
 
   .update-track {
-    width: min(320px, 100%);
-    height: 4px;
+    height: 6px;
+    margin-top: 4px;
     overflow: hidden;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 8%, transparent);
+    border-radius: 3px;
+    background: var(--surface-3);
   }
 
   .update-track span {
     display: block;
     height: 100%;
-    border-radius: inherit;
-    background: var(--primary);
-    transition: width 0.2s ease-out;
+    border-radius: 3px;
+    background: var(--accent-brand);
+    transition: width var(--dur-3) var(--ease-out);
   }
 
   .update-actions {
-    flex: none;
-  }
-
-  .update-actions button {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 28px;
-    padding: 0 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--foreground);
-    font-size: 9.5px;
-    cursor: default;
-  }
-
-  .update-actions .primary-small {
-    border-color: transparent;
-    background: var(--primary);
-    color: var(--primary-foreground);
-  }
-
-  .update-actions button:disabled {
-    opacity: 0.5;
-  }
-
-  .state {
-    display: grid;
-    place-content: center;
-    min-height: 260px;
-    border-radius: 18px;
-    color: var(--muted-foreground);
-    font-size: 12px;
-  }
-
-  @media (max-width: 760px) {
-    .row {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 5px;
-    }
-    .theme-grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-  }
-
-  /* ── раскладка с разделами: ближе к legacy ── */
-  .settings-layout {
-    display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
-    align-items: stretch;
-    gap: 18px;
-    flex: 1;
-    min-height: 0;
-  }
-
-  .settings-side {
-    align-self: start;
     display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 10px;
-    border-radius: 20px;
+    gap: 8px;
   }
 
-  .settings-side button {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 42px;
-    padding: 0 13px;
-    border: 0;
-    border-radius: 12px;
-    background: transparent;
-    color: var(--muted-foreground);
-    font-size: 13px;
-    font-weight: 520;
-    text-align: left;
-    cursor: default;
-    transition:
-      background 150ms ease,
-      color 150ms ease;
-  }
-
-  .settings-side button:hover {
-    background: color-mix(in oklab, var(--foreground) 6%, transparent);
-    color: var(--foreground);
-  }
-
-  .settings-side button.active {
-    background: color-mix(in oklab, var(--primary) 16%, transparent);
-    color: var(--foreground);
-    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent);
-  }
-
-  .settings-sections {
-    display: flex;
-    flex-direction: column;
-    gap: 13px;
-    min-width: 0;
-    min-height: 0;
-    overflow-y: auto;
-    padding-right: 4px;
-  }
-
-  .settings-sections > section {
-    min-height: 0;
-    box-sizing: border-box;
-  }
-
-  .hint {
-    font-size: 11.5px;
-    line-height: 1.45;
-  }
-
-  .block {
-    gap: 16px;
-    padding: 20px 22px;
-    border-radius: 20px;
-  }
-
-  .block-head h2 {
-    font-size: 17px;
-    letter-spacing: -0.01em;
-  }
-
-  .block-head span {
-    font-size: 11.5px;
-  }
-
-  .group-title {
-    margin-top: 4px;
-    font-size: 10px;
-  }
-
-  .row > label,
-  .row > .label {
-    font-size: 13px;
-  }
-
-  .appearance-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 18px;
-  }
-
-  .appearance-left,
-  .appearance-right {
-    gap: 12px;
-  }
-
-  .presets button {
-    padding: 13px 15px;
-    border-radius: 15px;
-  }
-
-  .presets button b {
-    font-size: 13px;
-  }
-
-  .presets button small {
-    font-size: 11px;
-    line-height: 1.4;
-  }
-
-  .switch-row {
-    padding: 13px 16px;
-    border-radius: 15px;
-  }
-
-  .switch-row b {
-    font-size: 13.5px;
-  }
-
-  .switch-row small {
-    margin-top: 3px;
-    font-size: 11.5px;
-    line-height: 1.4;
-  }
-
-  .settings-subcard {
-    padding: 16px;
-    border-radius: 16px;
-  }
-
-  .subcard-title {
-    font-size: 13px;
-  }
-
-  .choices {
-    gap: 7px;
-  }
-
-  .choices button {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 34px;
-    padding: 0 14px;
-    font-size: 12.5px;
-  }
-
-  .theme-grid {
-    gap: 10px;
-  }
-
-  .swatch {
-    height: 88px;
-    border-radius: 15px;
-  }
-
-  .swatch b {
-    bottom: 24px;
-    left: 11px;
-    font-size: 12.5px;
-  }
-
-  .swatch small {
-    bottom: 10px;
-    left: 11px;
-    font-size: 9.5px;
-  }
-
-  .number {
-    width: 96px;
-    height: 34px;
-    font-size: 13px;
-  }
-
-  .unit {
-    font-size: 12px;
-  }
-
-  .path-row input {
-    height: 36px;
-    font-size: 12.5px;
-  }
-
-  .path-row button,
-  .watch button,
-  .add {
-    height: 34px;
-    padding: 0 13px;
-    font-size: 11.5px;
-  }
-
-  .watch-row {
-    padding: 6px 6px 6px 12px;
-    font-size: 11.5px;
-  }
-
-  .update-main p {
-    font-size: 13.5px;
-  }
-
-  .update-main span {
-    font-size: 11.5px;
-  }
-
-  .update-actions button {
-    height: 34px;
-    padding: 0 14px;
-    font-size: 11.5px;
-  }
-
-  /* ── живое превью вместо абстрактных пятен ── */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  @media (max-width: 1180px) {
+  @media (max-width: 860px) {
     .settings-layout {
-      grid-template-columns: 190px minmax(0, 1fr);
-      gap: 14px;
+      grid-template-columns: minmax(0, 1fr);
     }
 
-    .settings-side button {
-      padding: 0 10px;
-      font-size: 12px;
+    .settings-side {
+      flex-direction: row;
+      flex-wrap: wrap;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
     }
   }
 </style>

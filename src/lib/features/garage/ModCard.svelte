@@ -1,27 +1,55 @@
 <script lang="ts">
-  import { duplicateBadge } from "./duplicates";
-  import { Car, FileCode, Map, Music, Package } from "@lucide/svelte";
-  import { Switch } from "$lib/components/ui/switch";
-  import { modPreview, type ModCardDto } from "$lib/ipc/library";
-  import { formatSize, kindLabel, plural } from "./format";
+  import Car from "phosphor-svelte/lib/Car";
+  import MapTrifold from "phosphor-svelte/lib/MapTrifold";
+  import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
+  import FileCode from "phosphor-svelte/lib/FileCode";
+  import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
+  import Package from "phosphor-svelte/lib/Package";
+  import Copy from "phosphor-svelte/lib/Copy";
+  import { Switch } from "#lib/components/ui/switch/index.js";
+  import { modPreview, type ModCardDto } from "#lib/ipc/library.js";
+  import { copiesBadge } from "./duplicates";
+  import { addonCaption, compatNote, versionLine } from "./cardText";
+  import { formatSize, plural } from "./format";
+  import { typeLabel, typeTag } from "./view";
+  import { modStatus } from "./status";
+  import { flowName } from "#lib/shell/motion.svelte.js";
 
   let {
     mod,
     selected,
+    index = 0,
+    appear = false,
     onselect,
     ontoggle,
   }: {
     mod: ModCardDto;
     selected: boolean;
-    onselect: (id: string) => void;
+    /** Порядок в видимой части — для небольшой задержки появления. */
+    index?: number;
+    /** Появиться с анимацией (первый показ списка, смена фильтра). */
+    appear?: boolean;
+    onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
     ontoggle: (mod: ModCardDto) => void;
   } = $props();
 
   let preview = $state<string | null>(null);
   let requested = $state("");
+  let loaded = $state(false);
+
+  // Дополнение (детали для машин игры, погода, скрипт): картинки у таких модов
+  // случайные — текстуры, шум, — поэтому карточка без картинки, с подписью.
+  const addon = $derived(mod.role === "addon");
+  const tag = $derived(typeTag(mod));
+  const copies = $derived(copiesBadge(mod));
+  const status = $derived(modStatus(mod));
 
   $effect(() => {
     const id = mod.id;
+    if (addon) {
+      preview = null;
+      return;
+    }
     if (mod.previewUrl) {
       preview = mod.previewUrl;
       return;
@@ -29,6 +57,7 @@
     if (requested === id) return;
     requested = id;
     preview = null;
+    loaded = false;
     void modPreview(id)
       .then((url) => {
         if (requested === id) preview = url;
@@ -36,105 +65,39 @@
       .catch(() => {});
   });
 
-  const hue = $derived(hashHue(mod.id));
-  const placeholder = $derived(
-    `radial-gradient(120% 90% at 18% 0%, hsl(${hue} 85% 68% / 0.85), transparent 62%), radial-gradient(100% 80% at 90% 100%, hsl(${(hue + 58) % 360} 80% 55% / 0.5), transparent 55%), linear-gradient(135deg, hsl(${hue} 38% 28%), hsl(${(hue + 58) % 360} 42% 16%))`,
-  );
-
   const icon = $derived(
-    mod.kind === "vehicle"
+    tag === "vehicle"
       ? Car
-      : mod.kind === "level"
-        ? Map
-        : mod.kind === "sound"
-          ? Music
-          : mod.kind === "script"
-            ? FileCode
-            : Package,
+      : tag === "map"
+        ? MapTrifold
+        : tag === "script"
+          ? FileCode
+          : tag === "sound"
+            ? SpeakerHigh
+            : tag === "addon"
+              ? PuzzlePiece
+              : Package,
   );
 
-  const status = $derived(
-    mod.deleted
-      ? { text: "Удалён", class: "deleted" }
-      : mod.problem
-        ? { text: "Игра не загрузит", class: "problem" }
-      : mod.duplicateOf
-        ? { text: duplicateBadge(mod.duplicateOf), class: "problem" }
-      : mod.update === "likely"
-        ? { text: "Есть обновление", class: "update" }
-        : mod.update === "possible"
-          ? { text: "Возможно, обновлён", class: "possible" }
-          : !mod.enabled
-            ? { text: "Выключен", class: "off" }
-            : null,
-  );
-
-  function hashHue(id: string): number {
-    let hash = 0;
-    for (let index = 0; index < id.length; index += 1) {
-      hash = (hash * 31 + id.charCodeAt(index)) % 360;
-    }
-    return hash;
+  function select(event: MouseEvent) {
+    onselect(mod.id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
   }
 
-  function select() {
-    onselect(mod.id);
-  }
+  const version = $derived(versionLine(mod));
+  const compat = $derived(compatNote(mod));
+  const caption = $derived(addonCaption(mod));
 </script>
 
 <div
-  class="card"
+  class="card flow-card"
   class:selected
+  class:appear
   class:sleeping={!mod.enabled && !mod.deleted}
   class:deleted={mod.deleted}
-  class:pending={mod.pending === "queued"}
+  style={`--i:${Math.min(index, 14)}; --flow:${flowName(mod.id)}`}
+  data-mod-id={mod.id}
 >
-  <div class="thumb" style={preview ? undefined : `background:${placeholder}`}>
-      {#if preview}
-        <img src={preview} alt="" loading="lazy" />
-      {:else}
-        {@const Icon = icon}
-        <span class="placeholder">
-          <Icon size={34} strokeWidth={1.4} />
-          <span>{kindLabel(mod.kind)}</span>
-        </span>
-      {/if}
-
-      {#if mod.pending === "queued"}
-        <span class="badge pending-badge">После игры</span>
-      {/if}
-      {#if status}
-        <span class="badge {status.class}">{status.text}</span>
-      {/if}
-
-      <div class="caption">
-        <div class="titles">
-          <p class="title">{mod.name}</p>
-          <p class="meta">
-            {#if mod.update !== "none" && mod.updateVersion && mod.updateVersion !== mod.version}
-              <span class="version">{mod.version ? `${mod.version} → ${mod.updateVersion}` : mod.updateVersion}</span>
-            {:else if mod.version}
-              <span class="version">{mod.version}</span>
-            {/if}
-            {#if mod.version || mod.updateVersion}
-              <span class="dot">·</span>
-            {/if}
-            <span>{formatSize(mod.sizeBytes)}</span>
-            {#if mod.deleted}
-              <span class="dot">·</span>
-              <span>{mod.copies > 1 ? `${mod.copies} ${plural(mod.copies, "копия", "копии", "копий")}` : "копия"}</span>
-            {:else if mod.unchecked && mod.update === "none"}
-              <span class="dot">·</span>
-              <span>не проверяется</span>
-            {:else if mod.compat.differs}
-              <span class="dot">·</span>
-              <span class="compat">{mod.compat.modFor}</span>
-            {/if}
-          </p>
-        </div>
-      </div>
-    </div>
-
+  <!-- Выбор — отдельной кнопкой поверх карточки: переключатель не вложен в кнопку. -->
   <button
     class="select"
     type="button"
@@ -143,44 +106,102 @@
     title={mod.fileName}
     onclick={select}
   ></button>
-
-  {#if !mod.deleted}
-    <div class="toggle">
-      <Switch
-        checked={mod.enabled}
-        onCheckedChange={() => ontoggle(mod)}
-        aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
+  <div class="thumb" class:addon>
+    {#if addon}
+      {@const Icon = icon}
+      <span class="addon-label">
+        <Icon size={34} weight="duotone" />
+        {#if caption}<span>{caption}</span>{/if}
+      </span>
+    {:else if preview}
+      <img
+        src={preview}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        class:loaded
+        onload={() => (loaded = true)}
       />
+    {:else}
+      {@const Icon = icon}
+      <span class="placeholder"><Icon size={40} weight="thin" /></span>
+    {/if}
+
+    <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+    {#if status}
+      <span class="status {status.tone}">{status.text}</span>
+    {/if}
+    {#if copies}
+      <span
+        class="copies"
+        class:conflict={mod.groupConflict}
+        title={mod.groupConflict
+          ? "Включено несколько копий — игра загрузит все"
+          : "Остальные копии — в панели мода"}
+      >
+        <Copy size={12} weight="bold" />{copies}
+      </span>
+    {/if}
+  </div>
+
+  <div class="body">
+    <div class="text">
+      <p class="name">{mod.name}</p>
+      <p class="meta">
+        {#if version}
+          <span class="mono version" class:fresh={version.fresh}>{version.text}</span>
+        {/if}
+        <span>{formatSize(mod.sizeBytes)}</span>
+        {#if mod.deleted}
+          <span>{mod.copies > 1 ? `${mod.copies} ${plural(mod.copies, "копия", "копии", "копий")}` : "копия"}</span>
+        {:else if compat}
+          <span class="compat" title={compat.title}>{compat.text}</span>
+        {/if}
+      </p>
     </div>
-  {/if}
+    {#if !mod.deleted}
+      <div class="toggle">
+        <Switch
+          checked={mod.enabled}
+          onCheckedChange={() => ontoggle(mod)}
+          aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
+        />
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
   .card {
     position: relative;
-    height: 236px;
-    border: 1px solid rgb(255 255 255 / 0.16);
-    border-radius: 26px;
-    background: var(--glass-fill);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.28),
-      0 16px 32px rgb(8 12 24 / 0.22);
-    cursor: default;
+    display: flex;
+    flex-direction: column;
+    height: 206px;
     overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    cursor: default;
     transition:
-      transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-      border-color 160ms ease,
-      box-shadow 220ms ease;
+      transform var(--dur-2) var(--ease-out),
+      border-color var(--dur-2) var(--ease-out),
+      box-shadow var(--dur-2) var(--ease-out);
   }
 
-  /* Наведение (legacy): приподнимается на 5 px, голубое свечение и светлая окантовка. */
+  .card.appear {
+    animation: rise-in var(--dur-3) var(--ease-out) both;
+    animation-delay: calc(var(--i) * 18ms);
+  }
+
+  /* Без сдвига при наведении: карточка под краем курсора начинала дрожать. */
   .card:hover {
-    transform: translateY(-5px);
-    border-color: rgb(255 255 255 / 0.55);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.4),
-      0 22px 40px rgb(8 12 24 / 0.28),
-      0 0 26px rgb(170 205 255 / 0.28);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-1);
+  }
+
+  .card.selected {
+    border-color: var(--accent-brand);
+    box-shadow: 0 0 0 1px var(--accent-brand);
   }
 
   .select {
@@ -189,196 +210,204 @@
     z-index: 1;
     padding: 0;
     border: 0;
-    border-radius: 26px;
+    border-radius: inherit;
     background: transparent;
     cursor: default;
   }
 
   .select:focus-visible {
-    outline: 3px solid var(--ring);
-    outline-offset: -3px;
-  }
-
-  /* Выбранная — без обводки: приподнята, кромка ярче, холодное свечение снизу. */
-  .card.selected {
-    transform: translateY(-4px);
-    border-color: rgb(255 255 255 / 0.5);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.45),
-      0 22px 44px rgb(8 12 24 / 0.3),
-      0 14px 34px rgb(150 190 255 / 0.32);
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 
   .thumb {
     position: relative;
-    width: 100%;
-    height: 100%;
+    flex: none;
+    height: 140px;
     overflow: hidden;
+    background: var(--surface-2);
   }
 
   .thumb img {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+    opacity: 0;
+    transition:
+      opacity var(--dur-3) var(--ease-out),
+      transform var(--dur-3) var(--ease-out);
+  }
+
+  .thumb img.loaded {
+    opacity: 1;
   }
 
   .card:hover .thumb img {
-    transform: scale(1.035);
+    transform: scale(1.04);
   }
 
   .placeholder {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--faint-foreground);
+    opacity: 0.6;
+  }
+
+  .thumb.addon {
+    background: repeating-linear-gradient(
+      135deg,
+      var(--surface-2) 0 12px,
+      color-mix(in oklab, var(--surface-2) 70%, var(--surface-3)) 12px 24px
+    );
+  }
+
+  .addon-label {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    color: rgb(255 255 255 / 0.46);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .sleeping .thumb {
-    filter: grayscale(0.85) brightness(0.7);
-  }
-
-  .deleted .thumb {
-    filter: grayscale(0.7) brightness(0.58);
-  }
-
-  .deleted {
-    border-color: color-mix(in oklab, var(--foreground) 14%, transparent);
-  }
-
-  .deleted .caption {
-    padding-right: 14px;
-  }
-
-  /* Плашки legacy: тёмное стекло, белый текст и цветная точка — статус читается словом. */
-  .badge {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    display: inline-flex;
-    align-items: center;
     gap: 6px;
-    height: 24px;
-    padding: 0 10px;
-    border: 1px solid rgb(255 255 255 / 0.16);
-    border-radius: 999px;
-    background: rgb(10 14 26 / 0.78);
-    color: rgb(255 255 255 / 0.94);
+    color: var(--muted-foreground);
     font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.005em;
   }
 
-  .badge::before {
-    content: "";
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
-    background: currentColor;
-  }
-
-  .badge.update::before {
-    background: #6fb3ff;
-    box-shadow: 0 0 8px #6fb3ff;
-  }
-
-  .badge.problem::before {
-    background: #ff6b5e;
-    box-shadow: 0 0 8px #ff6b5e;
-  }
-
-  .badge.possible::before {
-    background: #ffb340;
-    box-shadow: 0 0 8px #ffb340;
-  }
-
-  .badge.off::before,
-  .badge.deleted::before {
-    background: rgb(255 255 255 / 0.7);
-  }
-
-  /* Выключенный переключатель на тёмной подложке фото должен быть виден в обоих оформлениях. */
-  .toggle :global([data-slot="switch"][data-state="unchecked"]) {
-    background: rgb(255 255 255 / 0.24);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.3);
-  }
-
-  .badge.pending-badge {
-    right: auto;
-    left: 12px;
-  }
-
-  .caption {
+  .kind-tag {
     position: absolute;
-    inset: auto 0 0;
+    top: 10px;
+    left: 10px;
+  }
+
+  .status {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 5px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+    animation: pop-in var(--dur-3) var(--ease-out) both;
+  }
+
+  .status.update {
+    background: var(--accent-brand);
+    color: var(--accent-brand-contrast);
+  }
+
+  .status.possible {
+    border: 1px solid var(--warning-border);
+    background: color-mix(in oklab, var(--background) 82%, transparent);
+    color: var(--warning);
+  }
+
+  .status.problem {
+    border: 1px solid color-mix(in oklab, var(--danger) 45%, transparent);
+    background: color-mix(in oklab, var(--background) 82%, transparent);
+    color: var(--danger);
+  }
+
+  .status.off,
+  .status.deleted,
+  .status.pending {
+    border: 1px solid var(--border-strong);
+    background: color-mix(in oklab, var(--background) 82%, transparent);
+    color: var(--muted-foreground);
+  }
+
+  .copies {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    background: var(--background);
+    color: var(--foreground);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .copies.conflict {
+    border-color: color-mix(in oklab, var(--danger) 60%, transparent);
+    color: var(--danger);
+  }
+
+  .body {
+    flex: 1;
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 56px 74px 14px 14px;
-    background: linear-gradient(
-      to top,
-      rgb(4 7 14 / 0.94),
-      rgb(4 7 14 / 0.62) 55%,
-      transparent
-    );
+    align-items: center;
+    gap: 10px;
+    min-height: 0;
+    padding: 0 12px;
   }
 
-  .titles {
+  .text {
+    flex: 1;
     min-width: 0;
-    color: #fff;
   }
 
-  .title {
+  .name {
     margin: 0;
     overflow: hidden;
-    font-size: 15px;
-    font-weight: 620;
+    font-size: 14.5px;
+    font-weight: 700;
     line-height: 1.25;
     text-overflow: ellipsis;
     white-space: nowrap;
-    text-shadow: 0 1px 8px rgb(0 0 0 / 0.35);
   }
 
+  /* По базовой линии: моноширинная версия мельче и без этого «висела» выше «3 МБ». */
   .meta {
     display: flex;
-    align-items: center;
-    gap: 5px;
-    margin: 3px 0 0;
+    align-items: baseline;
+    gap: 8px;
+    margin: 2px 0 0;
     overflow: hidden;
-    color: rgb(255 255 255 / 0.72);
-    font-size: 12.5px;
-    font-variant-numeric: tabular-nums;
+    color: var(--muted-foreground);
+    font-size: 12px;
     white-space: nowrap;
   }
 
   .version {
-    color: rgb(255 255 255 / 0.9);
-    font-weight: 600;
+    color: var(--foreground);
+  }
+
+  .version.fresh {
+    color: var(--accent-brand-text);
   }
 
   .compat {
-    color: oklch(0.86 0.11 85);
-  }
-
-  .dot {
-    color: rgb(255 255 255 / 0.38);
+    color: var(--warning);
   }
 
   .toggle {
-    position: absolute;
-    right: 14px;
-    bottom: 14px;
+    position: relative;
     z-index: 2;
     flex: none;
-    filter: drop-shadow(0 2px 6px rgb(0 0 0 / 0.45));
+  }
+
+  .sleeping .thumb > img,
+  .sleeping .thumb .placeholder {
+    filter: grayscale(0.9) brightness(0.65);
+  }
+
+  .sleeping .name {
+    color: var(--muted-foreground);
+  }
+
+  .deleted {
+    opacity: 0.6;
   }
 </style>

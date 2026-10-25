@@ -95,6 +95,20 @@ pub struct UpdatesSnapshotDto {
     /// Последняя проверка любого мода (RFC 3339).
     #[serde(default)]
     pub last_checked: Option<String>,
+    /// Страницы, которых несколько проверок подряд нет на сайте: мод удалили
+    /// или перенесли. Сама программа за ними уже ничего не узнает.
+    #[serde(default)]
+    pub lost: Vec<LostPageDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LostPageDto {
+    pub mod_id: String,
+    pub mod_name: String,
+    pub source: String,
+    pub url: String,
+    pub preview_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -483,6 +497,32 @@ pub async fn updates_refollow(
     Ok(build_snapshot(&state))
 }
 
+/// «Страница пропала»: перестать следить за ней. `search_again` — разрешить поиск
+/// новой страницы сразу (иначе отказ от страницы откладывает поиск, как «Это другой мод»).
+pub(crate) fn forget_lost(
+    state: &AppState,
+    mod_id: &str,
+    source: &str,
+    search_again: bool,
+) -> Result<(), AppError> {
+    unfollow(state, mod_id, source)?;
+    if search_again {
+        state.library.set_page_search(mod_id, None);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn updates_forget_lost(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+    source: String,
+    search_again: bool,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    forget_lost(&state, &mod_id, &source, search_again)?;
+    Ok(build_snapshot(&state))
+}
+
 /// «Указать страницу» из панели мода: ссылка, которую вставил человек.
 #[tauri::command]
 pub async fn mod_bind_page(
@@ -744,6 +784,7 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
     let last_checked = checks
         .iter()
         .map(|check| check.last_checked_utc)
+        .chain(store.last_run())
         .max()
         .map(|at| at.to_rfc3339());
     let statuses = store.source_statuses();
@@ -803,6 +844,16 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
             .collect(),
         sites,
         last_checked,
+        lost: bmm_checks::BindingRepair::dead(store)
+            .into_iter()
+            .map(|dead| LostPageDto {
+                mod_name: name_of(&dead.installed.id),
+                preview_url: preview_of(&dead.installed.id),
+                mod_id: dead.installed.id,
+                source: dead.binding.source,
+                url: dead.binding.url.to_string(),
+            })
+            .collect(),
     }
 }
 
@@ -1118,6 +1169,137 @@ mod tests {
     }
 
     #[test]
+    fn updates_window_and_rust_agree_on_fields_and_values() {
+        use crate::test_support::{assert_matches_ts, ts_field_values, ts_union};
+        let (_temp, state) = state();
+        let store = state.library.as_ref();
+        for (id, name, source_id, confirmed, misses) in [
+            ("m1", "BMW M2 G87", "bmw", true, 0),
+            ("m2", "Audi RS6", "audi", false, 0),
+            ("m3", "Лада 2106", "lada", true, 9),
+        ] {
+            store.upsert_mod(InstalledMod {
+                id: id.to_string(),
+                name: name.to_string(),
+                file_name: format!("{source_id}.zip"),
+                version: Some("1.0".to_string()),
+                size_bytes: Some(100),
+                installed_at_utc: instant(),
+                enabled: true,
+            });
+            store
+                .upsert_binding(ModBinding {
+                    mod_id: id.to_string(),
+                    source: "stmods".to_string(),
+                    source_id: source_id.to_string(),
+                    url: format!("https://stmods.org/beamng_drive/mods/{source_id}/")
+                        .parse()
+                        .unwrap(),
+                    confirmed,
+                })
+                .unwrap();
+            if confirmed {
+                store.save_check(CheckState {
+                    mod_id: id.to_string(),
+                    source: "stmods".to_string(),
+                    last_checked_utc: instant(),
+                    last_changed_utc: Some(instant()),
+                    last_version: Some("1.5".to_string()),
+                    last_size: Some(120),
+                    miss_count: misses,
+                    last_game_version: None,
+                    last_title: None,
+                });
+            }
+        }
+
+        let snapshot = build_snapshot(&state);
+        assert!(
+            !snapshot.lost.is_empty(),
+            "страница m3 должна считаться пропавшей"
+        );
+        let value = serde_json::to_value(&snapshot).unwrap();
+        assert_matches_ts(&value, "updates.ts", "UpdatesSnapshot");
+        assert_matches_ts(&value["findings"][0], "updates.ts", "UpdateFinding");
+        assert_matches_ts(&value["suggestions"][0], "updates.ts", "PageSuggestion");
+        assert_matches_ts(&value["lost"][0], "updates.ts", "LostPage");
+
+        let progress = UpdateProgress {
+            source: "stmods".to_string(),
+            stage: "карточки".to_string(),
+            done: 1,
+            total: 3,
+        };
+        let event = serde_json::to_value(progress_event(1, &progress)).unwrap();
+        assert_matches_ts(&event, "updates.ts", "UpdatesEvent");
+        assert_matches_ts(&event["progress"], "updates.ts", "UpdateProgress");
+
+        let report = UpdateRunReport {
+            findings: Vec::new(),
+            sources: vec![SourceRunReport {
+                source: "stmods".to_string(),
+                status: SourceStatus::NeedsHumanCheck,
+                feed_pages_fetched: 1,
+                cards_fetched: 2,
+                postponed: 0,
+                missing_mods: Vec::new(),
+                unreadable_mods: Vec::new(),
+                layout_changed: false,
+                note: None,
+            }],
+            requests: 3,
+            up_to_date: 1,
+            new_findings: Vec::new(),
+            fresh_skipped: 0,
+            cancelled: false,
+            stopped_by_time: false,
+            reused: false,
+        };
+        let names = HashMap::from([("stmods".to_string(), "STMods".to_string())]);
+        let done = serde_json::to_value(done_event(
+            2,
+            build_snapshot(&state),
+            &report,
+            &names,
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_matches_ts(&done, "updates.ts", "UpdatesEvent");
+        assert_matches_ts(&done["sources"][0], "updates.ts", "UpdateSource");
+
+        let statuses = ts_union("updates.ts", "UpdateStatusText");
+        for status in [
+            UpdateStatus::None,
+            UpdateStatus::Likely,
+            UpdateStatus::Possible,
+        ] {
+            assert!(statuses.contains(status_text(status)));
+        }
+        let phases = ts_field_values("updates.ts", "UpdatesEvent", "phase");
+        for phase in ["progress", "done", "pages", "error", "auto"] {
+            assert!(phases.contains(phase), "окно не знает этап {phase}");
+        }
+        let sites = ts_field_values("updates.ts", "UpdateSite", "status");
+        for status in ["ok", "human_check", "unavailable", "off"] {
+            assert!(
+                sites.contains(status),
+                "окно не знает состояние сайта {status}"
+            );
+        }
+        let sources = ts_field_values("updates.ts", "UpdateSource", "status");
+        for status in [
+            SourceStatus::Ok,
+            SourceStatus::NeedsHumanCheck,
+            SourceStatus::Unavailable,
+        ] {
+            let mut item = report.sources[0].clone();
+            item.status = status;
+            assert!(sources.contains(&source_dto(&item, &names).status));
+        }
+    }
+
+    #[test]
     fn snapshot_finds_dismisses_and_suggests() {
         let (_temp, state) = state();
         let store = state.library.as_ref();
@@ -1339,10 +1521,74 @@ mod tests {
     }
 
     #[test]
+    fn lost_page_is_listed_and_can_be_searched_again() {
+        let (_temp, state) = state();
+        let store = state.library.as_ref();
+        store.upsert_mod(InstalledMod {
+            id: "m1".to_string(),
+            name: "Old Car".to_string(),
+            file_name: "old.zip".to_string(),
+            version: Some("1.0".to_string()),
+            size_bytes: Some(100),
+            installed_at_utc: instant(),
+            enabled: true,
+        });
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "m1".to_string(),
+                source: "stmods".to_string(),
+                source_id: "old".to_string(),
+                url: "https://stmods.org/beamng_drive/mods/old/".parse().unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        let mut check = CheckState {
+            mod_id: "m1".to_string(),
+            source: "stmods".to_string(),
+            last_checked_utc: instant(),
+            last_changed_utc: None,
+            last_version: Some("1.0".to_string()),
+            last_size: None,
+            miss_count: 1,
+            last_game_version: None,
+            last_title: None,
+        };
+        store.save_check(check.clone());
+        assert!(
+            build_snapshot(&state).lost.is_empty(),
+            "один промах — ещё не пропажа"
+        );
+
+        check.miss_count = 2;
+        store.save_check(check);
+        let lost = build_snapshot(&state).lost;
+        assert_eq!(lost.len(), 1);
+        assert_eq!(lost[0].mod_name, "Old Car");
+        assert_eq!(lost[0].url, "https://stmods.org/beamng_drive/mods/old/");
+
+        forget_lost(&state, "m1", "stmods", true).unwrap();
+        assert!(build_snapshot(&state).lost.is_empty());
+        assert!(store.bindings().is_empty());
+        assert!(
+            store.get_page_search("m1").is_none(),
+            "новую страницу можно искать сразу"
+        );
+        assert!(forget_lost(&state, "m1", "stmods", false).is_err());
+    }
+
+    #[test]
     fn snapshot_reports_sites_and_last_check() {
         let (_temp, state) = state();
         let snapshot = build_snapshot(&state);
         assert!(snapshot.sites.is_empty(), "без сайтов в тестовом окружении");
         assert_eq!(snapshot.last_checked, None);
+
+        // Все моды отложены — записей о проверке нет, но время нажатия видно.
+        let at = chrono::DateTime::parse_from_rfc3339("2026-10-24T10:00:00+00:00").unwrap();
+        state.library.set_last_run(at);
+        assert_eq!(
+            build_snapshot(&state).last_checked.as_deref(),
+            Some("2026-10-24T10:00:00+00:00")
+        );
     }
 }

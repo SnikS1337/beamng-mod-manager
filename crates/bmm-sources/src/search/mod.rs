@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use bmm_domain::matches::{ManualMatch, MatchDecisions};
 use bmm_domain::matching::{DuplicateMatcher, MatchVerdict};
 use bmm_domain::models::{Listing, PriceStatus};
-use bmm_domain::text::{TitleNormalizer, TitleParser};
+use bmm_domain::text::{ModKind, TitleNormalizer, TitleParser};
 use bmm_domain::versioning::{VersionComparer, VersionOrder};
 
 use crate::sources::{ModSource, SourceStatus};
@@ -33,6 +33,8 @@ pub struct ModCard {
     pub price: PriceSummary,
     pub possible_same_as: Vec<String>,
     pub relevance: f64,
+    /// Машина, карта или дополнение: по разделу сайта, иначе по рубрике в названии.
+    pub kind: Option<ModKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -430,7 +432,21 @@ impl SearchService {
                 .map(|&index| TitleNormalizer::similarity(query, &unique[index].title))
                 .fold(0.0_f64, f64::max)
                 + 0.05 * cluster.len().min(3) as f64;
+            let kind = cluster
+                .iter()
+                .find_map(|&index| {
+                    unique[index]
+                        .category
+                        .as_deref()
+                        .and_then(ModKind::from_category)
+                })
+                .or_else(|| {
+                    cluster
+                        .iter()
+                        .find_map(|&index| TitleParser::parse(&unique[index].title).kind)
+                });
             cards.push(ModCard {
+                kind,
                 id: ids[cluster_index].clone(),
                 title,
                 listings: cluster.iter().map(|&index| unique[index].clone()).collect(),
@@ -788,6 +804,21 @@ mod tests {
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].listings.len(), 2);
         assert_eq!(cards[0].id, "modland:a+stmods:b");
+    }
+
+    #[test]
+    fn card_kind_from_section_then_title_and_title_is_clean() {
+        let by_title = listing("modsgaming", "1", "автомобиль LADA 2106", None);
+        let mut by_section = listing("modland", "2", "Sumner Road", None);
+        by_section.category = Some("Maps".to_string());
+        let unknown = listing("stmods", "3", "Dynamic Dirt", None);
+        let cards = service().group(&[by_title, by_section, unknown], "x");
+        let find = |id: &str| cards.iter().find(|card| card.id.contains(id)).unwrap();
+        let lada = find("modsgaming:1");
+        assert_eq!(lada.title, "LADA 2106", "рубрика ушла из названия");
+        assert_eq!(lada.kind, Some(ModKind::Vehicle));
+        assert_eq!(find("modland:2").kind, Some(ModKind::Map));
+        assert_eq!(find("stmods:3").kind, None);
     }
 
     #[test]

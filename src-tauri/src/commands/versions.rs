@@ -408,16 +408,50 @@ mod tests {
 
         let ticket = delete_mod(&state, &id).unwrap();
         assert!(ticket.backup_id.ends_with("mod.zip"));
+        // «Отменить» в окне читает билет по именам полей.
+        crate::test_support::assert_matches_ts(
+            &serde_json::to_value(&ticket).unwrap(),
+            "library.ts",
+            "DeletedTicket",
+        );
         forget_deleted(&state, &id).unwrap();
         assert!(state.library.get_mod(&id).is_none());
         let snapshot = load_snapshot(&state).unwrap();
         assert_eq!(snapshot.deleted.len(), 1);
         assert_eq!(snapshot.deleted[0].file_name, "mod.zip");
+        crate::test_support::assert_matches_ts(
+            &serde_json::to_value(&snapshot.deleted[0]).unwrap(),
+            "library.ts",
+            "ModCardDto",
+        );
 
         restore_deleted(&state, "mod.zip", None).unwrap();
         let snapshot = load_snapshot(&state).unwrap();
         assert_eq!(snapshot.mods.len(), 1);
         assert!(snapshot.deleted.is_empty());
+    }
+
+    #[test]
+    fn deleting_a_disabled_mod_and_undoing_keeps_it_disabled() {
+        let (temp, state) = setup();
+        let source = temp.path().join("source.zip");
+        make_zip(&source);
+        install_direct(&state, &source, "off.zip");
+        let id = load_snapshot(&state).unwrap().mods[0].id.clone();
+        crate::commands::library::toggle_mod(&state, &id, false).unwrap();
+        assert!(!load_snapshot(&state).unwrap().mods[0].enabled);
+
+        let ticket = delete_mod(&state, &id).unwrap();
+        assert!(ticket.was_in_disabled);
+        undelete_mod(&state, &id).unwrap();
+        let snapshot = load_snapshot(&state).unwrap();
+        assert_eq!(snapshot.mods.len(), 1);
+        assert!(!snapshot.mods[0].enabled, "отмена не включает мод сама");
+        assert!(delete_mod(&state, "нет-такого").is_err());
+        assert!(
+            undelete_mod(&state, &id).is_err(),
+            "второй раз отменять нечего"
+        );
     }
 
     #[test]
@@ -445,6 +479,11 @@ mod tests {
             .clone();
         let rows = versions_of(&state, &id).unwrap();
         assert_eq!(rows.len(), 1);
+        crate::test_support::assert_matches_ts(
+            &serde_json::to_value(&rows[0]).unwrap(),
+            "library.ts",
+            "VersionRow",
+        );
         assert_eq!(rows[0].file_name, "mod_v1.zip");
 
         restore_version(&state, &id, &rows[0].backup_id).unwrap();

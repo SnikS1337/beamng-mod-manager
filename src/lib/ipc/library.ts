@@ -32,9 +32,17 @@ export interface ModCardDto {
   savedAt: string | null;
   /** Почему игра не загрузит архив; null — в порядке. */
   problem: PackagingProblem | null;
-  /** Повторяет другой включённый мод: игра загрузит оба. */
+  /** Повторяет другой мод — основной в группе; отдельной карточки не показываем. */
   duplicateOf: DuplicateOf | null;
+  /** У основного в группе — id остальных копий и версий. */
+  group: string[];
+  /** В группе включено больше одного: игра загрузит все. */
+  groupConflict: boolean;
+  /** По составу архива: своя машина, своя карта или дополнение; null — ещё не прочитан. */
+  role: ModRole | null;
 }
+
+export type ModRole = "vehicle" | "map" | "addon";
 
 export interface DuplicateOf {
   id: string;
@@ -193,6 +201,9 @@ export function mockAddInstalled(
       savedAt: null,
       problem: null,
       duplicateOf: null,
+      group: [],
+      groupConflict: false,
+      role: null,
     });
   }
   recount(snapshot);
@@ -230,6 +241,9 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
       savedAt: null,
       problem: index === 4 ? "loose" : index === 9 ? "not_mod" : null,
       duplicateOf: index === 6 ? { id: "mock-1", name: TITLES[1], exact: true } : null,
+      group: index === 1 ? ["mock-6"] : [],
+      groupConflict: index === 1,
+      role: index % 5 === 2 ? "addon" : index % 5 === 3 ? "map" : "vehicle",
     };
   });
   const enabled = mods.filter((mod) => mod.enabled).length;
@@ -249,7 +263,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
     gameVersion: "0.39.4",
     gameRunning: false,
     warning: null,
-    manyEnabled: "Включено 3 333 модов. Игра может грузиться дольше",
+    manyEnabled: "Включено 3 333 мода. Игра может грузиться дольше",
     deleted: [],
   };
 }

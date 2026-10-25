@@ -6,6 +6,9 @@ use fancy_regex::Regex;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTitle {
     pub name: String,
+    /// Рубрика сайта в начале названия («автомобиль LADA 2106», «Карта «…»»):
+    /// из имени убрана, показывается меткой.
+    pub kind: Option<ModKind>,
     pub mod_version: Option<String>,
     pub game_version: Option<String>,
     pub has_paid_marker: bool,
@@ -100,6 +103,74 @@ fn patterns() -> &'static Patterns {
     PATTERNS.get_or_init(Patterns::new)
 }
 
+/// Что за мод по описанию на сайте.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModKind {
+    Vehicle,
+    Map,
+    Addon,
+}
+
+impl ModKind {
+    pub fn code(self) -> &'static str {
+        match self {
+            ModKind::Vehicle => "vehicle",
+            ModKind::Map => "map",
+            ModKind::Addon => "addon",
+        }
+    }
+
+    /// По разделу сайта: адрес ModsGaming («mashiny»), Modland («Cars»),
+    /// репозиторий BeamNG («Terrains, Levels, Maps», «Mods of Mods»).
+    pub fn from_category(category: &str) -> Option<ModKind> {
+        let text = category.to_lowercase();
+        let has = |words: &[&str]| words.iter().any(|word| text.contains(word));
+        if has(&[
+            "mashin",
+            "машин",
+            "автомоб",
+            "car",
+            "vehicle",
+            "truck",
+            "bus",
+            "грузов",
+        ]) {
+            Some(ModKind::Vehicle)
+        } else if has(&["karty", "карт", "map", "level", "terrain"]) {
+            Some(ModKind::Map)
+        } else if has(&[
+            "mods-of-mods",
+            "mods of mods",
+            "skin",
+            "sound",
+            "звук",
+            "interface",
+            "ui app",
+            "prop",
+            "license",
+            "scenario",
+            "сценари",
+            "тюнинг",
+            "запчаст",
+        ]) {
+            Some(ModKind::Addon)
+        } else {
+            None
+        }
+    }
+
+    fn from_title_word(word: &str) -> Option<ModKind> {
+        let word = word.to_lowercase();
+        if word.starts_with("автомобил") || word.starts_with("машин") {
+            Some(ModKind::Vehicle)
+        } else if word.starts_with("карт") || word == "map" {
+            Some(ModKind::Map)
+        } else {
+            None
+        }
+    }
+}
+
 pub struct TitleParser;
 
 impl TitleParser {
@@ -134,6 +205,14 @@ impl TitleParser {
         }
 
         text = replace_all(&p.leading_mod, &text, "");
+        let kind = match p.leading_kind.find(&text) {
+            Ok(Some(found)) if found.start() == 0 => {
+                let kind = ModKind::from_title_word(found.as_str().trim());
+                text = text[found.end()..].to_string();
+                kind
+            }
+            _ => None,
+        };
         text = replace_all(&p.for_beam, &text, "");
 
         let mod_version = take_capture(&p.word_version, &mut text)
@@ -147,6 +226,7 @@ impl TitleParser {
 
         ParsedTitle {
             name,
+            kind,
             mod_version,
             game_version,
             has_paid_marker: paid,
@@ -363,6 +443,43 @@ mod tests {
         assert_eq!(parsed.mod_version.as_deref(), Some("1.0.7"));
         assert_eq!(parsed.game_version.as_deref(), Some("0.39.x"));
         assert!(!parsed.has_paid_marker);
+    }
+
+    #[test]
+    fn parse_takes_site_heading_as_kind() {
+        let parsed = TitleParser::parse("Мод автомобиль VAZ (lada) 2106");
+        assert_eq!(parsed.name, "VAZ (lada) 2106");
+        assert_eq!(parsed.kind, Some(ModKind::Vehicle));
+        let parsed = TitleParser::parse("автомобиль LADA 2106 v1.0");
+        assert_eq!(parsed.name, "LADA 2106");
+        assert_eq!(parsed.kind, Some(ModKind::Vehicle));
+        let parsed = TitleParser::parse("Карта «Sumner Road»");
+        assert_eq!(parsed.kind, Some(ModKind::Map));
+        // Слово внутри названия — не рубрика.
+        let parsed = TitleParser::parse("Weather Map Tool");
+        assert_eq!(parsed.kind, None);
+        assert_eq!(parsed.name, "Weather Map Tool");
+        let parsed = TitleParser::parse("Картинг Arena");
+        assert_eq!(parsed.kind, None);
+    }
+
+    #[test]
+    fn kind_from_site_sections() {
+        assert_eq!(ModKind::from_category("mashiny"), Some(ModKind::Vehicle));
+        assert_eq!(ModKind::from_category("karty"), Some(ModKind::Map));
+        assert_eq!(ModKind::from_category("Cars"), Some(ModKind::Vehicle));
+        assert_eq!(ModKind::from_category("Maps"), Some(ModKind::Map));
+        assert_eq!(
+            ModKind::from_category("Terrains, Levels, Maps"),
+            Some(ModKind::Map)
+        );
+        assert_eq!(ModKind::from_category("Mods of Mods"), Some(ModKind::Addon));
+        assert_eq!(
+            ModKind::from_category("User Interface Apps"),
+            Some(ModKind::Addon)
+        );
+        assert_eq!(ModKind::from_category("Sounds"), Some(ModKind::Addon));
+        assert_eq!(ModKind::from_category("Разное"), None);
     }
 
     #[test]

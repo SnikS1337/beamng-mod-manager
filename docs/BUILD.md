@@ -1,16 +1,17 @@
 # Сборка и проверки
 
-Новое приложение: Rust + Tauri 2 + SvelteKit 2 (SPA) + Svelte 5 + Tailwind CSS 4.
+Новое приложение: Rust + Tauri 2 + SvelteKit 3 (SPA) + Svelte 5 + Tailwind CSS 4.
 Старый C#/WPF лежит в `legacy/` и не собирается в новом CI.
 
 ## Что нужно
 
 - Windows 10/11 с WebView2 (на целевой машине уже есть);
-- Node.js 24;
+- Node.js 24 (SvelteKit 3 требует минимум 22.17);
 - Rust stable (минимум 1.95 — его требует sysinfo) с target `x86_64-pc-windows-msvc`;
 - Visual Studio Build Tools 2022: workload «C++ build tools» и Windows SDK.
 
 TypeScript остаётся 6.0.x: svelte-check пока не поддерживает TypeScript 7.
+`components.json` пока ссылается на `$lib`: shadcn-svelte CLI ещё не описывает SvelteKit 3 (конфиг в `vite.config.js`, импорты `#lib/…`). Готовые компоненты в `src/lib/components/ui` собираются без CLI; новые через CLI добавлять после проверки.
 Зависимости раз в неделю проверяет Dependabot (`.github/dependabot.yml`), PR идут в `refactor-rust-poc`.
 
 ## Обычная x64-машина

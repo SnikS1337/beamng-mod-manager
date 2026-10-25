@@ -188,7 +188,7 @@ impl ModInstaller {
         options: &InstallOptions,
     ) -> InstallResult {
         if let Err(message) = fs::create_dir_all(&self.layout.mods_dir) {
-            return InstallResult::fail(InstallError::Io, message.to_string());
+            return InstallResult::fail_from_io(message);
         }
         if let Some(existing) = self.check_target(name, options) {
             return existing;
@@ -232,7 +232,7 @@ impl ModInstaller {
             && let Err(error) = fs::create_dir_all(parent)
         {
             self.restore_moved(&moved, &target);
-            return InstallResult::fail(InstallError::Io, error.to_string());
+            return InstallResult::fail_from_io(error);
         }
         if let Err(error) = fs::rename(temp, &target) {
             self.restore_moved(&moved, &target);
@@ -727,16 +727,15 @@ fn copy_with_hash(
     destination: &Path,
     max_bytes: u64,
 ) -> Result<String, (InstallError, String)> {
-    let mut input = File::open(source).map_err(|error| (InstallError::Io, error.to_string()))?;
-    let mut output =
-        File::create(destination).map_err(|error| (InstallError::Io, error.to_string()))?;
+    let mut input = File::open(source).map_err(|error| io_failure(&error))?;
+    let mut output = File::create(destination).map_err(|error| io_failure(&error))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 81920];
     let mut total = 0u64;
     loop {
         let read = input
             .read(&mut buffer)
-            .map_err(|error| (InstallError::Io, error.to_string()))?;
+            .map_err(|error| io_failure(&error))?;
         if read == 0 {
             break;
         }
@@ -749,39 +748,52 @@ fn copy_with_hash(
         }
         output
             .write_all(&buffer[..read])
-            .map_err(|error| (InstallError::Io, error.to_string()))?;
+            .map_err(|error| io_failure(&error))?;
         hasher.update(&buffer[..read]);
     }
-    output
-        .sync_all()
-        .map_err(|error| (InstallError::Io, error.to_string()))?;
+    output.sync_all().map_err(|error| io_failure(&error))?;
     Ok(hex_lower(&hasher.finalize()))
 }
 
 impl InstallResult {
     fn fail_from_io(error: io::Error) -> Self {
-        if is_sharing_violation(&error) {
-            Self::fail(
-                InstallError::InUse,
-                "Файл занят другой программой (возможно, запущена игра). Закройте игру и повторите.",
-            )
-        } else {
-            Self::fail(InstallError::Io, error.to_string())
-        }
+        let (kind, message) = io_failure(&error);
+        Self::fail(kind, message)
+    }
+}
+
+const IN_USE_MESSAGE: &str =
+    "Файл занят другой программой (возможно, запущена игра). Закройте игру и повторите.";
+const DISK_FULL_MESSAGE: &str = "На диске не хватает места. Освободите место и повторите.";
+
+fn io_failure(error: &io::Error) -> (InstallError, String) {
+    if is_sharing_violation(error) {
+        (InstallError::InUse, IN_USE_MESSAGE.to_string())
+    } else if is_disk_full(error) {
+        (InstallError::Io, DISK_FULL_MESSAGE.to_string())
+    } else {
+        (InstallError::Io, error.to_string())
     }
 }
 
 fn io_message(error: &io::Error) -> String {
     if is_sharing_violation(error) {
-        "Файл занят другой программой (возможно, запущена игра). Закройте игру и повторите."
-            .to_string()
+        IN_USE_MESSAGE.to_string()
+    } else if is_disk_full(error) {
+        DISK_FULL_MESSAGE.to_string()
     } else {
         format!("Не получилось изменить файл: {error}")
     }
 }
 
+/// ERROR_HANDLE_DISK_FULL (39) и ERROR_DISK_FULL (112) у Windows, ENOSPC у остальных.
+fn is_disk_full(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::StorageFull
+        || (cfg!(windows) && matches!(error.raw_os_error(), Some(39) | Some(112)))
+}
+
 fn is_sharing_violation(error: &io::Error) -> bool {
-    matches!(error.raw_os_error(), Some(32) | Some(33))
+    cfg!(windows) && matches!(error.raw_os_error(), Some(32) | Some(33))
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -860,6 +872,19 @@ fn parse_backup(path: &Path, mod_name: &str) -> Option<BackupEntry> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn disk_full_and_busy_file_have_plain_messages() {
+        let full = io::Error::from(io::ErrorKind::StorageFull);
+        assert_eq!(io_failure(&full).1, DISK_FULL_MESSAGE);
+        assert!(io_message(&full).contains("не хватает места"));
+        let busy = io::Error::from_raw_os_error(32);
+        if cfg!(windows) {
+            assert_eq!(io_failure(&busy).0, InstallError::InUse);
+        }
+        let other = io::Error::other("сбой");
+        assert_eq!(io_failure(&other).1, "сбой");
+    }
     use super::*;
     use crate::scan::ModLayout;
     use std::io::Write;

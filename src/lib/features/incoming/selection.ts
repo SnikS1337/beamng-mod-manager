@@ -1,4 +1,4 @@
-import type { IncomingItemDto } from "$lib/ipc/incoming";
+import type { IncomingItemDto } from "#lib/ipc/incoming.js";
 
 /** Можно ли поставить пункт вообще. */
 export function installable(item: IncomingItemDto): boolean {
