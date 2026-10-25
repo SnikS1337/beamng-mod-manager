@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isShortcut } from "#lib/shell/keys.js";
   import { onDestroy, onMount } from "svelte";
   import { page } from "$app/state";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -294,7 +295,7 @@
   }
 
   function onkeydown(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+    if (isShortcut(event, "f")) {
       event.preventDefault();
       input?.focus();
       input?.select();
