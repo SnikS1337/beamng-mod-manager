@@ -137,7 +137,7 @@
   });
   let selected = $derived(allCards.find((mod) => mod.id === selectedId) ?? null);
   let note = $derived(
-    snapshot ? headerNote(snapshot.mods.length, snapshot.counts.updates) : "загружаем…",
+    snapshot ? headerNote(shownMods.length, snapshot.counts.updates, snapshot.mods.length) : "загружаем…",
   );
 
   onMount(() => {
