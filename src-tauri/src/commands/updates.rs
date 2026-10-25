@@ -8,10 +8,14 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+};
 
 use bmm_checks::runner::SourceRunReport;
-use bmm_checks::{UpdateCheckService, UpdateFinding, UpdateProgress, UpdateRunReport};
+use bmm_checks::{
+    BindingActions, UpdateCheckService, UpdateFinding, UpdateProgress, UpdateRunReport,
+};
 use bmm_domain::library::{LibraryStore, ModBinding};
 use bmm_domain::versioning::UpdateStatus;
 use bmm_sources::sources::SourceStatus;
@@ -47,6 +51,12 @@ pub struct UpdateSiteDto {
     pub status: String,
     /// За сколькими модами следим на этом сайте.
     pub tracked: usize,
+    /// Последняя проверка мода на этом сайте (RFC 3339).
+    #[serde(default)]
+    pub last_checked: Option<String>,
+    /// Последнее объяснение от сайта из отчёта проверки.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,11 +231,13 @@ fn run_page_search(
     let mut progress = |progress: &UpdateProgress| {
         let _ = app_for_progress.emit("updates://event", progress_event(request_id, progress));
     };
-    bmm_checks::find_pages(
+    let include_disabled = state.settings.load().settings.check_disabled_mods;
+    bmm_checks::find_pages_with(
         store.as_ref(),
         service.as_ref(),
         Utc::now().fixed_offset(),
         cancel,
+        include_disabled,
         &|mod_id| page_title(state, mod_id),
         &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
         Some(&mut progress),
@@ -239,7 +251,31 @@ pub async fn updates_start(
     force: bool,
     request_id: u64,
 ) -> Result<(), AppError> {
+    start_updates(app, state.inner().clone(), force, request_id).await
+}
+
+/// Повтор после сбоя одного сайта: снимаем паузу и запускаем обычную проверку.
+/// Свежие моды при этом не трогаются — пойдут только те, кому уже пора.
+#[tauri::command]
+pub async fn updates_retry_source(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    source: String,
+    request_id: u64,
+) -> Result<(), AppError> {
     let state = state.inner().clone();
+    if let Some(runtime) = &state.update {
+        runtime.coordinator.resolve_human_check(&source);
+    }
+    start_updates(app, state, false, request_id).await
+}
+
+async fn start_updates(
+    app: AppHandle,
+    state: Arc<AppState>,
+    force: bool,
+    request_id: u64,
+) -> Result<(), AppError> {
     let runtime = state
         .update
         .clone()
@@ -338,6 +374,172 @@ pub async fn updates_cancel(state: tauri::State<'_, Arc<AppState>>) -> Result<()
         runtime.page_cancel.store(true, Ordering::SeqCst);
     }
     Ok(())
+}
+
+/// Проверка одного мода по уже привязанной странице. Не трогает TTL и другие моды:
+/// человек нажал «Проверить обновления» именно здесь.
+#[tauri::command]
+pub async fn updates_check_mod(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || check_mod_once(&state, &mod_id))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, AppError> {
+    let store = state.library.as_ref();
+    let binding = store
+        .bindings()
+        .into_iter()
+        .find(|binding| binding.mod_id == mod_id && binding.confirmed)
+        .ok_or_else(|| AppError::new("updates", "У мода нет страницы для проверки обновлений."))?;
+    let settings = state.settings.load().settings;
+    if settings
+        .disabled_sources
+        .iter()
+        .any(|source| source.eq_ignore_ascii_case(&binding.source))
+    {
+        return Err(AppError::new(
+            "updates",
+            "Сайт этого мода выключен в настройках.",
+        ));
+    }
+    let runtime = state
+        .update
+        .as_ref()
+        .ok_or_else(|| AppError::new("updates", "Проверка обновлений недоступна."))?;
+    if runtime.coordinator.is_running() {
+        return Err(AppError::new(
+            "updates",
+            "Проверка обновлений уже идёт. Дождитесь её окончания.",
+        ));
+    }
+    let source = runtime
+        .sources
+        .iter()
+        .find(|source| source.id().eq_ignore_ascii_case(&binding.source))
+        .ok_or_else(|| AppError::new("updates", "Сайт мода не найден."))?;
+    let tracked = UpdateCheckService::tracked(store)
+        .into_iter()
+        .find(|tracked| tracked.mod_id == mod_id && tracked.source == binding.source)
+        .ok_or_else(|| AppError::new("updates", "Мод не готов к проверке."))?;
+    let listing = source
+        .listing(&binding.url, &AtomicBool::new(false))
+        .map_err(|error| AppError::new("updates", error.message))?
+        .ok_or_else(|| {
+            AppError::new(
+                "updates",
+                "Страница мода не открылась: возможно, её перенесли или удалили.",
+            )
+        })?;
+    let _batch = state.library.batch();
+    UpdateCheckService::apply_card(store, &tracked, &listing, Utc::now().fixed_offset());
+    drop(_batch);
+    Ok(build_snapshot(state))
+}
+
+/// «Не проверять обновления» для одного мода. Возвращает снимок, чтобы окно
+/// сразу показало новое состояние; «Отменить» — отдельной командой.
+#[tauri::command]
+pub async fn updates_decline_mod(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    let state = state.inner().clone();
+    if state
+        .update
+        .as_ref()
+        .is_some_and(|runtime| runtime.coordinator.is_running())
+    {
+        return Err(AppError::new(
+            "updates",
+            "Проверка обновлений уже идёт. Дождитесь её окончания.",
+        ));
+    }
+    let undo = BindingActions::decline(state.library.as_ref(), &mod_id)
+        .ok_or_else(|| AppError::new("updates", "Мод не найден."))?;
+    let mut list = declined();
+    list.retain(|item| item.mod_id != mod_id);
+    list.push(undo);
+    let excess = list.len().saturating_sub(16);
+    list.drain(..excess);
+    Ok(build_snapshot(&state))
+}
+
+/// «Отменить» после «Не проверять обновления».
+#[tauri::command]
+pub async fn updates_undo_decline(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    let state = state.inner().clone();
+    if state
+        .update
+        .as_ref()
+        .is_some_and(|runtime| runtime.coordinator.is_running())
+    {
+        return Err(AppError::new(
+            "updates",
+            "Проверка обновлений уже идёт. Дождитесь её окончания.",
+        ));
+    }
+    let undo = {
+        let mut list = declined();
+        let index = list
+            .iter()
+            .position(|item| item.mod_id == mod_id)
+            .ok_or_else(|| AppError::new("updates", "Вернуть уже нечего."))?;
+        list.remove(index)
+    };
+    if !BindingActions::undo(state.library.as_ref(), &undo) {
+        return Err(AppError::new(
+            "updates",
+            "Не удалось вернуть проверку: мод изменился или удалён.",
+        ));
+    }
+    Ok(build_snapshot(&state))
+}
+
+/// Снять отказ «Не проверять» (например, после перезапуска, когда отменять
+/// конкретную привязку уже нечего).
+#[tauri::command]
+pub async fn updates_resume_mod(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    let state = state.inner().clone();
+    if state
+        .update
+        .as_ref()
+        .is_some_and(|runtime| runtime.coordinator.is_running())
+    {
+        return Err(AppError::new(
+            "updates",
+            "Проверка обновлений уже идёт. Дождитесь её окончания.",
+        ));
+    }
+    {
+        let mut list = declined();
+        if let Some(index) = list.iter().position(|item| item.mod_id == mod_id) {
+            let undo = list.remove(index);
+            if BindingActions::undo(state.library.as_ref(), &undo) {
+                return Ok(build_snapshot(&state));
+            }
+        }
+    }
+    BindingActions::resume_checking(state.library.as_ref(), &mod_id);
+    Ok(build_snapshot(&state))
+}
+
+static DECLINED: std::sync::Mutex<Vec<bmm_checks::DeclineUndo>> = std::sync::Mutex::new(Vec::new());
+
+fn declined() -> std::sync::MutexGuard<'static, Vec<bmm_checks::DeclineUndo>> {
+    DECLINED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[tauri::command]
@@ -788,11 +990,25 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         .max()
         .map(|at| at.to_rfc3339());
     let statuses = store.source_statuses();
+    let last_report_sources = state
+        .update
+        .as_ref()
+        .and_then(|runtime| runtime.coordinator.last_report())
+        .map(|report| report.sources)
+        .unwrap_or_default();
     let disabled = state.settings.load().settings.disabled_sources;
+    let check_disabled = state.settings.load().settings.check_disabled_mods;
     let tracked: Vec<ModBinding> = store
         .bindings()
         .into_iter()
         .filter(|binding| binding.confirmed)
+        .filter(|binding| {
+            check_disabled
+                || store
+                    .get_mod(&binding.mod_id)
+                    .map(|installed| installed.enabled)
+                    .unwrap_or(true)
+        })
         .collect();
     let sites = state
         .update
@@ -822,6 +1038,16 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
                             .count(),
                         display_name: source.display_name().to_string(),
                         status: status.to_string(),
+                        last_checked: checks
+                            .iter()
+                            .filter(|check| check.source == id)
+                            .map(|check| check.last_checked_utc)
+                            .max()
+                            .map(|at| at.to_rfc3339()),
+                        note: last_report_sources
+                            .iter()
+                            .find(|report| report.source == id)
+                            .and_then(|report| report.note.clone()),
                         id,
                     }
                 })
@@ -1021,6 +1247,15 @@ fn contained<T>(step: impl FnOnce() -> T) -> Option<T> {
     std::panic::catch_unwind(AssertUnwindSafe(step)).ok()
 }
 
+fn should_attention(
+    new_findings: usize,
+    setting_enabled: bool,
+    focused: bool,
+    minimized: bool,
+) -> bool {
+    setting_enabled && new_findings > 0 && (!focused || minimized)
+}
+
 /// Проверка при запуске и по расписанию. Итог уходит в окно событием `updates://event`
 /// с фазой `auto`: значок на «Обновлениях» и тост появляются без открытия раздела.
 pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
@@ -1098,6 +1333,19 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                     .iter()
                     .map(|source| (source.id().to_string(), source.display_name().to_string()))
                     .collect();
+                if let Some(window) = app.get_webview_window("main") {
+                    let focused = window.is_focused().unwrap_or(false);
+                    let minimized = window.is_minimized().unwrap_or(false);
+                    if should_attention(
+                        report.new_findings.len(),
+                        settings.attention_on_updates,
+                        focused,
+                        minimized,
+                    ) {
+                        let _ =
+                            window.request_user_attention(Some(UserAttentionType::Informational));
+                    }
+                }
                 let event = done_event(
                     AUTO_REQUEST_ID,
                     build_snapshot(&state),
@@ -1128,6 +1376,15 @@ mod tests {
     use bmm_domain::settings::AppSettings;
     use bmm_domain::settings_store::SettingsStore;
     use bmm_packs::cache::PreviewCache;
+
+    #[test]
+    fn attention_only_for_new_findings_while_window_is_not_in_front() {
+        assert!(should_attention(2, true, false, false));
+        assert!(should_attention(2, true, true, true));
+        assert!(!should_attention(0, true, false, false));
+        assert!(!should_attention(2, false, false, false));
+        assert!(!should_attention(2, true, true, false));
+    }
 
     fn state() -> (tempfile::TempDir, AppState) {
         let temp = tempfile::tempdir().unwrap();

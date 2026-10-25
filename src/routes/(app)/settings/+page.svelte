@@ -719,6 +719,40 @@
       </div>
       <div class="switch-row">
         <div>
+          <b>Проверять выключенные моды</b>
+          <small>Обновления ищутся и для модов, которые сейчас выключены. Выключите, чтобы не тратить запросы.</small>
+        </div>
+        <Switch
+          size="lg"
+          checked={draft.checkDisabledMods}
+          onCheckedChange={(value) => {
+            if (draft) {
+              draft.checkDisabledMods = value;
+              mark();
+            }
+          }}
+          aria-label="Проверять обновления выключенных модов"
+        />
+      </div>
+      <div class="switch-row">
+        <div>
+          <b>Привлекать внимание к обновлениям</b>
+          <small>Если окно свёрнуто, значок на панели задач мигнёт, когда фоновая проверка найдёт новые версии.</small>
+        </div>
+        <Switch
+          size="lg"
+          checked={draft.attentionOnUpdates}
+          onCheckedChange={(value) => {
+            if (draft) {
+              draft.attentionOnUpdates = value;
+              mark();
+            }
+          }}
+          aria-label="Привлекать внимание к новым обновлениям"
+        />
+      </div>
+      <div class="switch-row">
+        <div>
           <b>Обновления программы</b>
           <small>Проверять новые версии самой программы на GitHub.</small>
         </div>

@@ -121,6 +121,7 @@ export interface ModDetails {
   archive: ArchiveDto | null;
   previewUrl: string | null;
   binding: BindingDto | null;
+  checkingDeclined: boolean;
 }
 
 export interface ToggleResult {
@@ -317,6 +318,7 @@ export async function modDetails(id: string): Promise<ModDetails> {
     },
     previewUrl: null,
     binding: null,
+    checkingDeclined: false,
   };
 }
 

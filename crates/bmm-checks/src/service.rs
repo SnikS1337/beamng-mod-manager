@@ -46,6 +46,10 @@ impl UpdateCheckService {
             .map(|binding| {
                 let check = store.get_check(&binding.mod_id, &binding.source);
                 TrackedBinding {
+                    enabled: store
+                        .get_mod(&binding.mod_id)
+                        .map(|installed| installed.enabled)
+                        .unwrap_or(true),
                     mod_id: binding.mod_id,
                     source: binding.source,
                     source_id: binding.source_id,

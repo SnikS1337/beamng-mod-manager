@@ -41,6 +41,9 @@
     onUnfollow,
     onBindPage,
     onPassCheck,
+    onCheckUpdates,
+    onDeclineChecking,
+    onResumeChecking,
     onClose,
   }: {
     details: ModDetails | null;
@@ -74,6 +77,12 @@
     onBindPage?: (url: string) => Promise<string | null>;
     /** Сайт просит подтвердить, что вы человек: открыть его проверку. `true` — пройдена. */
     onPassCheck?: () => Promise<boolean>;
+    /** Проверить обновления только этого мода по его странице. */
+    onCheckUpdates?: () => Promise<void>;
+    /** «Не проверять обновления» для этого мода. */
+    onDeclineChecking?: () => Promise<void>;
+    /** Снова включить проверку после отказа. */
+    onResumeChecking?: () => Promise<void>;
     onClose: () => void;
   } = $props();
 
@@ -82,6 +91,37 @@
   let pageUrl = $state("");
   let bindError = $state<string | null>(null);
   let bindBusy = $state(false);
+  let updateBusy = $state(false);
+
+  async function checkUpdates() {
+    if (!onCheckUpdates || updateBusy) return;
+    updateBusy = true;
+    try {
+      await onCheckUpdates();
+    } finally {
+      updateBusy = false;
+    }
+  }
+
+  async function declineChecking() {
+    if (!onDeclineChecking || updateBusy) return;
+    updateBusy = true;
+    try {
+      await onDeclineChecking();
+    } finally {
+      updateBusy = false;
+    }
+  }
+
+  async function resumeChecking() {
+    if (!onResumeChecking || updateBusy) return;
+    updateBusy = true;
+    try {
+      await onResumeChecking();
+    } finally {
+      updateBusy = false;
+    }
+  }
 
   // Поле сбрасывается только при переходе к другому моду: панель перечитывает данные
   // того же мода (после проверки, названий из архивов) и не должна закрывать форму.
@@ -266,6 +306,30 @@
         <div><span>Обновления</span><b title="Укажите страницу мода — и программа будет проверять обновления">не проверяются</b></div>
       {/if}
     </div>
+
+    {#if details.checkingDeclined}
+      <div class="update-actions">
+        <span>Проверка обновлений отключена.</span>
+        {#if onResumeChecking}
+          <button type="button" onclick={() => void resumeChecking()} disabled={updateBusy}>
+            Снова проверять
+          </button>
+        {/if}
+      </div>
+    {:else if details.binding?.confirmed}
+      <div class="update-actions">
+        {#if onCheckUpdates}
+          <button type="button" onclick={() => void checkUpdates()} disabled={updateBusy}>
+            {updateBusy ? "Проверяем…" : "Проверить обновления"}
+          </button>
+        {/if}
+        {#if onDeclineChecking}
+          <button type="button" onclick={() => void declineChecking()} disabled={updateBusy}>
+            Не проверять
+          </button>
+        {/if}
+      </div>
+    {/if}
 
     {#if details.archive}
       <section>
@@ -502,6 +566,36 @@
 
   .facts .warning b {
     color: var(--warning);
+  }
+
+  .update-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    margin-top: 10px;
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+  }
+
+  .update-actions button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-brand-text);
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: default;
+  }
+
+  .update-actions button:hover {
+    color: var(--foreground);
+  }
+
+  .update-actions button:disabled {
+    opacity: 0.55;
   }
 
   .facts p {

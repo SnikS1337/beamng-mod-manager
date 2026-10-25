@@ -9,7 +9,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use encoding_rs::{Encoding, UTF_8, WINDOWS_1251};
 use reqwest::blocking::Client;
-use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER};
+use reqwest::header::{
+    CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+    RETRY_AFTER,
+};
 use url::Url;
 
 pub const USER_AGENT: &str = "BeamModManager/0.4 (personal use; update checks)";
@@ -28,6 +31,9 @@ pub struct RawResponse {
     pub text: String,
     pub final_url: Url,
     pub retry_after: Option<Duration>,
+    /// Валидаторы ответа для условных GET: не менялись — сайт вернёт 304.
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -52,6 +58,16 @@ impl FetchError {
 
 pub trait PageFetcher: Send + Sync {
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError>;
+    /// GET с валидаторами кэша; по умолчанию обычный GET (браузерные страницы
+    /// и тестовые загрузчики не умеют 304).
+    fn get_conditional(
+        &self,
+        url: &Url,
+        _etag: Option<&str>,
+        _last_modified: Option<&str>,
+    ) -> Result<RawResponse, FetchError> {
+        self.get(url)
+    }
     fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
         let _ = (url, form);
         Err(FetchError::Unsupported)
@@ -131,6 +147,19 @@ impl PageFetcher for RoutingPageFetcher {
         }
     }
 
+    fn get_conditional(
+        &self,
+        url: &Url,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+    ) -> Result<RawResponse, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.get(url)
+        } else {
+            self.plain.get_conditional(url, etag, last_modified)
+        }
+    }
+
     fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
         if self.uses_browser(url) {
             self.browser.post_form(url, form)
@@ -184,6 +213,16 @@ impl HttpPageFetcher {
             .get(CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
+        let etag = response
+            .headers()
+            .get(ETAG)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let last_modified = response
+            .headers()
+            .get(LAST_MODIFIED)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         if response
             .headers()
             .get(CONTENT_LENGTH)
@@ -206,6 +245,8 @@ impl HttpPageFetcher {
             text: decode_body(&body, content_type.as_deref()),
             final_url,
             retry_after,
+            etag,
+            last_modified,
         })
     }
 }
@@ -213,6 +254,22 @@ impl HttpPageFetcher {
 impl PageFetcher for HttpPageFetcher {
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
         self.send(self.client.get(url.clone()))
+    }
+
+    fn get_conditional(
+        &self,
+        url: &Url,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+    ) -> Result<RawResponse, FetchError> {
+        let mut request = self.client.get(url.clone());
+        if let Some(etag) = etag {
+            request = request.header(IF_NONE_MATCH, etag);
+        }
+        if let Some(last_modified) = last_modified {
+            request = request.header(IF_MODIFIED_SINCE, last_modified);
+        }
+        self.send(request)
     }
 
     fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
@@ -396,6 +453,7 @@ struct HostEntry {
     inner: Mutex<HostInner>,
 }
 
+#[derive(Debug, Clone)]
 struct CacheEntry {
     stored: Instant,
     response: RawResponse,
@@ -567,6 +625,10 @@ impl PoliteFetcher {
         if let Some(response) = self.cached(&key) {
             return FetchResult::ok(response);
         }
+        let conditional = form
+            .is_none()
+            .then(|| self.cache_validators(&key))
+            .flatten();
         if !self.wait_for_slot(&entry, url, cancel) {
             return cancelled();
         }
@@ -584,11 +646,30 @@ impl PoliteFetcher {
                         .collect();
                     self.fetcher.post_form(url, &pairs)
                 }
-                None => self.fetcher.get(url),
+                None => match &conditional {
+                    Some((etag, last_modified)) => {
+                        self.fetcher
+                            .get_conditional(url, etag.as_deref(), last_modified.as_deref())
+                    }
+                    None => self.fetcher.get(url),
+                },
             };
             lock(&entry.inner).last_request = Some(Instant::now());
             match result {
                 Ok(response) => {
+                    if response.status == 304 {
+                        if let Some(cached) = self.use_cached_not_modified(&key, &response) {
+                            let mut inner = lock(&entry.inner);
+                            inner.failures = 0;
+                            inner.status = SourceStatus::Ok;
+                            inner.message = None;
+                            self.remember(source, SourceStatus::Ok, None, None);
+                            return FetchResult::ok(cached);
+                        }
+                        last_message =
+                            "Сайт ответил «не изменилось» без сохранённой страницы.".to_string();
+                        break;
+                    }
                     if is_challenge_page(&response.text) {
                         let message = "Сайт просит подтвердить, что вы человек.".to_string();
                         let mut inner = lock(&entry.inner);
@@ -741,11 +822,32 @@ impl PoliteFetcher {
     }
 
     fn cached(&self, key: &str) -> Option<RawResponse> {
-        let mut cache = lock(&self.cache);
+        let cache = lock(&self.cache);
         let entry = cache.get(key)?;
         if entry.stored.elapsed() > self.options.cache_ttl {
-            cache.remove(key);
             return None;
+        }
+        Some(entry.response.clone())
+    }
+
+    fn cache_validators(&self, key: &str) -> Option<(Option<String>, Option<String>)> {
+        let cache = lock(&self.cache);
+        let entry = cache.get(key)?;
+        let etag = entry.response.etag.clone();
+        let last_modified = entry.response.last_modified.clone();
+        (etag.is_some() || last_modified.is_some()).then_some((etag, last_modified))
+    }
+
+    /// Сайт ответил 304: отдаём сохранённую страницу и продлеваем её свежесть.
+    fn use_cached_not_modified(&self, key: &str, response: &RawResponse) -> Option<RawResponse> {
+        let mut cache = lock(&self.cache);
+        let entry = cache.get_mut(key)?;
+        entry.stored = Instant::now();
+        if response.etag.is_some() {
+            entry.response.etag = response.etag.clone();
+        }
+        if response.last_modified.is_some() {
+            entry.response.last_modified = response.last_modified.clone();
         }
         Some(entry.response.clone())
     }
@@ -1092,6 +1194,8 @@ mod tests {
             text: text.to_string(),
             final_url: url("https://example.org/"),
             retry_after: None,
+            etag: None,
+            last_modified: None,
         }
     }
 
@@ -1123,6 +1227,134 @@ mod tests {
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
         assert_eq!(missing.calls.lock().unwrap().len(), 2);
+    }
+
+    struct ConditionalFetcher {
+        calls: Mutex<Vec<(Option<String>, Option<String>)>>,
+        etag: String,
+        text: String,
+    }
+
+    impl PageFetcher for ConditionalFetcher {
+        fn get(&self, _url: &Url) -> Result<RawResponse, FetchError> {
+            self.calls.lock().unwrap().push((None, None));
+            let mut response = response(200, &self.text);
+            response.etag = Some(self.etag.clone());
+            Ok(response)
+        }
+
+        fn get_conditional(
+            &self,
+            _url: &Url,
+            etag: Option<&str>,
+            last_modified: Option<&str>,
+        ) -> Result<RawResponse, FetchError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((etag.map(str::to_string), last_modified.map(str::to_string)));
+            if etag == Some(self.etag.as_str()) {
+                Ok(response(304, ""))
+            } else {
+                let mut response = response(200, &self.text);
+                response.etag = Some(self.etag.clone());
+                Ok(response)
+            }
+        }
+    }
+
+    #[test]
+    fn expired_cache_revalidates_with_etag_and_304_returns_body() {
+        let fake = Arc::new(ConditionalFetcher {
+            calls: Mutex::new(Vec::new()),
+            etag: "\"v1\"".to_string(),
+            text: "<html>mod</html>".to_string(),
+        });
+        let mut opts = options();
+        opts.cache_ttl = Duration::from_millis(1);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/mod");
+        let first = polite.get("site", &page);
+        std::thread::sleep(Duration::from_millis(2));
+        assert_eq!(first.status, SourceStatus::Ok);
+        assert_eq!(first.response.unwrap().text, "<html>mod</html>");
+        let second = polite.get("site", &page);
+        assert_eq!(second.status, SourceStatus::Ok);
+        assert_eq!(second.response.unwrap().text, "<html>mod</html>");
+        let calls = fake.calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].0.as_deref(), Some("\"v1\""));
+    }
+
+    #[test]
+    fn unexpected_304_without_cache_is_a_failure() {
+        struct AlwaysNotModified;
+        impl PageFetcher for AlwaysNotModified {
+            fn get(&self, _url: &Url) -> Result<RawResponse, FetchError> {
+                Ok(response(304, ""))
+            }
+
+            fn get_conditional(
+                &self,
+                _url: &Url,
+                _etag: Option<&str>,
+                _last_modified: Option<&str>,
+            ) -> Result<RawResponse, FetchError> {
+                Ok(response(304, ""))
+            }
+        }
+        let polite = PoliteFetcher::new(Arc::new(AlwaysNotModified), options());
+        assert_eq!(
+            polite.get("site", &url("https://example.org/mod")).status,
+            SourceStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn last_modified_revalidation_returns_cached_body() {
+        struct ModifiedFetcher {
+            calls: Mutex<Vec<Option<String>>>,
+        }
+        impl PageFetcher for ModifiedFetcher {
+            fn get(&self, _url: &Url) -> Result<RawResponse, FetchError> {
+                self.calls.lock().unwrap().push(None);
+                let mut response = response(200, "cached");
+                response.last_modified = Some("Wed, 21 Oct 2026 07:28:00 GMT".to_string());
+                Ok(response)
+            }
+
+            fn get_conditional(
+                &self,
+                _url: &Url,
+                _etag: Option<&str>,
+                last_modified: Option<&str>,
+            ) -> Result<RawResponse, FetchError> {
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push(last_modified.map(str::to_string));
+                if last_modified == Some("Wed, 21 Oct 2026 07:28:00 GMT") {
+                    Ok(response(304, ""))
+                } else {
+                    Ok(response(200, "cached"))
+                }
+            }
+        }
+        let fake = Arc::new(ModifiedFetcher {
+            calls: Mutex::new(Vec::new()),
+        });
+        let mut opts = options();
+        opts.cache_ttl = Duration::from_millis(1);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/mod");
+        assert_eq!(polite.get("site", &page).response.unwrap().text, "cached");
+        std::thread::sleep(Duration::from_millis(2));
+        let second = polite.get("site", &page);
+        assert_eq!(second.status, SourceStatus::Ok);
+        assert_eq!(second.response.unwrap().text, "cached");
+        let calls = fake.calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].as_deref(), Some("Wed, 21 Oct 2026 07:28:00 GMT"));
     }
 
     #[test]
@@ -1386,6 +1618,8 @@ mod tests {
                 text: "<html>ok</html>".to_string(),
                 final_url: url.clone(),
                 retry_after: None,
+                etag: None,
+                last_modified: None,
             })
         }
     }
@@ -1427,6 +1661,8 @@ mod tests {
                 text: "<html>ok</html>".to_string(),
                 final_url: url.clone(),
                 retry_after: None,
+                etag: None,
+                last_modified: None,
             })
         }
     }

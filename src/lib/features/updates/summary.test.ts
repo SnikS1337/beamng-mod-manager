@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { UpdateSource } from "#lib/ipc/updates.js";
-import { checkSummary } from "./summary";
+import type { UpdateSite, UpdateSource } from "#lib/ipc/updates.js";
+import { checkSummary, failedSites, updateHeadline } from "./summary";
+
+function site(patch: Partial<UpdateSite>): UpdateSite {
+    return {
+        id: "stmods",
+        displayName: "STMods",
+        status: "ok",
+        tracked: 3,
+        ...patch,
+    };
+}
 
 function source(patch: Partial<UpdateSource>): UpdateSource {
     return {
@@ -92,4 +102,60 @@ describe("checkSummary", () => {
       "Новых версий нет. STMods: сайт изменился, часть модов не прочитали. Страницы пропали с сайта: 2",
     );
   });
+});
+
+describe("updateHeadline", () => {
+    const now = "2026-10-25T10:00:00Z";
+
+    it("не называет всё актуальным, если сайт не ответил", () => {
+        expect(
+            updateHeadline(0, [
+                site({ displayName: "Modland", status: "unavailable" }),
+                site({ displayName: "STMods" }),
+            ], now),
+        ).toEqual({
+            text: "Проверено не всё: Modland",
+            tone: "warn",
+        });
+        expect(
+            updateHeadline(0, [
+                site({ displayName: "Modland", status: "human_check" }),
+            ], now).text,
+        ).toBe("Проверено не всё: Modland");
+    });
+
+    it("различает ещё не проверяли, все сайты выключены и нечего проверять", () => {
+        expect(updateHeadline(0, [], null)).toEqual({
+            text: "Ещё не проверяли",
+            tone: "muted",
+        });
+        expect(
+            updateHeadline(0, [site({ status: "off", tracked: 0 })], now).text,
+        ).toBe("Все сайты выключены");
+        expect(
+            updateHeadline(0, [site({ tracked: 0 })], now).text,
+        ).toBe("Нечего проверять");
+    });
+
+    it("показывает число ожидающих решения и не прячет проблемный сайт", () => {
+        expect(
+            updateHeadline(2, [
+                site({ displayName: "STMods" }),
+                site({ displayName: "Modland", status: "unavailable" }),
+            ], now),
+        ).toEqual({
+            text: "2 мода ждут решения · проверено не всё",
+            tone: "warn",
+        });
+        expect(failedSites([
+            site({ displayName: "STMods" }),
+            site({ displayName: "Modland", status: "unavailable" }),
+        ]).map((item) => item.displayName)).toEqual(["Modland"]);
+    });
+
+    it("всё актуально только после полной проверки", () => {
+        expect(
+            updateHeadline(0, [site({ displayName: "STMods" })], now),
+        ).toEqual({ text: "Всё актуально", tone: "ok" });
+    });
 });

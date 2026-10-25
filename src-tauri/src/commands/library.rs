@@ -169,6 +169,8 @@ pub struct ModDetails {
     pub archive: Option<ArchiveDto>,
     pub preview_url: Option<String>,
     pub binding: Option<BindingDto>,
+    /// Пользователь выбрал «Не проверять обновления» для этого мода.
+    pub checking_declined: bool,
 }
 
 #[tauri::command]
@@ -1235,6 +1237,7 @@ fn details(state: &AppState, id: &str) -> Result<ModDetails, AppError> {
             url: binding.url.to_string(),
             confirmed: binding.confirmed,
         }),
+        checking_declined: state.library.is_checking_declined(&installed.id),
     })
 }
 

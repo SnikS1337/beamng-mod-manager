@@ -61,6 +61,15 @@ impl PageGuesser {
     /// Моды, для которых пора искать страницу: без привязок, без отказа
     /// «Не проверять», не искали недавно; новые первыми, не больше [`PER_RUN`].
     pub fn due(store: &dyn LibraryStore, now: DateTime<FixedOffset>) -> Vec<InstalledMod> {
+        Self::due_with(store, now, true)
+    }
+
+    /// Как [`Self::due`], но можно не искать страницы для выключенных модов.
+    pub fn due_with(
+        store: &dyn LibraryStore,
+        now: DateTime<FixedOffset>,
+        include_disabled: bool,
+    ) -> Vec<InstalledMod> {
         let bound: HashSet<String> = store
             .bindings()
             .into_iter()
@@ -71,6 +80,7 @@ impl PageGuesser {
             .mods()
             .into_iter()
             .filter(|installed| !bound.contains(&installed.id))
+            .filter(|installed| include_disabled || installed.enabled)
             .filter(|installed| !store.is_checking_declined(&installed.id))
             .filter(|installed| match store.get_page_search(&installed.id) {
                 None => true,
@@ -963,6 +973,21 @@ mod tests {
             ids.iter()
                 .all(|id| !["m0", "m1", "m2", "m3", "m5"].contains(id))
         );
+    }
+
+    #[test]
+    fn disabled_mods_are_skipped_when_page_search_is_limited() {
+        let store = InMemoryLibraryStore::new();
+        let mut off = installed("off", "off.zip", None, None);
+        off.enabled = false;
+        store.upsert_mod(off);
+        store.upsert_mod(installed("on", "on.zip", None, None));
+
+        let all = PageGuesser::due(&store, now());
+        assert_eq!(all.len(), 2);
+        let enabled = PageGuesser::due_with(&store, now(), false);
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].id, "on");
     }
 
     #[test]

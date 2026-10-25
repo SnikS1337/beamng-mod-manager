@@ -8,6 +8,8 @@ export interface SettingsDto {
   autoCheckOnStart: boolean;
   checkAppUpdates: boolean;
   autoCheckEveryHours: number;
+  checkDisabledMods: boolean;
+  attentionOnUpdates: boolean;
   disabledSources: string[];
   keepBackups: number;
   maxCardChecksPerSource: number;
@@ -35,6 +37,8 @@ export async function settingsLoad(): Promise<SettingsDto> {
     autoCheckOnStart: true,
     checkAppUpdates: true,
     autoCheckEveryHours: 0,
+    checkDisabledMods: true,
+    attentionOnUpdates: true,
     disabledSources: ["modland"],
     keepBackups: 3,
     maxCardChecksPerSource: 150,

@@ -9,7 +9,7 @@
   import { sourceName } from "#lib/ipc/search.js";
   import { formatAgo, formatWhen, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
-  import { checkSummary } from "#lib/features/updates/summary.js";
+  import { checkSummary, failedSites, updateHeadline } from "#lib/features/updates/summary.js";
   import { motion } from "#lib/shell/motion.svelte.js";
   import { reason, sizeChange } from "#lib/features/updates/reason.js";
   import {
@@ -24,6 +24,7 @@
     updatesUnfollow,
     updatesForgetLost,
     updatesRestore,
+    updatesRetrySource,
     updatesSnapshot,
     updatesStart,
     updatesUndoPage,
@@ -68,6 +69,10 @@
     hidden: snapshot.hidden.length,
     pages: snapshot.suggestions.length + (snapshot.lost?.length ?? 0),
   });
+  const headline = $derived(
+    updateHeadline(counts.available, snapshot.sites, snapshot.lastChecked),
+  );
+  const failed = $derived(failedSites(snapshot.sites));
 
   // «Проверить обновления сейчас» из палитры команд: /updates?check=1
   let askedCheck = false;
@@ -374,23 +379,63 @@
     return parts.join(" · ");
   }
 
-  function siteRows(): { id: string; name: string; tone: string; text: string }[] {
+  function siteRows(): {
+    id: string;
+    name: string;
+    tone: string;
+    text: string;
+    when: string;
+    retry: boolean;
+  }[] {
     const live = new Map(sources.map((item) => [item.id, item]));
     return (snapshot.sites ?? []).map((site) => {
       const now = live.get(site.id);
       const human = site.status === "human_check" || now?.status === "needsHumanCheck";
       const down = site.status === "unavailable" || now?.status === "unavailable";
-      if (site.status === "off") return { id: site.id, name: site.displayName, tone: "off", text: "выключен" };
-      if (human) return { id: site.id, name: site.displayName, tone: "warn", text: "просит проверку" };
-      if (down) return { id: site.id, name: site.displayName, tone: "bad", text: now?.note ?? "не отвечает" };
-      if (site.tracked === 0) return { id: site.id, name: site.displayName, tone: "off", text: "ни одного мода" };
+      const when = site.lastChecked ? `проверен ${formatAgo(site.lastChecked)}` : "ещё не проверялся";
+      if (site.status === "off") {
+        return { id: site.id, name: site.displayName, tone: "off", text: "выключен", when: "", retry: false };
+      }
+      if (human) {
+        return { id: site.id, name: site.displayName, tone: "warn", text: "просит проверку", when, retry: false };
+      }
+      if (down) {
+        return {
+          id: site.id,
+          name: site.displayName,
+          tone: "bad",
+          text: now?.note ?? site.note ?? "не отвечает",
+          when,
+          retry: true,
+        };
+      }
+      if (site.tracked === 0) {
+        return { id: site.id, name: site.displayName, tone: "off", text: "ни одного мода", when, retry: false };
+      }
       return {
         id: site.id,
         name: site.displayName,
         tone: "ok",
         text: `следим за ${site.tracked} ${plural(site.tracked, "модом", "модами", "модами")}`,
+        when,
+        retry: false,
       };
     });
+  }
+
+  async function retrySource(source: string) {
+    if (checking) return;
+    requestId += 1;
+    checking = true;
+    progress = null;
+    error = null;
+    offerForce = false;
+    try {
+      await updatesRetrySource(source, requestId);
+    } catch (reason) {
+      error = errorText(reason);
+      checking = false;
+    }
   }
 </script>
 
@@ -418,12 +463,8 @@
   <header class="top" data-tauri-drag-region>
     <div class="title" data-tauri-drag-region>
       <h1 class="display" data-tauri-drag-region>Обновления</h1>
-      <p data-tauri-drag-region>
-        {#if counts.available === 0}
-          Всё актуально
-        {:else}
-          {counts.available} {plural(counts.available, "мод ждёт", "мода ждут", "модов ждут")} решения
-        {/if}
+      <p data-tauri-drag-region class:warn={headline.tone === "warn"}>
+        {headline.text}
       </p>
     </div>
     <div class="tabs" role="tablist" aria-label="Что показать">
@@ -557,7 +598,11 @@
         {:else if autoProgress}
           Проверка при запуске: {progressText(autoProgress)}
         {:else if snapshot.lastChecked}
-          Последняя проверка {formatWhen(snapshot.lastChecked)}. Окно можно закрыть: найденное сохранится.
+          Последняя проверка {formatWhen(snapshot.lastChecked)}.
+          {#if failed.length > 0}
+            Не проверены: {failed.map((site) => site.displayName).join(", ")}.
+          {/if}
+          Окно можно закрыть: найденное сохранится.
         {:else}
           Ещё не проверяли. Проверим моды, за которыми следим на сайтах.
         {/if}
@@ -578,10 +623,19 @@
       <h2 class="display sites-title">Сайты</h2>
       <div class="sites">
         {#each siteRows() as site (site.id)}
-          <div class="site">
+          <div class="site" title={site.when ? `${site.text} · ${site.when}` : site.text}>
             <span class="dot {site.tone}"></span>
-            <b>{site.name}</b>
-            <span class="state-text">{site.text}</span>
+            <b class="site-name">{site.name}</b>
+            <span class="site-meta">
+              <span class="state-text">{site.text}</span>
+              {#if site.retry}
+                <button class="site-retry" type="button" onclick={() => void retrySource(site.id)}>
+                  Повторить
+                </button>
+              {:else if site.when}
+                <span class="site-when">{site.when}</span>
+              {/if}
+            </span>
           </div>
           {#if site.id === "modland" && site.tone === "warn"}
             <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
@@ -627,6 +681,10 @@
     margin: 3px 0 0;
     color: var(--muted-foreground);
     font-size: 13px;
+  }
+
+  .title p.warn {
+    color: var(--warning);
   }
 
   .tabs {
@@ -990,13 +1048,25 @@
     font-size: 13.5px;
   }
 
+  .site-name {
+    min-width: 0;
+    font-weight: 700;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .site-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    min-width: 0;
+    margin-left: auto;
+  }
+
   .site + .site,
   .pass + .site {
     border-top: 1px solid var(--border);
-  }
-
-  .site b {
-    font-weight: 700;
   }
 
   .dot {
@@ -1020,10 +1090,32 @@
   }
 
   .state-text {
-    margin-left: auto;
     color: var(--muted-foreground);
     font-size: 12px;
     text-align: right;
+  }
+
+  .site-when {
+    color: var(--faint-foreground);
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+
+  .site-retry {
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: default;
+  }
+
+  .site-retry:hover {
+    background: var(--surface-3);
+    color: var(--foreground);
   }
 
   .pass {
