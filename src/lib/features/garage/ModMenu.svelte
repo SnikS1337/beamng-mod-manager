@@ -89,7 +89,7 @@
           <FolderOpen size={16} />Показать в папке
         </ContextMenu.Item>
         <ContextMenu.Item class="menu-item" onSelect={() => onShowDetails(mod)}>
-          <ClockCounterClockwise size={16} />Подробно и прошлые версии
+          <ClockCounterClockwise size={16} />Подробнее и прошлые версии
         </ContextMenu.Item>
         {#if !mod.fromGameRepo}
           <ContextMenu.Separator class="menu-sep" />

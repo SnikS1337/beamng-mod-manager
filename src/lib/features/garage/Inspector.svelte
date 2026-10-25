@@ -263,7 +263,7 @@
       {#if details.binding}
         <div><span>Следим на</span><b>{sourceName(details.binding.source)}</b></div>
       {:else}
-        <div><span>Обновления</span><b>не проверяются — нет страницы</b></div>
+        <div><span>Обновления</span><b title="Укажите страницу мода — и программа будет проверять обновления">не проверяются</b></div>
       {/if}
     </div>
 
@@ -281,7 +281,7 @@
               <div><span>{details.archive.levels.length > 1 ? "Карты" : "Карта"}</span><b>{details.archive.levels.slice(0, 3).join(", ")}{details.archive.levels.length > 3 ? ` и ещё ${details.archive.levels.length - 3}` : ""}</b></div>
             {/if}
             <div><span>Скрипты</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} ${plural(details.archive.luaFiles, "файл", "файла", "файлов")} Lua` : "нет"}</b></div>
-            <div><span>Файлов</span><b>{groupDigits(details.archive.files)}, {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
+            <div><span>Файлов</span><b>{groupDigits(details.archive.files)} · {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
             {#each details.archive.warnings as warning}
               <p class="warn">{warning}</p>
             {/each}
