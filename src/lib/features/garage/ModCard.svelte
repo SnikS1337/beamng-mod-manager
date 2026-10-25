@@ -9,7 +9,7 @@
   import { Switch } from "#lib/components/ui/switch/index.js";
   import { modPreview, type ModCardDto } from "#lib/ipc/library.js";
   import { addonHint, copiesBadge } from "./duplicates";
-  import { formatSize } from "./format";
+  import { formatSize, plural } from "./format";
   import { typeLabel, typeTag } from "./view";
   import { modStatus } from "./status";
 
@@ -27,7 +27,7 @@
     index?: number;
     /** Появиться с анимацией (первый показ списка, смена фильтра). */
     appear?: boolean;
-    onselect: (id: string) => void;
+    onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
     ontoggle: (mod: ModCardDto) => void;
   } = $props();
 
@@ -77,17 +77,18 @@
               : Package,
   );
 
-  function select() {
-    onselect(mod.id);
+  function select(event: MouseEvent) {
+    onselect(mod.id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
   }
 
-  function onkeydown(event: KeyboardEvent) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key === "Enter") {
-      event.preventDefault();
-      select();
-    }
-  }
+  // Версия на карточке: «1.0 → 1.2», если на сайте новее.
+  const versionText = $derived(
+    mod.update !== "none" && mod.updateVersion && mod.updateVersion !== mod.version
+      ? mod.version
+        ? `${mod.version} → ${mod.updateVersion}`
+        : `→ ${mod.updateVersion}`
+      : mod.version,
+  );
 </script>
 
 <div
@@ -98,14 +99,16 @@
   class:deleted={mod.deleted}
   style={`--i:${Math.min(index, 14)}`}
   data-mod-id={mod.id}
-  role="button"
-  tabindex="0"
-  aria-pressed={selected}
-  aria-label={mod.name}
-  title={mod.fileName}
-  onclick={select}
-  {onkeydown}
 >
+  <!-- Выбор — отдельной кнопкой поверх карточки: переключатель не вложен в кнопку. -->
+  <button
+    class="select"
+    type="button"
+    aria-pressed={selected}
+    aria-label={mod.name}
+    title={mod.fileName}
+    onclick={select}
+  ></button>
   <div class="thumb" class:addon>
     {#if addon}
       {@const Icon = icon}
@@ -148,12 +151,14 @@
     <div class="text">
       <p class="name">{mod.name}</p>
       <p class="meta">
-        {#if mod.version}
-          <span class="mono version">{mod.version}</span>
+        {#if versionText}
+          <span class="mono version" class:fresh={versionText !== mod.version}>{versionText}</span>
         {/if}
         <span>{formatSize(mod.sizeBytes)}</span>
         {#if mod.deleted}
-          <span>{mod.copies > 1 ? `${mod.copies} копии` : "копия"}</span>
+          <span>{mod.copies > 1 ? `${mod.copies} ${plural(mod.copies, "копия", "копии", "копий")}` : "копия"}</span>
+        {:else if mod.unchecked && mod.update === "none"}
+          <span title="Страница мода не указана — обновления не проверяются">не проверяется</span>
         {:else if mod.compat.differs}
           <span class="compat" title="Мод сделан для другой версии игры">{mod.compat.modFor}</span>
         {/if}
@@ -164,7 +169,6 @@
         <Switch
           checked={mod.enabled}
           onCheckedChange={() => ontoggle(mod)}
-          onclick={(event: MouseEvent) => event.stopPropagation()}
           aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
         />
       </div>
@@ -174,6 +178,7 @@
 
 <style>
   .card {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 206px;
@@ -204,7 +209,18 @@
     box-shadow: 0 0 0 1px var(--accent-brand);
   }
 
-  .card:focus-visible {
+  .select {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    padding: 0;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    cursor: default;
+  }
+
+  .select:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
@@ -371,11 +387,17 @@
     color: var(--foreground);
   }
 
+  .version.fresh {
+    color: var(--accent-brand-text);
+  }
+
   .compat {
     color: var(--warning);
   }
 
   .toggle {
+    position: relative;
+    z-index: 2;
     flex: none;
   }
 

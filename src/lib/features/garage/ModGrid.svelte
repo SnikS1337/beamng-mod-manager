@@ -4,15 +4,16 @@
 
   let {
     items,
-    selectedId,
+    selectedIds,
     onselect,
     ontoggle,
     resetKey = "",
     renderedCount = $bindable(0),
   }: {
     items: ModCardDto[];
-    selectedId: string | null;
-    onselect: (id: string) => void;
+    /** Выбранные: одна карточка или несколько. */
+    selectedIds: string[];
+    onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
     ontoggle: (mod: ModCardDto) => void;
     resetKey?: string;
     renderedCount?: number;
@@ -74,7 +75,7 @@
 
   <div class="grid" style={`grid-template-columns:repeat(${columns}, minmax(0, 1fr)); gap:${GAP}px`}>
     {#each visible as mod, index (mod.id)}
-      <ModCard {mod} {index} {appear} selected={mod.id === selectedId} {onselect} {ontoggle} />
+      <ModCard {mod} {index} {appear} selected={selectedIds.includes(mod.id)} {onselect} {ontoggle} />
     {/each}
   </div>
 

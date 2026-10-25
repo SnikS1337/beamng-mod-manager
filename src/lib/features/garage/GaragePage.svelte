@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
   import { groupMembers, isShown, visibleCards } from "./duplicates";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     listenUpdates,
     updatesOpenModland,
@@ -10,7 +11,7 @@
   } from "#lib/ipc/updates.js";
   import { isTauri } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+  import { openPath } from "@tauri-apps/plugin-opener";
   import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
   import Plus from "phosphor-svelte/lib/Plus";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
@@ -44,7 +45,7 @@
   import ModGrid from "./ModGrid.svelte";
   import ModList from "./ModList.svelte";
   import ModMenu from "./ModMenu.svelte";
-  import { headerNote, matchesQuery } from "./format";
+  import { groupDigits, headerNote, matchesQuery } from "./format";
   import {
     loadViewMode,
     matchesType,
@@ -55,6 +56,17 @@
     type ViewMode,
   } from "./view";
   import { palette } from "#lib/shell/palette.svelte.js";
+  import {
+    EMPTY,
+    bulkPlan,
+    clickSelect,
+    keepVisible,
+    selectAll,
+    selectOnly,
+    single,
+    type Selection,
+  } from "./selection";
+  import BulkBar from "./BulkBar.svelte";
 
   type Filter = "all" | "disabled" | "updates" | "unchecked" | "deleted";
 
@@ -66,7 +78,9 @@
   let typeFilter = $state<TypeGroup | "all">("all");
   let view = $state<ViewMode>(loadViewMode());
   let query = $state("");
-  let selectedId = $state<string | null>(null);
+  /** Выбранные моды; ровно один — его панель справа, несколько — панель действий. */
+  let picked = $state<Selection>(EMPTY);
+  let selectedId = $derived(single(picked));
   let details = $state<ModDetails | null>(null);
   let detailsLoading = $state(false);
   let renderedCount = $state(0);
@@ -158,9 +172,15 @@
     };
   });
 
+  // Смена фильтра или поиска: выбранными остаются только видимые (одиночный — и как копия
+  // в группе видимого основного, его панель тогда не закрывается).
   $effect(() => {
-    if (selectedId && !isShown(selectedId, filtered)) {
-      selectedId = null;
+    const shown = filtered;
+    const current = untrack(() => picked);
+    if (current.ids.length === 1) {
+      if (!isShown(current.ids[0], shown)) picked = EMPTY;
+    } else if (current.ids.length > 1) {
+      picked = keepVisible(current, shown.map((mod) => mod.id));
     }
   });
 
@@ -184,7 +204,7 @@
       filter = "all";
       typeFilter = "all";
       query = "";
-      selectedId = request.id;
+      picked = selectOnly(request.id);
     } else if (request.kind === "filter") {
       filter = request.filter;
     } else if (request.kind === "archive") {
@@ -229,7 +249,7 @@
         !snapshot.mods.some((mod) => mod.id === selectedId) &&
         !snapshot.deleted.some((mod) => mod.id === selectedId)
       ) {
-        selectedId = null;
+        picked = EMPTY;
       }
     } catch (reason) {
       error = errorText(reason);
@@ -291,8 +311,13 @@
     }
   }
 
-  function select(id: string) {
-    selectedId = selectedId === id ? null : id;
+  function select(id: string, keys: { ctrl: boolean; shift: boolean } = { ctrl: false, shift: false }) {
+    picked = clickSelect(
+      picked,
+      id,
+      filtered.map((mod) => mod.id),
+      keys,
+    );
   }
 
   async function toggle(mod: ModCardDto) {
@@ -351,7 +376,7 @@
     if (card.deleted || card.fromGameRepo) return;
     try {
       // Удаляют копию из панели группы — панель основного остаётся открытой.
-      if (selectedId === card.id) selectedId = null;
+      if (picked.ids.includes(card.id)) picked = EMPTY;
       const ticket = await modDelete(card.id);
       await load(true);
       showToast(`Удалён «${trimName(ticket.name)}»`, {
@@ -369,10 +394,85 @@
     }
   }
 
+  // Действия над несколькими выбранными: одним тостом и одной отменой на всех.
+  let bulkBusy = $state(false);
+  let plan = $derived(bulkPlan(allCards, picked.ids));
+
+  async function bulkToggle(target: boolean) {
+    const mods = target ? plan.enable : plan.disable;
+    if (bulkBusy || mods.length === 0) return;
+    bulkBusy = true;
+    const changed: ModCardDto[] = [];
+    let failed = 0;
+    let queued = 0;
+    for (const mod of mods) {
+      try {
+        const result = await modToggle(mod.id, target);
+        if (result.outcome === "error" || result.outcome === "failed") {
+          failed += 1;
+        } else {
+          if (result.outcome === "queued") queued += 1;
+          changed.push(mod);
+        }
+      } catch {
+        failed += 1;
+      }
+    }
+    await load(true);
+    bulkBusy = false;
+    const verb = target ? "Включено" : "Выключено";
+    const parts = [`${verb}: ${changed.length}`];
+    if (queued > 0) parts.push(`после игры: ${queued}`);
+    if (failed > 0) parts.push(`не получилось: ${failed}`);
+    showToast(parts.join(" · "), {
+      undo:
+        changed.length > 0 && queued === 0
+          ? async () => {
+              for (const mod of changed) await modToggle(mod.id, !target).catch(() => {});
+              await load(true);
+            }
+          : undefined,
+    });
+  }
+
+  async function bulkDelete() {
+    const mods = plan.remove;
+    if (bulkBusy || mods.length === 0) return;
+    bulkBusy = true;
+    const removed: ModCardDto[] = [];
+    let failed = 0;
+    for (const mod of mods) {
+      try {
+        await modDelete(mod.id);
+        removed.push(mod);
+      } catch {
+        failed += 1;
+      }
+    }
+    picked = EMPTY;
+    await load(true);
+    bulkBusy = false;
+    const text = `Удалено: ${removed.length}${failed > 0 ? ` · не получилось: ${failed}` : ""}`;
+    showToast(text, {
+      undo: removed.length
+        ? async () => {
+            for (const mod of removed) await modUndelete(mod.id).catch(() => {});
+            await load(true);
+          }
+        : undefined,
+      commit: removed.length
+        ? async () => {
+            for (const mod of removed) await modForgetDeleted(mod.id).catch(() => {});
+            await load(true);
+          }
+        : undefined,
+    });
+  }
+
   async function restoreDeleted(card: ModCardDto) {
     try {
       await modRestoreDeleted(card.fileName);
-      selectedId = null;
+      picked = EMPTY;
       await load(true);
       showToast(`Возвращён «${trimName(card.name)}»`);
     } catch (reason) {
@@ -433,7 +533,7 @@
     if (!card) return;
     filter = "all";
     query = "";
-    selectedId = card.id;
+    picked = selectOnly(card.id);
   }
 
   async function pickArchive() {
@@ -489,14 +589,26 @@
       return;
     }
     if (event.key === "Escape") {
-      if (query) {
+      if (picked.ids.length > 0) {
+        picked = EMPTY;
+      } else if (query) {
         query = "";
-      } else {
-        selectedId = null;
       }
       return;
     }
     if (isTyping(event)) return;
+    if (isShortcut(event, "a") && filtered.length > 0) {
+      event.preventDefault();
+      picked = selectAll(filtered.filter((mod) => !mod.deleted).map((mod) => mod.id));
+      return;
+    }
+    if (picked.ids.length > 1) {
+      if (event.key === "Delete") {
+        event.preventDefault();
+        void bulkDelete();
+      }
+      return;
+    }
     if (event.key === "Delete" && selected && !selected.deleted && !selected.fromGameRepo) {
       event.preventDefault();
       void deleteSelected();
@@ -521,7 +633,7 @@
               ? -rowStep()
               : rowStep();
       const next = list[Math.max(0, Math.min(list.length - 1, index + step))];
-      if (next) selectedId = next.id;
+      if (next) picked = selectOnly(next.id);
     }
   }
 
@@ -543,9 +655,9 @@
     try {
       const found = await modDetails(mod.id);
       if (found.binding?.url) {
-        await openUrl(found.binding.url);
+        await openExternal(found.binding.url);
       } else {
-        selectedId = mod.id;
+        picked = selectOnly(mod.id);
         showToast("Страница мода не указана — её можно указать в панели мода");
       }
     } catch (reason) {
@@ -587,7 +699,7 @@
     }
     if (query) return "Проверьте написание. Ищем только среди ваших модов.";
     if (filter === "updates") return "Обновлений нет. Проверить снова можно на экране «Обновления».";
-    if (filter === "unchecked") return "У всех модов есть подтверждённая страница.";
+    if (filter === "unchecked") return "У всех модов есть страница — обновления проверяются.";
     if (filter === "disabled") return "Все моды включены.";
     if (typeFilter !== "all") return "Сбросьте фильтр типа, чтобы увидеть остальные.";
     if (filter === "deleted") return "Удалённые моды появятся здесь после подтверждения.";
@@ -681,7 +793,7 @@
         typeFilter = "all";
         filter = "all";
       }}
-    >Все <b>{shownMods.length.toLocaleString("ru-RU")}</b></button>
+    >Все <b>{groupDigits(shownMods.length)}</b></button>
     {#each typeFilters as item (item.id)}
       <button
         class="chip"
@@ -689,7 +801,7 @@
         type="button"
         aria-pressed={typeFilter === item.id}
         onclick={() => (typeFilter = typeFilter === item.id ? "all" : item.id)}
-      >{item.label} <b>{kinds[item.id].toLocaleString("ru-RU")}</b></button>
+      >{item.label} <b>{groupDigits(kinds[item.id])}</b></button>
     {/each}
     <span class="sep" aria-hidden="true"></span>
     {#each visibleFilters as item (item.id)}
@@ -701,7 +813,7 @@
         type="button"
         aria-pressed={filter === item.id}
         onclick={() => (filter = filter === item.id ? "all" : item.id)}
-      >{item.label} <b>{count.toLocaleString("ru-RU")}</b></button>
+      >{item.label} <b>{groupDigits(count)}</b></button>
     {/each}
   </div>
 
@@ -717,7 +829,7 @@
     </div>
   {/if}
 
-  <div class="body" class:with-inspector={selectedId !== null}>
+  <div class="body" class:with-inspector={selectedId !== null || picked.ids.length > 1}>
     <section class="work">
       {#if loading}
         <div class="loading" aria-label="Загружаем моды">
@@ -738,7 +850,10 @@
           {#if snapshot.folderError}
             <a class="btn-primary" href="/settings?section=folders">Выбрать папку</a>
           {:else if query}
-            <button type="button" class="btn-glass" onclick={() => (query = "")}>Сбросить поиск</button>
+            <div class="state-actions">
+              <a class="btn-primary" href={`/search?q=${encodeURIComponent(query)}`}>Искать на сайтах</a>
+              <button type="button" class="btn-glass" onclick={() => (query = "")}>Сбросить поиск</button>
+            </div>
           {:else if filter !== "all" || typeFilter !== "all"}
             <button
               type="button"
@@ -748,6 +863,8 @@
                 typeFilter = "all";
               }}>Показать все</button
             >
+          {:else if snapshot.mods.length === 0}
+            <a class="btn-primary" href="/search">Перейти в поиск</a>
           {/if}
         </div>
       {:else if snapshot}
@@ -756,13 +873,16 @@
           onToggle={(mod) => void toggle(mod)}
           onOpenPage={(mod) => void openPageOf(mod)}
           onShowFolder={(mod) => void showFolderOf(mod)}
-          onShowDetails={(mod) => (selectedId = mod.id)}
+          onShowDetails={(mod) => (picked = selectOnly(mod.id))}
           onDelete={(mod) => void deleteCard(mod)}
+          selectedIds={picked.ids}
+          onBulk={(action) =>
+            void (action === "delete" ? bulkDelete() : bulkToggle(action === "enable"))}
         >
           {#if view === "list"}
             <ModList
               items={filtered}
-              {selectedId}
+              selectedIds={picked.ids}
               onselect={select}
               ontoggle={(mod) => {
                 if (!mod.deleted) void toggle(mod);
@@ -772,7 +892,7 @@
           {:else}
             <ModGrid
               items={filtered}
-              {selectedId}
+              selectedIds={picked.ids}
               onselect={select}
               ontoggle={(mod) => {
                 if (!mod.deleted) void toggle(mod);
@@ -784,11 +904,21 @@
         </ModMenu>
       {/if}
     </section>
-    {#if selected?.deleted}
+    {#if picked.ids.length > 1}
+      <BulkBar
+        count={picked.ids.length}
+        {plan}
+        busy={bulkBusy}
+        onEnable={() => void bulkToggle(true)}
+        onDisable={() => void bulkToggle(false)}
+        onDelete={() => void bulkDelete()}
+        onClear={() => (picked = EMPTY)}
+      />
+    {:else if selected?.deleted}
       <DeletedInspector
         card={selected}
         onRestore={(card) => void restoreDeleted(card)}
-        onClose={() => (selectedId = null)}
+        onClose={() => (picked = EMPTY)}
       />
     {:else if selectedId !== null}
       <Inspector
@@ -800,7 +930,7 @@
         addon={selected?.role === "addon"}
         tag={selected ? typeTag(selected) : "mod"}
         group={selected && snapshot && selected.group.length > 0 ? groupMembers(selected, snapshot.mods) : []}
-        onShowMod={(id) => (selectedId = id)}
+        onShowMod={(id) => (picked = selectOnly(id))}
         onKeepOnly={(card) => void keepOnly(card)}
         onDeleteCard={(card) => void deleteCard(card)}
         update={selected?.update ?? "none"}
@@ -815,7 +945,7 @@
         }}
         onDelete={() => void deleteSelected()}
         onRestoreVersion={(version) => void restoreVersion(version)}
-        onClose={() => (selectedId = null)}
+        onClose={() => (picked = EMPTY)}
       />
     {/if}
   </div>
@@ -1052,6 +1182,7 @@
   }
 
   .body {
+    position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     flex: 1;
@@ -1108,13 +1239,29 @@
     text-decoration: none;
   }
 
+  .state-actions {
+    display: flex;
+    gap: 8px;
+  }
+
   .state.error p {
     color: var(--danger);
   }
 
+  /* Узкое окно: панель не прячется, а ложится поверх сетки справа. */
   @media (max-width: 980px) {
     .body.with-inspector {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .body.with-inspector > :global(aside) {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 5;
+      width: min(360px, 92%);
+      box-shadow: -18px 0 40px rgb(0 0 0 / 0.35);
     }
   }
 </style>

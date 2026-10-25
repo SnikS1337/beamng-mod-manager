@@ -1,9 +1,9 @@
 <script lang="ts">
+  import { openExternal } from "#lib/shell/openExternal.js";
   import { page } from "$app/state";
   import Car from "phosphor-svelte/lib/Car";
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { onDestroy, onMount } from "svelte";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { sourceName } from "#lib/ipc/search.js";
   import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
@@ -302,11 +302,7 @@
   }
 
   async function openLink(url: string) {
-    try {
-      await openUrl(url);
-    } catch {
-      window.open(url, "_blank", "noopener");
-    }
+    await openExternal(url);
   }
 
   /** «Обновить»: страница мода и полчаса наблюдения за «Загрузками». */
