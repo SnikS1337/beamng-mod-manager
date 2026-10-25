@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import IncomingHost from "#lib/features/incoming/IncomingHost.svelte";
+  import CommandPalette from "#lib/shell/CommandPalette.svelte";
   import Background from "#lib/shell/Background.svelte";
   import NavRail from "#lib/shell/NavRail.svelte";
   import Titlebar from "#lib/shell/Titlebar.svelte";
@@ -32,7 +33,6 @@
 
 <div class="app">
   <Background />
-  <div class="noise"></div>
   <Titlebar />
 
   <div class="workspace">
@@ -43,6 +43,7 @@
   </div>
 
   <IncomingHost />
+  <CommandPalette />
   <ToastHost />
   <WelcomeTour open={welcome} onClose={() => void closeWelcome()} />
 </div>
@@ -58,22 +59,12 @@
     position: relative;
     z-index: 10;
     display: grid;
-    grid-template-columns: 84px minmax(0, 1fr);
-    gap: 16px;
+    grid-template-columns: 76px minmax(0, 1fr);
     height: 100vh;
-    padding: 16px;
   }
 
   .content {
     min-width: 0;
     overflow: auto;
-    border-radius: 20px;
-  }
-
-  @media (max-width: 1020px) {
-    .workspace {
-      grid-template-columns: 84px minmax(0, 1fr);
-      gap: 12px;
-    }
   }
 </style>

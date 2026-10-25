@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from "$app/state";
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { onDestroy, onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -55,6 +56,14 @@
     available: snapshot.findings.length,
     hidden: snapshot.hidden.length,
     pages: snapshot.suggestions.length + (snapshot.lost?.length ?? 0),
+  });
+
+  // «Проверить обновления сейчас» из палитры команд: /updates?check=1
+  let askedCheck = false;
+  $effect(() => {
+    if (page.url.searchParams.get("check") !== "1" || askedCheck || loading) return;
+    askedCheck = true;
+    void check();
   });
 
   onMount(() => {

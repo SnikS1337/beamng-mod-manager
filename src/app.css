@@ -5,169 +5,223 @@
 @custom-variant data-checked (&[data-state="checked"]);
 @custom-variant data-unchecked (&[data-state="unchecked"]);
 
-/* Переключатель как в legacy: включённый — мягкий голубой, бегунок белый. */
-[data-slot="switch"][data-state="checked"] {
-  background: linear-gradient(180deg, oklch(0.74 0.12 255), oklch(0.62 0.14 262));
-  box-shadow:
-    0 0 0 1px oklch(0.7 0.12 258 / 0.7),
-    0 3px 10px oklch(0.7 0.13 258 / 0.35);
+/* Шрифты лежат в программе (static/fonts): без сети и внешних адресов. */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/manrope-cyrillic-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/manrope-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 200 700;
+  font-display: swap;
+  src: url("/fonts/oswald-cyrillic-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 200 700;
+  font-display: swap;
+  src: url("/fonts/oswald-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-cyrillic-500-normal.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-[data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] {
-  background: #fff;
-}
-
-[data-slot="switch"][data-state="unchecked"] {
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 14%, transparent);
-}
-
-[data-slot="switch-thumb"] {
-  box-shadow:
-    0 1px 4px rgb(6 10 22 / 0.28),
-    0 1px 1px rgb(6 10 22 / 0.18);
-}
+/*
+  Оформление «Гараж BeamNG»: графит, один акцентный цвет, узкие заголовки (Oswald),
+  текст — Manrope, числа и версии — JetBrains Mono.
+  Цвета — только через переменные ниже: компоненты не пишут свои оттенки,
+  поэтому тема (тёмная/светлая) и акцент меняются в одном месте.
+*/
 
 :root {
-  --radius: 0.875rem;
+  --radius: 0.625rem;
 
-  --background: oklch(0.968 0.007 250);
-  --foreground: oklch(0.21 0.02 265);
-  --card: oklch(0.99 0.004 250);
-  --card-foreground: oklch(0.21 0.02 265);
-  --popover: oklch(0.99 0.004 250);
-  --popover-foreground: oklch(0.21 0.02 265);
-  /* Главная кнопка в светлом — тёмная (#141B2B), в тёмном — белая (legacy, DESIGN.md 3.3). */
-  --primary: #141b2b;
-  --primary-foreground: #ffffff;
-  --primary-glow: rgb(60 80 140 / 0.22);
-  --secondary: oklch(0.93 0.012 255);
-  --secondary-foreground: oklch(0.25 0.02 265);
-  --muted: oklch(0.93 0.01 255);
-  --muted-foreground: oklch(0.5 0.02 260);
-  --accent: oklch(0.9 0.025 275);
-  --accent-foreground: oklch(0.25 0.03 275);
-  --destructive: oklch(0.58 0.21 25);
-  --border: oklch(0.21 0.02 265 / 0.12);
-  --input: oklch(0.21 0.02 265 / 0.16);
-  --ring: oklch(0.55 0.13 258);
-  --warning: oklch(0.44 0.13 68);
-  --warning-soft: oklch(0.82 0.15 85 / 0.2);
-  --warning-border: oklch(0.66 0.14 75 / 0.5);
+  /* Светлая тема. */
+  --background: #f1f2f4;
+  --surface: #ffffff;
+  --surface-2: #f6f7f9;
+  --surface-3: #eceef1;
+  --foreground: #16181c;
+  --muted-foreground: #5b626c;
+  --faint-foreground: #80868f;
+  --border: rgb(22 24 28 / 0.1);
+  --border-strong: rgb(22 24 28 / 0.18);
+  --shadow-1: 0 1px 2px rgb(16 18 22 / 0.06), 0 2px 8px rgb(16 18 22 / 0.05);
+  --shadow-2: 0 10px 30px rgb(16 18 22 / 0.14), 0 2px 6px rgb(16 18 22 / 0.08);
+  --overlay: rgb(16 18 22 / 0.35);
 
-  --glass-fill: rgb(255 255 255 / 0.72);
-  --glass-fill-strong: rgb(255 255 255 / 0.86);
-  --glass-border: rgb(255 255 255 / 0.72);
-  --glass-highlight: rgb(255 255 255 / 0.9);
-  --glass-shadow: 0 20px 55px rgb(30 45 80 / 0.16);
-  --drop-fill: rgb(255 255 255 / 0.66);
-  --drop-glow: rgb(80 100 170 / 0.16);
-  --panel-solid: oklch(0.985 0.004 250);
-  --grid-line: rgb(20 35 60 / 0.06);
+  --accent-brand: #f26a0f;
+  --accent-brand-hover: #ff7a1a;
+  --accent-brand-contrast: #1a0e04;
+  --accent-brand-soft: rgb(242 106 15 / 0.12);
+  --accent-brand-text: #b84d05;
 
-  --blob-a: oklch(0.76 0.16 275);
-  --blob-b: oklch(0.78 0.13 210);
-  --blob-c: oklch(0.82 0.14 330);
-  --blob-d: oklch(0.85 0.11 160);
+  --ok: #1f9a62;
+  --warning: #9a6a0c;
+  --warning-soft: rgb(242 181 68 / 0.18);
+  --warning-border: rgb(196 140 30 / 0.45);
+  --danger: #c93b30;
+  --danger-soft: rgb(255 107 94 / 0.12);
+  --info: #2f6fd0;
+
+  --kind-vehicle: #b45a12;
+  --kind-map: #1d8a5a;
+  --kind-addon: #5361d6;
+  --kind-script: #23799f;
+
+  /* Совместимость со shadcn-компонентами и старыми классами. */
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface);
+  --popover-foreground: var(--foreground);
+  --primary: var(--accent-brand);
+  --primary-foreground: var(--accent-brand-contrast);
+  --primary-glow: transparent;
+  --secondary: var(--surface-3);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-3);
+  --accent: var(--surface-3);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--danger);
+  --input: var(--border-strong);
+  --ring: var(--accent-brand);
+  --glass-fill: var(--surface);
+  --glass-fill-strong: var(--surface-2);
+  --glass-border: var(--border);
+  --glass-highlight: transparent;
+  --glass-shadow: var(--shadow-1);
+  --drop-fill: var(--surface);
+  --drop-glow: var(--accent-brand-soft);
+  --panel-solid: var(--surface);
+  --grid-line: rgb(22 24 28 / 0.04);
+
+  --font-sans: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Oswald", "Manrope", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  /* Движение: короткое и с мягким торможением. `.no-motion` обнуляет длительности. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
 }
 
 .dark {
-  --background: oklch(0.16 0.022 268);
-  --foreground: oklch(0.95 0.008 255);
-  --card: oklch(0.215 0.022 268);
-  --card-foreground: oklch(0.95 0.008 255);
-  --popover: oklch(0.2 0.022 268);
-  --popover-foreground: oklch(0.95 0.008 255);
-  --primary: #ffffff;
-  --primary-foreground: #111111;
-  --primary-glow: rgb(170 205 255 / 0.42);
-  --secondary: oklch(0.27 0.024 268);
-  --secondary-foreground: oklch(0.94 0.008 255);
-  --muted: oklch(0.25 0.02 268);
-  --muted-foreground: oklch(0.69 0.02 260);
-  --accent: oklch(0.31 0.04 278);
-  --accent-foreground: oklch(0.96 0.008 255);
-  --destructive: oklch(0.63 0.2 25);
-  --border: rgb(255 255 255 / 0.12);
-  --input: rgb(255 255 255 / 0.16);
-  --ring: rgb(255 255 255 / 0.9);
-  --warning: oklch(0.85 0.12 85);
-  --warning-soft: oklch(0.82 0.15 85 / 0.1);
-  --warning-border: oklch(0.82 0.15 85 / 0.35);
+  --background: #0e0f11;
+  --surface: #16181c;
+  --surface-2: #1c1f24;
+  --surface-3: #24272d;
+  --foreground: #ecedef;
+  --muted-foreground: #a0a6ae;
+  --faint-foreground: #7c838c;
+  --border: rgb(255 255 255 / 0.08);
+  --border-strong: rgb(255 255 255 / 0.15);
+  --shadow-1: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 6px 18px rgb(0 0 0 / 0.28);
+  --shadow-2: 0 24px 60px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.4);
+  --overlay: rgb(6 7 9 / 0.62);
 
-  --glass-fill: rgb(30 36 54 / 0.62);
-  --glass-fill-strong: rgb(44 52 74 / 0.72);
-  --glass-border: rgb(255 255 255 / 0.14);
-  --glass-highlight: rgb(255 255 255 / 0.24);
-  --glass-shadow: 0 22px 56px rgb(8 12 24 / 0.38);
-  --drop-fill: rgb(255 255 255 / 0.13);
-  --drop-glow: rgb(170 205 255 / 0.22);
-  --panel-solid: oklch(0.21 0.022 268);
-  --grid-line: rgb(255 255 255 / 0.05);
+  --accent-brand: #ff7a1a;
+  --accent-brand-hover: #ff8f3f;
+  --accent-brand-contrast: #1a0e04;
+  --accent-brand-soft: rgb(255 122 26 / 0.14);
+  --accent-brand-text: #ffb27a;
 
-  --blob-a: oklch(0.55 0.2 278);
-  --blob-b: oklch(0.55 0.16 215);
-  --blob-c: oklch(0.52 0.18 330);
-  --blob-d: oklch(0.55 0.14 160);
+  --ok: #4cc38a;
+  --warning: #ffd08a;
+  --warning-soft: rgb(242 181 68 / 0.12);
+  --warning-border: rgb(242 181 68 / 0.4);
+  --danger: #ff8a7e;
+  --danger-soft: rgb(255 107 94 / 0.12);
+  --info: #7cb8ff;
+
+  --kind-vehicle: #ffb27a;
+  --kind-map: #7fd1a8;
+  --kind-addon: #a9b4ff;
+  --kind-script: #8fd3ff;
+
+  --grid-line: rgb(255 255 255 / 0.025);
 }
 
+/* Акцент. Имена тем остались прежними — так сохранённые настройки не сбрасываются. */
 .theme-deep {
-  --blob-a: oklch(0.62 0.18 250);
-  --blob-b: oklch(0.66 0.14 205);
-  --blob-c: oklch(0.64 0.16 290);
-  --blob-d: oklch(0.68 0.12 180);
+  --accent-brand: #3d8bff;
+  --accent-brand-hover: #5a9dff;
+  --accent-brand-contrast: #04101f;
+  --accent-brand-soft: rgb(61 139 255 / 0.14);
+  --accent-brand-text: #2463c4;
 }
-
 .dark.theme-deep {
-  --blob-a: oklch(0.45 0.19 252);
-  --blob-b: oklch(0.47 0.14 205);
-  --blob-c: oklch(0.43 0.18 292);
-  --blob-d: oklch(0.48 0.12 180);
+  --accent-brand-text: #9cc4ff;
 }
-
 .theme-dusk {
-  --blob-a: oklch(0.75 0.16 330);
-  --blob-b: oklch(0.78 0.14 35);
-  --blob-c: oklch(0.72 0.16 300);
-  --blob-d: oklch(0.8 0.12 70);
+  --accent-brand: #ff4f4f;
+  --accent-brand-hover: #ff6a6a;
+  --accent-brand-contrast: #1f0505;
+  --accent-brand-soft: rgb(255 79 79 / 0.14);
+  --accent-brand-text: #c02a2a;
 }
-
 .dark.theme-dusk {
-  --blob-a: oklch(0.52 0.18 330);
-  --blob-b: oklch(0.55 0.16 35);
-  --blob-c: oklch(0.48 0.16 300);
-  --blob-d: oklch(0.56 0.13 70);
+  --accent-brand-text: #ffaaa6;
 }
-
 .theme-forest {
-  --blob-a: oklch(0.7 0.14 150);
-  --blob-b: oklch(0.74 0.12 185);
-  --blob-c: oklch(0.68 0.13 120);
-  --blob-d: oklch(0.78 0.1 90);
+  --accent-brand: #33c47c;
+  --accent-brand-hover: #4fd28f;
+  --accent-brand-contrast: #04170d;
+  --accent-brand-soft: rgb(51 196 124 / 0.14);
+  --accent-brand-text: #17824f;
 }
-
 .dark.theme-forest {
-  --blob-a: oklch(0.45 0.14 150);
-  --blob-b: oklch(0.48 0.12 185);
-  --blob-c: oklch(0.42 0.12 120);
-  --blob-d: oklch(0.5 0.1 90);
+  --accent-brand-text: #8fe3b8;
 }
-
 .theme-graphite {
-  --blob-a: oklch(0.72 0.02 260);
-  --blob-b: oklch(0.76 0.015 240);
-  --blob-c: oklch(0.68 0.02 280);
-  --blob-d: oklch(0.8 0.01 220);
+  --accent-brand: #2a2d33;
+  --accent-brand-hover: #3a3e45;
+  --accent-brand-contrast: #ffffff;
+  --accent-brand-soft: rgb(42 45 51 / 0.1);
+  --accent-brand-text: #2a2d33;
 }
-
 .dark.theme-graphite {
-  --blob-a: oklch(0.42 0.015 260);
-  --blob-b: oklch(0.46 0.012 240);
-  --blob-c: oklch(0.38 0.015 280);
-  --blob-d: oklch(0.5 0.01 220);
+  --accent-brand: #dcdfe3;
+  --accent-brand-hover: #eceef0;
+  --accent-brand-contrast: #111214;
+  --accent-brand-soft: rgb(220 223 227 / 0.1);
+  --accent-brand-text: #eceef0;
 }
 
-.no-background .bg-blob {
-  animation: none !important;
+.no-motion {
+  --dur-1: 0ms;
+  --dur-2: 0ms;
+  --dur-3: 0ms;
 }
 
 @theme inline {
@@ -189,11 +243,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 0.375rem);
-  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-sm: calc(var(--radius) - 0.25rem);
+  --radius-md: calc(var(--radius) - 0.125rem);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 0.25rem);
-  --radius-2xl: calc(var(--radius) + 0.75rem);
+  --radius-2xl: calc(var(--radius) + 0.5rem);
 }
 
 html,
@@ -206,11 +260,12 @@ body {
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 500;
   line-height: 1.4;
   font-synthesis: none;
+  font-variant-numeric: tabular-nums;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -218,147 +273,203 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
-.glass {
-  background: var(--glass-fill);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    var(--glass-shadow);
+/* Заголовки разделов — узкий шрифт капителью, как в интерфейсе игры. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
-/* Кнопки legacy: полностью круглые. Главная — белая (тёмная в светлом) со свечением,
-   вторичные — стеклянные пилюли. */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+/* Панель: плотная поверхность с тонкой кромкой. Имя класса прежнее — им пользуются все экраны. */
+.glass {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+.glass-strong {
+  background: var(--surface-2);
+}
+
+.glass[role="dialog"],
+.glass[role="status"],
+.glass.solid {
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+
+/* Старая «жидкая кромка» больше не рисуется. */
+.liquid-edge {
+  position: relative;
+}
+
 .btn-primary,
-.btn-glass {
+.btn-glass,
+.btn-ghost {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
   height: 36px;
-  padding: 0 18px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 620;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
   white-space: nowrap;
   cursor: default;
   transition:
-    transform 100ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease;
+    transform var(--dur-1) var(--ease-out),
+    background-color var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
 }
 
 .btn-primary {
-  border: 0;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  box-shadow: 0 6px 22px var(--primary-glow);
+  border: 1px solid var(--accent-brand);
+  background: var(--accent-brand);
+  color: var(--accent-brand-contrast);
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: var(--accent-brand-hover);
+  background: var(--accent-brand-hover);
 }
 
 .btn-glass {
-  border: 1px solid var(--glass-border);
-  background: var(--glass-fill);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
   color: var(--foreground);
 }
 
-.btn-glass:hover {
-  background: var(--glass-fill-strong);
+.btn-glass:hover:not(:disabled) {
+  background: var(--surface-3);
 }
 
-.btn-primary:active,
-.btn-glass:active {
-  transform: scale(0.97);
+.btn-ghost {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--foreground);
+}
+
+.btn-primary:active:not(:disabled),
+.btn-glass:active:not(:disabled),
+.btn-ghost:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn-primary:disabled,
-.btn-glass:disabled {
-  opacity: 0.55;
+.btn-glass:disabled,
+.btn-ghost:disabled {
+  opacity: 0.5;
 }
 
-/* Окна поверх содержимого (диалоги, подсказки, тосты) — всегда плотные: без размытия
-   сквозь полупрозрачную панель читались бы карточки под ней. */
-.glass[role="dialog"],
-.glass[role="status"],
-.glass.solid {
-  background: var(--panel-solid);
+:where(button, a, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
-.glass-strong {
-  background: var(--glass-fill-strong);
+/* Метка типа мода: «Машина», «Карта», «Дополнение», «Скрипт». */
+.kind-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 5px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.no-glass .glass {
-  background: var(--panel-solid);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 10px 30px rgb(0 0 0 / 0.18);
+.kind-tag.vehicle {
+  color: var(--kind-vehicle);
+}
+.kind-tag.map,
+.kind-tag.level {
+  color: var(--kind-map);
+}
+.kind-tag.addon,
+.kind-tag.sound {
+  color: var(--kind-addon);
+}
+.kind-tag.script {
+  color: var(--kind-script);
 }
 
-.liquid-edge {
-  position: relative;
-  isolation: isolate;
+kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
 }
 
-.liquid-edge::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  padding: 1px;
-  border-radius: inherit;
-  background: conic-gradient(
-    from 140deg,
-    rgb(255 255 255 / 0.02),
-    rgb(167 139 250 / 0.55),
-    rgb(103 232 249 / 0.4),
-    rgb(255 255 255 / 0.02),
-    rgb(244 114 182 / 0.35),
-    rgb(255 255 255 / 0.02)
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  opacity: 0.55;
-  pointer-events: none;
+/* Переключатель: включённый — акцентом. */
+[data-slot="switch"][data-state="checked"] {
+  background: var(--accent-brand);
 }
 
-.no-glass .liquid-edge::before {
-  opacity: 0.18;
+[data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] {
+  background: var(--accent-brand-contrast);
 }
 
-.noise {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.04;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.7'/%3E%3C/svg%3E");
-  mix-blend-mode: overlay;
+[data-slot="switch"][data-state="unchecked"] {
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+[data-slot="switch"][data-state="unchecked"] [data-slot="switch-thumb"] {
+  background: var(--muted-foreground);
+}
+
+[data-slot="switch-thumb"] {
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 input[type="checkbox"] {
   display: inline-grid;
   place-content: center;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   margin: 0;
-  border: 1px solid color-mix(in oklab, var(--foreground) 28%, transparent);
-  border-radius: 5px;
-  background: color-mix(in oklab, var(--foreground) 5%, transparent);
-  color: var(--primary-foreground);
-  accent-color: var(--primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--accent-brand-contrast);
   cursor: default;
   appearance: none;
   vertical-align: middle;
   transition:
-    border-color 0.12s ease-out,
-    background-color 0.12s ease-out;
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
 }
 
 input[type="checkbox"]::after {
@@ -367,33 +478,23 @@ input[type="checkbox"]::after {
   height: 8px;
   margin-top: -2px;
   border: solid currentColor;
-  border-width: 0 1.8px 1.8px 0;
+  border-width: 0 2px 2px 0;
   transform: rotate(45deg) scale(0);
-  transition: transform 0.12s ease-out;
+  transition: transform var(--dur-1) var(--ease-out);
 }
 
 input[type="checkbox"]:checked {
-  border-color: var(--primary);
-  background: var(--primary);
+  border-color: var(--accent-brand);
+  background: var(--accent-brand);
 }
 
 input[type="checkbox"]:checked::after {
   transform: rotate(45deg) scale(1);
 }
 
-input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.no-motion input[type="checkbox"],
-.no-motion input[type="checkbox"]::after {
-  transition: none;
-}
-
 .scroll-area {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .scroll-area::-webkit-scrollbar {
@@ -404,12 +505,12 @@ input[type="checkbox"]:focus-visible {
 .scroll-area::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
-  background: color-mix(in oklab, var(--foreground) 20%, transparent);
+  background: var(--border-strong);
   background-clip: content-box;
 }
 
 .scroll-area::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklab, var(--foreground) 30%, transparent);
+  background: var(--faint-foreground);
   background-clip: content-box;
 }
 
@@ -423,18 +524,62 @@ input[type="checkbox"]:focus-visible {
   }
 }
 
-.no-motion .spin {
+/* Появление: короткий подъём с проявлением. Карточкам — с небольшой задержкой по порядку. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.rise-in {
+  animation: rise-in var(--dur-3) var(--ease-out) both;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+.no-motion .spin,
+.no-motion .rise-in,
+.no-motion .skeleton {
   animation: none;
 }
 
-.no-motion .bg-blob,
-.no-motion .bg-noise {
-  animation: none !important;
-}
-
-.no-motion .liquid-edge::before {
-  background: var(--glass-border);
-}
-
-/* Флажок Windows «анимация элементов» фон не гасит: движением управляют только
-   настройки программы (решение 0.3.11, класс .no-motion / .no-background). */
+/* Флажок Windows «анимация элементов» движение не гасит: им управляют только
+   настройки программы (решение 0.3.11, класс .no-motion). */

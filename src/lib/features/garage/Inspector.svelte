@@ -11,7 +11,10 @@
   } from "#lib/ipc/library.js";
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
-  import { formatDate, formatSize, kindLabel, plural } from "./format";
+  import X from "phosphor-svelte/lib/X";
+  import Car from "phosphor-svelte/lib/Car";
+  import { formatDate, formatSize, plural } from "./format";
+  import { typeLabel, type TypeTag } from "./view";
   import VersionsBlock from "./VersionsBlock.svelte";
   import { duplicateExplain } from "./duplicates";
 
@@ -23,6 +26,7 @@
     duplicateOf = null,
     group = [],
     addon = false,
+    tag = "mod",
     fixing = false,
     update = "none",
     updateVersion = null,
@@ -48,6 +52,8 @@
     group?: ModCardDto[];
     /** Дополнение (не машина и не карта): без картинки, как в списке. */
     addon?: boolean;
+    /** Метка типа — та же, что на карточке. */
+    tag?: TypeTag;
     fixing?: boolean;
     update?: string;
     updateVersion?: string | null;
@@ -128,19 +134,6 @@
       .catch(() => {});
   });
 
-  const hue = $derived(details ? hashHue(details.id) : 210);
-  const placeholder = $derived(
-    `radial-gradient(120% 90% at 18% 0%, hsl(${hue} 85% 68% / 0.8), transparent 62%), linear-gradient(135deg, hsl(${hue} 38% 28%), hsl(${(hue + 58) % 360} 42% 16%))`,
-  );
-
-  function hashHue(id: string): number {
-    let hash = 0;
-    for (let index = 0; index < id.length; index += 1) {
-      hash = (hash * 31 + id.charCodeAt(index)) % 360;
-    }
-    return hash;
-  }
-
   const hasUpdate = $derived(update !== "none" && !!details?.binding);
 
   async function openPage() {
@@ -168,27 +161,33 @@
   }
 </script>
 
-<aside class="inspector glass liquid-edge scroll-area">
-  <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>×</button>
+<aside class="inspector scroll-area" aria-label="Выбранный мод">
+  <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>
+    <X size={15} weight="bold" />
+  </button>
 
   {#if loading && !details}
-    <div class="skeleton"></div>
+    <div class="skeleton hero-skeleton"></div>
+    <div class="skeleton line-skeleton"></div>
   {:else if details}
-    <div class="hero" style={preview ? undefined : `background:${placeholder}`}>
-      {#if preview}
-        <img src={preview} alt="" />
-      {:else}
-        <span>{addon ? "Дополнение" : kindLabel(details.kind)}</span>
-      {/if}
-    </div>
+    {#key details.id}
+      <div class="hero" class:addon>
+        {#if preview}
+          <img src={preview} alt="" />
+        {:else}
+          <span class="hero-icon"><Car size={56} weight="thin" /></span>
+        {/if}
+        <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+      </div>
+    {/key}
 
-    <h2>{details.name}</h2>
+    <h2 class="display">{details.name}</h2>
     <p class="file" title={details.fileName}>{details.fileName}</p>
 
     {#if group.length > 1}
       {@const enabledCount = group.filter((item) => item.enabled).length}
       <section class="copies" class:conflict={enabledCount > 1}>
-        <h3>Копии: {group.length - 1}</h3>
+        <h3>В группе {group.length} {plural(group.length, "файл", "файла", "файлов")}</h3>
         <p>
           {enabledCount > 1
             ? `Включено ${enabledCount} — игра загрузит все, и чьи файлы победят, неизвестно. Оставьте одну.`
@@ -362,47 +361,66 @@
 </aside>
 
 <style>
-  /* Правая панель legacy: стекло, радиус 32, ширина 328, фото, название 24/700,
-     одно главное действие, блоки данных на светлой подложке. */
+  /* Панель справа: на всю высоту, плоская, отделена кромкой — как в макете. */
   .inspector {
     position: relative;
     min-width: 0;
     height: 100%;
+    box-sizing: border-box;
     overflow-y: auto;
-    border-radius: 32px;
-    padding: 16px 18px 20px;
-    background: var(--glass-fill-strong);
+    padding: 20px;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    animation: panel-in var(--dur-3) var(--ease-out) both;
+  }
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   .close {
     position: absolute;
-    top: 24px;
-    right: 26px;
+    top: 28px;
+    right: 28px;
     z-index: 2;
     display: grid;
     place-items: center;
     width: 30px;
     height: 30px;
-    border: 1px solid rgb(255 255 255 / 0.2);
-    border-radius: 999px;
-    background: rgb(10 14 26 / 0.7);
-    color: rgb(255 255 255 / 0.85);
-    font-size: 18px;
-    line-height: 1;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--background) 80%, transparent);
+    color: var(--foreground);
     cursor: default;
   }
 
   .close:hover {
-    color: white;
+    background: var(--surface-3);
   }
 
   .hero {
     position: relative;
-    height: 150px;
+    height: 190px;
     margin-bottom: 16px;
-    border-radius: 20px;
     overflow: hidden;
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+    border-radius: 10px;
+    background: var(--surface-2);
+    animation: fade-in var(--dur-3) var(--ease-out) both;
+  }
+
+  .hero.addon {
+    background: repeating-linear-gradient(
+      135deg,
+      var(--surface-2) 0 12px,
+      color-mix(in oklab, var(--surface-2) 70%, var(--surface-3)) 12px 24px
+    );
   }
 
   .hero img {
@@ -411,30 +429,31 @@
     object-fit: cover;
   }
 
-  .hero span {
+  .hero-icon {
     position: absolute;
     inset: 0;
     display: grid;
     place-items: center;
-    color: rgb(255 255 255 / 0.25);
-    font-size: 18px;
-    font-weight: 650;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    color: var(--faint-foreground);
+    opacity: 0.6;
+  }
+
+  .hero .kind-tag {
+    position: absolute;
+    top: 12px;
+    left: 12px;
   }
 
   h2 {
     margin: 0;
-    font-size: 24px;
-    font-weight: 700;
-    line-height: 1.15;
-    letter-spacing: -0.02em;
+    font-size: 25px;
+    line-height: 1.1;
   }
 
   .file {
-    margin: 5px 0 16px;
+    margin: 4px 0 16px;
     overflow: hidden;
-    color: color-mix(in oklab, var(--foreground) 60%, transparent);
+    color: var(--faint-foreground);
     font-size: 12.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -442,25 +461,22 @@
 
   .wide {
     width: 100%;
-    height: 42px;
-    font-size: 14px;
+    height: 40px;
   }
 
   .explain {
     margin: 8px 2px 0;
-    color: color-mix(in oklab, var(--foreground) 66%, transparent);
+    color: var(--muted-foreground);
     font-size: 12.5px;
-    line-height: 1.4;
-    text-align: center;
+    line-height: 1.45;
   }
 
   .facts {
     display: flex;
     flex-direction: column;
     margin-top: 16px;
-    padding: 4px 14px;
-    border-radius: 16px;
-    background: color-mix(in oklab, var(--foreground) 7%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 10px;
   }
 
   section .facts {
@@ -471,18 +487,18 @@
     display: flex;
     justify-content: space-between;
     gap: 14px;
-    padding: 9px 0;
-    color: color-mix(in oklab, var(--foreground) 64%, transparent);
+    padding: 9px 12px;
+    color: var(--muted-foreground);
     font-size: 13px;
   }
 
   .facts div + div {
-    border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
+    border-top: 1px solid var(--border);
   }
 
   .facts b {
     color: var(--foreground);
-    font-weight: 550;
+    font-weight: 600;
     text-align: right;
   }
 
@@ -490,38 +506,47 @@
     color: var(--warning);
   }
 
+  .facts p {
+    margin: 0;
+    padding: 9px 12px;
+  }
+
   section {
     padding-top: 18px;
   }
 
   h3 {
-    margin: 0 0 8px 2px;
-    font-size: 13px;
-    font-weight: 650;
+    margin: 0 0 8px;
+    color: var(--faint-foreground);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .copies {
     display: grid;
     gap: 8px;
+    margin-bottom: 4px;
     padding: 12px;
-    border: 1px solid rgb(255 255 255 / 0.14);
-    border-radius: 16px;
-    background: rgb(255 255 255 / 0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
   }
 
   .copies.conflict {
-    border-color: rgb(255 107 94 / 0.5);
+    border-color: color-mix(in oklab, var(--danger) 50%, transparent);
+    background: var(--danger-soft);
   }
 
   .copies h3 {
     margin: 0;
-    font-size: 13px;
   }
 
   .copies p {
     margin: 0;
-    font-size: 12px;
-    opacity: 0.75;
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    line-height: 1.45;
   }
 
   .copies ul {
@@ -536,12 +561,13 @@
     display: grid;
     gap: 4px;
     padding: 8px 10px;
-    border-radius: 12px;
-    background: rgb(255 255 255 / 0.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
   }
 
   .copies li.current {
-    outline: 1px solid rgb(111 179 255 / 0.5);
+    border-color: var(--accent-brand);
   }
 
   .copy-text {
@@ -551,14 +577,14 @@
 
   .copy-text b {
     overflow: hidden;
-    font-size: 12px;
+    font-size: 12.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .copy-text span {
-    font-size: 11px;
-    opacity: 0.7;
+    color: var(--muted-foreground);
+    font-size: 11.5px;
   }
 
   .copy-actions {
@@ -571,36 +597,39 @@
     padding: 0;
     border: 0;
     background: none;
-    color: inherit;
-    font-size: 12px;
-    font-weight: 600;
+    color: var(--accent-brand-text);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: default;
+  }
+
+  .copy-actions .link:hover {
     text-decoration: underline;
-    cursor: pointer;
   }
 
   .copy-actions .danger {
-    color: #ff8b80;
+    color: var(--danger);
   }
 
   .problem {
     padding: 14px;
-    border: 1px solid oklch(0.66 0.19 25 / 0.45);
-    border-radius: 16px;
-    background: oklch(0.66 0.19 25 / 0.1);
+    border: 1px solid var(--warning-border);
+    border-radius: 10px;
+    background: var(--warning-soft);
   }
 
   .problem h3 {
     margin: 0;
+    color: var(--warning);
   }
 
   .problem p {
     margin: 6px 0 12px;
-    font-size: 12.5px;
+    font-size: 13px;
     line-height: 1.45;
   }
 
   .warn {
-    margin: 4px 0 8px;
     color: var(--warning);
     font-size: 12.5px;
     line-height: 1.4;
@@ -621,8 +650,7 @@
   .links :global(.btn-glass) {
     flex: 1 1 auto;
     height: 34px;
-    padding: 0 14px;
-    font-size: 12.5px;
+    font-size: 13px;
   }
 
   .bind {
@@ -631,8 +659,9 @@
     gap: 8px;
     margin-top: 18px;
     padding: 14px;
-    border-radius: 18px;
-    background: color-mix(in oklab, var(--foreground) 5%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
   }
 
   .bind span {
@@ -643,9 +672,9 @@
   .bind input {
     height: 36px;
     padding: 0 12px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--panel-solid);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
     color: var(--foreground);
     font-size: 13px;
     outline: none;
@@ -653,12 +682,12 @@
   }
 
   .bind input:focus {
-    border-color: var(--ring);
+    border-color: var(--accent-brand);
   }
 
   .bind-error {
     margin: 0;
-    color: var(--destructive);
+    color: var(--danger);
     font-size: 12.5px;
     line-height: 1.4;
   }
@@ -677,8 +706,8 @@
     display: flex;
     align-items: baseline;
     gap: 10px;
-    margin: 14px 2px 0;
-    color: color-mix(in oklab, var(--foreground) 55%, transparent);
+    margin: 16px 0 0;
+    color: var(--faint-foreground);
     font-size: 12.5px;
   }
 
@@ -686,29 +715,29 @@
     padding: 0;
     border: 0;
     background: transparent;
-    color: #ff8f84;
+    color: var(--danger);
     font-size: 13px;
-    font-weight: 600;
-    text-decoration: underline;
-    text-underline-offset: 3px;
+    font-weight: 700;
     cursor: default;
   }
 
-  .skeleton {
-    height: 260px;
-    margin: 10px 0;
-    border-radius: 20px;
-    background: color-mix(in oklab, var(--foreground) 6%, transparent);
-    animation: pulse 1.6s ease-in-out infinite;
+  .delete button:hover {
+    text-decoration: underline;
   }
 
-  @keyframes pulse {
-    50% {
-      opacity: 0.5;
-    }
+  .hero-skeleton {
+    height: 190px;
+    border-radius: 10px;
   }
 
-  @media (max-width: 900px) {
+  .line-skeleton {
+    height: 28px;
+    width: 70%;
+    margin-top: 16px;
+    border-radius: 6px;
+  }
+
+  @media (max-width: 980px) {
     .inspector {
       display: none;
     }

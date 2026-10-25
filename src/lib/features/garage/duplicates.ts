@@ -1,4 +1,5 @@
 import type { DuplicateOf, ModCardDto } from "#lib/ipc/library.js";
+import { plural } from "./format";
 
 /** Карточки для списка: копии прячутся за карточкой основного мода группы. */
 export function visibleCards(cards: ModCardDto[]): ModCardDto[] {
@@ -17,9 +18,11 @@ export function groupMembers(main: ModCardDto, all: ModCardDto[]): ModCardDto[] 
   return [main, ...members];
 }
 
-/** Метка в углу карточки основного: сколько ещё копий. */
+/** Метка в углу карточки основного: сколько всего файлов в группе, считая его самого. */
 export function copiesBadge(main: ModCardDto): string | null {
-  return main.group.length > 0 ? `Копий: ${main.group.length}` : null;
+  if (main.group.length === 0) return null;
+  const total = main.group.length + 1;
+  return `${total} ${plural(total, "копия", "копии", "копий")}`;
 }
 
 /** Короткая метка у копии. */

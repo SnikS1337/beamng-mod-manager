@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { page } from "$app/state";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { ExternalLink, Search, X } from "@lucide/svelte";
   import { formatSize, plural } from "#lib/features/garage/format.js";
@@ -68,12 +69,25 @@
     }
   });
 
+  let listening = $state(false);
+
   onMount(() => {
     input?.focus();
     void listenSearch(onEvent).then((stop) => {
       unlisten = stop;
+      listening = true;
     });
     return () => unlisten?.();
+  });
+
+  // «Найти … на сайтах» из палитры команд: /search?q=…
+  let askedQuery = "";
+  $effect(() => {
+    const asked = page.url.searchParams.get("q")?.trim() ?? "";
+    if (!listening || !asked || asked === askedQuery) return;
+    askedQuery = asked;
+    query = asked;
+    void runSearch();
   });
 
   onDestroy(() => {
