@@ -8,6 +8,7 @@
   import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { checkSummary } from "#lib/features/updates/summary.js";
+  import { motion } from "#lib/shell/motion.svelte.js";
   import { reason, sizeChange } from "#lib/features/updates/reason.js";
   import {
     listenUpdates,
@@ -41,6 +42,13 @@
   let checking = $state(false);
   let passing = $state(false);
   let filter = $state<Filter>("available");
+
+  function setTab(next: Filter) {
+    if (next === filter) return;
+    void motion.run(() => {
+      filter = next;
+    }, "flow-section");
+  }
   let progress = $state<UpdateProgress | null>(null);
   /** Ход проверки при запуске (она идёт сама, без нажатия). */
   let autoProgress = $state<UpdateProgress | null>(null);
@@ -397,13 +405,16 @@
       </p>
     </div>
     <div class="tabs" role="tablist" aria-label="Что показать">
-      <button type="button" role="tab" class="tab" class:active={filter === "available"} aria-selected={filter === "available"} onclick={() => (filter = "available")}>
+      <button type="button" role="tab" class="tab" class:active={filter === "available"} aria-selected={filter === "available"} onclick={() => setTab("available")}>
+        {#if filter === "available"}<span class="line" aria-hidden="true"></span>{/if}
         Доступные <b>{counts.available}</b>
       </button>
-      <button type="button" role="tab" class="tab" class:active={filter === "hidden"} aria-selected={filter === "hidden"} onclick={() => (filter = "hidden")}>
+      <button type="button" role="tab" class="tab" class:active={filter === "hidden"} aria-selected={filter === "hidden"} onclick={() => setTab("hidden")}>
+        {#if filter === "hidden"}<span class="line" aria-hidden="true"></span>{/if}
         Пропущенные <b>{counts.hidden}</b>
       </button>
-      <button type="button" role="tab" class="tab" class:active={filter === "pages"} aria-selected={filter === "pages"} onclick={() => (filter = "pages")}>
+      <button type="button" role="tab" class="tab" class:active={filter === "pages"} aria-selected={filter === "pages"} onclick={() => setTab("pages")}>
+        {#if filter === "pages"}<span class="line" aria-hidden="true"></span>{/if}
         Страницы <b>{counts.pages}</b>
       </button>
     </div>
@@ -414,7 +425,7 @@
   {/if}
 
   <div class="body">
-    <section class="list scroll-area">
+    <section class="list scroll-area flow-section-body">
       {#if loading}
         <div class="state"><p>Загружаем обновления…</p></div>
       {:else if filter === "available" && snapshot.findings.length === 0}
@@ -626,8 +637,8 @@
     color: var(--faint-foreground);
   }
 
-  .tab::after {
-    content: "";
+  /* Черта под вкладкой переезжает к новой (view-transition), а не гаснет. */
+  .line {
     position: absolute;
     left: 10px;
     right: 10px;
@@ -635,8 +646,7 @@
     height: 2px;
     border-radius: 2px;
     background: var(--accent-brand);
-    transform: scaleX(0);
-    transition: transform var(--dur-3) var(--ease-out);
+    view-transition-name: tab-line;
   }
 
   .tab:hover {
@@ -645,10 +655,6 @@
 
   .tab.active {
     color: var(--foreground);
-  }
-
-  .tab.active::after {
-    transform: scaleX(1);
   }
 
   .banner {

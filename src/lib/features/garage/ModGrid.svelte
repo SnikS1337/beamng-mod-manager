@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { ModCardDto } from "#lib/ipc/library.js";
+  import { untrack } from "svelte";
+  import { motion } from "#lib/shell/motion.svelte.js";
   import ModCard from "./ModCard.svelte";
 
   let {
@@ -54,9 +56,19 @@
       viewport.scrollTop = 0;
       scrollTop = 0;
     }
-    appear = true;
+    // В плавном переходе карточки уже двигаются — своё появление лишнее.
+    appear = !untrack(() => motion.active);
     const timer = setTimeout(() => (appear = false), 700);
     return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    const el = viewport;
+    if (!el) return;
+    return motion.measure(() => {
+      width = el.clientWidth;
+      height = el.clientHeight;
+    });
   });
 
   function onscroll(event: Event) {
@@ -65,7 +77,7 @@
 </script>
 
 <div
-  class="scroll-area viewport"
+  class="scroll-area viewport flow-mods"
   bind:this={viewport}
   bind:clientWidth={width}
   bind:clientHeight={height}

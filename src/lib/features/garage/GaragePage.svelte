@@ -64,8 +64,10 @@
     selectAll,
     selectOnly,
     single,
+    panelOf,
     type Selection,
   } from "./selection";
+  import { motion } from "#lib/shell/motion.svelte.js";
   import BulkBar from "./BulkBar.svelte";
 
   type Filter = "all" | "disabled" | "updates" | "unchecked" | "deleted";
@@ -312,12 +314,26 @@
   }
 
   function select(id: string, keys: { ctrl: boolean; shift: boolean } = { ctrl: false, shift: false }) {
-    picked = clickSelect(
-      picked,
-      id,
-      filtered.map((mod) => mod.id),
-      keys,
-    );
+    pick(clickSelect(picked, id, filtered.map((mod) => mod.id), keys));
+  }
+
+  /** Выбор из рук пользователя: если панель справа появляется или уходит — плавно. */
+  function pick(next: Selection) {
+    if (panelOf(next) === panelOf(picked)) {
+      picked = next;
+      return;
+    }
+    void motion.run(() => {
+      picked = next;
+    }, "flow-garage");
+  }
+
+  function setFilters(nextFilter: Filter, nextType: TypeGroup | "all") {
+    if (nextFilter === filter && nextType === typeFilter) return;
+    void motion.run(() => {
+      filter = nextFilter;
+      typeFilter = nextType;
+    }, "flow-garage");
   }
 
   async function toggle(mod: ModCardDto) {
@@ -590,7 +606,7 @@
     }
     if (event.key === "Escape") {
       if (picked.ids.length > 0) {
-        picked = EMPTY;
+        pick(EMPTY);
       } else if (query) {
         query = "";
       }
@@ -647,7 +663,10 @@
   }
 
   function setView(mode: ViewMode) {
-    view = mode;
+    if (mode === view) return;
+    void motion.run(() => {
+      view = mode;
+    }, "flow-garage");
     saveViewMode(mode);
   }
 
@@ -789,10 +808,7 @@
       class="chip"
       class:on={typeFilter === "all" && filter === "all"}
       type="button"
-      onclick={() => {
-        typeFilter = "all";
-        filter = "all";
-      }}
+      onclick={() => setFilters("all", "all")}
     >Все <b>{groupDigits(shownMods.length)}</b></button>
     {#each typeFilters as item (item.id)}
       <button
@@ -800,7 +816,7 @@
         class:on={typeFilter === item.id}
         type="button"
         aria-pressed={typeFilter === item.id}
-        onclick={() => (typeFilter = typeFilter === item.id ? "all" : item.id)}
+        onclick={() => setFilters(filter, typeFilter === item.id ? "all" : item.id)}
       >{item.label} <b>{groupDigits(kinds[item.id])}</b></button>
     {/each}
     <span class="sep" aria-hidden="true"></span>
@@ -812,7 +828,7 @@
         class:hot={item.id === "updates" && count > 0}
         type="button"
         aria-pressed={filter === item.id}
-        onclick={() => (filter = filter === item.id ? "all" : item.id)}
+        onclick={() => setFilters(filter === item.id ? "all" : item.id, typeFilter)}
       >{item.label} <b>{groupDigits(count)}</b></button>
     {/each}
   </div>
@@ -829,7 +845,7 @@
     </div>
   {/if}
 
-  <div class="body" class:with-inspector={selectedId !== null || picked.ids.length > 1}>
+  <div class="body flow-body" class:with-inspector={selectedId !== null || picked.ids.length > 1}>
     <section class="work">
       {#if loading}
         <div class="loading" aria-label="Загружаем моды">
@@ -858,10 +874,7 @@
             <button
               type="button"
               class="btn-glass"
-              onclick={() => {
-                filter = "all";
-                typeFilter = "all";
-              }}>Показать все</button
+              onclick={() => setFilters("all", "all")}>Показать все</button
             >
           {:else if snapshot.mods.length === 0}
             <a class="btn-primary" href="/search">Перейти в поиск</a>
@@ -912,13 +925,13 @@
         onEnable={() => void bulkToggle(true)}
         onDisable={() => void bulkToggle(false)}
         onDelete={() => void bulkDelete()}
-        onClear={() => (picked = EMPTY)}
+        onClear={() => pick(EMPTY)}
       />
     {:else if selected?.deleted}
       <DeletedInspector
         card={selected}
         onRestore={(card) => void restoreDeleted(card)}
-        onClose={() => (picked = EMPTY)}
+        onClose={() => pick(EMPTY)}
       />
     {:else if selectedId !== null}
       <Inspector
@@ -945,7 +958,7 @@
         }}
         onDelete={() => void deleteSelected()}
         onRestoreVersion={(version) => void restoreVersion(version)}
-        onClose={() => (picked = EMPTY)}
+        onClose={() => pick(EMPTY)}
       />
     {/if}
   </div>

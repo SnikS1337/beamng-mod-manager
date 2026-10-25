@@ -64,6 +64,11 @@ export function single(current: Selection): string | null {
   return current.ids.length === 1 ? current.ids[0] : null;
 }
 
+/** Какая панель справа: никакой, панель мода или «Выбрано N». Сменилась — раскладка двигается. */
+export function panelOf(current: Selection): "none" | "one" | "many" {
+  return current.ids.length === 0 ? "none" : current.ids.length === 1 ? "one" : "many";
+}
+
 /** Что можно сделать с выбранными: включить выключенные, выключить включённые, удалить. */
 export interface BulkPlan {
   enable: ModCardDto[];

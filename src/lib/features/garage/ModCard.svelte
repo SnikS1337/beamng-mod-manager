@@ -13,6 +13,7 @@
   import { formatSize, plural } from "./format";
   import { typeLabel, typeTag } from "./view";
   import { modStatus } from "./status";
+  import { flowName } from "#lib/shell/motion.svelte.js";
 
   let {
     mod,
@@ -88,12 +89,12 @@
 </script>
 
 <div
-  class="card"
+  class="card flow-card"
   class:selected
   class:appear
   class:sleeping={!mod.enabled && !mod.deleted}
   class:deleted={mod.deleted}
-  style={`--i:${Math.min(index, 14)}`}
+  style={`--i:${Math.min(index, 14)}; --flow:${flowName(mod.id)}`}
   data-mod-id={mod.id}
 >
   <!-- Выбор — отдельной кнопкой поверх карточки: переключатель не вложен в кнопку. -->

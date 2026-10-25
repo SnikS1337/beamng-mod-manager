@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { openPath } from "@tauri-apps/plugin-opener";
@@ -71,8 +72,11 @@
   let revision = 0;
 
   function selectSection(id: SectionId) {
-    activeSection = id;
-    if (sectionsEl) sectionsEl.scrollTop = 0;
+    if (id === activeSection) return;
+    void motion.run(() => {
+      activeSection = id;
+      if (sectionsEl) sectionsEl.scrollTop = 0;
+    }, "flow-section");
   }
   let draft = $state<SettingsDto | null>(null);
   let loading = $state(true);
@@ -383,7 +387,7 @@
           </button>
         {/each}
       </nav>
-      <div class="settings-sections" bind:this={sectionsEl}>
+      <div class="settings-sections flow-section-body" bind:this={sectionsEl}>
         {#if activeSection === "appearance"}
         <section id="settings-appearance" class="block">
           <div class="block-head">
@@ -427,7 +431,7 @@
             <div class="switch-row">
               <div>
                 <b>Анимации интерфейса</b>
-                <small>Появление карточек, панелей, окон и подсказок.</small>
+                <small>Плавные переходы между разделами; карточки переезжают на новые места, панели выезжают.</small>
               </div>
               <Switch
                 size="lg"

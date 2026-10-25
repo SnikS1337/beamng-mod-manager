@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { onNavigate } from "$app/navigation";
+  import { canFlow, motion } from "#lib/shell/motion.svelte.js";
   import IncomingHost from "#lib/features/incoming/IncomingHost.svelte";
   import CommandPalette from "#lib/shell/CommandPalette.svelte";
   import Background from "#lib/shell/Background.svelte";
@@ -13,10 +15,25 @@
   let welcome = $state(false);
 
   onMount(() => {
+    const uninstall = motion.install();
     void (async () => {
       const loaded = appearance.settings ?? (await appearance.load());
       welcome = loaded ? !loaded.firstRunDone : false;
     })();
+    return uninstall;
+  });
+
+  // Смена раздела — одним движением: старый уходит, новый проявляется, полоска
+  // в меню переезжает к новому пункту.
+  onNavigate((navigation) => {
+    if (!canFlow(document)) return;
+    if (navigation.from?.url.pathname === navigation.to?.url.pathname) return;
+    return new Promise<void>((resolve) => {
+      void motion.run(async () => {
+        resolve();
+        await navigation.complete;
+      }, "flow-route");
+    });
   });
 
   async function closeWelcome() {
@@ -66,5 +83,6 @@
   .content {
     min-width: 0;
     overflow: auto;
+    view-transition-name: page;
   }
 </style>

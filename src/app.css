@@ -583,3 +583,158 @@ input[type="checkbox"]:checked::after {
 
 /* Флажок Windows «анимация элементов» движение не гасит: им управляют только
    настройки программы (решение 0.3.11, класс .no-motion). */
+
+/* ── Поток (View Transitions) ─────────────────────────────────────────────
+   Работает только в режиме с анимациями (motion.svelte.ts). Корень — фон,
+   рамка окна — не анимируем: меняется только то, что действительно движется. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-group(*) {
+  animation-duration: var(--dur-3);
+  animation-timing-function: var(--ease-out);
+}
+
+/* Кто двигается внутри гаража. Карточка — отдельный слой и переезжает на новое
+   место; сетка обрезает карточки по краю, чтобы они не залезали на фильтры. */
+html.flow-garage .flow-card {
+  view-transition-name: var(--flow);
+  view-transition-class: card;
+  view-transition-group: nearest;
+}
+
+html.flow-garage .flow-mods {
+  view-transition-name: mods;
+  view-transition-group: nearest;
+}
+
+html.flow-garage .flow-body > aside {
+  view-transition-name: side;
+  view-transition-group: nearest;
+  /* Своё появление панели в переходе лишнее — её уже выдвигает переход. */
+  animation: none;
+}
+
+/* Вкладки и разделы настроек: меняется только содержимое, шапка стоит. */
+html.flow-section .flow-section-body {
+  view-transition-name: section;
+  view-transition-group: nearest;
+}
+
+html.flow-section::view-transition-old(page),
+html.flow-section::view-transition-new(page) {
+  animation: none;
+}
+
+html.flow-section::view-transition-old(section) {
+  animation: flow-fade-out var(--dur-1) var(--ease-out) both;
+}
+
+html.flow-section::view-transition-new(section) {
+  animation: flow-page-in var(--dur-3) var(--ease-out) both;
+}
+
+/* Смена раздела: старый чуть уходит вверх и гаснет, новый поднимается навстречу. */
+html.flow-route::view-transition-old(page) {
+  animation: flow-page-out var(--dur-2) var(--ease-in-out) both;
+}
+
+html.flow-route::view-transition-new(page) {
+  animation: flow-page-in var(--dur-3) var(--ease-out) 60ms both;
+}
+
+/* Внутри раздела страница не мигает: двигаются карточки и панель. */
+html.flow-garage::view-transition-old(page),
+html.flow-garage::view-transition-new(page) {
+  animation: none;
+}
+
+html.flow-garage::view-transition-old(mods),
+html.flow-garage::view-transition-new(mods) {
+  animation: none;
+}
+
+/* Карточки: оставшиеся переезжают (группа), новые проявляются, ушедшие гаснут.
+   Переезжающая карточка не «двоится»: старый снимок прячем, новый не растягиваем,
+   а открываем от левого верхнего угла, пока карточка меняет ширину. */
+::view-transition-group(*.card) {
+  animation-duration: calc(var(--dur-3) + 60ms);
+}
+
+::view-transition-old(*.card) {
+  animation: none;
+  opacity: 0;
+}
+
+::view-transition-new(*.card) {
+  animation: none;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: left top;
+}
+
+/* Карточки не залезают на фильтры и на панель — обрезаются по краю сетки. */
+::view-transition-group-children(mods) {
+  overflow: clip;
+}
+
+::view-transition-new(*.card):only-child {
+  animation: flow-card-in var(--dur-3) var(--ease-out) both;
+}
+
+::view-transition-old(*.card):only-child {
+  animation: flow-fade-out var(--dur-2) var(--ease-out) both;
+}
+
+/* Панель мода выезжает справа и уезжает обратно. */
+::view-transition-new(side):only-child {
+  animation: flow-side-in var(--dur-3) var(--ease-out) both;
+}
+
+::view-transition-old(side):only-child {
+  animation: flow-side-out var(--dur-2) var(--ease-in-out) both;
+}
+
+@keyframes flow-page-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes flow-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+@keyframes flow-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes flow-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes flow-side-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes flow-side-out {
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
