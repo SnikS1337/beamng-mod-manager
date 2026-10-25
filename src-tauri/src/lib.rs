@@ -3,6 +3,8 @@ mod commands;
 mod error;
 mod named_mutex;
 mod state;
+#[cfg(test)]
+mod test_support;
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -108,10 +110,17 @@ pub fn run() {
         fetcher,
         service: search_service,
         matches,
-        previews: Arc::new(bmm_sources::images::RemoteImageCache::with_fallback(
-            paths.search_previews(),
-            pages,
-        )),
+        previews: {
+            let cache = Arc::new(bmm_sources::images::RemoteImageCache::with_fallback(
+                paths.search_previews(),
+                pages,
+            ));
+            let trimmer = cache.clone();
+            std::thread::spawn(move || {
+                trimmer.trim(bmm_sources::images::DEFAULT_LIMIT_BYTES);
+            });
+            cache
+        },
         sources: source_list.clone(),
     }));
     let update = Some(Arc::new(UpdateRuntime {
@@ -199,9 +208,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_bootstrap,
-            commands::dev::dev_library,
-            commands::dev::dev_environment,
-            commands::dev::open_modland_probe,
             commands::library::library_load,
             commands::library::library_refresh,
             commands::library::mod_toggle,
@@ -234,6 +240,7 @@ pub fn run() {
             commands::updates::updates_reject_page,
             commands::updates::updates_undo_page,
             commands::updates::updates_unfollow,
+            commands::updates::updates_forget_lost,
             commands::updates::updates_refollow,
             commands::updates::mod_bind_page,
             commands::downloads::downloads_expect,

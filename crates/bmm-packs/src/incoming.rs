@@ -434,12 +434,18 @@ fn blocked_item(
         warnings: false,
         findings: {
             let mut findings = inspection.findings;
-            findings.push(Finding {
-                severity: Severity::Block,
-                code: "broken",
-                message: message.to_string(),
-                entry: None,
-            });
+            // Проверка уже назвала причину («не zip или повреждён») — второй раз не повторяем.
+            if !findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Block)
+            {
+                findings.push(Finding {
+                    severity: Severity::Block,
+                    code: "broken",
+                    message: message.to_string(),
+                    entry: None,
+                });
+            }
             findings
         },
         content: HashSet::new(),

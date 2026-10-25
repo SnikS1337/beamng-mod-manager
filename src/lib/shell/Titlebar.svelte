@@ -1,21 +1,23 @@
 <script lang="ts">
-  import { Minus, Square, X } from "@lucide/svelte";
-  import { windowAction } from "$lib/ipc/window";
+  import Minus from "phosphor-svelte/lib/Minus";
+  import Square from "phosphor-svelte/lib/Square";
+  import X from "phosphor-svelte/lib/X";
+  import { windowAction } from "#lib/ipc/window.js";
 </script>
 
-<!-- Своей полосы заголовка нет (как в legacy): окно таскается за верхнюю кромку и за
-     заголовки разделов, кнопки окна — стеклянная капсула в правом верхнем углу. -->
+<!-- Своей полосы заголовка нет: окно таскается за верхнюю кромку, за полосу разделов и за
+     заголовки экранов; кнопки окна — в правом верхнем углу. -->
 <div class="drag-strip" data-tauri-drag-region></div>
 
-<div class="window-capsule glass liquid-edge">
+<div class="window-buttons">
   <button type="button" aria-label="Свернуть" onclick={() => void windowAction("minimize")}>
-    <Minus size={15} strokeWidth={1.7} />
+    <Minus size={15} />
   </button>
   <button type="button" aria-label="Развернуть" onclick={() => void windowAction("maximize")}>
-    <Square size={12} strokeWidth={1.7} />
+    <Square size={13} />
   </button>
   <button type="button" class="close" aria-label="Закрыть" onclick={() => void windowAction("close")}>
-    <X size={15} strokeWidth={1.7} />
+    <X size={15} />
   </button>
 </div>
 
@@ -24,44 +26,38 @@
     position: absolute;
     inset: 0 0 auto 0;
     z-index: 25;
-    height: 14px;
+    height: 10px;
   }
 
-  .window-capsule {
+  .window-buttons {
     position: absolute;
-    top: 16px;
-    right: 16px;
+    top: 0;
+    right: 0;
     z-index: 30;
     display: flex;
-    gap: 0;
-    height: 36px;
-    padding: 0;
-    border-radius: 999px;
-    overflow: hidden;
   }
 
-  .window-capsule button {
+  .window-buttons button {
     display: grid;
     place-items: center;
-    width: 44px;
-    height: 36px;
+    width: 46px;
+    height: 34px;
     border: 0;
-    border-radius: 999px;
     background: transparent;
-    color: color-mix(in oklab, var(--foreground) 78%, transparent);
+    color: var(--muted-foreground);
     cursor: default;
     transition:
-      background 160ms ease,
-      color 160ms ease;
+      background-color var(--dur-1) var(--ease-out),
+      color var(--dur-1) var(--ease-out);
   }
 
-  .window-capsule button:hover {
-    background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  .window-buttons button:hover {
+    background: var(--surface-3);
     color: var(--foreground);
   }
 
-  .window-capsule .close:hover {
-    background: oklch(0.59 0.21 25);
-    color: white;
+  .window-buttons .close:hover {
+    background: #d9362b;
+    color: #fff;
   }
 </style>

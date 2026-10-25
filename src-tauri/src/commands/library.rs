@@ -60,8 +60,14 @@ pub struct ModCardDto {
     pub saved_at: Option<String>,
     /// Почему игра не загрузит архив: `wrapped`, `loose`, `not_mod`; `None` — в порядке.
     pub problem: Option<String>,
-    /// Повторяет другой включённый мод: игра загрузит оба.
+    /// Повторяет другой мод (основной в группе): в списке не показывается отдельно.
     pub duplicate_of: Option<DuplicateDto>,
+    /// У основного в группе — остальные копии и версии.
+    pub group: Vec<String>,
+    /// В группе включено больше одного: игра загрузит все.
+    pub group_conflict: bool,
+    /// «vehicle», «map», «addon»; `None` — архив ещё не прочитан.
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,28 +247,39 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Помечает включённые моды, которые повторяют другой включённый (см.
-/// [`bmm_packs::duplicates`]). Состав архивов — из кэша; ещё не прочитанные архивы
-/// не участвуют, пометка появится после фонового чтения.
+/// Роль мода по составу архива и группы повторов (см. [`bmm_packs::duplicates`]).
+/// Состав — из кэша; ещё не прочитанные архивы не участвуют, пометка появится после
+/// фонового чтения. В группе основной — самый свежий: в списке видна только его
+/// карточка с числом копий, остальные — в его панели.
 fn mark_duplicates(
     mut mods: Vec<ModCardDto>,
     preview_keys: &HashMap<String, String>,
     contents: &std::collections::BTreeMap<String, Vec<String>>,
+    modified: &HashMap<String, i64>,
 ) -> Vec<ModCardDto> {
     let empty: Vec<String> = Vec::new();
+    let content_of = |id: &str| {
+        preview_keys
+            .get(id)
+            .and_then(|key| contents.get(key))
+            .unwrap_or(&empty)
+    };
+    for card in &mut mods {
+        card.role = bmm_packs::duplicates::role_of(content_of(&card.id))
+            .map(|role| role.code().to_string());
+    }
     let items: Vec<bmm_packs::duplicates::DupItem> = mods
         .iter()
-        .filter(|card| card.enabled && !card.deleted)
+        .filter(|card| !card.deleted)
         .filter_map(|card| {
-            let content = preview_keys
-                .get(&card.id)
-                .and_then(|key| contents.get(key))
-                .unwrap_or(&empty);
+            let content = content_of(&card.id);
             (!content.is_empty()).then_some(bmm_packs::duplicates::DupItem {
                 id: &card.id,
                 file_name: &card.file_name,
                 size: card.size_bytes,
                 content,
+                version: card.version.as_deref(),
+                modified: modified.get(&card.id).copied(),
             })
         })
         .collect();
@@ -272,6 +289,19 @@ fn mark_duplicates(
         .iter()
         .map(|card| (card.id.clone(), card.name.clone()))
         .collect();
+    let enabled: HashMap<String, bool> = mods
+        .iter()
+        .map(|card| (card.id.clone(), card.enabled))
+        .collect();
+    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut ids: Vec<&String> = found.keys().collect();
+    ids.sort();
+    for id in ids {
+        groups
+            .entry(found[id].of.clone())
+            .or_default()
+            .push(id.clone());
+    }
     for card in &mut mods {
         if let Some(duplicate) = found.get(&card.id) {
             card.duplicate_of = Some(DuplicateDto {
@@ -279,6 +309,14 @@ fn mark_duplicates(
                 name: names.get(&duplicate.of).cloned().unwrap_or_default(),
                 exact: duplicate.exact,
             });
+        }
+        if let Some(members) = groups.get(&card.id) {
+            let enabled_count = std::iter::once(&card.id)
+                .chain(members.iter())
+                .filter(|id| enabled.get(*id).copied().unwrap_or(false))
+                .count();
+            card.group = members.clone();
+            card.group_conflict = enabled_count > 1;
         }
     }
     mods
@@ -293,13 +331,32 @@ fn spawn_title_fill(app: tauri::AppHandle, state: Arc<AppState>) {
         return;
     }
     std::thread::spawn(move || {
-        let added = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fill_titles(&state)))
-            .unwrap_or(0);
+        let added = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let added = fill_titles(&state);
+            prune_previews(&state);
+            added
+        }))
+        .unwrap_or(0);
         TITLES_BUSY.store(false, Ordering::SeqCst);
         if added > 0 {
             let _ = app.emit("library://titles", added);
         }
     });
+}
+
+/// Убирает из кэша картинки и сведения модов, которых больше нет на диске.
+/// Список ещё не построен (папка не найдена) — ничего не трогаем, иначе стёрли бы всё.
+pub(crate) fn prune_previews(state: &AppState) {
+    let live: std::collections::HashSet<String> = state
+        .previews_by_id
+        .lock()
+        .unwrap()
+        .values()
+        .map(|target| target.key.clone())
+        .collect();
+    if !live.is_empty() {
+        state.previews.prune(&live);
+    }
 }
 
 /// Дочитывает названия, которых ещё нет в кэше. Возвращает, сколько записали.
@@ -314,13 +371,20 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
     let known = state.previews.titles();
     let known_problems = state.previews.problems();
     let known_contents = state.previews.contents();
+    let known_infos = state.previews.mod_infos();
+    let mut infos: Vec<(String, serde_json::Value)> = Vec::new();
     let mut found: Vec<(String, Option<String>)> = Vec::new();
     let mut problems: Vec<(String, Option<String>)> = Vec::new();
     let mut contents: Vec<(String, Vec<String>)> = Vec::new();
     let mut written = 0usize;
     let mut flush = |found: &mut Vec<(String, Option<String>)>,
                      problems: &mut Vec<(String, Option<String>)>,
-                     contents: &mut Vec<(String, Vec<String>)>| {
+                     contents: &mut Vec<(String, Vec<String>)>,
+                     infos: &mut Vec<(String, serde_json::Value)>| {
+        if state.previews.put_mod_infos(infos).is_ok() {
+            written += infos.len();
+        }
+        infos.clear();
         if state.previews.put_titles(found).is_ok() {
             written += found.len();
         }
@@ -358,11 +422,21 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
                 incoming::content_keys(&index).into_iter().collect(),
             ));
         }
-        if found.len() + problems.len() + contents.len() >= 100 {
-            flush(&mut found, &mut problems, &mut contents);
+        // mod_info из архива — страница в репозитории BeamNG и версия ещё до запуска игры.
+        if !known_infos.contains_key(&target.key)
+            && !infos.iter().any(|(key, _)| *key == target.key)
+            && target.path.is_file()
+        {
+            let value = overview::mod_info(&target.path)
+                .map(|(id, data)| serde_json::json!({ "id": id, "data": data }))
+                .unwrap_or(serde_json::Value::Null);
+            infos.push((target.key.clone(), value));
+        }
+        if found.len() + problems.len() + contents.len() + infos.len() >= 100 {
+            flush(&mut found, &mut problems, &mut contents, &mut infos);
         }
     }
-    flush(&mut found, &mut problems, &mut contents);
+    flush(&mut found, &mut problems, &mut contents, &mut infos);
     written
 }
 
@@ -542,7 +616,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         }
     }
 
-    apply_repo_info(state, &db_read, &mods_dir);
+    apply_repo_info(state, &db_read, &disks_by_file);
 
     let installed_list = state.library.mods();
     let bindings = state.library.bindings();
@@ -683,10 +757,22 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                     .filter(|_| disk.and_then(|disk| disk.sub_folder.as_ref()).is_none())
                     .cloned(),
                 duplicate_of: None,
+                group: Vec::new(),
+                group_conflict: false,
+                role: None,
             }
         })
         .collect();
-    let mods = mark_duplicates(mods, &preview_keys, &state.previews.contents());
+    let modified: HashMap<String, i64> = state
+        .library
+        .mods()
+        .iter()
+        .filter_map(|installed| {
+            let disk = disks_by_file.get(&installed.file_name.to_lowercase())?;
+            Some((installed.id.clone(), disk.modified_utc?.timestamp()))
+        })
+        .collect();
+    let mods = mark_duplicates(mods, &preview_keys, &state.previews.contents(), &modified);
 
     let ticket_files: HashSet<String> = tickets_before
         .values()
@@ -726,6 +812,9 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 saved_at: item.last_saved_at.map(|date| date.to_rfc3339()),
                 problem: None,
                 duplicate_of: None,
+                group: Vec::new(),
+                group_conflict: false,
+                role: None,
             }
         })
         .collect();
@@ -738,16 +827,11 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         scan_warnings,
         db_read.warnings,
         sync_report.warning,
-        state.library.load_warnings().to_vec(),
+        library_warnings(state.library.load_warnings(), state.library.save_error()),
     );
     let many_enabled = (settings.active_mods_warn_above > 0
         && enabled as i32 > settings.active_mods_warn_above)
-        .then(|| {
-            format!(
-                "Включено {} модов. Игра может грузиться дольше",
-                group_digits(enabled)
-            )
-        });
+        .then(|| many_enabled_text(enabled));
 
     Ok(LibrarySnapshot {
         counts: FilterCounts {
@@ -783,7 +867,7 @@ pub(crate) fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option
     }
 
     let roots = folders::default_user_roots();
-    if let Some(found) = folders::auto_detect(&[], &roots) {
+    if let Some(found) = folders::auto_detect(&folders::game_dirs(), &roots) {
         return (Some(found), None);
     }
     (None, Some("Папка игры не выбрана.".to_string()))
@@ -831,22 +915,36 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
 fn apply_repo_info(
     state: &AppState,
     db: &bmm_game::db::GameDbReadResult,
-    _mods_dir: &std::path::Path,
+    disks_by_file: &HashMap<String, &DiskMod>,
 ) {
-    if db.unreadable {
-        return;
-    }
+    let infos = state.previews.mod_infos();
     let _batch = state.library.batch();
     for installed in state.library.mods() {
         if state.library.is_checking_declined(&installed.id) {
             continue;
         }
-        let Some(entry) = db.find(&installed.file_name) else {
+        // Что игра записала в db.json, иначе — mod_info из самого архива (игру с этим
+        // модом ещё не запускали).
+        let from_db = if db.unreadable {
+            None
+        } else {
+            db.find(&installed.file_name)
+                .and_then(|entry| entry.repo.clone())
+        };
+        let from_archive = || {
+            let disk = disks_by_file.get(&installed.file_name.to_lowercase())?;
+            let key = PreviewCache::key(&installed.file_name, disk.size_bytes, disk.modified_utc);
+            let value = infos.get(&key)?;
+            let id = value.get("id")?.as_str()?;
+            Some(bmm_game::db::RepoInfo::from_mod_data(
+                id,
+                value.get("data").unwrap_or(&serde_json::Value::Null),
+            ))
+        };
+        let Some(repo) = from_db.or_else(from_archive) else {
             continue;
         };
-        let Some(repo) = &entry.repo else {
-            continue;
-        };
+        let repo = &repo;
         let mut updated = installed.clone();
         if let Some(version) = &repo.version {
             updated.version = Some(version.clone());
@@ -889,7 +987,11 @@ fn path_of(layout: &ModLayout, disk: &DiskMod) -> PathBuf {
     }
 }
 
-fn toggle_mod(state: &AppState, id: &str, enabled: bool) -> Result<ToggleResult, AppError> {
+pub(crate) fn toggle_mod(
+    state: &AppState,
+    id: &str,
+    enabled: bool,
+) -> Result<ToggleResult, AppError> {
     let _guard = state
         .load_lock
         .lock()
@@ -1205,6 +1307,51 @@ fn kind_of(mod_type: &str) -> &'static str {
     }
 }
 
+/// «Включено 3 333 мода. Игра может грузиться дольше»: разряды и падеж.
+fn many_enabled_text(count: usize) -> String {
+    format!(
+        "Включено {} {}. Игра может грузиться дольше",
+        group_digits(count),
+        plural(count, "мод", "мода", "модов")
+    )
+}
+
+fn group_digits(value: usize) -> String {
+    let text = value.to_string();
+    let mut result = String::with_capacity(text.len() + text.len() / 3);
+    for (index, character) in text.chars().enumerate() {
+        if index > 0 && (text.len() - index).is_multiple_of(3) {
+            result.push(' ');
+        }
+        result.push(character);
+    }
+    result
+}
+
+fn plural<'a>(count: usize, one: &'a str, few: &'a str, many: &'a str) -> &'a str {
+    let tens = count % 100;
+    let units = count % 10;
+    if (11..=14).contains(&tens) {
+        many
+    } else if units == 1 {
+        one
+    } else if (2..=4).contains(&units) {
+        few
+    } else {
+        many
+    }
+}
+
+/// Предупреждения о файле библиотеки. Несохранённая библиотека — молча терять
+/// подписки и проверки нельзя: пишем об этом на главной.
+fn library_warnings(loaded: &[String], save_error: Option<String>) -> Vec<String> {
+    let mut all = loaded.to_vec();
+    if let Some(error) = save_error {
+        all.push(format!("Не получается сохранить данные программы: {error}"));
+    }
+    all
+}
+
 fn join_warnings(
     settings: Vec<String>,
     scan: Vec<String>,
@@ -1253,18 +1400,6 @@ fn empty_snapshot(
     }
 }
 
-fn group_digits(value: usize) -> String {
-    let text = value.to_string();
-    let mut result = String::with_capacity(text.len() + text.len() / 3);
-    for (index, character) in text.chars().enumerate() {
-        if index > 0 && (text.len() - index).is_multiple_of(3) {
-            result.push(' ');
-        }
-        result.push(character);
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1279,14 +1414,6 @@ mod tests {
     use bmm_domain::settings::AppSettings;
     use bmm_domain::settings_store::SettingsStore;
     use bmm_packs::cache::PreviewCache;
-
-    #[test]
-    fn formats_enabled_count_with_thousands_separator() {
-        assert_eq!(group_digits(999), "999");
-        assert_eq!(group_digits(1_000), "1 000");
-        assert_eq!(group_digits(3_333), "3 333");
-        assert_eq!(group_digits(20_000), "20 000");
-    }
 
     #[test]
     fn loads_real_folder_and_toggles_active() {
@@ -1347,40 +1474,77 @@ mod tests {
     }
 
     fn test_state(temp: &tempfile::TempDir, mods: &std::path::Path) -> AppState {
-        let data = temp.path().join("data");
-        let paths = AppPaths::at(&data);
-        paths.ensure_dirs().unwrap();
-        let settings = SettingsStore::with_system_clock(paths.settings());
-        settings
-            .save(&AppSettings {
-                mods_folder: Some(mods.display().to_string()),
-                ..AppSettings::default()
-            })
-            .unwrap();
-        AppState {
-            paths,
-            settings,
-            library: Arc::new(JsonLibraryStore::new(
-                temp.path().join("data/library.json"),
-                system_clock(),
-            )),
-            previews: PreviewCache::new(temp.path().join("data/previews")),
-            load_lock: Mutex::new(()),
-            previews_by_id: Mutex::new(HashMap::new()),
-            pending: Mutex::new(HashMap::new()),
-            preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
-            deleted: Mutex::new(HashMap::new()),
-            content_cache: Mutex::new(HashMap::new()),
-            search: None,
-            update: None,
-            app_update: None,
-            search_cancel: Mutex::new(None),
-            last_search: Mutex::new(None),
-        }
+        crate::test_support::test_state(temp, mods)
     }
 
     #[test]
-    fn enabled_copies_are_marked_after_contents_are_read() {
+    fn repository_page_and_version_come_from_the_archive_before_the_game_runs() {
+        // dummy.zip из скачанного набора: в имени нет версии, игру ещё не запускали
+        // (db.json без modData), но в архиве лежит mod_info от репозитория BeamNG.
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(
+            &mods.join("dummy.zip"),
+            &[
+                ("vehicles/dummy/a.jbeam", b"x"),
+                (
+                    "mod_info/M9EL2DOCR/info.json",
+                    br#"{"tagid":"M9EL2DOCR","title":"Crash Test Dummy","version_string":"1.1","resource_id":906,"username":"B25Mitch"}"#,
+                ),
+            ],
+        );
+        let state = test_state(&temp, &mods);
+        let first = load_snapshot(&state).unwrap();
+        let id = first.mods[0].id.clone();
+        assert_eq!(state.library.get_mod(&id).unwrap().version, None);
+
+        fill_titles(&state);
+        load_snapshot(&state).unwrap();
+        let installed = state.library.get_mod(&id).unwrap();
+        assert_eq!(installed.version.as_deref(), Some("1.1"));
+        assert_eq!(installed.name, "Crash Test Dummy");
+        let binding = state
+            .library
+            .bindings()
+            .into_iter()
+            .find(|binding| binding.mod_id == id)
+            .expect("страница в репозитории");
+        assert_eq!(binding.source, "beamng");
+        assert_eq!(binding.url.as_str(), "https://beamng.com/resources/906/");
+        assert!(binding.confirmed);
+    }
+
+    #[test]
+    fn cache_forgets_removed_mods_but_not_before_the_list_is_built() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(&mods.join("keep.zip"), &[("vehicles/keep/a.jbeam", b"x")]);
+        write_zip(&mods.join("gone.zip"), &[("vehicles/gone/a.jbeam", b"x")]);
+        let state = test_state(&temp, &mods);
+
+        // До первого показа списка чистить нечего — и стирать всё нельзя.
+        state
+            .previews
+            .put_titles(&[("orphan".to_string(), Some("Old".to_string()))])
+            .unwrap();
+        prune_previews(&state);
+        assert!(state.previews.titles().contains_key("orphan"));
+
+        load_snapshot(&state).unwrap();
+        fill_titles(&state);
+        assert_eq!(state.previews.contents().len(), 2);
+        std::fs::remove_file(mods.join("gone.zip")).unwrap();
+        load_snapshot(&state).unwrap();
+        prune_previews(&state);
+        let contents = state.previews.contents();
+        assert_eq!(contents.len(), 1, "остался только живой мод");
+        assert!(!state.previews.titles().contains_key("orphan"));
+    }
+
+    #[test]
+    fn copies_are_grouped_after_contents_are_read() {
         let temp = tempfile::tempdir().unwrap();
         let mods = temp.path().join("mods");
         std::fs::create_dir_all(&mods).unwrap();
@@ -1399,34 +1563,93 @@ mod tests {
 
         fill_titles(&state);
         let snapshot = load_snapshot(&state).unwrap();
-        let copy = snapshot
+        let weather: Vec<&ModCardDto> = snapshot
             .mods
             .iter()
-            .find(|card| card.file_name == "weather_fx (1).zip")
-            .unwrap();
-        let main = snapshot
-            .mods
+            .filter(|card| card.file_name.starts_with("weather_fx"))
+            .collect();
+        let main = weather
             .iter()
-            .find(|card| card.file_name == "weather_fx.zip")
+            .find(|card| card.duplicate_of.is_none())
             .unwrap();
-        let duplicate = copy.duplicate_of.as_ref().expect("копия помечена");
+        let copy = weather
+            .iter()
+            .find(|card| card.duplicate_of.is_some())
+            .unwrap();
+        let duplicate = copy.duplicate_of.as_ref().unwrap();
         assert_eq!(duplicate.id, main.id);
         assert!(duplicate.exact);
-        assert!(main.duplicate_of.is_none());
-        assert!(
-            snapshot
-                .mods
-                .iter()
-                .find(|card| card.file_name == "rs3.zip")
-                .unwrap()
-                .duplicate_of
-                .is_none()
-        );
+        assert_eq!(main.group, vec![copy.id.clone()]);
+        assert!(main.group_conflict, "включены обе — игра загрузит обе");
+        assert_eq!(main.role.as_deref(), Some("addon"));
+        let rs3 = snapshot
+            .mods
+            .iter()
+            .find(|card| card.file_name == "rs3.zip")
+            .unwrap();
+        assert!(rs3.duplicate_of.is_none() && rs3.group.is_empty());
+        assert_eq!(rs3.role.as_deref(), Some("vehicle"));
 
-        // Выключенная копия игре не мешает.
+        // Выключенная копия остаётся в группе, но игре уже не мешает.
         toggle_mod(&state, &copy.id, false).unwrap();
         let after = load_snapshot(&state).unwrap();
-        assert!(after.mods.iter().all(|card| card.duplicate_of.is_none()));
+        let main_after = after.mods.iter().find(|card| card.id == main.id).unwrap();
+        assert_eq!(main_after.group.len(), 1);
+        assert!(!main_after.group_conflict);
+    }
+
+    #[test]
+    fn many_enabled_text_has_digits_and_right_case() {
+        assert_eq!(
+            many_enabled_text(39),
+            "Включено 39 модов. Игра может грузиться дольше"
+        );
+        assert!(many_enabled_text(21).starts_with("Включено 21 мод."));
+        assert!(many_enabled_text(3_333).starts_with("Включено 3 333 мода."));
+        assert!(many_enabled_text(111).starts_with("Включено 111 модов."));
+        assert!(many_enabled_text(20_000).starts_with("Включено 20 000 модов."));
+        assert_eq!(group_digits(999), "999");
+        assert_eq!(group_digits(1_000), "1 000");
+    }
+
+    #[test]
+    fn unsaved_library_is_reported() {
+        assert!(library_warnings(&[], None).is_empty());
+        let warnings = library_warnings(&["старое".to_string()], Some("диск полон".to_string()));
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[1].contains("Не получается сохранить"));
+        assert!(warnings[1].contains("диск полон"));
+    }
+
+    #[test]
+    #[ignore = "замер: cargo test --release -- --ignored five_hundred"]
+    fn five_hundred_mods_load_quickly() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        for index in 0..500 {
+            let jbeam = format!("vehicles/car{index}/car.jbeam");
+            let info = format!("vehicles/car{index}/info.json");
+            let body = format!("{{\"Name\":\"Car {index}\"}}");
+            write_zip(
+                &mods.join(format!("car_{index}_v1.{}.zip", index % 7)),
+                &[(jbeam.as_str(), b"{}"), (info.as_str(), body.as_bytes())],
+            );
+        }
+        let state = test_state(&temp, &mods);
+        let started = std::time::Instant::now();
+        let first = load_snapshot(&state).unwrap();
+        let cold = started.elapsed();
+        let started = std::time::Instant::now();
+        fill_titles(&state);
+        let fill = started.elapsed();
+        let started = std::time::Instant::now();
+        let again = load_snapshot(&state).unwrap();
+        let warm = started.elapsed();
+        eprintln!("cold {cold:?} fill {fill:?} warm {warm:?}");
+        assert_eq!(first.mods.len(), 500);
+        assert_eq!(again.mods.len(), 500);
+        assert!(again.mods.iter().all(|card| card.duplicate_of.is_none()));
     }
 
     #[test]
@@ -1543,7 +1766,7 @@ mod tests {
         state.library.upsert_mod(custom);
         state.library.set_checking_declined(&id, true);
 
-        apply_repo_info(&state, &GameModDb::new(&mods).read(), &mods);
+        apply_repo_info(&state, &GameModDb::new(&mods).read(), &HashMap::new());
 
         let after = state.library.get_mod(&id).unwrap();
         assert_eq!(after.name, "Моя трасса");
@@ -1684,6 +1907,73 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn garage_and_rust_agree_on_fields_and_values() {
+        // Гараж читает эти поля по именам: переименованное в Rust поле стало бы
+        // `undefined` — пропала бы метка, версия или переключатель.
+        use crate::test_support::{assert_matches_ts, ts_union};
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(
+            &mods.join("car.zip"),
+            &[
+                ("vehicles/car/car.jbeam", b"{}"),
+                ("lua/ge/extensions/car.lua", b"--"),
+            ],
+        );
+        std::fs::write(
+            mods.join("db.json"),
+            r#"{"header":{"version":1.1},"mods":{"car":{"filename":"car.zip","active":true,"modType":"vehicle"}}}"#,
+        )
+        .unwrap();
+        let state = test_state(&temp, &mods);
+
+        let snapshot = serde_json::to_value(load_snapshot(&state).unwrap()).unwrap();
+        assert_matches_ts(&snapshot, "library.ts", "LibrarySnapshot");
+        assert_matches_ts(&snapshot["counts"], "library.ts", "FilterCounts");
+        let card = &snapshot["mods"][0];
+        assert_matches_ts(card, "library.ts", "ModCardDto");
+        assert_matches_ts(&card["compat"], "library.ts", "CompatDto");
+
+        let id = card["id"].as_str().unwrap().to_string();
+        let details = serde_json::to_value(details(&state, &id).unwrap()).unwrap();
+        assert_matches_ts(&details, "library.ts", "ModDetails");
+        assert_matches_ts(&details["archive"], "library.ts", "ArchiveDto");
+
+        let toggled = serde_json::to_value(toggle_mod(&state, &id, false).unwrap()).unwrap();
+        assert_matches_ts(&toggled, "library.ts", "ToggleResult");
+
+        // Строки-значения, которые может прислать Rust, окно знает.
+        let kinds = ts_union("library.ts", "ModKind");
+        for mod_type in [
+            "vehicle", "terrain", "level", "sound", "scenario", "app", "script", "?",
+        ] {
+            assert!(
+                kinds.contains(kind_of(mod_type)),
+                "окно не знает тип {mod_type}"
+            );
+        }
+        let pending = ts_union("library.ts", "PendingState");
+        assert!(pending.contains("none") && pending.contains("queued"));
+        let roles = ts_union("library.ts", "ModRole");
+        for role in [
+            bmm_packs::duplicates::Role::Vehicle,
+            bmm_packs::duplicates::Role::Map,
+            bmm_packs::duplicates::Role::Addon,
+        ] {
+            assert!(roles.contains(role.code()));
+        }
+        let problems = ts_union("library.ts", "PackagingProblem");
+        for problem in [
+            bmm_packs::incoming::PackagingProblem::Wrapped,
+            bmm_packs::incoming::PackagingProblem::Loose,
+            bmm_packs::incoming::PackagingProblem::NotMod,
+        ] {
+            assert!(problems.contains(problem.code()));
+        }
     }
 
     #[test]

@@ -1,58 +1,25 @@
 <script lang="ts">
-  import { appearance } from "$lib/shell/appearance.svelte";
+  import { page } from "$app/state";
+  import { appearance } from "#lib/shell/appearance.svelte.js";
+  import { lightSpot } from "./backgroundSpot";
 
-  let tiltX = $state(0);
-  let tiltY = $state(0);
-
-  const fireflies = $derived(appearance.settings?.fireflies ?? true);
-  const tilt = $derived(appearance.settings?.backgroundTilt ?? false);
-  const motion = $derived(appearance.settings?.uiAnimations ?? true);
-  // Флажок Windows «анимация элементов» движение не выключает: только настройки программы (0.3.11).
-  const reducedMotion = false;
-
-  const flies = Array.from({ length: 18 }, (_, index) => ({
-    left: ((index * 37 + 11) % 96) + 2,
-    top: ((index * 53 + 7) % 88) + 6,
-    delay: (index % 9) * 0.9,
-    duration: 9 + (index % 7) * 1.7,
-    size: 2 + (index % 3),
-  }));
-
-  function move(event: MouseEvent) {
-    if (!tilt || !motion || reducedMotion) {
-      tiltX = 0;
-      tiltY = 0;
-      return;
-    }
-    tiltX = (event.clientX / window.innerWidth - 0.5) * 10;
-    tiltY = (event.clientY / window.innerHeight - 0.5) * 8;
-  }
-
-  function reset() {
-    tiltX = 0;
-    tiltY = 0;
-  }
+  // Тихий фон: графит, мягкий свет акцентного цвета и тонкая сетка гаража.
+  // Свет стоит у раздела, который открыт, и плавно переезжает при смене раздела —
+  // фон «ведёт» за собой. «Живой фон» добавляет медленное дыхание света; выключен —
+  // свет неподвижен. Двигается только transform: без перерисовки, почти без нагрузки.
+  const live = $derived(
+    (appearance.settings?.animatedBackground ?? true) && (appearance.settings?.uiAnimations ?? true),
+  );
+  const spot = $derived(lightSpot(page.url.pathname));
 </script>
 
-<svelte:window onmousemove={move} onmouseleave={reset} />
-
-<div class="bg" aria-hidden="true">
-  <div class="blobs" style={`transform:translate3d(${tilt ? tiltX : 0}px, ${tilt ? tiltY : 0}px, 0)`}>
-    <div class="bg-blob a"></div>
-    <div class="bg-blob b"></div>
-    <div class="bg-blob c"></div>
-    <div class="bg-blob d"></div>
+<div class="bg" class:live aria-hidden="true">
+  <div class="spot" style={`--x:${spot.x}%; --y:${spot.y}%; --power:${spot.power}`}>
+    <div class="light warm"></div>
+    <div class="light cool"></div>
   </div>
-  <div class="bg-grid"></div>
-  {#if fireflies}
-    <div class="flies">
-      {#each flies as fly, index (index)}
-        <span
-          style={`left:${fly.left}%;top:${fly.top}%;width:${fly.size}px;height:${fly.size}px;animation-delay:-${fly.delay}s;animation-duration:${fly.duration}s`}
-        ></span>
-      {/each}
-    </div>
-  {/if}
+  <div class="grid"></div>
+  <div class="grain"></div>
 </div>
 
 <style>
@@ -62,94 +29,102 @@
     z-index: 0;
     overflow: hidden;
     pointer-events: none;
+    background: var(--background);
   }
 
-  .blobs {
+  /* Точка света: у каждого раздела своя, переезд — секунду, с мягким торможением. */
+  .spot {
     position: absolute;
     inset: 0;
-    transition: transform 0.28s ease-out;
+    transform: translate3d(calc(var(--x) - 50%), calc(var(--y) - 50%), 0);
+    opacity: var(--power);
+    transition:
+      transform 1.4s var(--ease-out),
+      opacity 1.4s var(--ease-out);
     will-change: transform;
   }
 
-  .bg-blob {
+  :global(.no-motion) .spot {
+    transition: none;
+  }
+
+  .light {
     position: absolute;
-    width: 52vw;
-    height: 52vw;
     border-radius: 50%;
-    filter: blur(72px);
-    opacity: 0.34;
   }
 
-  .a {
-    top: -22vh;
-    left: -12vw;
-    background: var(--blob-a);
+  .warm {
+    left: 20%;
+    top: -30%;
+    width: 90%;
+    height: 90%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklab, var(--accent-brand) 11%, transparent),
+      color-mix(in oklab, var(--accent-brand) 4%, transparent) 55%,
+      transparent
+    );
   }
 
-  .b {
-    top: 8vh;
-    right: -18vw;
-    background: var(--blob-b);
+  /* Слабый ответный свет снизу: без него тёмный низ окна выглядел провалом. */
+  .cool {
+    left: -25%;
+    top: 55%;
+    width: 75%;
+    height: 75%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklab, var(--accent-brand) 5%, transparent),
+      transparent
+    );
   }
 
-  .c {
-    bottom: -30vh;
-    left: 18vw;
-    background: var(--blob-c);
+  /* Дыхание: два света ходят с разным шагом (41 и 59 с) — рисунок не повторяется
+     заметно, движение не читается как «анимация по кругу». */
+  .live .warm {
+    animation: drift-warm 41s var(--ease-in-out) infinite alternate;
   }
 
-  .d {
-    bottom: -24vh;
-    right: 4vw;
-    width: 34vw;
-    height: 34vw;
-    background: var(--blob-d);
-    opacity: 0.22;
+  .live .cool {
+    animation: drift-cool 59s var(--ease-in-out) infinite alternate;
   }
 
-  .bg-grid {
+  .grid {
     position: absolute;
     inset: 0;
     background-image:
       linear-gradient(var(--grid-line) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-    background-size: 56px 56px;
-    mask-image: radial-gradient(ellipse at 50% 40%, #000, transparent 78%);
-    -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000, transparent 78%);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 90% 70% at 60% 0%, #000 0%, transparent 75%);
   }
 
-  .flies {
+  /* Мелкое зерно убирает полосы на плавных переходах света. Картинка неподвижна. */
+  .grain {
     position: absolute;
     inset: 0;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
   }
 
-  .flies span {
-    position: absolute;
-    border-radius: 50%;
-    background: color-mix(in oklab, var(--blob-b) 80%, white);
-    box-shadow: 0 0 8px color-mix(in oklab, var(--blob-b) 70%, transparent);
-    opacity: 0.4;
-    animation: fly 12s ease-in-out infinite alternate;
-  }
-
-  :global(.no-motion) .flies span {
-    animation: none;
-    opacity: 0.35;
-  }
-
-
-  @keyframes fly {
+  @keyframes drift-warm {
     0% {
-      transform: translate3d(0, 0, 0) scale(0.7);
-      opacity: 0.15;
+      transform: translate3d(-5%, 0, 0) scale(1);
     }
-    40% {
-      opacity: 0.65;
+    50% {
+      transform: translate3d(3%, 4%, 0) scale(1.06);
     }
     100% {
-      transform: translate3d(18px, -26px, 0) scale(1.2);
-      opacity: 0.1;
+      transform: translate3d(8%, -2%, 0) scale(0.97);
     }
   }
 
+  @keyframes drift-cool {
+    from {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    to {
+      transform: translate3d(10%, -6%, 0) scale(1.1);
+    }
+  }
 </style>

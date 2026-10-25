@@ -1,12 +1,17 @@
-//! Одинаковые и повторяющиеся моды среди включённых.
+//! Одинаковые и повторяющиеся моды и их группы.
 //!
 //! Игра загружает каждый архив из папки модов: две копии одного файла
 //! («weather_fx.zip» и «weather_fx (1).zip») или две версии одной машины
 //! работают одновременно, и какие файлы победят — непредсказуемо. Сравниваем
 //! по составу архива (папки второго уровня, см. [`crate::incoming::content_keys`]),
 //! не открывая файлы заново: состав кэшируется вместе с названием.
+//!
+//! Повторы собираются в группу; в списке модов группа — одна карточка самого
+//! свежего мода с числом копий.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+use bmm_domain::versioning::{VersionComparer, VersionOrder};
 
 /// Мод для сравнения.
 #[derive(Debug, Clone)]
@@ -16,105 +21,160 @@ pub struct DupItem<'a> {
     pub size: i64,
     /// Состав архива: «vehicles/rs3», «lua/ge», …
     pub content: &'a [String],
+    pub version: Option<&'a str>,
+    /// Время изменения файла (секунды), чтобы выбрать самый свежий.
+    pub modified: Option<i64>,
 }
 
-/// Мод повторяет другой: `exact` — та же копия (состав и размер совпали),
-/// иначе другая версия тех же машин или карт.
+/// Мод повторяет другой — основной в своей группе. `exact` — та же копия
+/// (состав и размер совпали), иначе другая версия тех же машин, карт или скрипта.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Duplicate {
     pub of: String,
     pub exact: bool,
 }
 
-/// Повторы среди переданных модов (передавайте только включённые: выключенная копия
-/// игре не мешает). Основным в группе остаётся мод с самым «чистым» именем файла —
-/// без « (1)» и меток раздачи, самым коротким; остальные указывают на него.
+/// Повторы среди переданных модов: для каждого неосновного — на какой основной
+/// он указывает. Основной в группе — самый свежий: старшая версия, затем более новый
+/// файл, затем самое чистое имя (без « (1)» и меток раздачи).
 pub fn find(items: &[DupItem]) -> HashMap<String, Duplicate> {
-    let mut result = HashMap::new();
+    let mut groups = UnionFind::new(items.len());
+    let normalized: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            let mut content: Vec<String> =
+                item.content.iter().map(|key| key.to_lowercase()).collect();
+            content.sort();
+            content.dedup();
+            content
+        })
+        .collect();
 
-    let mut exact: BTreeMap<(i64, Vec<String>), Vec<&DupItem>> = BTreeMap::new();
-    for item in items {
-        if item.size <= 0 || item.content.is_empty() {
-            continue;
-        }
-        let mut content: Vec<String> = item.content.iter().map(|key| key.to_lowercase()).collect();
-        content.sort();
-        content.dedup();
-        exact.entry((item.size, content)).or_default().push(item);
-    }
-    for group in exact.values().filter(|group| group.len() > 1) {
-        let main = main_of(group);
-        for item in group.iter().filter(|item| item.id != main.id) {
-            result.insert(
-                item.id.to_string(),
-                Duplicate {
-                    of: main.id.to_string(),
-                    exact: true,
-                },
-            );
+    // 1. Та же копия: тот же состав и тот же размер.
+    let mut exact: BTreeMap<(i64, &Vec<String>), Vec<usize>> = BTreeMap::new();
+    for (index, item) in items.iter().enumerate() {
+        if item.size > 0 && !normalized[index].is_empty() {
+            exact
+                .entry((item.size, &normalized[index]))
+                .or_default()
+                .push(index);
         }
     }
+    join_all(&mut groups, exact.values());
 
-    let mut same_cars: BTreeMap<Vec<String>, Vec<&DupItem>> = BTreeMap::new();
-    for item in items {
-        if result.contains_key(item.id) {
-            continue; // уже копия — второй раз не помечаем
-        }
-        let keys: HashSet<String> = item.content.iter().map(|key| key.to_lowercase()).collect();
+    // 2. Те же свои машины или карты — другая версия того же мода.
+    let mut cars: BTreeMap<Vec<String>, Vec<usize>> = BTreeMap::new();
+    for (index, content) in normalized.iter().enumerate() {
+        let keys: HashSet<String> = content.iter().cloned().collect();
         let mut identity: Vec<String> = crate::incoming::identity_keys(&keys).into_iter().collect();
         if identity.is_empty() {
             continue;
         }
         identity.sort();
-        same_cars.entry(identity).or_default().push(item);
+        cars.entry(identity).or_default().push(index);
     }
-    for group in same_cars.values().filter(|group| group.len() > 1) {
-        mark_versions(group, &mut result);
-    }
+    join_all(&mut groups, cars.values());
 
-    // Скрипты и эффекты без своих машин и карт: тот же состав архива и то же имя
-    // («weather_fx_tg_m0dsbeamng.zip», перепакованный каналом, рядом с «weather_fx.zip»).
-    // Одного состава мало: «lua/ge» есть у сотен разных модов.
-    let mut same_scripts: BTreeMap<(Vec<String>, String), Vec<&DupItem>> = BTreeMap::new();
-    for item in items {
-        if result.contains_key(item.id) || item.content.is_empty() {
+    // 3. Скрипты и эффекты без своих машин: тот же состав и то же имя файла
+    // («weather_fx_tg_m0dsbeamng.zip», перепакованный каналом). Одного состава мало:
+    // «lua/ge» есть у сотен разных модов.
+    let mut scripts: BTreeMap<(&Vec<String>, String), Vec<usize>> = BTreeMap::new();
+    for (index, item) in items.iter().enumerate() {
+        if normalized[index].is_empty() {
             continue;
         }
         let name = crate::incoming::name_key(item.file_name);
-        if name.is_empty() {
-            continue;
+        if !name.is_empty() {
+            scripts
+                .entry((&normalized[index], name))
+                .or_default()
+                .push(index);
         }
-        let mut content: Vec<String> = item.content.iter().map(|key| key.to_lowercase()).collect();
-        content.sort();
-        content.dedup();
-        same_scripts.entry((content, name)).or_default().push(item);
     }
-    for group in same_scripts.values().filter(|group| group.len() > 1) {
-        // Основной мог стать копией в первом проходе — тогда он уже указан у других.
-        mark_versions(group, &mut result);
+    join_all(&mut groups, scripts.values());
+
+    let mut members: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for index in 0..items.len() {
+        members.entry(groups.root(index)).or_default().push(index);
+    }
+    let mut result = HashMap::new();
+    for group in members.values().filter(|group| group.len() > 1) {
+        let main = *group
+            .iter()
+            .min_by(|a, b| freshness(&items[**a], &items[**b]))
+            .expect("группа не пустая");
+        for &index in group.iter().filter(|index| **index != main) {
+            result.insert(
+                items[index].id.to_string(),
+                Duplicate {
+                    of: items[main].id.to_string(),
+                    exact: items[index].size == items[main].size
+                        && normalized[index] == normalized[main],
+                },
+            );
+        }
     }
     result
 }
 
-fn mark_versions(group: &[&DupItem], result: &mut HashMap<String, Duplicate>) {
-    let main = main_of(group);
-    for item in group.iter().filter(|item| item.id != main.id) {
-        result.entry(item.id.to_string()).or_insert(Duplicate {
-            of: main.id.to_string(),
-            exact: false,
-        });
+fn join_all<'a>(groups: &mut UnionFind, lists: impl Iterator<Item = &'a Vec<usize>>) {
+    for list in lists {
+        for pair in list.windows(2) {
+            groups.join(pair[0], pair[1]);
+        }
     }
 }
 
-fn main_of<'a>(group: &[&'a DupItem<'a>]) -> &'a DupItem<'a> {
-    group
-        .iter()
-        .copied()
-        .min_by_key(|item| {
-            let lower = item.file_name.to_lowercase();
-            (is_copy(&lower), lower.chars().count(), lower)
-        })
-        .expect("группа не пустая")
+/// Порядок «свежее — раньше».
+fn freshness(a: &DupItem, b: &DupItem) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match VersionComparer::compare(a.version, b.version) {
+        VersionOrder::Newer => return Ordering::Greater, // у `b` версия старше
+        VersionOrder::Older => return Ordering::Less,
+        _ => {}
+    }
+    // Без даты — как самый старый: порядок должен быть полным, иначе выбор зависит
+    // от того, в каком порядке пришли моды.
+    let (x, y) = (
+        a.modified.unwrap_or(i64::MIN),
+        b.modified.unwrap_or(i64::MIN),
+    );
+    if x != y {
+        return y.cmp(&x);
+    }
+    let (left, right) = (a.file_name.to_lowercase(), b.file_name.to_lowercase());
+    (is_copy(&left), left.chars().count(), &left).cmp(&(
+        is_copy(&right),
+        right.chars().count(),
+        &right,
+    ))
+}
+
+struct UnionFind {
+    parent: Vec<usize>,
+}
+
+impl UnionFind {
+    fn new(size: usize) -> Self {
+        Self {
+            parent: (0..size).collect(),
+        }
+    }
+
+    fn root(&mut self, mut index: usize) -> usize {
+        while self.parent[index] != index {
+            self.parent[index] = self.parent[self.parent[index]];
+            index = self.parent[index];
+        }
+        index
+    }
+
+    fn join(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.root(a), self.root(b));
+        if a != b {
+            self.parent[b] = a;
+        }
+    }
 }
 
 /// «weather_fx (1).zip» — повторная загрузка браузером.
@@ -128,6 +188,41 @@ fn is_copy(lower_name: &str) -> bool {
         .is_some_and(|(_, number)| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// Что за мод по составу архива: своя машина, своя карта или дополнение
+/// (детали для машин игры, скрипт, погода, звук).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Vehicle,
+    Map,
+    Addon,
+}
+
+impl Role {
+    pub fn code(self) -> &'static str {
+        match self {
+            Role::Vehicle => "vehicle",
+            Role::Map => "map",
+            Role::Addon => "addon",
+        }
+    }
+}
+
+/// `None` — состав пуст (архив ещё не прочитан или не читается).
+pub fn role_of(content: &[String]) -> Option<Role> {
+    if content.is_empty() {
+        return None;
+    }
+    let keys: HashSet<String> = content.iter().map(|key| key.to_lowercase()).collect();
+    let identity = crate::incoming::identity_keys(&keys);
+    if identity.iter().any(|key| key.starts_with("vehicles/")) {
+        Some(Role::Vehicle)
+    } else if identity.iter().any(|key| key.starts_with("levels/")) {
+        Some(Role::Map)
+    } else {
+        Some(Role::Addon)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,96 +231,33 @@ mod tests {
         list.iter().map(|key| key.to_string()).collect()
     }
 
-    #[test]
-    fn browser_copies_point_to_the_clean_name() {
-        // Реальный набор: weather_fx в четырёх копиях, acm_percheron в двух.
-        let weather = keys(&["lua/ge", "scripts/weather_fx"]);
-        let percheron = keys(&["vehicles/percheron", "vehicles/eu_trailers"]);
-        let items = [
-            DupItem {
-                id: "w1",
-                file_name: "weather_fx (1).zip",
-                size: 700_000,
-                content: &weather,
-            },
-            DupItem {
-                id: "w2",
-                file_name: "weather_fx_tg_m0dsbeamng.zip",
-                size: 700_000,
-                content: &weather,
-            },
-            DupItem {
-                id: "w3",
-                file_name: "weather_fx.zip",
-                size: 700_000,
-                content: &weather,
-            },
-            DupItem {
-                id: "w4",
-                file_name: "weather_fx_modland.zip",
-                size: 700_000,
-                content: &weather,
-            },
-            DupItem {
-                id: "p1",
-                file_name: "acm_percheron_addon_GR_v1-0 (1).zip",
-                size: 800_000,
-                content: &percheron,
-            },
-            DupItem {
-                id: "p2",
-                file_name: "acm_percheron_addon_GR_v1-0.zip",
-                size: 800_000,
-                content: &percheron,
-            },
-        ];
-        let found = find(&items);
-        for id in ["w1", "w2", "w4"] {
-            assert_eq!(
-                found[id],
-                Duplicate {
-                    of: "w3".to_string(),
-                    exact: true
-                },
-                "{id}"
-            );
+    fn item<'a>(id: &'a str, file: &'a str, size: i64, content: &'a [String]) -> DupItem<'a> {
+        DupItem {
+            id,
+            file_name: file,
+            size,
+            content,
+            version: None,
+            modified: None,
         }
-        assert!(!found.contains_key("w3"));
-        assert_eq!(
-            found["p1"],
-            Duplicate {
-                of: "p2".to_string(),
-                exact: true
-            }
-        );
-        assert!(!found.contains_key("p2"));
     }
 
     #[test]
-    fn repacked_script_with_the_same_name_is_a_second_version() {
-        // weather_fx_tg_m0dsbeamng.zip перепакован каналом: размер другой, состав тот же.
+    fn copies_and_repacks_form_one_group_around_the_freshest() {
+        // Реальный набор: weather_fx в четырёх файлах, один перепакован каналом.
         let weather = keys(&["lua/ge", "scripts/weather_fx"]);
-        let items = [
-            DupItem {
-                id: "w",
-                file_name: "weather_fx.zip",
-                size: 700_000,
-                content: &weather,
-            },
-            DupItem {
-                id: "w1",
-                file_name: "weather_fx (1).zip",
-                size: 700_000,
-                content: &weather,
-            },
-            DupItem {
-                id: "tg",
-                file_name: "weather_fx_tg_m0dsbeamng.zip",
-                size: 690_000,
-                content: &weather,
-            },
+        let mut items = vec![
+            item("w1", "weather_fx (1).zip", 700_000, &weather),
+            item("tg", "weather_fx_tg_m0dsbeamng.zip", 690_000, &weather),
+            item("w", "weather_fx.zip", 700_000, &weather),
+            item("ml", "weather_fx_modland.zip", 700_000, &weather),
         ];
         let found = find(&items);
+        assert_eq!(found.len(), 3, "одна группа, один основной");
+        assert!(
+            !found.contains_key("w"),
+            "без даты основной — самое чистое имя"
+        );
         assert_eq!(
             found["w1"],
             Duplicate {
@@ -240,49 +272,38 @@ mod tests {
                 exact: false
             }
         );
-        assert!(!found.contains_key("w"));
 
-        // Разные скрипты с одинаково бедным составом — не повторы.
-        let ge = keys(&["lua/ge"]);
-        let others = [
-            DupItem {
-                id: "a",
-                file_name: "traffic_tool.zip",
-                size: 10,
-                content: &ge,
-            },
-            DupItem {
-                id: "b",
-                file_name: "camera_tweaks.zip",
-                size: 20,
-                content: &ge,
-            },
-        ];
-        assert!(find(&others).is_empty());
+        // Свежий файл становится основным.
+        items[1].modified = Some(200);
+        items[2].modified = Some(100);
+        let found = find(&items);
+        assert!(!found.contains_key("tg"));
+        assert_eq!(
+            found["w"],
+            Duplicate {
+                of: "tg".to_string(),
+                exact: false
+            }
+        );
     }
 
     #[test]
-    fn two_versions_of_one_car_are_marked() {
+    fn newer_version_is_the_main_one() {
         let rs3 = keys(&["vehicles/rs3y8", "vehicles/common"]);
-        let items = [
-            DupItem {
-                id: "old",
-                file_name: "Audi_RS3_v1.0.zip",
-                size: 100,
-                content: &rs3,
-            },
-            DupItem {
-                id: "new",
-                file_name: "Audi_RS3_v1.1.zip",
-                size: 120,
-                content: &rs3,
-            },
-        ];
-        let found = find(&items);
-        assert_eq!(found.len(), 1);
-        let (id, duplicate) = found.iter().next().unwrap();
-        assert!(!duplicate.exact);
-        assert_ne!(id, &duplicate.of);
+        let mut old = item("old", "Audi_RS3_v1.0.zip", 100, &rs3);
+        old.version = Some("1.0");
+        old.modified = Some(500);
+        let mut new = item("new", "Audi_RS3_v1.1.zip", 120, &rs3);
+        new.version = Some("1.1");
+        new.modified = Some(100);
+        let found = find(&[old, new]);
+        assert_eq!(
+            found["old"],
+            Duplicate {
+                of: "new".to_string(),
+                exact: false
+            }
+        );
     }
 
     #[test]
@@ -291,43 +312,16 @@ mod tests {
         let tuning_b = keys(&["vehicles/etk800", "vehicles/pickup", "lua/ge"]);
         let car = keys(&["vehicles/rs3y8"]);
         let other = keys(&["vehicles/laurel"]);
+        let ge = keys(&["lua/ge"]);
         let items = [
-            DupItem {
-                id: "a",
-                file_name: "a.zip",
-                size: 10,
-                content: &tuning_a,
-            },
-            DupItem {
-                id: "b",
-                file_name: "b.zip",
-                size: 20,
-                content: &tuning_b,
-            },
-            DupItem {
-                id: "c",
-                file_name: "c.zip",
-                size: 30,
-                content: &car,
-            },
-            DupItem {
-                id: "d",
-                file_name: "d.zip",
-                size: 40,
-                content: &other,
-            },
-            DupItem {
-                id: "e",
-                file_name: "e.zip",
-                size: 50,
-                content: &[],
-            },
-            DupItem {
-                id: "f",
-                file_name: "f.zip",
-                size: 50,
-                content: &[],
-            },
+            item("a", "a.zip", 10, &tuning_a),
+            item("b", "b.zip", 20, &tuning_b),
+            item("c", "c.zip", 30, &car),
+            item("d", "d.zip", 40, &other),
+            item("e", "e.zip", 50, &[]),
+            item("f", "f.zip", 50, &[]),
+            item("t", "traffic_tool.zip", 60, &ge),
+            item("k", "camera_tweaks.zip", 70, &ge),
         ];
         assert!(find(&items).is_empty());
     }
@@ -338,5 +332,27 @@ mod tests {
         assert!(is_copy("car (12).zip"));
         assert!(!is_copy("lada 2106 (remaster).zip"));
         assert!(!is_copy("car.zip"));
+    }
+
+    #[test]
+    fn roles_by_content() {
+        assert_eq!(
+            role_of(&keys(&["vehicles/rs3y8", "vehicles/common"])),
+            Some(Role::Vehicle)
+        );
+        assert_eq!(
+            role_of(&keys(&["levels/poland", "art/sound"])),
+            Some(Role::Map)
+        );
+        // Тюнинг стандартных машин, погода, двигатели — дополнения.
+        assert_eq!(
+            role_of(&keys(&["vehicles/etk800", "vehicles/pickup"])),
+            Some(Role::Addon)
+        );
+        assert_eq!(
+            role_of(&keys(&["lua/ge", "scripts/weather_fx"])),
+            Some(Role::Addon)
+        );
+        assert_eq!(role_of(&[]), None);
     }
 }

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic;
@@ -247,6 +248,17 @@ impl LibraryStore for JsonLibraryStore {
         self.state.lock().unwrap().inner.statuses.clone()
     }
 
+    fn last_run(&self) -> Option<DateTime<FixedOffset>> {
+        self.state.lock().unwrap().inner.last_run
+    }
+
+    fn set_last_run(&self, at: DateTime<FixedOffset>) {
+        let mut state = self.state.lock().unwrap();
+        let changed = state.inner.last_run != Some(at);
+        state.inner.last_run = Some(at);
+        self.changed(&mut state, changed);
+    }
+
     fn get_dismissed_update(&self, mod_id: &str) -> Option<String> {
         self.state
             .lock()
@@ -326,6 +338,8 @@ struct FileModel {
     declined: Option<Vec<String>>,
     #[serde(default)]
     page_searches: Option<BTreeMap<String, PageSearch>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_run_utc: Option<DateTime<FixedOffset>>,
 }
 
 fn model_of(inner: &Inner) -> FileModel {
@@ -391,6 +405,7 @@ fn model_of(inner: &Inner) -> FileModel {
         history: Some(history),
         declined: Some(declined),
         page_searches: Some(page_searches),
+        last_run_utc: inner.last_run,
     }
 }
 
@@ -511,6 +526,8 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
         inner.set_page_search(&mod_id, Some(search));
     }
 
+    inner.last_run = model.last_run_utc;
+
     if skipped > 0 {
         warnings.push(format!(
             "записей библиотеки пропущено из-за неверных данных: {skipped}"
@@ -618,6 +635,7 @@ mod tests {
                     rejected: true,
                 }),
             );
+            store.set_last_run(moment());
             assert!(temp_names(dir.path()).is_empty());
         }
 
@@ -639,6 +657,7 @@ mod tests {
         assert_eq!(loaded.file_history("a"), vec!["a_old.zip"]);
         assert!(loaded.is_checking_declined("a"));
         assert!(loaded.get_page_search("a").unwrap().rejected);
+        assert_eq!(loaded.last_run(), Some(moment()));
     }
 
     #[test]

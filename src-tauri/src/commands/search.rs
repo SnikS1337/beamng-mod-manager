@@ -37,6 +37,8 @@ pub struct SearchListingDto {
     pub source_id: String,
     pub url: String,
     pub title: String,
+    /// Название без рубрики сайта и версии («автомобиль LADA 2106 v1.0» → «LADA 2106»).
+    pub name: String,
     pub mod_version: Option<String>,
     pub game_version: Option<String>,
     pub author: Option<String>,
@@ -60,6 +62,8 @@ pub struct SearchCardDto {
     pub possible_same_as: Vec<String>,
     pub relevance: f64,
     pub installed: bool,
+    /// «vehicle», «map», «addon» или нет, если сайт не сказал.
+    pub kind: Option<String>,
     pub listings: Vec<SearchListingDto>,
 }
 
@@ -431,6 +435,7 @@ fn card_dto(card: &ModCard, installed: &InstalledIndex) -> SearchCardDto {
         possible_same_as: card.possible_same_as.clone(),
         relevance: card.relevance,
         installed: listings.iter().any(|listing| listing.installed),
+        kind: card.kind.map(|kind| kind.code().to_string()),
         listings,
     }
 }
@@ -441,6 +446,14 @@ fn listing_dto(listing: &Listing, installed: &InstalledIndex) -> SearchListingDt
         source_id: listing.source_id.clone(),
         url: listing.url.to_string(),
         title: listing.title.clone(),
+        name: {
+            let name = bmm_domain::text::TitleParser::parse(&listing.title).name;
+            if name.is_empty() {
+                listing.title.clone()
+            } else {
+                name
+            }
+        },
         mod_version: listing.mod_version.clone(),
         game_version: listing.game_version.clone(),
         author: listing.author.clone(),
@@ -599,6 +612,7 @@ mod tests {
                     price: PriceSummary::Free,
                     possible_same_as: vec!["modland:9".to_string()],
                     relevance: 1.0,
+                    kind: Some(bmm_domain::text::ModKind::Vehicle),
                 },
                 ModCard {
                     id: "modland:9".to_string(),
@@ -607,6 +621,7 @@ mod tests {
                     price: PriceSummary::Paid,
                     possible_same_as: Vec::new(),
                     relevance: 0.5,
+                    kind: None,
                 },
             ],
             sources: vec![SourceReport {
@@ -624,11 +639,121 @@ mod tests {
         assert_eq!(event.phase, "done");
         assert!(event.cards[0].installed);
         assert!(event.cards[0].listings[0].installed);
+        assert_eq!(event.cards[0].listings[0].name, "Rolls-Royce Cullinan");
         assert_eq!(event.cards[0].price, "free");
+        assert_eq!(event.cards[0].kind.as_deref(), Some("vehicle"));
+        assert_eq!(event.cards[1].kind, None);
         assert_eq!(event.cards[0].possible_same_as, vec!["modland:9"]);
         assert!(!event.cards[1].installed);
         assert_eq!(event.cards[1].price, "paid");
         assert_eq!(event.cards[1].listings[0].price, "paid");
         assert_eq!(event.sources[0].status, "needsHumanCheck");
+    }
+
+    #[test]
+    fn search_window_and_rust_agree_on_fields_and_values() {
+        use crate::test_support::{assert_matches_ts, ts_field_values, ts_union};
+        use bmm_domain::models::{Offer, OfferKind};
+        use bmm_sources::search::ModCard;
+
+        let mut item = listing("stmods", "bmw", "BMW E34 версия 3.3");
+        item.offers = vec![Offer {
+            kind: OfferKind::ExternalHost,
+            host: "modsfire".to_string(),
+            url: "https://modsfire.com/x".parse().unwrap(),
+            host_file_id: Some("x".to_string()),
+            size_bytes: Some(1),
+        }];
+        let response = SearchResponse {
+            cards: vec![ModCard {
+                id: "stmods:bmw".to_string(),
+                title: "BMW E34".to_string(),
+                listings: vec![item],
+                price: PriceSummary::Mixed,
+                possible_same_as: Vec::new(),
+                relevance: 1.0,
+                kind: Some(bmm_domain::text::ModKind::Vehicle),
+            }],
+            sources: vec![SourceReport {
+                source_id: "stmods".to_string(),
+                display_name: "STMods".to_string(),
+                status: SourceStatus::Ok,
+                count: 1,
+                note: None,
+                pending: false,
+            }],
+            listings: Vec::new(),
+        };
+        let index = InstalledIndex::from_store(&InMemoryLibraryStore::new());
+        let event = serde_json::to_value(to_event(&response, 1, "done", &index, None)).unwrap();
+        assert_matches_ts(&event, "search.ts", "SearchEvent");
+        assert_matches_ts(&event["cards"][0], "search.ts", "SearchCard");
+        assert_matches_ts(
+            &event["cards"][0]["listings"][0],
+            "search.ts",
+            "SearchListing",
+        );
+        assert_matches_ts(
+            &event["cards"][0]["listings"][0]["offers"][0],
+            "search.ts",
+            "SearchOffer",
+        );
+        assert_matches_ts(&event["sources"][0], "search.ts", "SearchSource");
+
+        // Каждое значение, которое может прийти из Rust, окно знает.
+        let kinds = ts_field_values("search.ts", "SearchCard", "kind");
+        for kind in [
+            bmm_domain::text::ModKind::Vehicle,
+            bmm_domain::text::ModKind::Map,
+            bmm_domain::text::ModKind::Addon,
+        ] {
+            assert!(
+                kinds.contains(kind.code()),
+                "окно не знает тип {}",
+                kind.code()
+            );
+        }
+        let summaries = ts_union("search.ts", "SearchPriceSummary");
+        for price in [
+            PriceSummary::Unknown,
+            PriceSummary::Free,
+            PriceSummary::Paid,
+            PriceSummary::Mixed,
+        ] {
+            assert!(summaries.contains(price_summary(price)));
+        }
+        let prices = ts_union("search.ts", "SearchPrice");
+        for price in [PriceStatus::Unknown, PriceStatus::Free, PriceStatus::Paid] {
+            assert!(prices.contains(price_status(price)));
+        }
+        let statuses = ts_union("search.ts", "SearchSourceStatus");
+        for status in [
+            SourceStatus::Ok,
+            SourceStatus::NeedsHumanCheck,
+            SourceStatus::Unavailable,
+        ] {
+            let mut report = response.sources[0].clone();
+            report.status = status;
+            assert!(statuses.contains(&source_dto(&report).status));
+        }
+        let offer_kinds = ts_field_values("search.ts", "SearchOffer", "kind");
+        for kind in [
+            OfferKind::Direct,
+            OfferKind::ExternalHost,
+            OfferKind::PaidLink,
+        ] {
+            let offer = Offer {
+                kind,
+                host: String::new(),
+                url: "https://example.com".parse().unwrap(),
+                host_file_id: None,
+                size_bytes: None,
+            };
+            assert!(offer_kinds.contains(&offer_dto(&offer).kind));
+        }
+        let phases = ts_field_values("search.ts", "SearchEvent", "phase");
+        for phase in ["partial", "done", "error", "regroup"] {
+            assert!(phases.contains(phase));
+        }
     }
 }

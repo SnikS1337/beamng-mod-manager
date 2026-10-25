@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Utc};
@@ -8,6 +9,10 @@ use sha2::{Digest, Sha256};
 
 use bmm_domain::atomic;
 
+const TITLES_FILE: &str = "titles.json";
+const PROBLEMS_FILE: &str = "problems.json";
+const CONTENTS_FILE: &str = "contents.json";
+const MOD_INFO_FILE: &str = "mod_info.json";
 const TITLES_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const CONTENTS_MAX_BYTES: u64 = 32 * 1024 * 1024;
 /// Мод-сборник может нести сотни папок машин; для сравнения хватит первых.
@@ -25,13 +30,31 @@ pub enum CachedPreview {
     NoImage,
 }
 
+/// Кэш картинок и сведений об архивах модов.
+///
+/// Сведения (названия, состав, ошибки упаковки, mod_info) — по одному json на вид.
+/// Их читают на каждом показе списка, поэтому разобранная копия держится в памяти и
+/// перечитывается, только если файл изменился; запись идёт под одной блокировкой,
+/// чтобы фоновое заполнение и показ списка не затирали друг друга.
 pub struct PreviewCache {
     root: PathBuf,
+    titles: MapFile<String>,
+    problems: MapFile<String>,
+    contents: MapFile<Vec<String>>,
+    mod_infos: MapFile<serde_json::Value>,
+    write: Mutex<()>,
 }
 
 impl PreviewCache {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            titles: MapFile::new(Some(clean_title)),
+            problems: MapFile::new(None),
+            contents: MapFile::new(None),
+            mod_infos: MapFile::new(None),
+            write: Mutex::new(()),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -153,54 +176,40 @@ impl PreviewCache {
                 let _ = fs::remove_file(path);
             }
         }
+        self.prune_maps(live_keys);
     }
 
     /// Что не так с упаковкой архива (`PackagingProblem::code`), по ключу превью;
     /// пустая строка — проверено, всё в порядке.
     pub fn problems(&self) -> BTreeMap<String, String> {
-        let path = self.root.join("problems.json");
-        match fs::metadata(&path) {
-            Ok(metadata) if metadata.len() <= TITLES_MAX_BYTES => {}
-            _ => return BTreeMap::new(),
-        }
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+        self.problems
+            .load(&self.root.join(PROBLEMS_FILE), TITLES_MAX_BYTES)
     }
 
     pub fn put_problems(&self, entries: &[(String, Option<String>)]) -> std::io::Result<()> {
         if entries.is_empty() {
             return Ok(());
         }
-        fs::create_dir_all(&self.root)?;
+        let _write = self.write_gate();
         let mut problems = self.problems();
         for (key, problem) in entries {
             problems.insert(key.clone(), problem.clone().unwrap_or_default());
         }
-        let json = serde_json::to_string(&problems).map_err(std::io::Error::other)?;
-        atomic::write_atomic(&self.root.join("problems.json"), json.as_bytes())
+        self.problems.save(&self.root, PROBLEMS_FILE, problems)
     }
 
     /// Состав архивов (`incoming::content_keys`) по ключу превью — для поиска повторов
     /// без повторного чтения сотен архивов при каждом показе списка.
     pub fn contents(&self) -> BTreeMap<String, Vec<String>> {
-        let path = self.root.join("contents.json");
-        match fs::metadata(&path) {
-            Ok(metadata) if metadata.len() <= CONTENTS_MAX_BYTES => {}
-            _ => return BTreeMap::new(),
-        }
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+        self.contents
+            .load(&self.root.join(CONTENTS_FILE), CONTENTS_MAX_BYTES)
     }
 
     pub fn put_contents(&self, entries: &[(String, Vec<String>)]) -> std::io::Result<()> {
         if entries.is_empty() {
             return Ok(());
         }
-        fs::create_dir_all(&self.root)?;
+        let _write = self.write_gate();
         let mut contents = self.contents();
         for (key, keys) in entries {
             let mut keys = keys.clone();
@@ -208,27 +217,30 @@ impl PreviewCache {
             keys.truncate(CONTENT_KEYS_PER_MOD);
             contents.insert(key.clone(), keys);
         }
-        let json = serde_json::to_string(&contents).map_err(std::io::Error::other)?;
-        atomic::write_atomic(&self.root.join("contents.json"), json.as_bytes())
+        self.contents.save(&self.root, CONTENTS_FILE, contents)
+    }
+
+    /// `mod_info` из архивов по ключу превью: `{"id": …, "data": {…}}`, `null` — нет.
+    pub fn mod_infos(&self) -> BTreeMap<String, serde_json::Value> {
+        self.mod_infos
+            .load(&self.root.join(MOD_INFO_FILE), CONTENTS_MAX_BYTES)
+    }
+
+    pub fn put_mod_infos(&self, entries: &[(String, serde_json::Value)]) -> std::io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let _write = self.write_gate();
+        let mut infos = self.mod_infos();
+        for (key, value) in entries {
+            infos.insert(key.clone(), value.clone());
+        }
+        self.mod_infos.save(&self.root, MOD_INFO_FILE, infos)
     }
 
     pub fn titles(&self) -> BTreeMap<String, String> {
-        let path = self.root.join("titles.json");
-        let Ok(metadata) = fs::metadata(&path) else {
-            return BTreeMap::new();
-        };
-        if metadata.len() > TITLES_MAX_BYTES {
-            return BTreeMap::new();
-        }
-        let Ok(text) = fs::read_to_string(path) else {
-            return BTreeMap::new();
-        };
-        let titles: BTreeMap<String, String> = serde_json::from_str(&text).unwrap_or_default();
-        // Записанное раньше могло сохранить лишние пробелы авторов («Toyota  Mark II»).
-        titles
-            .into_iter()
-            .map(|(key, title)| (key, title.split_whitespace().collect::<Vec<_>>().join(" ")))
-            .collect()
+        self.titles
+            .load(&self.root.join(TITLES_FILE), TITLES_MAX_BYTES)
     }
 
     pub fn title(&self, key: &str) -> Option<Option<String>> {
@@ -247,30 +259,144 @@ impl PreviewCache {
         if entries.is_empty() {
             return Ok(());
         }
-        fs::create_dir_all(&self.root)?;
+        let _write = self.write_gate();
         let mut titles = self.titles();
         for (key, title) in entries {
             let value = title.as_deref().unwrap_or("");
             if value.chars().count() <= 200 {
-                titles.insert(key.clone(), value.to_string());
+                titles.insert(key.clone(), clean_title(value));
             }
         }
-        let json = serde_json::to_string(&titles).map_err(std::io::Error::other)?;
-        atomic::write_atomic(&self.root.join("titles.json"), json.as_bytes())
+        self.titles.save(&self.root, TITLES_FILE, titles)
     }
 
     pub fn put_title(&self, key: &str, title: Option<&str>) -> std::io::Result<()> {
-        fs::create_dir_all(&self.root)?;
+        self.put_titles(&[(key.to_string(), title.map(str::to_string))])
+    }
+
+    /// Убирает из сведений об архивах (названия, состав, ошибки упаковки, mod_info)
+    /// записи модов, которых больше нет. Без этого файлы растут с каждым обновлением
+    /// мода (новый размер — новый ключ), а состав архивов упирается в предел и
+    /// перестаёт читаться целиком.
+    fn prune_maps(&self, live_keys: &HashSet<String>) {
+        let _write = self.write_gate();
+        let keep = |key: &String| live_keys.contains(key);
         let mut titles = self.titles();
-        let value = title.unwrap_or("");
-        if value.chars().count() > 200 {
-            return Ok(());
+        if retain_changed(&mut titles, keep) {
+            let _ = self.titles.save(&self.root, TITLES_FILE, titles);
         }
-        titles.insert(key.to_string(), value.to_string());
-        let json = serde_json::to_string(&titles).map_err(std::io::Error::other)?;
-        atomic::write_atomic(&self.root.join("titles.json"), json.as_bytes())
+        let mut problems = self.problems();
+        if retain_changed(&mut problems, keep) {
+            let _ = self.problems.save(&self.root, PROBLEMS_FILE, problems);
+        }
+        let mut contents = self.contents();
+        if retain_changed(&mut contents, keep) {
+            let _ = self.contents.save(&self.root, CONTENTS_FILE, contents);
+        }
+        let mut infos = self.mod_infos();
+        if retain_changed(&mut infos, keep) {
+            let _ = self.mod_infos.save(&self.root, MOD_INFO_FILE, infos);
+        }
+    }
+
+    fn write_gate(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.write.lock().unwrap_or_else(|error| error.into_inner())
     }
 }
+
+/// Названия авторов бывают с лишними пробелами («Toyota  Mark II»).
+fn clean_title(title: &str) -> String {
+    title.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn retain_changed<T>(map: &mut BTreeMap<String, T>, keep: impl Fn(&String) -> bool) -> bool {
+    let before = map.len();
+    map.retain(|key, _| keep(key));
+    map.len() != before
+}
+
+/// Отметка файла: размер и время изменения. Совпала — разобранная копия свежая.
+type Stamp = (u64, Option<SystemTime>);
+
+fn stamp_of(path: &Path) -> Option<Stamp> {
+    let metadata = fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()))
+}
+
+type Cached<T> = Option<(Stamp, Arc<BTreeMap<String, T>>)>;
+
+/// Один json-файл сведений `ключ → значение` с разобранной копией в памяти.
+struct MapFile<T> {
+    cached: Mutex<Cached<T>>,
+    clean: Option<fn(&str) -> String>,
+}
+
+impl<T> MapFile<T>
+where
+    T: Clone + serde::Serialize + serde::de::DeserializeOwned + CleanValue,
+{
+    fn new(clean: Option<fn(&str) -> String>) -> Self {
+        Self {
+            cached: Mutex::new(None),
+            clean,
+        }
+    }
+
+    fn load(&self, path: &Path, max_bytes: u64) -> BTreeMap<String, T> {
+        let Some(stamp) = stamp_of(path) else {
+            *self.slot() = None;
+            return BTreeMap::new();
+        };
+        if stamp.0 > max_bytes {
+            return BTreeMap::new();
+        }
+        if let Some((cached, map)) = self.slot().as_ref()
+            && *cached == stamp
+        {
+            return (**map).clone();
+        }
+        let mut map: BTreeMap<String, T> = fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        if let Some(clean) = self.clean {
+            for value in map.values_mut() {
+                value.clean_with(clean);
+            }
+        }
+        *self.slot() = Some((stamp, Arc::new(map.clone())));
+        map
+    }
+
+    fn save(&self, root: &Path, name: &str, map: BTreeMap<String, T>) -> std::io::Result<()> {
+        fs::create_dir_all(root)?;
+        let path = root.join(name);
+        let json = serde_json::to_string(&map).map_err(std::io::Error::other)?;
+        atomic::write_atomic(&path, json.as_bytes())?;
+        *self.slot() = stamp_of(&path).map(|stamp| (stamp, Arc::new(map)));
+        Ok(())
+    }
+
+    fn slot(&self) -> std::sync::MutexGuard<'_, Cached<T>> {
+        self.cached
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+/// Чистка строковых значений при чтении (названия); остальные виды не трогаются.
+trait CleanValue {
+    fn clean_with(&mut self, _clean: fn(&str) -> String) {}
+}
+
+impl CleanValue for String {
+    fn clean_with(&mut self, clean: fn(&str) -> String) {
+        *self = clean(self);
+    }
+}
+
+impl CleanValue for Vec<String> {}
+impl CleanValue for serde_json::Value {}
 
 /// Уменьшает картинку до [`PREVIEW_MAX_SIDE`] и пережимает в jpg. `None` — картинка и так
 /// маленькая или не читается (тогда кладём как есть).
@@ -339,6 +465,84 @@ mod tests {
         assert!(dir.path().join("live.jpg").exists());
         assert!(!dir.path().join("dead.jpg").exists());
         assert!(dir.path().join("readme.txt").exists());
+    }
+
+    #[test]
+    fn prune_also_forgets_facts_of_removed_mods() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path());
+        cache
+            .put_titles(&[
+                ("live".to_string(), Some("Live".to_string())),
+                ("dead".to_string(), Some("Dead".to_string())),
+            ])
+            .unwrap();
+        cache
+            .put_contents(&[
+                ("live".to_string(), vec!["vehicles/a".to_string()]),
+                ("dead".to_string(), vec!["vehicles/b".to_string()]),
+            ])
+            .unwrap();
+        cache
+            .put_problems(&[("dead".to_string(), Some("nested".to_string()))])
+            .unwrap();
+        cache
+            .put_mod_infos(&[("dead".to_string(), serde_json::Value::Null)])
+            .unwrap();
+        cache.prune(&HashSet::from(["live".to_string()]));
+        assert_eq!(cache.titles().keys().collect::<Vec<_>>(), vec!["live"]);
+        assert_eq!(cache.contents().keys().collect::<Vec<_>>(), vec!["live"]);
+        assert!(cache.problems().is_empty());
+        assert!(cache.mod_infos().is_empty());
+        // И на диске, а не только в памяти.
+        let fresh = PreviewCache::new(dir.path());
+        assert_eq!(fresh.titles().len(), 1);
+        assert!(fresh.problems().is_empty());
+    }
+
+    #[test]
+    fn copy_in_memory_follows_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path());
+        cache
+            .put_titles(&[("a".to_string(), Some("A".to_string()))])
+            .unwrap();
+        assert_eq!(cache.titles()["a"], "A");
+        // Файл поменяли снаружи (другая копия программы, ручная правка): читаем заново.
+        fs::write(
+            dir.path().join(TITLES_FILE),
+            r#"{"a":"Changed name","b":"B"}"#,
+        )
+        .unwrap();
+        let titles = cache.titles();
+        assert_eq!(titles["a"], "Changed name");
+        assert_eq!(titles.len(), 2);
+        // Файл удалили — пусто, а не старая копия.
+        fs::remove_file(dir.path().join(TITLES_FILE)).unwrap();
+        assert!(cache.titles().is_empty());
+    }
+
+    #[test]
+    fn writes_from_two_threads_are_not_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = std::sync::Arc::new(PreviewCache::new(dir.path()));
+        let handles: Vec<_> = (0..8)
+            .map(|thread| {
+                let cache = cache.clone();
+                std::thread::spawn(move || {
+                    for index in 0..25 {
+                        cache
+                            .put_title(&format!("{thread}-{index}"), Some("x"))
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(cache.titles().len(), 200);
+        assert_eq!(PreviewCache::new(dir.path()).titles().len(), 200);
     }
 
     #[test]

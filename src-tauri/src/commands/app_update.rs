@@ -453,6 +453,41 @@ mod tests {
     }
 
     #[test]
+    fn update_banner_and_rust_agree_on_fields_and_stages() {
+        // Плашка обновления читает этот снимок; лишнее или пропавшее поле — пустая плашка.
+        let manifest = format!(
+            r#"{{"version":"9.9.9","url":"https://github.com/x/y/releases/download/v9.9.9/a.exe","size":5000000,"sha256":"{}","notes":"Исправления","published":"2026-10-20T10:00:00+03:00"}}"#,
+            "a".repeat(64)
+        );
+        let state = bmm_app_release::check_json(&current_version(), &manifest, None);
+        let value = serde_json::to_value(dto(state)).unwrap();
+        crate::test_support::assert_matches_ts(&value, "appUpdate.ts", "AppUpdateSnapshot");
+        crate::test_support::assert_matches_ts(&value["state"], "appUpdate.ts", "AppUpdateState");
+        let manifest = &value["state"]["manifest"];
+        crate::test_support::assert_matches_ts(manifest, "appUpdate.ts", "AppUpdateManifest");
+        // Версия — строкой «9.9.9», а не разобранным числом: окно её только печатает.
+        assert_eq!(manifest["version"], "9.9.9");
+        assert_eq!(value["state"]["stage"], "available");
+
+        let stages = crate::test_support::ts_union("appUpdate.ts", "AppUpdateStage");
+        for stage in [
+            UpdateStage::Idle,
+            UpdateStage::Checking,
+            UpdateStage::UpToDate,
+            UpdateStage::Available,
+            UpdateStage::Downloading,
+            UpdateStage::ReadyToRestart,
+            UpdateStage::Failed,
+        ] {
+            let name = serde_json::to_value(stage).unwrap();
+            assert!(
+                stages.contains(name.as_str().unwrap()),
+                "окно не знает стадию {name}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_installer_arguments() {
         let args = strings(&[
             "BeamModManager.exe",

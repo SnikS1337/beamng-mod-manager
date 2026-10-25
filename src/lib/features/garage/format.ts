@@ -19,16 +19,25 @@ export function plural(count: number, one: string, few: string, many: string): s
   return many;
 }
 
-export function modsLabel(count: number): string {
-  const grouped = count
-    .toLocaleString("ru-RU")
-    .replace(/[\u00a0\u202f]/g, " ");
-  return `${grouped} ${plural(count, "мод", "мода", "модов")}`;
+/** «5 000»: разряды обычным пробелом (у `toLocaleString` неразрывный узкий). */
+export function groupDigits(count: number): string {
+  return count.toLocaleString("ru-RU").replace(/[\u00a0\u202f]/g, " ");
 }
 
-export function headerNote(count: number, updates: number): string {
+export function modsLabel(count: number): string {
+  return `${groupDigits(count)} ${plural(count, "мод", "мода", "модов")}`;
+}
+
+/**
+ * Подпись под «Гаражом». `count` — моды (копии одного мода — один), `files` — архивы
+ * на диске: без него «39 модов» в шапке и «Все 35» в фильтре выглядели как ошибка.
+ */
+export function headerNote(count: number, updates: number, files = count): string {
   if (count === 0) return "модов пока нет";
-  const base = modsLabel(count);
+  const base =
+    files > count
+      ? `${modsLabel(count)} (${groupDigits(files)} ${plural(files, "файл", "файла", "файлов")})`
+      : modsLabel(count);
   if (updates > 0) {
     return `${base} · ${updates} ${plural(updates, "ждёт", "ждут", "ждут")} обновления`;
   }

@@ -256,6 +256,10 @@ impl UpdateCoordinator {
                 state.last_cancelled_run = None;
             }
         }
+        // «Последняя проверка» в окне — время нажатия, даже если все моды отложены.
+        if !report.cancelled {
+            self.store.set_last_run(self.now());
+        }
         self.idle.notify_all();
     }
 
@@ -804,8 +808,9 @@ mod tests {
         let site = Site::new();
         site.set_feed(vec![l("m0", "1.0"), l("m1", "1.0"), l("m2", "1.0")]);
         let clock = clock_at(t0());
+        let library = store(3);
         let coordinator = coordinator(
-            store(3),
+            Arc::clone(&library),
             Arc::clone(&site),
             clock_of(&clock),
             UpdateCoordinatorOptions::default(),
@@ -813,6 +818,7 @@ mod tests {
         let first = coordinator.check(false, None);
         let calls = site.feed_calls();
         assert_eq!(first.up_to_date, 3);
+        assert_eq!(library.last_run(), Some(t0()));
 
         *clock.lock().unwrap() = t0() + TimeDelta::minutes(10);
         let second = coordinator.check(false, None);
@@ -820,6 +826,8 @@ mod tests {
         assert_eq!(second.requests, 0);
         assert_eq!(second.fresh_skipped, 3);
         assert!(second.complete());
+        // Сайты не трогали, но «Последняя проверка» — это нажатие.
+        assert_eq!(library.last_run(), Some(t0() + TimeDelta::minutes(10)));
     }
 
     #[test]

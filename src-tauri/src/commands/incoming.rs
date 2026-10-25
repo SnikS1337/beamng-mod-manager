@@ -554,6 +554,32 @@ mod tests {
     }
 
     #[test]
+    fn broken_and_missing_archives_are_reported_not_dropped() {
+        let (temp, state) = setup();
+        let broken = temp.path().join("broken.zip");
+        fs::write(&broken, b"not a zip at all").unwrap();
+        let missing = temp.path().join("missing.zip");
+        let good = temp.path().join("good.zip");
+        make_zip(&good, b"{}");
+        let paths: Vec<String> = [&broken, &missing, &good]
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let result = inspect_paths(&state, &paths).unwrap();
+        assert_eq!(result.len(), 3, "каждый архив получил ответ");
+        // Битый архив — одна заблокированная строка с одной причиной, а не тишина.
+        let broken_item = &result[0].items[0];
+        assert!(broken_item.blocked);
+        assert_eq!(broken_item.findings.len(), 1, "{:?}", broken_item.findings);
+        assert!(result[1].problem.is_some(), "пропавший файл назван");
+        assert!(result[2].problem.is_none(), "{:?}", result[2].problem);
+        assert_eq!(result[2].items.len(), 1);
+        for archive in &result {
+            let _ = fs::remove_dir_all(&archive.work_dir);
+        }
+    }
+
+    #[test]
     fn install_update_and_undo_keeps_disabled_state() {
         let (temp, state) = setup();
         let v1 = temp.path().join("v1.zip");
@@ -597,6 +623,69 @@ mod tests {
         assert!(installer.layout().disabled_dir.join("car_v1.zip").is_file());
         assert!(!installer.layout().mods_dir.join("car_v1.zip").exists());
         assert!(!installer.layout().disabled_dir.join("car_v2.zip").exists());
+    }
+
+    #[test]
+    fn install_window_and_rust_agree_on_fields_and_values() {
+        use crate::test_support::{assert_matches_ts, ts_union};
+        let (temp, state) = setup();
+        let source = temp.path().join("new.zip");
+        make_zip(&source, b"body");
+
+        let archives = inspect_paths(&state, &[source.display().to_string()]).unwrap();
+        let archive = serde_json::to_value(&archives[0]).unwrap();
+        assert_matches_ts(&archive, "incoming.ts", "IncomingArchiveDto");
+        let item = &archive["items"][0];
+        assert_matches_ts(item, "incoming.ts", "IncomingItemDto");
+        assert!(ts_union("incoming.ts", "IncomingKind").contains(item["kind"].as_str().unwrap()));
+        for finding in item["findings"].as_array().unwrap() {
+            assert_matches_ts(finding, "incoming.ts", "IncomingFindingDto");
+        }
+        let severities = ts_union("incoming.ts", "FindingSeverity");
+        for severity in ["info", "warning", "block"] {
+            assert!(severities.contains(severity));
+        }
+        let kinds = ts_union("incoming.ts", "IncomingKind");
+        for kind in ["new", "update", "alreadyInstalled"] {
+            assert!(kinds.contains(kind));
+        }
+
+        // Окно присылает запрос в своём виде — Rust его принимает.
+        let request: IncomingInstallRequest = serde_json::from_value(serde_json::json!({
+            "zipPath": item["zipPath"],
+            "fileName": "new_mod.zip",
+            "replaces": null,
+            "allowWarnings": true,
+        }))
+        .unwrap();
+        let shape = crate::test_support::ts_interface("incoming.ts", "IncomingInstallRequest");
+        assert_eq!(
+            shape
+                .required
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["allowWarnings", "fileName", "replaces", "zipPath"]
+        );
+        let results = install_items(&state, &[request]).unwrap();
+        let result = serde_json::to_value(&results[0]).unwrap();
+        assert_matches_ts(&result, "incoming.ts", "IncomingInstallResult");
+
+        // Отмена приходит из окна билетом — тем же набором полей.
+        let ticket: IncomingTicketDto = serde_json::from_value(serde_json::json!({
+            "fileName": result["fileName"],
+            "replaces": result["replaces"],
+            "backupId": result["backupId"],
+            "wasDisabled": result["wasDisabled"],
+            "sameName": result["sameName"],
+        }))
+        .unwrap();
+        assert_matches_ts(
+            &serde_json::to_value(&ticket).unwrap(),
+            "incoming.ts",
+            "IncomingTicket",
+        );
+        undo_install(&state, &ticket).unwrap();
     }
 
     #[test]

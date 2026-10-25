@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
-  import type { ModCardDto } from "$lib/ipc/library";
+  import type { ModCardDto } from "#lib/ipc/library.js";
   import { formatDateTime, formatSize } from "./format";
 
   let {
@@ -14,7 +13,7 @@
   } = $props();
 </script>
 
-<aside class="inspector glass liquid-edge">
+<aside class="inspector scroll-area" aria-label="Удалённый мод">
   <div class="top">
     <span class="eyebrow">Удалённый мод</span>
     <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>×</button>
@@ -24,7 +23,7 @@
     <span>В копиях</span>
   </div>
 
-  <h2>{card.name}</h2>
+  <h2 class="display">{card.name}</h2>
   <p class="file">{card.fileName}</p>
 
   <div class="facts">
@@ -39,18 +38,21 @@
   </div>
 
   <p class="hint">Мод снова появится в папке, игра включит его сама.</p>
-  <Button onclick={() => onRestore(card)}>Вернуть</Button>
+  <button class="btn-primary" type="button" onclick={() => onRestore(card)}>Вернуть</button>
 </aside>
 
 <style>
   .inspector {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     height: 100%;
+    box-sizing: border-box;
     overflow-y: auto;
-    border-radius: 20px;
-    padding: 16px;
+    padding: 20px;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    animation: fade-in var(--dur-3) var(--ease-out) both;
   }
 
   .top {
@@ -60,19 +62,19 @@
   }
 
   .eyebrow {
-    color: var(--muted-foreground);
-    font-size: 9.5px;
-    font-weight: 650;
-    letter-spacing: 0.1em;
+    color: var(--faint-foreground);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   .close {
-    width: 26px;
-    height: 26px;
-    border: 0;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 8%, transparent);
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
     color: var(--muted-foreground);
     font-size: 18px;
     line-height: 1;
@@ -82,31 +84,30 @@
   .hero {
     display: grid;
     place-items: center;
-    height: 132px;
-    border-radius: 16px;
-    background: linear-gradient(135deg, oklch(0.32 0.03 250), oklch(0.25 0.02 260));
+    height: 140px;
+    border-radius: 10px;
+    background: repeating-linear-gradient(135deg, var(--surface-2) 0 12px, var(--surface-3) 12px 24px);
   }
 
   .hero span {
-    color: rgb(255 255 255 / 0.22);
-    font-size: 18px;
-    font-weight: 650;
+    color: var(--faint-foreground);
+    font-size: 13px;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   h2 {
     margin: 4px 0 0;
-    font-size: 20px;
-    font-weight: 650;
+    font-size: 23px;
+    line-height: 1.1;
   }
 
   .file {
     margin: 0 0 6px;
     overflow: hidden;
-    color: var(--muted-foreground);
-    font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
-    font-size: 9.5px;
+    color: var(--faint-foreground);
+    font-size: 12.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -114,35 +115,32 @@
   .facts {
     display: flex;
     flex-direction: column;
-    gap: 7px;
-    padding: 12px 0;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
+    border: 1px solid var(--border);
+    border-radius: 10px;
   }
 
   .facts div {
     display: flex;
     justify-content: space-between;
     gap: 12px;
+    padding: 9px 12px;
     color: var(--muted-foreground);
-    font-size: 10.5px;
+    font-size: 13px;
+  }
+
+  .facts div + div {
+    border-top: 1px solid var(--border);
   }
 
   .facts b {
     color: var(--foreground);
-    font-weight: 500;
+    font-weight: 600;
   }
 
   .hint {
     margin: 2px 0 4px;
     color: var(--muted-foreground);
-    font-size: 10.5px;
-    line-height: 1.4;
-  }
-
-  @media (max-width: 900px) {
-    .inspector {
-      display: none;
-    }
+    font-size: 13px;
+    line-height: 1.45;
   }
 </style>
