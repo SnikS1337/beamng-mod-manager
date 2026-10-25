@@ -26,6 +26,13 @@ static CARD_TITLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static AUTHOR_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?s)Автор:\s*<a[^>]*>(?<a>.*?)</a>"#).unwrap());
+static CARD_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<div class="col-xs-12 index-card-text">(?<t>.*?)</div>"#).unwrap()
+});
+/// «Категория: <a href="../../cars/">Легковые автомобили</a>» на странице мода.
+static DETAIL_CATEGORY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)Категория:\s*<a[^>]*href="(?<h>[^"]*)"[^>]*>(?<n>.*?)</a>"#).unwrap()
+});
 static DOWNLOAD_ANCHOR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?s)<a[^>]*href="(?<h>/download_file\.php\?[^"]+)"[^>]*>(?<t>.*?)</a>"#).unwrap()
 });
@@ -77,6 +84,11 @@ pub fn parse_list(html: &str) -> Vec<Listing> {
         listing.game_version = parsed.game_version;
         listing.author = author;
         listing.preview_url = preview;
+        listing.category = CARD_TEXT
+            .captures(card)
+            .and_then(|captures| captures.name("t"))
+            .and_then(|text| category_hint(&strip_tags(text.as_str())))
+            .map(str::to_string);
         listing.price = if parsed.has_paid_marker {
             PriceStatus::Paid
         } else {
@@ -85,6 +97,23 @@ pub fn parse_list(html: &str) -> Vec<Listing> {
         result.push(listing);
     }
     result
+}
+
+/// Раздела в карточке поиска STMods нет: все моды лежат в `/beamng_drive/mods/`.
+/// Подсказка по описанию: «20 конфигураций» бывает только у машин, «карта» — у карт.
+/// Не уверены — `None`, тип возьмут из названия или со страницы мода.
+pub fn category_hint(text: &str) -> Option<&'static str> {
+    let text = text.to_lowercase();
+    if text.contains("конфигурац") {
+        Some("cars")
+    } else if ["карта ", "карту ", "карты ", "новая карта", "map "]
+        .iter()
+        .any(|word| text.contains(word))
+    {
+        Some("maps")
+    } else {
+        None
+    }
 }
 
 pub fn is_update_marked(card_html: &str) -> bool {
@@ -121,6 +150,16 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
         .and_then(|captures| captures.name("a"))
     {
         listing.author = Some(clean(author.as_str()));
+    }
+    // Раздел со страницы точнее подсказки по описанию: «../../cars/» → «cars».
+    if let Some(found) = DETAIL_CATEGORY.captures(html) {
+        let slug = found
+            .name("h")
+            .map(|value| value.as_str().trim_matches(|c| c == '/' || c == '.'))
+            .and_then(|value| value.rsplit('/').next())
+            .filter(|value| !value.is_empty());
+        let name = found.name("n").map(|value| clean(value.as_str()));
+        listing.category = slug.map(str::to_string).or(name).or(listing.category);
     }
     listing.size_bytes = size;
     listing
@@ -201,6 +240,36 @@ mod tests {
         assert!(dated[0].title.contains("BMW E34"));
         assert_eq!(dated[0].author.as_deref(), Some("matissator"));
         assert!(dated[0].preview_url.is_some());
+    }
+
+    #[test]
+    fn category_from_detail_page() {
+        let list = parse_list(&fixture("list-real.html"));
+        let detail = parse_detail(&fixture("mod-real.html"), &list[1]);
+        assert_eq!(detail.category.as_deref(), Some("cars"));
+        assert_eq!(
+            bmm_domain::text::ModKind::from_category("cars"),
+            Some(bmm_domain::text::ModKind::Vehicle)
+        );
+    }
+
+    #[test]
+    fn category_hint_from_search_card() {
+        // Настоящая выдача: «BMW F30/F80. - 20 конфигураций» — машина.
+        let search = parse_list(&fixture("search-beamng-2026-10-18.html"));
+        assert!(
+            search
+                .iter()
+                .any(|item| item.category.as_deref() == Some("cars"))
+        );
+        assert_eq!(
+            category_hint("Новая карта для игры: город и трасса"),
+            Some("maps")
+        );
+        assert_eq!(category_hint("Добавлены 5 конфигураций"), Some("cars"));
+        // «карточка», «картон» — не карта; неизвестно — без типа, а не догадка.
+        assert_eq!(category_hint("Исправлена карточка мода"), None);
+        assert_eq!(category_hint("Звуки двигателя"), None);
     }
 
     #[test]
