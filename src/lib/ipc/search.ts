@@ -167,14 +167,6 @@ function mockSourceReports(): SearchSource[] {
       note: null,
       pending: true,
     },
-    {
-      id: "beamng",
-      displayName: "BeamNG (официальный)",
-      status: "ok",
-      count: 0,
-      note: "поиск на этом сайте пока не поддерживается",
-      pending: false,
-    },
   ];
 }
 

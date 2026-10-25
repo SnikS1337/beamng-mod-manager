@@ -173,10 +173,11 @@ pub async fn search_start(
         .sources()
         .iter()
         .filter(|source| {
-            !settings
-                .disabled_sources
-                .iter()
-                .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
+            source.supports_search()
+                && !settings
+                    .disabled_sources
+                    .iter()
+                    .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
         })
         .cloned()
         .collect();

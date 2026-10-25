@@ -60,7 +60,7 @@
     { id: "modland", label: "Modland", note: "Иногда просит подтвердить, что вы человек" },
     { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
     { id: "modsgaming", label: "ModsGaming", note: "Русский каталог модов" },
-    { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
+    { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления; в поиске не участвует" },
   ];
   // `/settings?section=folders` — ссылки вроде «Не нашли папку с модами» ведут сразу к нужному.
   const requested = new URLSearchParams(globalThis.location?.search ?? "").get("section");
@@ -758,7 +758,7 @@
           </div>
         {/each}
       </div>
-      <p class="hint">Поиск и проверка обновлений используют только включённые сайты.</p>
+      <p class="hint">Поиск использует включённые каталоги; BeamNG нужен для обновлений и страниц модов.</p>
     </section>
         {/if}
         {#if activeSection === "program"}
