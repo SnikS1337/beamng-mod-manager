@@ -1474,36 +1474,7 @@ mod tests {
     }
 
     fn test_state(temp: &tempfile::TempDir, mods: &std::path::Path) -> AppState {
-        let data = temp.path().join("data");
-        let paths = AppPaths::at(&data);
-        paths.ensure_dirs().unwrap();
-        let settings = SettingsStore::with_system_clock(paths.settings());
-        settings
-            .save(&AppSettings {
-                mods_folder: Some(mods.display().to_string()),
-                ..AppSettings::default()
-            })
-            .unwrap();
-        AppState {
-            paths,
-            settings,
-            library: Arc::new(JsonLibraryStore::new(
-                temp.path().join("data/library.json"),
-                system_clock(),
-            )),
-            previews: PreviewCache::new(temp.path().join("data/previews")),
-            load_lock: Mutex::new(()),
-            previews_by_id: Mutex::new(HashMap::new()),
-            pending: Mutex::new(HashMap::new()),
-            preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
-            deleted: Mutex::new(HashMap::new()),
-            content_cache: Mutex::new(HashMap::new()),
-            search: None,
-            update: None,
-            app_update: None,
-            search_cancel: Mutex::new(None),
-            last_search: Mutex::new(None),
-        }
+        crate::test_support::test_state(temp, mods)
     }
 
     #[test]
@@ -1936,6 +1907,73 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn garage_and_rust_agree_on_fields_and_values() {
+        // Гараж читает эти поля по именам: переименованное в Rust поле стало бы
+        // `undefined` — пропала бы метка, версия или переключатель.
+        use crate::test_support::{assert_matches_ts, ts_union};
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(
+            &mods.join("car.zip"),
+            &[
+                ("vehicles/car/car.jbeam", b"{}"),
+                ("lua/ge/extensions/car.lua", b"--"),
+            ],
+        );
+        std::fs::write(
+            mods.join("db.json"),
+            r#"{"header":{"version":1.1},"mods":{"car":{"filename":"car.zip","active":true,"modType":"vehicle"}}}"#,
+        )
+        .unwrap();
+        let state = test_state(&temp, &mods);
+
+        let snapshot = serde_json::to_value(load_snapshot(&state).unwrap()).unwrap();
+        assert_matches_ts(&snapshot, "library.ts", "LibrarySnapshot");
+        assert_matches_ts(&snapshot["counts"], "library.ts", "FilterCounts");
+        let card = &snapshot["mods"][0];
+        assert_matches_ts(card, "library.ts", "ModCardDto");
+        assert_matches_ts(&card["compat"], "library.ts", "CompatDto");
+
+        let id = card["id"].as_str().unwrap().to_string();
+        let details = serde_json::to_value(details(&state, &id).unwrap()).unwrap();
+        assert_matches_ts(&details, "library.ts", "ModDetails");
+        assert_matches_ts(&details["archive"], "library.ts", "ArchiveDto");
+
+        let toggled = serde_json::to_value(toggle_mod(&state, &id, false).unwrap()).unwrap();
+        assert_matches_ts(&toggled, "library.ts", "ToggleResult");
+
+        // Строки-значения, которые может прислать Rust, окно знает.
+        let kinds = ts_union("library.ts", "ModKind");
+        for mod_type in [
+            "vehicle", "terrain", "level", "sound", "scenario", "app", "script", "?",
+        ] {
+            assert!(
+                kinds.contains(kind_of(mod_type)),
+                "окно не знает тип {mod_type}"
+            );
+        }
+        let pending = ts_union("library.ts", "PendingState");
+        assert!(pending.contains("none") && pending.contains("queued"));
+        let roles = ts_union("library.ts", "ModRole");
+        for role in [
+            bmm_packs::duplicates::Role::Vehicle,
+            bmm_packs::duplicates::Role::Map,
+            bmm_packs::duplicates::Role::Addon,
+        ] {
+            assert!(roles.contains(role.code()));
+        }
+        let problems = ts_union("library.ts", "PackagingProblem");
+        for problem in [
+            bmm_packs::incoming::PackagingProblem::Wrapped,
+            bmm_packs::incoming::PackagingProblem::Loose,
+            bmm_packs::incoming::PackagingProblem::NotMod,
+        ] {
+            assert!(problems.contains(problem.code()));
+        }
     }
 
     #[test]
