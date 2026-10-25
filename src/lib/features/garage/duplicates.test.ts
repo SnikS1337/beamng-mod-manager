@@ -51,7 +51,7 @@ describe("группы копий", () => {
 
   it("копии прячутся за основной карточкой", () => {
     expect(visibleCards(all).map((item) => item.id)).toEqual(["rs3", "w"]);
-    expect(copiesBadge(main)).toBe("Копий: 3");
+    expect(copiesBadge(main)).toBe("4 копии");
     expect(copiesBadge(card("rs3"))).toBeNull();
   });
 

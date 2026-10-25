@@ -9,7 +9,13 @@
   } from "#lib/ipc/updates.js";
   import { isTauri } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { RefreshCw, Upload } from "@lucide/svelte";
+  import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+  import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
+  import Plus from "phosphor-svelte/lib/Plus";
+  import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+  import SquaresFour from "phosphor-svelte/lib/SquaresFour";
+  import Rows from "phosphor-svelte/lib/Rows";
+  import X from "phosphor-svelte/lib/X";
   import {
     libraryLoad,
     listenLibraryTitles,
@@ -35,15 +41,29 @@
   import DeletedInspector from "./DeletedInspector.svelte";
   import Inspector from "./Inspector.svelte";
   import ModGrid from "./ModGrid.svelte";
+  import ModList from "./ModList.svelte";
+  import ModMenu from "./ModMenu.svelte";
   import { headerNote, matchesQuery } from "./format";
+  import {
+    loadViewMode,
+    matchesType,
+    saveViewMode,
+    typeCounts,
+    typeTag,
+    type TypeGroup,
+    type ViewMode,
+  } from "./view";
+  import { palette } from "#lib/shell/palette.svelte.js";
 
-  type Filter = "all" | "enabled" | "updates" | "unchecked" | "deleted";
+  type Filter = "all" | "disabled" | "updates" | "unchecked" | "deleted";
 
   let snapshot = $state<LibrarySnapshot | null>(null);
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state<string | null>(null);
   let filter = $state<Filter>("all");
+  let typeFilter = $state<TypeGroup | "all">("all");
+  let view = $state<ViewMode>(loadViewMode());
   let query = $state("");
   let selectedId = $state<string | null>(null);
   let details = $state<ModDetails | null>(null);
@@ -54,11 +74,15 @@
   let archiveInput = $state<HTMLInputElement | null>(null);
   let detailsToken = 0;
 
-  const baseFilters: { id: Filter; label: string }[] = [
-    { id: "all", label: "Все" },
-    { id: "enabled", label: "Включённые" },
-    { id: "updates", label: "Нужно обновить" },
-    { id: "unchecked", label: "Не проверяются" },
+  const stateFilters: { id: Exclude<Filter, "all">; label: string }[] = [
+    { id: "updates", label: "Есть обновление" },
+    { id: "unchecked", label: "Без страницы" },
+    { id: "disabled", label: "Выключены" },
+  ];
+  const typeFilters: { id: TypeGroup; label: string }[] = [
+    { id: "vehicle", label: "Машины" },
+    { id: "map", label: "Карты" },
+    { id: "addon", label: "Дополнения" },
   ];
 
   let counts = $derived(
@@ -66,9 +90,21 @@
   );
   let visibleFilters = $derived(
     counts.deleted > 0
-      ? [...baseFilters, { id: "deleted" as const, label: "Удалённые" }]
-      : baseFilters,
+      ? [...stateFilters, { id: "deleted" as const, label: "Удалённые" }]
+      : stateFilters,
   );
+  let shownMods = $derived(snapshot ? visibleCards(snapshot.mods) : []);
+  let kinds = $derived(typeCounts(shownMods));
+  let stateCount = (id: Filter): number =>
+    id === "disabled"
+      ? counts.all - counts.enabled
+      : id === "updates"
+        ? counts.updates
+        : id === "unchecked"
+          ? counts.unchecked
+          : id === "deleted"
+            ? counts.deleted
+            : counts.all;
   let allCards = $derived(
     snapshot ? [...snapshot.mods, ...snapshot.deleted] : [],
   );
@@ -77,7 +113,8 @@
     // Копии прячутся за карточкой основного мода группы — их видно в его панели.
     const source = filter === "deleted" ? snapshot.deleted : visibleCards(snapshot.mods);
     return source.filter((mod) => {
-      if (filter === "enabled" && !mod.enabled) return false;
+      if (filter === "disabled" && mod.enabled) return false;
+      if (filter !== "deleted" && !matchesType(mod, typeFilter)) return false;
       if (filter === "updates" && mod.update === "none") return false;
       if (filter === "unchecked" && !mod.unchecked) return false;
       return matchesQuery(mod, query);
@@ -129,6 +166,28 @@
   $effect(() => {
     if (filter === "deleted" && counts.deleted === 0) {
       filter = "all";
+    }
+  });
+
+  // Палитра ищет по тем же карточкам, что показывает гараж.
+  $effect(() => {
+    if (snapshot) palette.mods = snapshot.mods;
+  });
+
+  // Палитра команд: «Найти мод» и выбор мода по имени.
+  $effect(() => {
+    const request = palette.garageRequest;
+    if (!request) return;
+    palette.garageRequest = null;
+    if (request.kind === "select") {
+      filter = "all";
+      typeFilter = "all";
+      query = "";
+      selectedId = request.id;
+    } else if (request.kind === "filter") {
+      filter = request.filter;
+    } else if (request.kind === "archive") {
+      void pickArchive();
     }
   });
 
@@ -388,9 +447,9 @@
         title: "Установить моды из архива",
         filters: [{ name: "Архивы модов", extensions: ["zip", "rar", "7z"] }],
       });
-      const paths = (Array.isArray(picked) ? picked : picked ? [picked] : [])
-        .filter(isArchivePath)
-        .slice(0, 8);
+      const paths = (Array.isArray(picked) ? picked : picked ? [picked] : []).filter(
+        isArchivePath,
+      );
       if (paths.length > 0) incomingQueue.add(paths);
     } catch (reason) {
       showToast(errorText(reason));
@@ -401,8 +460,7 @@
     const input = event.currentTarget as HTMLInputElement;
     const names = Array.from(input.files ?? [])
       .map((file) => file.name)
-      .filter(isArchivePath)
-      .slice(0, 8);
+      .filter(isArchivePath);
     input.value = "";
     if (names.length > 0) incomingQueue.add(names);
   }
@@ -459,10 +517,47 @@
           : event.key === "ArrowRight"
             ? 1
             : event.key === "ArrowUp"
-              ? -4
-              : 4;
+              ? -rowStep()
+              : rowStep();
       const next = list[Math.max(0, Math.min(list.length - 1, index + step))];
       if (next) selectedId = next.id;
+    }
+  }
+
+  /** Сколько карточек в ряду: в списке — одна. */
+  function rowStep(): number {
+    if (view === "list") return 1;
+    const card = document.querySelector<HTMLElement>(".garage [data-mod-id]");
+    const grid = card?.parentElement;
+    if (!grid) return 4;
+    return Math.max(1, getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+  }
+
+  function setView(mode: ViewMode) {
+    view = mode;
+    saveViewMode(mode);
+  }
+
+  async function openPageOf(mod: ModCardDto) {
+    try {
+      const found = await modDetails(mod.id);
+      if (found.binding?.url) {
+        await openUrl(found.binding.url);
+      } else {
+        selectedId = mod.id;
+        showToast("Страница мода не указана — её можно указать в панели мода");
+      }
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
+  }
+
+  async function showFolderOf(mod: ModCardDto) {
+    try {
+      const found = await modDetails(mod.id);
+      if (found.folder) await openPath(found.folder);
+    } catch (reason) {
+      showToast(errorText(reason));
     }
   }
 
@@ -479,7 +574,8 @@
     if (query) return "Нет такого мода";
     if (filter === "updates") return "Всё свежее";
     if (filter === "unchecked") return "Все моды проверяются";
-    if (filter === "enabled") return "Все моды выключены";
+    if (filter === "disabled") return "Выключенных нет";
+    if (typeFilter !== "all") return "Таких модов нет";
     if (filter === "deleted") return "Удалённых модов нет";
     return "Модов пока нет";
   }
@@ -491,7 +587,8 @@
     if (query) return "Проверьте написание. Ищем только среди ваших модов.";
     if (filter === "updates") return "Обновлений нет. Проверить снова можно на экране «Обновления».";
     if (filter === "unchecked") return "У всех модов есть подтверждённая страница.";
-    if (filter === "enabled") return "Включите нужные в общем списке.";
+    if (filter === "disabled") return "Все моды включены.";
+    if (typeFilter !== "all") return "Сбросьте фильтр типа, чтобы увидеть остальные.";
     if (filter === "deleted") return "Удалённые моды появятся здесь после подтверждения.";
     return "Найдите мод в поиске или перетащите архив на окно.";
   }
@@ -502,74 +599,110 @@
 <div class="garage">
   <header class="top" data-tauri-drag-region>
     <div class="title" data-tauri-drag-region>
-      <h1 data-tauri-drag-region>Моды</h1>
+      <h1 class="display" data-tauri-drag-region>Гараж</h1>
       <p data-tauri-drag-region>
         {note}{snapshot?.gameVersion ? ` · игра ${snapshot.gameVersion}` : ""}
       </p>
     </div>
 
-    <div class="island glass liquid-edge">
-      <div class="filters">
-        {#each visibleFilters as item (item.id)}
-          <button
-            class="filter"
-            class:active={filter === item.id}
-            type="button"
-            aria-pressed={filter === item.id}
-            onclick={() => (filter = item.id)}
-          >
-            {item.label}
-            {#if item.id === "enabled" && counts.enabled > 0}
-              <span>{counts.enabled.toLocaleString("ru-RU")}</span>
-            {:else if item.id === "updates" && counts.updates > 0}
-              <span>{counts.updates.toLocaleString("ru-RU")}</span>
-            {:else if item.id === "unchecked" && counts.unchecked > 0}
-              <span>{counts.unchecked.toLocaleString("ru-RU")}</span>
-            {:else if item.id === "deleted"}
-              <span>{counts.deleted.toLocaleString("ru-RU")}</span>
-            {/if}
-          </button>
-        {/each}
-      </div>
-      <div class="search">
-        <input
-          bind:this={searchEl}
-          bind:value={query}
-          id="garage-search"
-          name="garage-search"
-          type="search"
-          placeholder="Найти мод"
-          aria-label="Найти мод"
-        />
-        {#if query}
-          <button class="clear" type="button" aria-label="Очистить" onclick={() => (query = "")}>×</button>
-        {/if}
-      </div>
+    <label class="search">
+      <MagnifyingGlass size={16} />
+      <input
+        bind:this={searchEl}
+        bind:value={query}
+        id="garage-search"
+        name="garage-search"
+        type="search"
+        placeholder="Найти мод"
+        aria-label="Найти мод"
+      />
+      {#if query}
+        <button class="clear" type="button" aria-label="Очистить" onclick={() => (query = "")}>
+          <X size={13} weight="bold" />
+        </button>
+      {:else}
+        <button
+          class="kbd-hint"
+          type="button"
+          title="Палитра команд"
+          onclick={() => palette.show()}
+        ><kbd>Ctrl K</kbd></button>
+      {/if}
+    </label>
+
+    <div class="seg" role="group" aria-label="Вид">
+      <button
+        type="button"
+        class:on={view === "grid"}
+        aria-pressed={view === "grid"}
+        aria-label="Сетка"
+        title="Сетка"
+        onclick={() => setView("grid")}
+      ><SquaresFour size={17} weight={view === "grid" ? "fill" : "regular"} /></button>
+      <button
+        type="button"
+        class:on={view === "list"}
+        aria-pressed={view === "list"}
+        aria-label="Список"
+        title="Список"
+        onclick={() => setView("list")}
+      ><Rows size={17} weight={view === "list" ? "fill" : "regular"} /></button>
     </div>
 
-    <div class="actions">
-      <button
-        class="btn-glass"
-        type="button"
-        onclick={() => void pickArchive()}
-        disabled={refreshing}
-        title="Установить моды из архива"
-      >
-        <Upload size={15} />
-        Из архива
-      </button>
-      <button
-        class="btn-glass icon-only"
-        type="button"
-        onclick={() => void load(true)}
-        disabled={refreshing}
-        aria-label="Перечитать папку модов"
-        title="Перечитать папку модов"
-      >
-        <RefreshCw size={15} class={refreshing ? "spin" : ""} />
-      </button>
-    </div>
+    <button
+      class="btn-glass icon-only"
+      type="button"
+      onclick={() => void load(true)}
+      disabled={refreshing}
+      aria-label="Перечитать папку модов"
+      title="Перечитать папку модов"
+    >
+      <ArrowsClockwise size={16} class={refreshing ? "spin" : ""} />
+    </button>
+    <button
+      class="btn-primary"
+      type="button"
+      onclick={() => void pickArchive()}
+      disabled={refreshing}
+      title="Установить моды из архива"
+    >
+      <Plus size={16} weight="bold" />
+      Из архива
+    </button>
   </header>
+
+  <div class="filters" role="group" aria-label="Фильтры">
+    <button
+      class="chip"
+      class:on={typeFilter === "all" && filter === "all"}
+      type="button"
+      onclick={() => {
+        typeFilter = "all";
+        filter = "all";
+      }}
+    >Все <b>{shownMods.length.toLocaleString("ru-RU")}</b></button>
+    {#each typeFilters as item (item.id)}
+      <button
+        class="chip"
+        class:on={typeFilter === item.id}
+        type="button"
+        aria-pressed={typeFilter === item.id}
+        onclick={() => (typeFilter = typeFilter === item.id ? "all" : item.id)}
+      >{item.label} <b>{kinds[item.id].toLocaleString("ru-RU")}</b></button>
+    {/each}
+    <span class="sep" aria-hidden="true"></span>
+    {#each visibleFilters as item (item.id)}
+      {@const count = stateCount(item.id)}
+      <button
+        class="chip"
+        class:on={filter === item.id}
+        class:hot={item.id === "updates" && count > 0}
+        type="button"
+        aria-pressed={filter === item.id}
+        onclick={() => (filter = filter === item.id ? "all" : item.id)}
+      >{item.label} <b>{count.toLocaleString("ru-RU")}</b></button>
+    {/each}
+  </div>
 
   {#if snapshot?.warning}
     <div class="banner">{snapshot.warning}</div>
@@ -577,48 +710,79 @@
   {#if snapshot?.manyEnabled && !bannerDismissed}
     <div class="banner many">
       <span>{snapshot.manyEnabled}</span>
-      <button type="button" aria-label="Скрыть предупреждение" onclick={() => (bannerDismissed = true)}>×</button>
+      <button type="button" aria-label="Скрыть предупреждение" onclick={() => (bannerDismissed = true)}>
+        <X size={14} weight="bold" />
+      </button>
     </div>
   {/if}
 
   <div class="body" class:with-inspector={selectedId !== null}>
     <section class="work">
-      <div class="grid-wrap">
-        {#if loading}
-          <div class="state"><p>Загружаем моды…</p></div>
-        {:else if error}
-          <div class="state error">
-            <p>Не удалось загрузить моды</p>
-            <span>{error}</span>
-            <button type="button" onclick={() => void load(true)}>Попробовать снова</button>
-          </div>
-        {:else if snapshot && (snapshot.folderError || (snapshot.mods.length === 0 && snapshot.deleted.length === 0) || filtered.length === 0)}
-          <div class="state">
-            <p>{emptyTitle()}</p>
-            <span>{emptyText()}</span>
-            {#if snapshot.folderError}
-              <a href="/settings?section=folders">Выбрать папку</a>
-            {:else if query}
-              <button type="button" onclick={() => (query = "")}>Сбросить поиск</button>
-            {:else if filter !== "all"}
-              <button type="button" onclick={() => (filter = "all")}>Показать все</button>
-            {/if}
-          </div>
-        {:else if snapshot}
-          <ModGrid
-            items={filtered}
-            {selectedId}
-            onselect={select}
-            ontoggle={(mod) => {
-              if (!mod.deleted) void toggle(mod);
-            }}
-            resetKey={`${filter}|${query}`}
-            bind:renderedCount
-          />
-        {/if}
-      </div>
+      {#if loading}
+        <div class="loading" aria-label="Загружаем моды">
+          {#each Array.from({ length: 8 }, (_, index) => index) as index (index)}
+            <div class="skeleton ghost-card"></div>
+          {/each}
+        </div>
+      {:else if error}
+        <div class="state error">
+          <p>Не удалось загрузить моды</p>
+          <span>{error}</span>
+          <button type="button" class="btn-glass" onclick={() => void load(true)}>Попробовать снова</button>
+        </div>
+      {:else if snapshot && (snapshot.folderError || (snapshot.mods.length === 0 && snapshot.deleted.length === 0) || filtered.length === 0)}
+        <div class="state">
+          <p class="display">{emptyTitle()}</p>
+          <span>{emptyText()}</span>
+          {#if snapshot.folderError}
+            <a class="btn-primary" href="/settings?section=folders">Выбрать папку</a>
+          {:else if query}
+            <button type="button" class="btn-glass" onclick={() => (query = "")}>Сбросить поиск</button>
+          {:else if filter !== "all" || typeFilter !== "all"}
+            <button
+              type="button"
+              class="btn-glass"
+              onclick={() => {
+                filter = "all";
+                typeFilter = "all";
+              }}>Показать все</button
+            >
+          {/if}
+        </div>
+      {:else if snapshot}
+        <ModMenu
+          mods={allCards}
+          onToggle={(mod) => void toggle(mod)}
+          onOpenPage={(mod) => void openPageOf(mod)}
+          onShowFolder={(mod) => void showFolderOf(mod)}
+          onShowDetails={(mod) => (selectedId = mod.id)}
+          onDelete={(mod) => void deleteCard(mod)}
+        >
+          {#if view === "list"}
+            <ModList
+              items={filtered}
+              {selectedId}
+              onselect={select}
+              ontoggle={(mod) => {
+                if (!mod.deleted) void toggle(mod);
+              }}
+              resetKey={`${filter}|${typeFilter}|${query}`}
+            />
+          {:else}
+            <ModGrid
+              items={filtered}
+              {selectedId}
+              onselect={select}
+              ontoggle={(mod) => {
+                if (!mod.deleted) void toggle(mod);
+              }}
+              resetKey={`${filter}|${typeFilter}|${query}`}
+              bind:renderedCount
+            />
+          {/if}
+        </ModMenu>
+      {/if}
     </section>
-
     {#if selected?.deleted}
       <DeletedInspector
         card={selected}
@@ -633,6 +797,7 @@
         problem={selected?.problem ?? null}
         duplicateOf={selected?.duplicateOf ?? null}
         addon={selected?.role === "addon"}
+        tag={selected ? typeTag(selected) : "mod"}
         group={selected && snapshot && selected.group.length > 0 ? groupMembers(selected, snapshot.mods) : []}
         onShowMod={(id) => (selectedId = id)}
         onKeepOnly={(card) => void keepOnly(card)}
@@ -677,45 +842,118 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    gap: 14px;
   }
 
-  /* Ряд «островков» (legacy, DESIGN.md 4): заголовок на фоне, островок фильтров по центру,
-     справа место под капсулу кнопок окна. */
+  /* Шапка: заголовок, поиск, вид и действия; справа место под кнопки окна. */
   .top {
-    display: grid;
-    grid-template-columns: minmax(170px, 1fr) auto minmax(0, auto);
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 16px;
-    min-height: 52px;
-    padding-right: 148px;
+    gap: 12px;
+    padding: 18px 150px 14px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .title {
+    flex: 1 1 220px;
+    min-width: 0;
   }
 
   h1 {
     margin: 0;
-    font-size: 26px;
-    font-weight: 700;
-    line-height: 1.1;
-    letter-spacing: -0.02em;
-  }
-
-  .title {
-    min-width: 0;
+    font-size: 30px;
+    line-height: 1.05;
   }
 
   .title p {
     margin: 3px 0 0;
     overflow: hidden;
-    color: color-mix(in oklab, var(--foreground) 66%, transparent);
+    color: var(--muted-foreground);
     font-size: 13px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .actions {
+  .search {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
     gap: 8px;
+    width: 300px;
+    height: 36px;
+    padding: 0 6px 0 12px;
+    box-sizing: border-box;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--muted-foreground);
+    transition: border-color var(--dur-2) var(--ease-out);
+  }
+
+  .search:focus-within {
+    border-color: var(--accent-brand);
+  }
+
+  .search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--foreground);
+    font-size: 14px;
+    outline: none;
+  }
+
+  .search input::placeholder {
+    color: var(--faint-foreground);
+  }
+
+  .search input::-webkit-search-cancel-button {
+    display: none;
+  }
+
+  .clear,
+  .kbd-hint {
+    display: grid;
+    place-items: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted-foreground);
+    cursor: default;
+  }
+
+  .clear:hover {
+    background: var(--surface-3);
+    color: var(--foreground);
+  }
+
+  .seg {
+    display: flex;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+  }
+
+  .seg button {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 34px;
+    border: 0;
+    background: var(--surface);
+    color: var(--muted-foreground);
+    cursor: default;
+    transition:
+      background-color var(--dur-2) var(--ease-out),
+      color var(--dur-2) var(--ease-out);
+  }
+
+  .seg button.on {
+    background: var(--surface-3);
+    color: var(--foreground);
   }
 
   .icon-only {
@@ -723,13 +961,77 @@
     padding: 0;
   }
 
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 15px;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: default;
+    transition:
+      background-color var(--dur-2) var(--ease-out),
+      color var(--dur-2) var(--ease-out),
+      border-color var(--dur-2) var(--ease-out);
+  }
+
+  .chip b {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--faint-foreground);
+  }
+
+  .chip:hover {
+    color: var(--foreground);
+    border-color: var(--faint-foreground);
+  }
+
+  .chip.on {
+    border-color: var(--foreground);
+    background: var(--foreground);
+    color: var(--background);
+  }
+
+  .chip.on b {
+    color: color-mix(in oklab, var(--background) 70%, transparent);
+  }
+
+  .chip.hot:not(.on) b {
+    color: var(--accent-brand-text);
+  }
+
+  .sep {
+    width: 1px;
+    height: 20px;
+    margin: 0 6px;
+    background: var(--border-strong);
+  }
+
   .banner {
+    margin: 12px 24px 0;
     padding: 9px 14px;
     border: 1px solid var(--warning-border);
-    border-radius: 16px;
+    border-radius: 8px;
     background: var(--warning-soft);
     color: var(--warning);
     font-size: 13px;
+    animation: rise-in var(--dur-3) var(--ease-out) both;
   }
 
   .banner.many {
@@ -740,192 +1042,78 @@
   }
 
   .banner.many button {
+    display: grid;
+    place-items: center;
     border: 0;
     background: transparent;
     color: inherit;
-    font-size: 17px;
-    line-height: 1;
     cursor: default;
   }
 
   .body {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
     flex: 1;
     min-height: 0;
   }
 
   .body.with-inspector {
-    grid-template-columns: minmax(0, 1fr) 328px;
+    grid-template-columns: minmax(0, 1fr) 360px;
   }
 
   .work {
-    display: flex;
-    flex-direction: column;
     min-width: 0;
     min-height: 0;
   }
 
-  .island {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 52px;
-    padding: 0 8px;
-    border-radius: 26px;
+  .loading {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+    gap: 16px;
+    padding: 20px 24px;
   }
 
-  .search {
-    position: relative;
-    width: 160px;
-  }
-
-  .search input {
-    width: 100%;
-    height: 35px;
-    padding: 0 30px 0 14px;
-    border: 0;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 8%, transparent);
-    color: var(--foreground);
-    font-size: 13px;
-  }
-
-  .search input::placeholder {
-    color: color-mix(in oklab, var(--foreground) 55%, transparent);
-  }
-
-  .search input:focus-visible {
-    outline: 2px solid var(--ring);
-  }
-
-  .clear {
-    position: absolute;
-    top: 50%;
-    right: 8px;
-    width: 22px;
-    height: 22px;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--muted-foreground);
-    font-size: 17px;
-    transform: translateY(-50%);
-    cursor: default;
-  }
-
-  .filters {
-    display: flex;
-    gap: 2px;
-    height: 35px;
-    padding: 3px;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 6%, transparent);
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .filter {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 29px;
-    padding: 0 13px;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: color-mix(in oklab, var(--foreground) 74%, transparent);
-    font-size: 13px;
-    font-weight: 550;
-    white-space: nowrap;
-    cursor: default;
-    transition:
-      background 220ms ease,
-      color 220ms ease;
-  }
-
-  .filter span {
-    color: inherit;
-    opacity: 0.6;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .filter:hover {
-    color: var(--foreground);
-  }
-
-  .filter.active {
-    background: var(--drop-fill);
-    color: var(--foreground);
-    font-weight: 650;
-    box-shadow:
-      inset 0 1px 0 var(--glass-highlight),
-      inset 0 0 0 1px var(--glass-border),
-      0 4px 14px var(--drop-glow);
-  }
-
-  .grid-wrap {
-    flex: 1;
-    min-height: 0;
+  .ghost-card {
+    height: 206px;
+    border-radius: 12px;
   }
 
   .state {
     display: grid;
     place-content: center;
-    gap: 6px;
-    min-height: 280px;
+    justify-items: center;
+    gap: 8px;
+    min-height: 320px;
     color: var(--muted-foreground);
     text-align: center;
+    animation: fade-in var(--dur-3) var(--ease-out) both;
   }
 
   .state p {
     margin: 0;
     color: var(--foreground);
-    font-size: 15px;
-    font-weight: 600;
+    font-size: 22px;
   }
 
   .state span {
-    max-width: 420px;
-    font-size: 11px;
-    line-height: 1.45;
+    max-width: 440px;
+    font-size: 13.5px;
+    line-height: 1.5;
   }
 
-  .state button,
-  .state a {
-    justify-self: center;
-    margin-top: 4px;
-    padding: 6px 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: 999px;
-    color: var(--foreground);
-    font-size: 10.5px;
+  .state .btn-primary,
+  .state .btn-glass {
+    margin-top: 6px;
     text-decoration: none;
-    cursor: default;
   }
 
   .state.error p {
-    color: oklch(0.85 0.12 25);
+    color: var(--danger);
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 980px) {
     .body.with-inspector {
       grid-template-columns: minmax(0, 1fr);
-    }
-  }
-
-  @media (max-width: 1320px) {
-    .top {
-      grid-template-columns: minmax(0, 1fr) auto;
-      padding-right: 148px;
-    }
-
-    .island {
-      grid-column: 1 / -1;
-      grid-row: 2;
-      justify-self: center;
-      max-width: 100%;
     }
   }
 </style>
