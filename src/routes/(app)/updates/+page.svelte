@@ -2,6 +2,8 @@
   import { openExternal } from "#lib/shell/openExternal.js";
   import { page } from "$app/state";
   import Package from "phosphor-svelte/lib/Package";
+  import DotsThree from "phosphor-svelte/lib/DotsThree";
+  import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { onDestroy, onMount } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
@@ -392,6 +394,26 @@
   }
 </script>
 
+{#snippet moreActions(finding: UpdateFinding, dismissLabel: string)}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger class="btn-ghost more" aria-label="Ещё действия">
+      <span>Ещё</span>
+      <DotsThree size={16} weight="bold" />
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content class="updates-menu" sideOffset={6} align="end">
+        <DropdownMenu.Item class="menu-item" onSelect={() => void dismiss(finding)}>
+          {dismissLabel}
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator class="menu-separator" />
+        <DropdownMenu.Item class="menu-item" onSelect={() => void unfollow(finding)}>
+          Это другой мод
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>
+{/snippet}
+
 <div class="updates">
   <header class="top" data-tauri-drag-region>
     <div class="title" data-tauri-drag-region>
@@ -478,13 +500,11 @@
                   <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                 {:else if possible}
                   <button class="btn-primary" type="button" onclick={() => void update(finding)}>Открыть страницу</button>
-                  <button class="btn-ghost" type="button" onclick={() => void dismiss(finding)}>Версия не изменилась</button>
-                  <button class="btn-ghost" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
+                  {@render moreActions(finding, "Версия не изменилась")}
                 {:else}
                   <button class="btn-primary" type="button" onclick={() => void update(finding)}>Обновить</button>
                   <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
-                  <button class="btn-ghost" type="button" onclick={() => void dismiss(finding)}>Пропустить эту версию</button>
-                  <button class="btn-ghost" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
+                  {@render moreActions(finding, "Пропустить эту версию")}
                 {/if}
               </div>
             </div>
@@ -529,7 +549,7 @@
       {/if}
     </section>
 
-    <aside class="panel">
+    <aside class="panel" aria-label="Проверка обновлений">
       <h2 class="display">Проверка</h2>
       <p class="sub">
         {#if checking}
@@ -813,6 +833,58 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-top: 6px;
+  }
+
+  .more {
+    gap: 5px;
+    padding: 0 10px;
+  }
+
+  :global(.updates-menu) {
+    z-index: 90;
+    min-width: 216px;
+    padding: 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: var(--shadow-2);
+    outline: none;
+    transform-origin: var(--bits-dropdown-menu-content-transform-origin);
+    transition:
+      opacity var(--dur-2) var(--ease-out),
+      transform var(--dur-2) var(--ease-out);
+  }
+
+  :global(.updates-menu[data-starting-style]),
+  :global(.updates-menu[data-ending-style]) {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+
+  :global(.updates-menu .menu-item) {
+    display: flex;
+    align-items: center;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 6px;
+    color: var(--foreground);
+    font-size: 13.5px;
+    cursor: default;
+    outline: none;
+  }
+
+  :global(.updates-menu .menu-item[data-highlighted]) {
+    background: var(--surface-3);
+  }
+
+  :global(.updates-menu .menu-item:focus-visible) {
+    outline: none;
+  }
+
+  :global(.updates-menu .menu-separator) {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--border);
   }
 
   .state {

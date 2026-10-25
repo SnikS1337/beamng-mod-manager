@@ -7,6 +7,7 @@
   import SlidersHorizontal from "phosphor-svelte/lib/SlidersHorizontal";
   import { page } from "$app/state";
   import { updatesBadge } from "#lib/shell/updatesBadge.svelte.js";
+  import { plural } from "#lib/features/garage/format.js";
 
   const nav = [
     { href: "/", label: "Гараж", icon: Garage },
@@ -37,9 +38,6 @@
         class:active
         href={item.href}
         aria-current={active ? "page" : undefined}
-        aria-label={item.href === "/updates" && updatesBadge.available > 0
-          ? `Обновления: ${updatesBadge.available} ждут решения`
-          : item.label}
       >
         {#if active}<span class="bar" aria-hidden="true"></span>{/if}
         <span class="icon">
@@ -51,6 +49,12 @@
           {/if}
         </span>
         <span class="label">{item.label}</span>
+        {#if item.href === "/updates" && updatesBadge.available > 0}
+          <span class="sr-only">
+            : {updatesBadge.available}
+            {plural(updatesBadge.available, "обновление", "обновления", "обновлений")}
+          </span>
+        {/if}
       </a>
     {/each}
   </nav>
@@ -162,6 +166,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .icon {

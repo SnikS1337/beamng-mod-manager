@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { onNavigate } from "$app/navigation";
+  import { IconContext } from "phosphor-svelte";
   import { canFlow, motion } from "#lib/shell/motion.svelte.js";
   import IncomingHost from "#lib/features/incoming/IncomingHost.svelte";
   import CommandPalette from "#lib/shell/CommandPalette.svelte";
@@ -48,22 +49,24 @@
   }
 </script>
 
-<div class="app">
-  <Background />
-  <Titlebar />
+<IconContext values={{ "aria-hidden": "true" }}>
+  <div class="app">
+    <Background />
+    <Titlebar />
 
-  <div class="workspace">
-    <NavRail />
-    <main class="content scroll-area">
-      {@render children()}
-    </main>
+    <div class="workspace">
+      <NavRail />
+      <main class="content scroll-area">
+        {@render children()}
+      </main>
+    </div>
+
+    <IncomingHost />
+    <CommandPalette />
+    <ToastHost />
+    <WelcomeTour open={welcome} onClose={() => void closeWelcome()} />
   </div>
-
-  <IncomingHost />
-  <CommandPalette />
-  <ToastHost />
-  <WelcomeTour open={welcome} onClose={() => void closeWelcome()} />
-</div>
+</IconContext>
 
 <style>
   .app {
