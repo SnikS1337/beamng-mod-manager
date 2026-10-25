@@ -141,6 +141,9 @@
   let note = $derived(
     snapshot ? headerNote(shownMods.length, snapshot.counts.updates, snapshot.mods.length) : "загружаем…",
   );
+  let noteParts = $derived(
+    [...note.split(" · "), ...(snapshot?.gameVersion ? [`игра ${snapshot.gameVersion}`] : [])],
+  );
 
   onMount(() => {
     void load();
@@ -664,9 +667,10 @@
 
   function setView(mode: ViewMode) {
     if (mode === view) return;
+    // Карточка в строку не «перетекает» — слишком разная форма; вид просто сменяется.
     void motion.run(() => {
       view = mode;
-    }, "flow-garage");
+    }, "flow-view");
     saveViewMode(mode);
   }
 
@@ -732,8 +736,11 @@
   <header class="top" data-tauri-drag-region>
     <div class="title" data-tauri-drag-region>
       <h1 class="display" data-tauri-drag-region>Гараж</h1>
+      <!-- Узкое окно: подпись переносится по кускам, а не обрезается многоточием. -->
       <p data-tauri-drag-region>
-        {note}{snapshot?.gameVersion ? ` · игра ${snapshot.gameVersion}` : ""}
+        {#each noteParts as part, index (index)}{#if index > 0}{" · "}{/if}<span
+            class="part">{part}</span
+          >{/each}
       </p>
     </div>
 
@@ -1011,10 +1018,11 @@
 
   .title p {
     margin: 3px 0 0;
-    overflow: hidden;
     color: var(--muted-foreground);
     font-size: 13px;
-    text-overflow: ellipsis;
+  }
+
+  .title p .part {
     white-space: nowrap;
   }
 
