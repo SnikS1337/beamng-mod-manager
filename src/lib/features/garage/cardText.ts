@@ -30,7 +30,7 @@ export function compatNote(mod: Pick<ModCardDto, "compat">): { text: string; tit
  * только то, что метка не говорит.
  */
 export function addonCaption(mod: Pick<ModCardDto, "kind">): string | null {
-  if (mod.kind === "vehicle") return "Детали для машин игры";
+  if (mod.kind === "vehicle") return "Для машин игры";
   if (mod.kind === "level") return "Для карт игры";
   return null;
 }

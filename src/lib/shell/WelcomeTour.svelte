@@ -15,7 +15,7 @@
     },
     {
       icon: RefreshCw,
-      title: "Обновления сами",
+      title: "Обновления — сами",
       text: "Программа сверяет версии с сайтами и показывает, что можно обновить.",
     },
     {
@@ -42,7 +42,7 @@
     >
       <p class="eyebrow">Первый запуск</p>
       <h1 class="display" id="welcome-title">ModManager BeamNG</h1>
-      <p class="lead">Всё, чтобы держать моды в порядке, — в одном окне. Коротко о главном:</p>
+      <p class="lead">Всё для порядка в модах — в одном окне. Коротко о главном:</p>
       <div class="points">
         {#each points as point (point.title)}
           {@const Icon = point.icon}

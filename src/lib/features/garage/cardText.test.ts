@@ -46,7 +46,7 @@ describe("addonCaption", () => {
   });
 
   it("говорит то, чего нет в метке", () => {
-    expect(addonCaption({ kind: "vehicle" })).toBe("Детали для машин игры");
+    expect(addonCaption({ kind: "vehicle" })).toBe("Для машин игры");
     expect(addonCaption({ kind: "level" })).toBe("Для карт игры");
   });
 });
