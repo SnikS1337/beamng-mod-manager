@@ -136,6 +136,8 @@ impl PageFetcher for BrowserPages {
             text: html,
             final_url,
             retry_after: None,
+            etag: None,
+            last_modified: None,
         })
     }
 

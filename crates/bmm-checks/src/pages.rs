@@ -47,9 +47,26 @@ pub fn find_pages(
     cancel: &AtomicBool,
     title_of: &dyn Fn(&str) -> Option<String>,
     author_of: &dyn Fn(&str) -> Option<String>,
+    progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+) -> PageSearchReport {
+    find_pages_with(
+        store, search, now, cancel, true, title_of, author_of, progress,
+    )
+}
+
+/// Как [`find_pages`], но можно пропустить выключенные моды.
+#[allow(clippy::too_many_arguments)]
+pub fn find_pages_with(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    now: DateTime<FixedOffset>,
+    cancel: &AtomicBool,
+    include_disabled: bool,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
     mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
-    let due = PageGuesser::due(store, now);
+    let due = PageGuesser::due_with(store, now, include_disabled);
     let mut result = PageSearchReport::default();
     if due.is_empty() {
         return result;

@@ -5,8 +5,12 @@
   import { onMount, untrack } from "svelte";
   import {
     listenUpdates,
+    updatesCheckMod,
+    updatesDeclineMod,
     updatesOpenModland,
     updatesRefollow,
+    updatesResumeMod,
+    updatesUndoDecline,
     updatesUnfollow,
   } from "#lib/ipc/updates.js";
   import { isTauri } from "@tauri-apps/api/core";
@@ -313,6 +317,80 @@
       return null;
     } catch (reason) {
       return errorText(reason);
+    }
+  }
+
+  async function refreshDetails(id: string): Promise<void> {
+    if (selectedId !== id) return;
+    const token = ++detailsToken;
+    try {
+      const value = await modDetails(id);
+      if (token === detailsToken && selectedId === id) details = value;
+    } catch {
+      // Панель останется прежней; ошибку действия уже показали.
+    }
+  }
+
+  async function checkUpdatesSelected(): Promise<void> {
+    const card = selected;
+    if (!card) return;
+    try {
+      const next = await updatesCheckMod(card.id);
+      updatesBadge.refresh();
+      await load(true);
+      await refreshDetails(card.id);
+      const found = next.findings.find((item) => item.modId === card.id);
+      if (found) {
+        const version = found.latestVersion ? ` ${found.latestVersion}` : "";
+        showToast(
+          found.status === "likely"
+            ? `Нашли обновление${version}`
+            : `Возможно, обновление${version}`,
+        );
+      } else {
+        showToast("Новых версий нет");
+      }
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
+  }
+
+  async function declineCheckingSelected(): Promise<void> {
+    const card = selected;
+    if (!card) return;
+    try {
+      await updatesDeclineMod(card.id);
+      updatesBadge.refresh();
+      await load(true);
+      await refreshDetails(card.id);
+      showToast(`Не проверяем обновления «${trimName(card.name)}»`, {
+        undo: async () => {
+          try {
+            await updatesUndoDecline(card.id);
+            updatesBadge.refresh();
+            await load(true);
+            await refreshDetails(card.id);
+          } catch (reason) {
+            showToast(errorText(reason));
+          }
+        },
+      });
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
+  }
+
+  async function resumeCheckingSelected(): Promise<void> {
+    const card = selected;
+    if (!card) return;
+    try {
+      await updatesResumeMod(card.id);
+      updatesBadge.refresh();
+      await load(true);
+      await refreshDetails(card.id);
+      showToast(`Снова проверяем обновления «${trimName(card.name)}»`);
+    } catch (reason) {
+      showToast(errorText(reason));
     }
   }
 
@@ -961,6 +1039,9 @@
         onUnfollow={(source) => void unfollowSelected(source)}
         onBindPage={bindSelected}
         onPassCheck={updatesOpenModland}
+        onCheckUpdates={checkUpdatesSelected}
+        onDeclineChecking={declineCheckingSelected}
+        onResumeChecking={resumeCheckingSelected}
         onToggle={() => {
           if (selected) void toggle(selected);
         }}

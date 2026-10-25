@@ -33,6 +33,8 @@ pub struct UpdateCheckOptions {
     pub max_feed_pages_per_source: u32,
     /// Сколько карточек открывать на сайте за одну проверку.
     pub max_card_checks_per_source: usize,
+    /// Проверять и выключенные моды (настройка `CheckDisabledMods`).
+    pub check_disabled: bool,
     /// Игнорировать TTL и интервалы (кнопка «проверить принудительно»).
     pub force: bool,
     /// Общий предел времени одной проверки; остаток переносится на следующую.
@@ -47,6 +49,7 @@ impl Default for UpdateCheckOptions {
             bindings_per_extra_feed_page: DEFAULT_BINDINGS_PER_EXTRA_FEED_PAGE,
             max_feed_pages_per_source: DEFAULT_MAX_FEED_PAGES_PER_SOURCE,
             max_card_checks_per_source: DEFAULT_MAX_CARD_CHECKS_PER_SOURCE,
+            check_disabled: true,
             force: false,
             max_duration: DEFAULT_MAX_DURATION,
         }
@@ -68,6 +71,7 @@ impl UpdateCheckOptions {
         Self {
             ttl: TimeDelta::hours((check.ttl.as_secs() / 3600) as i64),
             max_card_checks_per_source: check.max_cards.max(1) as usize,
+            check_disabled: settings.check_disabled_mods,
             ..Self::default()
         }
     }
@@ -90,6 +94,7 @@ mod tests {
         assert_eq!(options.bindings_per_extra_feed_page, 50);
         assert_eq!(options.max_feed_pages_per_source, 10);
         assert_eq!(options.max_card_checks_per_source, 150);
+        assert!(options.check_disabled);
         assert_eq!(options.max_duration, Duration::from_secs(300));
         assert!(!options.force);
     }
@@ -99,11 +104,13 @@ mod tests {
         let settings = AppSettings {
             check_ttl_hours: 12,
             max_card_checks_per_source: 40,
+            check_disabled_mods: false,
             ..AppSettings::default()
         };
         let options = UpdateCheckOptions::from_settings(&settings);
         assert_eq!(options.ttl, TimeDelta::hours(12));
         assert_eq!(options.max_card_checks_per_source, 40);
+        assert!(!options.check_disabled);
         assert_eq!(options.feed_pages_base, 3);
     }
 

@@ -24,6 +24,8 @@ export interface UpdateSite {
   displayName: string;
   status: "ok" | "human_check" | "unavailable" | "off";
   tracked: number;
+  lastChecked?: string | null;
+  note?: string | null;
 }
 
 export interface PageSuggestion {
@@ -252,6 +254,34 @@ export async function updatesStart(force: boolean, requestId: number): Promise<v
 
 export async function updatesCancel(): Promise<void> {
   if (isTauri()) await invoke("updates_cancel");
+}
+
+export async function updatesRetrySource(source: string, requestId: number): Promise<void> {
+  if (isTauri()) {
+    await invoke("updates_retry_source", { source, requestId });
+    return;
+  }
+  mockStart(requestId);
+}
+
+export async function updatesCheckMod(modId: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_check_mod", { modId });
+  return clone(mockSnapshot);
+}
+
+export async function updatesDeclineMod(modId: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_decline_mod", { modId });
+  return clone(mockSnapshot);
+}
+
+export async function updatesUndoDecline(modId: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_undo_decline", { modId });
+  return clone(mockSnapshot);
+}
+
+export async function updatesResumeMod(modId: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_resume_mod", { modId });
+  return clone(mockSnapshot);
 }
 
 export async function updatesDismiss(modId: string): Promise<UpdatesSnapshot> {

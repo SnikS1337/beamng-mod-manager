@@ -136,6 +136,8 @@ mod tests {
                 text,
                 final_url: url.clone(),
                 retry_after: None,
+                etag: None,
+                last_modified: None,
             })
         }
 
@@ -158,6 +160,8 @@ mod tests {
                 text,
                 final_url: url.clone(),
                 retry_after: None,
+                etag: None,
+                last_modified: None,
             })
         }
     }
@@ -191,6 +195,8 @@ mod tests {
                 text: self.text.clone(),
                 final_url: url.clone(),
                 retry_after: None,
+                etag: None,
+                last_modified: None,
             })
         }
     }
@@ -228,12 +234,16 @@ mod tests {
                     text,
                     final_url: url.clone(),
                     retry_after: None,
+                    etag: None,
+                    last_modified: None,
                 }),
                 None => Ok(RawResponse {
                     status: 404,
                     text: String::new(),
                     final_url: url.clone(),
                     retry_after: None,
+                    etag: None,
+                    last_modified: None,
                 }),
             }
         }

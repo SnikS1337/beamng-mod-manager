@@ -18,6 +18,8 @@ pub struct TrackedBinding {
     pub mod_id: String,
     pub source: String,
     pub source_id: String,
+    /// Включён ли мод сейчас; выключенные можно не проверять настройкой.
+    pub enabled: bool,
     pub last_checked_utc: Option<DateTime<FixedOffset>>,
     pub last_changed_utc: Option<DateTime<FixedOffset>>,
     pub last_version: Option<String>,
@@ -35,6 +37,7 @@ impl TrackedBinding {
             mod_id: mod_id.into(),
             source: source.into(),
             source_id: source_id.into(),
+            enabled: true,
             last_checked_utc: None,
             last_changed_utc: None,
             last_version: None,
@@ -173,6 +176,9 @@ impl UpdateCheckPlanner {
         let mut skipped: BTreeMap<String, SourceStatus> = BTreeMap::new();
 
         for binding in bindings {
+            if !options.check_disabled && !binding.enabled {
+                continue;
+            }
             let status = statuses
                 .get(&binding.source)
                 .copied()
@@ -349,6 +355,7 @@ mod tests {
             mod_id: format!("m{index}"),
             source: source.to_string(),
             source_id: format!("id{index}"),
+            enabled: true,
             last_checked_utc: last_checked,
             last_changed_utc: last_changed,
             last_version: version.map(str::to_string),
@@ -455,6 +462,30 @@ mod tests {
             &UpdateCheckOptions::default(),
         );
         assert!(plan.due.is_empty());
+    }
+
+    #[test]
+    fn disabled_mods_are_skipped_only_when_asked() {
+        let mut off = binding(0, "stmods", None, None, None, None);
+        off.enabled = false;
+        let on = binding(1, "stmods", None, None, None, None);
+        let bindings = vec![off, on];
+
+        let default = UpdateCheckPlanner::plan_feeds(
+            &bindings,
+            &ok_statuses(),
+            now(),
+            &UpdateCheckOptions::default(),
+        );
+        assert_eq!(default.due.len(), 2);
+
+        let options = UpdateCheckOptions {
+            check_disabled: false,
+            ..UpdateCheckOptions::default()
+        };
+        let skipped = UpdateCheckPlanner::plan_feeds(&bindings, &ok_statuses(), now(), &options);
+        assert_eq!(skipped.due.len(), 1);
+        assert_eq!(skipped.due[0].mod_id, "m1");
     }
 
     #[test]

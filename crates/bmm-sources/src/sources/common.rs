@@ -221,6 +221,8 @@ mod tests {
                     .to_string(),
                 final_url: url.clone(),
                 retry_after: None,
+                etag: None,
+                last_modified: None,
             })
         }
     }

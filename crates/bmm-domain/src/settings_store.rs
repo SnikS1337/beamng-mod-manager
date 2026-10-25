@@ -122,6 +122,18 @@ impl SettingsStore {
                 defaults.auto_check_every_hours,
                 &mut warnings,
             ),
+            check_disabled_mods: bool_field(
+                root,
+                "CheckDisabledMods",
+                defaults.check_disabled_mods,
+                &mut warnings,
+            ),
+            attention_on_updates: bool_field(
+                root,
+                "AttentionOnUpdates",
+                defaults.attention_on_updates,
+                &mut warnings,
+            ),
             disabled_sources,
             keep_backups: int_field(root, "KeepBackups", defaults.keep_backups, &mut warnings),
             max_card_checks_per_source: int_field(
@@ -511,6 +523,15 @@ mod tests {
     }
 
     #[test]
+    fn new_check_switches_default_on_for_old_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with(dir.path(), r#"{ "CheckTtlHours": 6 }"#);
+        let settings = store.load().settings;
+        assert!(settings.check_disabled_mods);
+        assert!(settings.attention_on_updates);
+    }
+
+    #[test]
     fn round_trip_preserves_all_fields() {
         let dir = tempfile::tempdir().unwrap();
         let store = SettingsStore::new(dir.path().join("settings.json"), fixed_clock());
@@ -522,6 +543,8 @@ mod tests {
             auto_check_on_start: false,
             check_app_updates: false,
             auto_check_every_hours: 24,
+            check_disabled_mods: false,
+            attention_on_updates: false,
             disabled_sources: vec!["stmods".to_string()],
             keep_backups: 8,
             max_card_checks_per_source: 200,
