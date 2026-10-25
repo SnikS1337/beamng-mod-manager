@@ -1,8 +1,8 @@
 <script lang="ts">
+  import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
   import { onDestroy, onMount } from "svelte";
   import { page } from "$app/state";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import X from "phosphor-svelte/lib/X";
@@ -170,11 +170,7 @@
   }
 
   async function openLink(url: string) {
-    try {
-      await openUrl(url);
-    } catch {
-      window.open(url, "_blank", "noopener");
-    }
+    await openExternal(url);
   }
 
   async function openModland() {
@@ -229,7 +225,7 @@
       case "free":
         return "Бесплатно";
       case "paid":
-        return "Платно";
+        return "Платный";
       case "mixed":
         return "Есть платные";
       default:
@@ -383,8 +379,9 @@
     </div>
   {:else if searched && cards.length === 0 && !searching && !error}
     <div class="state">
-      <p>Ничего не нашлось</p>
+      <p>Ничего не нашли</p>
       <span>Попробуйте короче: название машины, карты или автора. Сайты ищут по-разному.</span>
+      <a class="btn-glass" href="/settings?section=sites">Какие сайты включены</a>
     </div>
   {:else if cards.length > 0}
     <div class="grid">
@@ -397,7 +394,7 @@
             {:else}
               <span class="glyph"><Car size={44} weight="thin" /></span>
             {/if}
-            {#if card.price !== "unknown"}
+            {#if card.price === "paid" || card.price === "mixed"}
               <span class="price {card.price}">{priceLabel(card.price)}</span>
             {/if}
             {#if card.installed}
@@ -448,7 +445,7 @@
                         type="button"
                         onclick={() => void openLink(paidOffer(listing)!.url)}
                       >
-                        Купить
+                        Купить у автора
                       </button>
                     {/if}
                     <button
@@ -519,6 +516,7 @@
               class:pending={source.pending}
               class:warn={source.status === "needsHumanCheck"}
               class:bad={source.status === "unavailable"}
+              class:zero={source.status === "ok" && !source.pending && source.count === 0}
             ></span>
             <b>{source.displayName}</b>
             <span class="state-text">
@@ -528,6 +526,8 @@
                 просит проверку
               {:else if source.status === "unavailable"}
                 не ответил
+              {:else if source.count === 0}
+                ничего
               {:else}
                 нашёл {source.count}
               {/if}
@@ -544,7 +544,7 @@
       <p class="sub">Modland, STMods, ModsGaming и репозиторий BeamNG — сразу, одним запросом.</p>
     {/if}
     <p class="note">
-      Платные моды не скачиваются: вместо «Скачать» кнопка ведёт на страницу автора.
+      Платные моды не скачиваются: вместо «Скачать» — «Купить у автора».
     </p>
     <a class="link" href="/settings">Включить или выключить сайты</a>
   </aside>
@@ -1008,6 +1008,11 @@
     text-transform: uppercase;
   }
 
+  .state .btn-glass {
+    margin-top: 6px;
+    text-decoration: none;
+  }
+
   .state span {
     max-width: 460px;
     font-size: 13.5px;
@@ -1092,6 +1097,10 @@
 
   .dot.bad {
     background: var(--danger);
+  }
+
+  .dot.zero {
+    background: var(--faint-foreground);
   }
 
   .state-text {

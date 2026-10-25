@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+  import { openExternal } from "#lib/shell/openExternal.js";
+  import { openPath } from "@tauri-apps/plugin-opener";
   import { sourceName } from "#lib/ipc/search.js";
   import {
     modPreview,
@@ -13,7 +14,7 @@
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import X from "phosphor-svelte/lib/X";
   import Car from "phosphor-svelte/lib/Car";
-  import { formatDate, formatSize, plural } from "./format";
+  import { formatDate, formatSize, groupDigits, plural } from "./format";
   import { typeLabel, type TypeTag } from "./view";
   import VersionsBlock from "./VersionsBlock.svelte";
   import { duplicateExplain } from "./duplicates";
@@ -138,11 +139,7 @@
 
   async function openPage() {
     if (!details?.binding) return;
-    try {
-      await openUrl(details.binding.url);
-    } catch {
-      // В браузере и без прав просто ничего не делаем.
-    }
+    if (!(await openExternal(details.binding.url))) return;
     if (hasUpdate) {
       await expectDownload();
       toasts.show(
@@ -263,10 +260,11 @@
           <span>Для игры</span><b>{details.compat.text}</b>
         </div>
       {/if}
-      <div>
-        <span>Следим на</span>
-        <b>{details.binding ? sourceName(details.binding.source) : "не проверяется"}</b>
-      </div>
+      {#if details.binding}
+        <div><span>Следим на</span><b>{sourceName(details.binding.source)}</b></div>
+      {:else}
+        <div><span>Обновления</span><b>не проверяются — нет страницы</b></div>
+      {/if}
     </div>
 
     {#if details.archive}
@@ -283,7 +281,7 @@
               <div><span>{details.archive.levels.length > 1 ? "Карты" : "Карта"}</span><b>{details.archive.levels.slice(0, 3).join(", ")}{details.archive.levels.length > 3 ? ` и ещё ${details.archive.levels.length - 3}` : ""}</b></div>
             {/if}
             <div><span>Скрипты</span><b>{details.archive.hasScripts ? `есть, ${details.archive.luaFiles} ${plural(details.archive.luaFiles, "файл", "файла", "файлов")} Lua` : "нет"}</b></div>
-            <div><span>Файлов</span><b>{details.archive.files.toLocaleString("ru-RU")}, {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
+            <div><span>Файлов</span><b>{groupDigits(details.archive.files)}, {formatSize(details.archive.unpackedBytes)} после распаковки</b></div>
             {#each details.archive.warnings as warning}
               <p class="warn">{warning}</p>
             {/each}
@@ -735,11 +733,5 @@
     width: 70%;
     margin-top: 16px;
     border-radius: 6px;
-  }
-
-  @media (max-width: 980px) {
-    .inspector {
-      display: none;
-    }
   }
 </style>

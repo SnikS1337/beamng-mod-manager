@@ -16,6 +16,8 @@
     onShowFolder,
     onShowDetails,
     onDelete,
+    selectedIds = [],
+    onBulk,
   }: {
     /** Все карточки, по которым можно щёлкнуть правой кнопкой. */
     mods: ModCardDto[];
@@ -25,10 +27,17 @@
     onShowFolder: (mod: ModCardDto) => void;
     onShowDetails: (mod: ModCardDto) => void;
     onDelete: (mod: ModCardDto) => void;
+    /** Выбранные; щелчок по одному из нескольких выбранных — меню для всех. */
+    selectedIds?: string[];
+    onBulk?: (action: "enable" | "disable" | "delete") => void;
   } = $props();
+
 
   // Одно меню на весь список: мод — тот, по чьей карточке или строке щёлкнули.
   let target = $state<ModCardDto | null>(null);
+  const many = $derived(
+    !!target && selectedIds.length > 1 && selectedIds.includes(target.id) && !!onBulk,
+  );
 
   function pick(event: MouseEvent) {
     const element = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-mod-id]");
@@ -55,7 +64,19 @@
   </ContextMenu.Trigger>
   <ContextMenu.Portal>
     <ContextMenu.Content class="mod-menu">
-      {#if target}
+      {#if many}
+        <div class="menu-title">Выбрано: {selectedIds.length}</div>
+        <ContextMenu.Item class="menu-item" onSelect={() => onBulk?.("enable")}>
+          <Power size={16} weight="bold" />Включить выбранные
+        </ContextMenu.Item>
+        <ContextMenu.Item class="menu-item" onSelect={() => onBulk?.("disable")}>
+          <Power size={16} />Выключить выбранные
+        </ContextMenu.Item>
+        <ContextMenu.Separator class="menu-sep" />
+        <ContextMenu.Item class="menu-item danger" onSelect={() => onBulk?.("delete")}>
+          <Trash size={16} />Удалить выбранные<kbd>Del</kbd>
+        </ContextMenu.Item>
+      {:else if target}
         {@const mod = target}
         <div class="menu-title">{mod.name}</div>
         <ContextMenu.Item class="menu-item" onSelect={() => onToggle(mod)}>

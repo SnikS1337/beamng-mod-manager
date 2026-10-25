@@ -3,6 +3,7 @@
   import RefreshCw from "phosphor-svelte/lib/ArrowsClockwise";
   import Search from "phosphor-svelte/lib/MagnifyingGlass";
   import Sparkles from "phosphor-svelte/lib/Sparkle";
+  import { trapFocus } from "./focus";
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
@@ -32,7 +33,13 @@
 
 {#if open}
   <div class="backdrop">
-    <div class="tour glass" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+    <div
+      class="tour glass"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="welcome-title"
+      use:trapFocus={".start"}
+    >
       <p class="eyebrow">Первый запуск</p>
       <h1 class="display" id="welcome-title">ModManager BeamNG</h1>
       <p class="lead">Всё, чтобы держать моды в порядке, — в одном окне. Коротко о главном:</p>
@@ -50,7 +57,7 @@
       </div>
       <footer>
         <span>Это окно больше не появится.</span>
-        <button type="button" onclick={onClose}>Начать</button>
+        <button class="start" type="button" onclick={onClose}>Начать</button>
       </footer>
     </div>
   </div>

@@ -9,14 +9,15 @@
 
   let {
     items,
-    selectedId,
+    selectedIds,
     onselect,
     ontoggle,
     resetKey = "",
   }: {
     items: ModCardDto[];
-    selectedId: string | null;
-    onselect: (id: string) => void;
+    /** Выбранные: одна карточка или несколько. */
+    selectedIds: string[];
+    onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
     ontoggle: (mod: ModCardDto) => void;
     resetKey?: string;
   } = $props();
@@ -44,7 +45,7 @@
     if (event.target !== event.currentTarget) return;
     if (event.key === "Enter") {
       event.preventDefault();
-      onselect(id);
+      onselect(id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
     }
   }
 </script>
@@ -74,15 +75,16 @@
         {@const copies = copiesBadge(mod)}
         <div
           class="row"
-          class:selected={mod.id === selectedId}
+          class:selected={selectedIds.includes(mod.id)}
           class:sleeping={!mod.enabled && !mod.deleted}
           style={`top:${(start + offset) * ROW}px`}
           data-mod-id={mod.id}
           role="row"
           tabindex="0"
-          aria-selected={mod.id === selectedId}
+          aria-selected={selectedIds.includes(mod.id)}
           title={mod.fileName}
-          onclick={() => onselect(mod.id)}
+          onclick={(event) =>
+            onselect(mod.id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey })}
           onkeydown={(event) => onkeydown(event, mod.id)}
         >
           <span class="thumb" class:addon={mod.role === "addon"}>

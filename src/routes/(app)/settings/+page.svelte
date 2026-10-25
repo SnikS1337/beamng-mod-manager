@@ -44,7 +44,7 @@
   const MODES: { id: Mode; label: string; icon: typeof Moon }[] = [
     { id: "dark", label: "Тёмная", icon: Moon },
     { id: "light", label: "Светлая", icon: Sun },
-    { id: "system", label: "Как в системе", icon: Monitor },
+    { id: "system", label: "Как в Windows", icon: Monitor },
   ];
   const SECTIONS = [
     { id: "appearance", label: "Внешний вид", icon: Palette },
@@ -56,7 +56,7 @@
   ] as const;
   type SectionId = (typeof SECTIONS)[number]["id"];
   const SOURCES = [
-    { id: "modland", label: "Modland", note: "Каталог с проверкой «вы человек»" },
+    { id: "modland", label: "Modland", note: "Иногда просит подтвердить, что вы человек" },
     { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
     { id: "modsgaming", label: "ModsGaming", note: "Русский каталог, картинки со страницы" },
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления от авторов" },
@@ -244,8 +244,15 @@
         : null,
   );
 
+  // Набор, к которому вернуться, если движение поменяли вручную.
+  let lastPreset = $state<"beauty" | "fast">("beauty");
+  $effect(() => {
+    if (preset) lastPreset = preset;
+  });
+
   function applyPreset(kind: "beauty" | "fast") {
     if (!draft) return;
+    lastPreset = kind;
     const on = kind === "beauty";
     draft.uiAnimations = on;
     draft.animatedBackground = on;
@@ -407,6 +414,15 @@
             </button>
           </div>
 
+          {#if preset === null}
+            <p class="preset-note">
+              Движение настроено вручную.
+              <button type="button" onclick={() => applyPreset(lastPreset)}>
+                Вернуть «{lastPreset === "beauty" ? "Живо" : "Быстро"}»
+              </button>
+            </p>
+          {/if}
+
           <span class="group-title">Движение</span>
           <div class="switch-list">
             <div class="switch-row">
@@ -498,7 +514,7 @@
       <div class="row">
         <label for="mods-folder">Папка модов</label>
         <div class="path-row">
-          <input id="mods-folder" readonly value={draft.modsFolder ?? ""} placeholder="не выбрана" />
+          <input id="mods-folder" readonly value={draft.modsFolder ?? ""} placeholder="не выбрана" title={draft.modsFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("modsFolder")}>
             <FolderOpen size={13} />
             Выбрать
@@ -516,7 +532,7 @@
       <div class="row">
         <label for="user-folder">Папка пользователя игры</label>
         <div class="path-row">
-          <input id="user-folder" readonly value={draft.userFolder ?? ""} placeholder="определяется автоматически" />
+          <input id="user-folder" readonly value={draft.userFolder ?? ""} placeholder="определяется автоматически" title={draft.userFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("userFolder")}>
             <FolderOpen size={13} />
             Выбрать
@@ -972,6 +988,26 @@
     color: var(--muted-foreground);
     font-size: 12.5px;
     line-height: 1.4;
+  }
+
+  .preset-note {
+    margin: 8px 0 0;
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+  }
+
+  .preset-note button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent-brand-text);
+    font: inherit;
+    font-weight: 700;
+    cursor: default;
+  }
+
+  .preset-note button:hover {
+    text-decoration: underline;
   }
 
   .switch-list {

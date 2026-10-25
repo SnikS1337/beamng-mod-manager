@@ -831,7 +831,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     );
     let many_enabled = (settings.active_mods_warn_above > 0
         && enabled as i32 > settings.active_mods_warn_above)
-        .then(|| format!("Включено {enabled} модов. Игра может грузиться дольше"));
+        .then(|| many_enabled_text(enabled));
 
     Ok(LibrarySnapshot {
         counts: FilterCounts {
@@ -1307,6 +1307,41 @@ fn kind_of(mod_type: &str) -> &'static str {
     }
 }
 
+/// «Включено 3 333 мода. Игра может грузиться дольше»: разряды и падеж.
+fn many_enabled_text(count: usize) -> String {
+    format!(
+        "Включено {} {}. Игра может грузиться дольше",
+        group_digits(count),
+        plural(count, "мод", "мода", "модов")
+    )
+}
+
+fn group_digits(value: usize) -> String {
+    let text = value.to_string();
+    let mut result = String::with_capacity(text.len() + text.len() / 3);
+    for (index, character) in text.chars().enumerate() {
+        if index > 0 && (text.len() - index).is_multiple_of(3) {
+            result.push(' ');
+        }
+        result.push(character);
+    }
+    result
+}
+
+fn plural<'a>(count: usize, one: &'a str, few: &'a str, many: &'a str) -> &'a str {
+    let tens = count % 100;
+    let units = count % 10;
+    if (11..=14).contains(&tens) {
+        many
+    } else if units == 1 {
+        one
+    } else if (2..=4).contains(&units) {
+        few
+    } else {
+        many
+    }
+}
+
 /// Предупреждения о файле библиотеки. Несохранённая библиотека — молча терять
 /// подписки и проверки нельзя: пишем об этом на главной.
 fn library_warnings(loaded: &[String], save_error: Option<String>) -> Vec<String> {
@@ -1590,6 +1625,20 @@ mod tests {
         let main_after = after.mods.iter().find(|card| card.id == main.id).unwrap();
         assert_eq!(main_after.group.len(), 1);
         assert!(!main_after.group_conflict);
+    }
+
+    #[test]
+    fn many_enabled_text_has_digits_and_right_case() {
+        assert_eq!(
+            many_enabled_text(39),
+            "Включено 39 модов. Игра может грузиться дольше"
+        );
+        assert!(many_enabled_text(21).starts_with("Включено 21 мод."));
+        assert!(many_enabled_text(3_333).starts_with("Включено 3 333 мода."));
+        assert!(many_enabled_text(111).starts_with("Включено 111 модов."));
+        assert!(many_enabled_text(20_000).starts_with("Включено 20 000 модов."));
+        assert_eq!(group_digits(999), "999");
+        assert_eq!(group_digits(1_000), "1 000");
     }
 
     #[test]

@@ -19,8 +19,13 @@ export function plural(count: number, one: string, few: string, many: string): s
   return many;
 }
 
+/** «5 000»: разряды обычным пробелом (у `toLocaleString` неразрывный узкий). */
+export function groupDigits(count: number): string {
+  return count.toLocaleString("ru-RU").replace(/[\u00a0\u202f]/g, " ");
+}
+
 export function modsLabel(count: number): string {
-  return `${count} ${plural(count, "мод", "мода", "модов")}`;
+  return `${groupDigits(count)} ${plural(count, "мод", "мода", "модов")}`;
 }
 
 export function headerNote(count: number, updates: number): string {

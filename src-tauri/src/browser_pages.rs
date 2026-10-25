@@ -82,6 +82,11 @@ impl BrowserPages {
     }
 
     fn begin(&self, window: &WebviewWindow, url: &Url) -> Result<String, FetchError> {
+        if !is_web_url(url) {
+            return Err(FetchError::Message(
+                "Открывать можно только страницы http и https.".to_string(),
+            ));
+        }
         let token = format!(
             "bmm-{}",
             std::time::SystemTime::now()
@@ -263,6 +268,10 @@ fn eval_json_timeout(
     serde_json::from_str(&raw).map_err(|_| FetchError::Network)
 }
 
+fn is_web_url(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
 fn base_host(host: &str) -> String {
     let host = host.trim_start_matches("www.").to_ascii_lowercase();
     let labels: Vec<&str> = host.split('.').collect();
@@ -296,6 +305,20 @@ mod tests {
         assert!(image_from_script(&empty).unwrap().is_none());
         let broken = serde_json::json!({"type": "image/png", "data": "@@@"});
         assert!(image_from_script(&broken).is_err());
+    }
+
+    #[test]
+    fn only_http_and_https_are_web_urls() {
+        for raw in ["https://modland.net/x", "http://example.org/a"] {
+            assert!(is_web_url(&Url::parse(raw).unwrap()), "{raw}");
+        }
+        for raw in [
+            "javascript:alert(1)",
+            "file:///C:/Windows/System32/calc.exe",
+            "data:text/html,hello",
+        ] {
+            assert!(!is_web_url(&Url::parse(raw).unwrap()), "{raw}");
+        }
     }
 
     #[test]

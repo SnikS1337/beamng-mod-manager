@@ -143,10 +143,4 @@
     font-size: 13px;
     line-height: 1.45;
   }
-
-  @media (max-width: 980px) {
-    .inspector {
-      display: none;
-    }
-  }
 </style>
