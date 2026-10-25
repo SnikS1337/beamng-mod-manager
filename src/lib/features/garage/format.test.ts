@@ -45,6 +45,12 @@ describe("headerNote", () => {
     expect(headerNote(5000, 295)).toBe("5 000 модов · 295 ждут обновления");
     expect(headerNote(21, 0)).toBe("21 мод");
   });
+
+  it("копии одного мода: файлов больше, чем модов", () => {
+    expect(headerNote(35, 2, 39)).toBe("35 модов (39 файлов) · 2 ждут обновления");
+    expect(headerNote(1, 0, 2)).toBe("1 мод (2 файла)");
+    expect(headerNote(8, 0, 8)).toBe("8 модов");
+  });
 });
 
 describe("kindLabel", () => {

@@ -36,18 +36,30 @@
   </p>
 
   <div class="actions">
-    <button class="btn-primary" type="button" disabled={busy || plan.enable.length === 0} onclick={onEnable}>
-      <Power size={16} weight="bold" />
-      Включить {plan.enable.length > 0 ? plan.enable.length : ""}
-    </button>
-    <button class="btn-glass" type="button" disabled={busy || plan.disable.length === 0} onclick={onDisable}>
-      <Power size={16} />
-      Выключить {plan.disable.length > 0 ? plan.disable.length : ""}
-    </button>
-    <button class="btn-glass danger" type="button" disabled={busy || plan.remove.length === 0} onclick={onDelete}>
-      <Trash size={16} />
-      Удалить {plan.remove.length > 0 ? plan.remove.length : ""}
-    </button>
+    <!-- Кнопки без работы не показываем: «Включить» у включённых только сбивает. -->
+    {#if plan.enable.length > 0}
+      <button class="btn-primary" type="button" disabled={busy} onclick={onEnable}>
+        <Power size={16} weight="bold" />
+        Включить {plan.enable.length}
+      </button>
+    {/if}
+    {#if plan.disable.length > 0}
+      <button
+        class={plan.enable.length > 0 ? "btn-glass" : "btn-primary"}
+        type="button"
+        disabled={busy}
+        onclick={onDisable}
+      >
+        <Power size={16} />
+        Выключить {plan.disable.length}
+      </button>
+    {/if}
+    {#if plan.remove.length > 0}
+      <button class="btn-glass danger" type="button" disabled={busy} onclick={onDelete}>
+        <Trash size={16} />
+        Удалить {plan.remove.length}
+      </button>
+    {/if}
   </div>
   {#if plan.remove.length < count && plan.remove.length > 0}
     <p class="hint">Моды из репозитория игры удаляются в самой игре — их здесь не тронем.</p>

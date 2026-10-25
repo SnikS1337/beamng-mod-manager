@@ -28,9 +28,16 @@ export function modsLabel(count: number): string {
   return `${groupDigits(count)} ${plural(count, "мод", "мода", "модов")}`;
 }
 
-export function headerNote(count: number, updates: number): string {
+/**
+ * Подпись под «Гаражом». `count` — моды (копии одного мода — один), `files` — архивы
+ * на диске: без него «39 модов» в шапке и «Все 35» в фильтре выглядели как ошибка.
+ */
+export function headerNote(count: number, updates: number, files = count): string {
   if (count === 0) return "модов пока нет";
-  const base = modsLabel(count);
+  const base =
+    files > count
+      ? `${modsLabel(count)} (${groupDigits(files)} ${plural(files, "файл", "файла", "файлов")})`
+      : modsLabel(count);
   if (updates > 0) {
     return `${base} · ${updates} ${plural(updates, "ждёт", "ждут", "ждут")} обновления`;
   }
