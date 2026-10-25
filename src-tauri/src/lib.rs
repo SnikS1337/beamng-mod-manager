@@ -206,9 +206,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_bootstrap,
-            commands::dev::dev_library,
-            commands::dev::dev_environment,
-            commands::dev::open_modland_probe,
             commands::library::library_load,
             commands::library::library_refresh,
             commands::library::mod_toggle,
