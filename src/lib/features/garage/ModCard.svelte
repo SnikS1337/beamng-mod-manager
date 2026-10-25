@@ -103,7 +103,7 @@
     type="button"
     aria-pressed={selected}
     aria-label={mod.name}
-    title={mod.fileName}
+    title={`${mod.name} — ${mod.fileName}`}
     onclick={select}
   ></button>
   <div class="thumb" class:addon>
@@ -359,13 +359,16 @@
   }
 
   .name {
+    display: -webkit-box;
     margin: 0;
     overflow: hidden;
     font-size: 14.5px;
     font-weight: 700;
     line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 
   /* По базовой линии: моноширинная версия мельче и без этого «висела» выше «3 МБ». */

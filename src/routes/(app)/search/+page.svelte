@@ -26,6 +26,8 @@
     type SearchPriceSummary,
   } from "#lib/ipc/search.js";
 
+  const EXAMPLES = ["Audi RS3", "Rolls-Royce", "Nissan Laurel", "карта"] as const;
+
   let query = $state("");
   let submitted = $state("");
   let searching = $state(false);
@@ -153,6 +155,11 @@
     requestId += 1;
     searching = false;
     await searchCancel(current).catch(() => {});
+  }
+
+  function searchExample(example: string) {
+    query = example;
+    void runSearch();
   }
 
   function clear() {
@@ -316,7 +323,7 @@
           {cards.length}
           {plural(cards.length, "мод", "мода", "модов")}
         {:else}
-          сразу на всех сайтах
+          сразу на нескольких сайтах
         {/if}
       </p>
     </div>
@@ -494,17 +501,28 @@
       {/each}
     </div>
   {:else}
-    <div class="state">
-      <p>Найдите мод сразу везде</p>
-      <span>
-        Напишите название и нажмите «Найти». Карточки появляются по мере ответов сайтов,
-        одинаковые моды с разных сайтов собираются в одну.
+    <div class="start">
+      <span class="start-icon rise-in" aria-hidden="true">
+        <MagnifyingGlass size={26} weight="bold" />
       </span>
+      <p class="start-title rise-in" style="animation-delay:60ms">Найдите мод сразу везде</p>
+      <span class="start-text rise-in" style="animation-delay:100ms">
+        Напишите название машины, карты или автора и нажмите «Найти». Одинаковые моды
+        с разных сайтов собираются в одну карточку.
+      </span>
+      <div class="examples rise-in" style="animation-delay:140ms" role="group" aria-label="Примеры запросов">
+        <span>Например:</span>
+        {#each EXAMPLES as example (example)}
+          <button class="example" type="button" onclick={() => searchExample(example)}>
+            {example}
+          </button>
+        {/each}
+      </div>
     </div>
   {/if}
   </section>
 
-  <aside class="panel">
+  <aside class="panel" aria-label="Сайты поиска">
     <h2 class="display">Сайты</h2>
     <p class="sub">Один мод с разных сайтов собран в одну карточку.</p>
     {#if sources.length > 0}
@@ -988,6 +1006,87 @@
 
   .ghost-line:last-child {
     margin-bottom: 14px;
+  }
+
+  .start {
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    min-height: 420px;
+    padding: 40px 24px;
+    color: var(--muted-foreground);
+    text-align: center;
+  }
+
+  .start-icon {
+    display: grid;
+    place-items: center;
+    width: 58px;
+    height: 58px;
+    margin-bottom: 2px;
+    border-radius: 18px;
+    background: var(--accent-brand-soft);
+    color: var(--accent-brand-text);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-brand) 24%, transparent);
+  }
+
+  .start-title {
+    margin: 0;
+    color: var(--foreground);
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .start-text {
+    max-width: 480px;
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+
+  .examples {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .examples > span {
+    color: var(--faint-foreground);
+    font-size: 12.5px;
+  }
+
+  .example {
+    height: 30px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: default;
+    transition:
+      transform var(--dur-1) var(--ease-out),
+      border-color var(--dur-2) var(--ease-out),
+      background-color var(--dur-2) var(--ease-out),
+      color var(--dur-2) var(--ease-out);
+  }
+
+  .example:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+    color: var(--foreground);
+  }
+
+  :global(.no-motion) .example {
+    transition: none;
   }
 
   .state {

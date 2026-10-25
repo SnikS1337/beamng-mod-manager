@@ -799,14 +799,15 @@
       <ArrowsClockwise size={16} class={refreshing ? "spin" : ""} />
     </button>
     <button
-      class="btn-primary"
+      class="btn-primary add-archive"
       type="button"
       onclick={() => void pickArchive()}
       disabled={refreshing}
       title="Установить моды из архива"
+      aria-label="Установить моды из архива"
     >
       <Plus size={16} weight="bold" />
-      Из архива
+      <span class="add-label">Из архива</span>
     </button>
   </header>
 
@@ -1273,8 +1274,21 @@
     color: var(--danger);
   }
 
-  /* Узкое окно: панель не прячется, а ложится поверх сетки справа. */
-  @media (max-width: 980px) {
+  /* На минимальной ширине окна основная кнопка остаётся в первой строке:
+     подпись прячется, но назначение остаётся в title и aria-label. */
+  @media (max-width: 1100px) {
+    .add-archive {
+      width: 36px;
+      padding: 0;
+    }
+
+    .add-label {
+      display: none;
+    }
+  }
+
+  /* Узкое окно: панель не прячется, а ложится поверх списка справа. */
+  @media (max-width: 1100px) {
     .body.with-inspector {
       grid-template-columns: minmax(0, 1fr);
     }

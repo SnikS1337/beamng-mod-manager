@@ -43,12 +43,8 @@
     }
   });
 
-  function onkeydown(event: KeyboardEvent, id: string) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key === "Enter") {
-      event.preventDefault();
-      onselect(id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
-    }
+  function select(event: MouseEvent, id: string) {
+    onselect(id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
   }
 
   // Высота до снимка нового вида: иначе список досчитывает строки посреди перехода.
@@ -62,18 +58,18 @@
 </script>
 
 <div class="list">
-  <div class="head" role="row">
+  <div class="head">
     <span></span>
     <span>Название</span>
-    <span>Тип</span>
-    <span>Версия</span>
-    <span>Размер</span>
+    <span class="type-cell">Тип</span>
+    <span class="version-cell">Версия</span>
+    <span class="size-cell">Размер</span>
     <span>Состояние</span>
     <span class="end">Вкл.</span>
   </div>
   <div
     class="scroll-area viewport flow-mods"
-    role="grid"
+    role="list"
     aria-label="Моды"
     bind:this={viewport}
     bind:clientHeight={height}
@@ -93,14 +89,17 @@
           class:sleeping={!mod.enabled && !mod.deleted}
           style={`top:${(start + offset) * ROW}px; --flow:${flowName(mod.id)}`}
           data-mod-id={mod.id}
-          role="row"
-          tabindex="0"
-          aria-selected={selectedIds.includes(mod.id)}
-          title={mod.fileName}
-          onclick={(event) =>
-            onselect(mod.id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey })}
-          onkeydown={(event) => onkeydown(event, mod.id)}
+          role="listitem"
+          title={`${mod.name} — ${mod.fileName}`}
         >
+          <button
+            class="select"
+            type="button"
+            aria-pressed={selectedIds.includes(mod.id)}
+            aria-label={`${mod.name} — ${mod.fileName}`}
+            title={`${mod.name} — ${mod.fileName}`}
+            onclick={(event) => select(event, mod.id)}
+          ></button>
           <span class="thumb" class:addon={mod.role === "addon"}>
             {#if mod.previewUrl && mod.role !== "addon"}
               <img src={mod.previewUrl} alt="" loading="lazy" decoding="async" />
@@ -112,9 +111,9 @@
             <b>{mod.name}</b>
             <small>{mod.fileName}</small>
           </span>
-          <span><span class="kind-tag {tag}">{typeLabel(tag)}</span></span>
-          <span class="mono" class:fresh={version?.fresh}>{version?.text ?? "—"}</span>
-          <span class="muted">{formatSize(mod.sizeBytes)}</span>
+          <span class="type-cell"><span class="kind-tag {tag}">{typeLabel(tag)}</span></span>
+          <span class="version-cell mono" class:fresh={version?.fresh}>{version?.text ?? "—"}</span>
+          <span class="size-cell muted">{formatSize(mod.sizeBytes)}</span>
           <span class="states">
             {#if status}<span class="status {status.tone}">{status.text}</span>{/if}
             {#if copies}<span class="status copies" class:conflict={mod.groupConflict}>{copies}</span>{/if}
@@ -142,15 +141,17 @@
     height: 100%;
     min-height: 0;
     padding: 8px 24px 0;
+    overflow-x: clip;
+    container-type: inline-size;
     box-sizing: border-box;
   }
 
   .head,
   .row {
     display: grid;
-    grid-template-columns: 64px minmax(180px, 1fr) 120px 90px 80px minmax(140px, 220px) 56px;
+    grid-template-columns: 56px minmax(0, 1fr) 108px 84px 76px minmax(120px, 210px) 52px;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     padding: 0 10px;
   }
 
@@ -167,6 +168,7 @@
   .viewport {
     flex: 1;
     min-height: 0;
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -190,7 +192,17 @@
     box-shadow: inset 3px 0 0 var(--accent-brand);
   }
 
-  .row:focus-visible {
+  .select {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: default;
+  }
+
+  .select:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: -2px;
   }
@@ -283,6 +295,8 @@
   }
 
   .end {
+    position: relative;
+    z-index: 2;
     display: flex;
     justify-content: flex-end;
   }
@@ -293,5 +307,19 @@
 
   .sleeping .thumb img {
     filter: grayscale(0.9) brightness(0.65);
+  }
+
+  /* С панелью мода список уже, чем окно: оставляем главное — имя, версию,
+     состояние и переключатель, а тип и размер прячем. */
+  @container (max-width: 760px) {
+    .head,
+    .row {
+      grid-template-columns: 52px minmax(0, 1fr) 84px minmax(0, 180px) 48px;
+    }
+
+    .type-cell,
+    .size-cell {
+      display: none;
+    }
   }
 </style>

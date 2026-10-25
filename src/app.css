@@ -72,7 +72,7 @@
   --surface-3: #eceef1;
   --foreground: #16181c;
   --muted-foreground: #5b626c;
-  --faint-foreground: #80868f;
+  --faint-foreground: #6b717a;
   --border: rgb(22 24 28 / 0.1);
   --border-strong: rgb(22 24 28 / 0.18);
   --shadow-1: 0 1px 2px rgb(16 18 22 / 0.06), 0 2px 8px rgb(16 18 22 / 0.05);
@@ -134,7 +134,7 @@
   --surface-3: #24272d;
   --foreground: #ecedef;
   --muted-foreground: #a0a6ae;
-  --faint-foreground: #7c838c;
+  --faint-foreground: #8a919a;
   --border: rgb(255 255 255 / 0.08);
   --border-strong: rgb(255 255 255 / 0.15);
   --shadow-1: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 6px 18px rgb(0 0 0 / 0.28);
@@ -567,8 +567,8 @@ input[type="checkbox"]:checked::after {
   animation: none;
 }
 
-/* Флажок Windows «анимация элементов» движение не гасит: им управляют только
-   настройки программы (решение 0.3.11, класс .no-motion). */
+/* Системный флажок Windows движение не гасит: им управляют настройки программы
+   (класс .no-motion). Так «Живо» остаётся выбором человека, а не системы. */
 
 /* ── Поток (View Transitions) ─────────────────────────────────────────────
    Работает только в режиме с анимациями (motion.svelte.ts). Корень — фон,

@@ -1107,8 +1107,13 @@
 
   .theme-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  /* Пять акцентов: последний добирает пустое место, чтобы ряд не выглядел обрезанным. */
+  .theme-grid .swatch:last-child:nth-child(5) {
+    grid-column: span 2;
   }
 
   .swatch {
@@ -1122,10 +1127,13 @@
     color: var(--foreground);
     text-align: left;
     cursor: default;
-    transition: border-color var(--dur-2) var(--ease-out);
+    transition:
+      transform var(--dur-1) var(--ease-out),
+      border-color var(--dur-2) var(--ease-out);
   }
 
   .swatch:hover {
+    transform: translateY(-1px);
     border-color: var(--faint-foreground);
   }
 
