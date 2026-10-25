@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import Car from "phosphor-svelte/lib/Car";
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { onDestroy, onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -359,12 +360,6 @@
     return "Не удалось выполнить действие.";
   }
 
-  function placeholder(id: string): string {
-    let hash = 0;
-    for (let index = 0; index < id.length; index += 1) hash = (hash * 31 + id.charCodeAt(index)) % 360;
-    return `radial-gradient(120% 90% at 18% 0%, hsl(${hash} 70% 60% / 0.7), transparent 62%), linear-gradient(135deg, hsl(${hash} 38% 28%), hsl(${(hash + 58) % 360} 42% 16%))`;
-  }
-
   function whereText(finding: UpdateFinding): string {
     const parts = [sourceName(finding.source)];
     if (finding.noticedAt) parts.push(`новую версию заметили ${formatAgo(finding.noticedAt)}`);
@@ -396,29 +391,26 @@
 <div class="updates">
   <header class="top" data-tauri-drag-region>
     <div class="title" data-tauri-drag-region>
-      <h1 data-tauri-drag-region>Обновления</h1>
+      <h1 class="display" data-tauri-drag-region>Обновления</h1>
       <p data-tauri-drag-region>
         {#if counts.available === 0}
           Всё актуально
         {:else}
-          {counts.available} {plural(counts.available, "доступно", "доступно", "доступно")}
+          {counts.available} {plural(counts.available, "мод ждёт", "мода ждут", "модов ждут")} решения
         {/if}
       </p>
     </div>
-    <div class="island glass liquid-edge">
-      <div class="filters">
-        <button type="button" class="filter" class:active={filter === "available"} onclick={() => (filter = "available")}>
-          Доступные {#if counts.available > 0}<span>{counts.available}</span>{/if}
-        </button>
-        <button type="button" class="filter" class:active={filter === "hidden"} onclick={() => (filter = "hidden")}>
-          Скрытые {#if counts.hidden > 0}<span>{counts.hidden}</span>{/if}
-        </button>
-        <button type="button" class="filter" class:active={filter === "pages"} onclick={() => (filter = "pages")}>
-          Страницы {#if counts.pages > 0}<span>{counts.pages}</span>{/if}
-        </button>
-      </div>
+    <div class="tabs" role="tablist" aria-label="Что показать">
+      <button type="button" role="tab" class="tab" class:active={filter === "available"} aria-selected={filter === "available"} onclick={() => (filter = "available")}>
+        Доступные <b>{counts.available}</b>
+      </button>
+      <button type="button" role="tab" class="tab" class:active={filter === "hidden"} aria-selected={filter === "hidden"} onclick={() => (filter = "hidden")}>
+        Пропущенные <b>{counts.hidden}</b>
+      </button>
+      <button type="button" role="tab" class="tab" class:active={filter === "pages"} aria-selected={filter === "pages"} onclick={() => (filter = "pages")}>
+        Страницы <b>{counts.pages}</b>
+      </button>
     </div>
-    <div></div>
   </header>
 
   {#if error}
@@ -454,32 +446,38 @@
         {#each filter === "available" ? snapshot.findings : snapshot.hidden as finding (finding.modId)}
           {@const possible = finding.status !== "likely"}
           <article class="card">
-            <div class="photo" style={finding.previewUrl ? `background-image:url('${finding.previewUrl}')` : `background:${placeholder(finding.modId)}`}></div>
+            <div class="photo">{#if finding.previewUrl}<img src={finding.previewUrl} alt="" loading="lazy" />{:else}<Car size={48} weight="thin" />{/if}</div>
             <div class="content">
-              {#if possible}
-                <span class="chip"><i></i>Возможно, обновлён</span>
-              {/if}
-              <h2>{finding.modName}</h2>
+              <div class="head">
+                <h2>{finding.modName}</h2>
+                {#if filter === "hidden"}
+                  <span class="chip muted">Пропущено</span>
+                {:else if possible}
+                  <span class="chip possible">Возможно, обновлён</span>
+                {:else}
+                  <span class="chip update">Обновление</span>
+                {/if}
+              </div>
               {#if finding.installedVersion && finding.latestVersion && !possible}
-                <p class="versions"><s>{finding.installedVersion}</s> → <b>{finding.latestVersion}</b></p>
+                <p class="versions mono"><s>{finding.installedVersion}</s> → <b>{finding.latestVersion}</b></p>
               {:else if finding.latestVersion && !possible}
-                <p class="versions"><b>{finding.latestVersion}</b></p>
+                <p class="versions mono"><b>{finding.latestVersion}</b></p>
               {/if}
               <p class="why">{reason(finding)}</p>
               <p class="where">{whereText(finding)}</p>
               <div class="actions">
                 {#if filter === "hidden"}
                   <button class="btn-primary" type="button" onclick={() => void restore(finding)}>Вернуть в список</button>
-                  <button class="link" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
+                  <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                 {:else if possible}
                   <button class="btn-primary" type="button" onclick={() => void update(finding)}>Открыть страницу</button>
-                  <button class="link" type="button" onclick={() => void dismiss(finding)}>Версия не изменилась</button>
-                  <button class="link" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
+                  <button class="btn-ghost" type="button" onclick={() => void dismiss(finding)}>Версия не изменилась</button>
+                  <button class="btn-ghost" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
                 {:else}
                   <button class="btn-primary" type="button" onclick={() => void update(finding)}>Обновить</button>
-                  <button class="link" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
-                  <button class="link" type="button" onclick={() => void dismiss(finding)}>Пропустить эту версию</button>
-                  <button class="link" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
+                  <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
+                  <button class="btn-ghost" type="button" onclick={() => void dismiss(finding)}>Пропустить эту версию</button>
+                  <button class="btn-ghost" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
                 {/if}
               </div>
             </div>
@@ -488,10 +486,9 @@
       {:else}
         {#each snapshot.lost ?? [] as page (page.modId + page.source)}
           <article class="card compact">
-            <div class="photo" style={page.previewUrl ? `background-image:url('${page.previewUrl}')` : `background:${placeholder(page.modId)}`}></div>
+            <div class="photo">{#if page.previewUrl}<img src={page.previewUrl} alt="" loading="lazy" />{:else}<Car size={48} weight="thin" />{/if}</div>
             <div class="content">
-              <span class="chip"><i></i>Страница пропала</span>
-              <h2>{page.modName}</h2>
+              <div class="head"><h2>{page.modName}</h2><span class="chip lost">Страница пропала</span></div>
               <p class="why">
                 На {sourceName(page.source)} этой страницы нет уже несколько проверок: мод удалили или перенесли.
                 Обновлений по ней больше не будет.
@@ -499,26 +496,25 @@
               <p class="where url" title={page.url}>{page.url}</p>
               <div class="actions">
                 <button class="btn-primary" type="button" onclick={() => void forgetLost(page, true)}>Найти новую страницу</button>
-                <button class="link" type="button" onclick={() => void openLink(page.url)}>Открыть старую</button>
-                <button class="link" type="button" onclick={() => void forgetLost(page, false)}>Перестать следить</button>
+                <button class="btn-ghost" type="button" onclick={() => void openLink(page.url)}>Открыть старую</button>
+                <button class="btn-ghost" type="button" onclick={() => void forgetLost(page, false)}>Перестать следить</button>
               </div>
             </div>
           </article>
         {/each}
         {#each snapshot.suggestions as suggestion (suggestion.modId + suggestion.source)}
           <article class="card compact">
-            <div class="photo" style={`background:${placeholder(suggestion.modId)}`}></div>
+            <div class="photo"><Car size={48} weight="thin" /></div>
             <div class="content">
-              <span class="chip"><i></i>Это его страница?</span>
-              <h2>{suggestion.modName}</h2>
+              <div class="head"><h2>{suggestion.modName}</h2><span class="chip possible">Это его страница?</span></div>
               <p class="why">
                 На {sourceName(suggestion.source)} нашлась похожая страница, но уверенности нет: проверьте её.
               </p>
               <p class="where url" title={suggestion.url}>{suggestion.url}</p>
               <div class="actions">
                 <button class="btn-primary" type="button" onclick={() => void confirmPage(suggestion)}>Следить</button>
-                <button class="link" type="button" onclick={() => void openLink(suggestion.url)}>Открыть страницу</button>
-                <button class="link" type="button" onclick={() => void rejectPage(suggestion)}>Это другой мод</button>
+                <button class="btn-ghost" type="button" onclick={() => void openLink(suggestion.url)}>Открыть страницу</button>
+                <button class="btn-ghost" type="button" onclick={() => void rejectPage(suggestion)}>Это другой мод</button>
               </div>
             </div>
           </article>
@@ -526,8 +522,8 @@
       {/if}
     </section>
 
-    <aside class="panel glass liquid-edge">
-      <h2>Проверка</h2>
+    <aside class="panel">
+      <h2 class="display">Проверка</h2>
       <p class="sub">
         {#if checking}
           {progressText()}
@@ -552,7 +548,7 @@
         </button>
       {/if}
 
-      <h3>Сайты</h3>
+      <h2 class="display sites-title">Сайты</h2>
       <div class="sites">
         {#each siteRows() as site (site.id)}
           <div class="site">
@@ -575,105 +571,106 @@
   .updates {
     display: flex;
     flex-direction: column;
-    gap: 14px;
     height: 100%;
     min-height: 0;
   }
 
   .top {
-    display: grid;
-    grid-template-columns: minmax(170px, 1fr) auto minmax(0, 1fr);
-    align-items: center;
-    gap: 16px;
-    min-height: 52px;
-    padding-right: 148px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 16px 24px;
+    padding: 18px 150px 0 24px;
+    border-bottom: 1px solid var(--border);
   }
 
   .title {
+    flex: 1 1 240px;
     min-width: 0;
+    padding-bottom: 14px;
   }
 
   h1 {
     margin: 0;
-    font-size: 26px;
-    font-weight: 700;
-    line-height: 1.1;
-    letter-spacing: -0.02em;
+    font-size: 30px;
+    line-height: 1.05;
   }
 
   .title p {
     margin: 3px 0 0;
-    color: color-mix(in oklab, var(--foreground) 66%, transparent);
+    color: var(--muted-foreground);
     font-size: 13px;
-    white-space: nowrap;
   }
 
-  .island {
+  .tabs {
     display: flex;
-    align-items: center;
-    height: 52px;
-    padding: 0 8px;
-    border-radius: 26px;
+    gap: 4px;
   }
 
-  .filters {
-    display: flex;
-    gap: 2px;
-    height: 35px;
-    padding: 3px;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 6%, transparent);
-  }
-
-  .filter {
+  .tab {
+    position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    height: 29px;
+    gap: 7px;
+    height: 44px;
     padding: 0 14px;
     border: 0;
-    border-radius: 999px;
     background: transparent;
-    color: color-mix(in oklab, var(--foreground) 74%, transparent);
-    font-size: 13px;
-    font-weight: 550;
+    color: var(--muted-foreground);
+    font-size: 14px;
+    font-weight: 700;
     cursor: default;
-    transition:
-      background 220ms ease,
-      color 220ms ease;
+    transition: color var(--dur-2) var(--ease-out);
   }
 
-  .filter span {
-    opacity: 0.6;
-    font-variant-numeric: tabular-nums;
+  .tab b {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--faint-foreground);
   }
 
-  .filter:hover {
+  .tab::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--accent-brand);
+    transform: scaleX(0);
+    transition: transform var(--dur-3) var(--ease-out);
+  }
+
+  .tab:hover {
     color: var(--foreground);
   }
 
-  .filter.active {
-    background: var(--drop-fill);
+  .tab.active {
     color: var(--foreground);
-    font-weight: 650;
-    box-shadow:
-      inset 0 1px 0 var(--glass-highlight),
-      inset 0 0 0 1px var(--glass-border),
-      0 4px 14px var(--drop-glow);
+  }
+
+  .tab.active::after {
+    transform: scaleX(1);
+  }
+
+  .banner {
+    margin: 12px 24px 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
   }
 
   .banner.error {
-    padding: 9px 14px;
-    border: 1px solid oklch(0.66 0.19 25 / 0.45);
-    border-radius: 16px;
-    background: oklch(0.66 0.19 25 / 0.1);
-    font-size: 13px;
+    border: 1px solid color-mix(in oklab, var(--danger) 45%, transparent);
+    background: var(--danger-soft);
+    color: var(--danger);
   }
 
   .body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 328px;
-    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) 340px;
     flex: 1;
     min-height: 0;
   }
@@ -681,101 +678,125 @@
   .list {
     display: flex;
     flex-direction: column;
-    gap: 18px;
-    min-height: 0;
-    padding: 2px 4px 16px 2px;
+    gap: 12px;
+    min-width: 0;
     overflow-y: auto;
+    padding: 20px 24px 24px;
   }
 
-  /* Карточка обновления legacy: фото слева, справа версия крупно, объяснение и действия. */
   .card {
-    display: grid;
-    grid-template-columns: minmax(200px, 38%) minmax(0, 1fr);
-    min-height: 196px;
-    border: 1px solid rgb(255 255 255 / 0.16);
-    border-radius: 26px;
-    background: rgb(12 16 30 / 0.86);
-    color: #fff;
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.22),
-      0 16px 32px rgb(8 12 24 / 0.22);
+    display: flex;
+    flex-wrap: wrap;
+    flex: none;
     overflow: hidden;
-  }
-
-  .card.compact {
-    min-height: 170px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    animation: rise-in var(--dur-3) var(--ease-out) both;
   }
 
   .photo {
-    background-position: center;
-    background-size: cover;
-    mask-image: linear-gradient(90deg, #000 72%, transparent);
-    -webkit-mask-image: linear-gradient(90deg, #000 72%, transparent);
+    position: relative;
+    display: grid;
+    flex: 0 0 220px;
+    place-items: center;
+    min-height: 150px;
+    overflow: hidden;
+    background: var(--surface-2);
+    color: var(--faint-foreground);
+  }
+
+  .card.compact .photo {
+    flex-basis: 160px;
+    min-height: 120px;
+  }
+
+  .photo img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   .content {
     display: flex;
+    flex: 1 1 300px;
     flex-direction: column;
-    align-items: flex-start;
     gap: 6px;
     min-width: 0;
-    padding: 22px 24px 20px 6px;
+    padding: 14px 18px 16px;
+  }
+
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+
+  h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 800;
   }
 
   .chip {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    height: 24px;
-    padding: 0 10px;
-    border: 1px solid rgb(255 255 255 / 0.16);
-    border-radius: 999px;
-    background: rgb(255 255 255 / 0.06);
-    font-size: 12px;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 5px;
+    font-size: 11px;
     font-weight: 700;
-  }
-
-  .chip i {
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
-    background: #ffb340;
-    box-shadow: 0 0 8px #ffb340;
-  }
-
-  .card h2 {
-    margin: 0;
-    max-width: 100%;
-    overflow: hidden;
-    font-size: 15px;
-    font-weight: 620;
-    text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .chip.update {
+    background: var(--accent-brand);
+    color: var(--accent-brand-contrast);
+  }
+
+  .chip.possible {
+    border: 1px solid var(--warning-border);
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+
+  .chip.lost {
+    border: 1px solid color-mix(in oklab, var(--kind-addon) 45%, transparent);
+    color: var(--kind-addon);
+  }
+
+  .chip.muted {
+    border: 1px solid var(--border-strong);
+    color: var(--muted-foreground);
   }
 
   .versions {
     margin: 0;
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    font-variant-numeric: tabular-nums;
+    font-size: 14px;
   }
 
   .versions s {
-    color: rgb(255 255 255 / 0.55);
-    font-weight: 600;
+    color: var(--faint-foreground);
   }
 
-  .why,
+  .versions b {
+    color: var(--accent-brand-text);
+    font-weight: 500;
+  }
+
+  .why {
+    margin: 0;
+    color: var(--foreground);
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+
   .where {
     margin: 0;
-    max-width: 100%;
-    font-size: 13px;
-    line-height: 1.4;
-  }
-
-  .where {
-    color: rgb(255 255 255 / 0.66);
+    color: var(--faint-foreground);
     font-size: 12.5px;
   }
 
@@ -788,175 +809,152 @@
   .actions {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 18px;
-    margin-top: auto;
-    padding-top: 10px;
-  }
-
-  .actions .btn-primary {
-    background: #fff;
-    color: #111;
-    box-shadow: 0 6px 22px rgb(170 205 255 / 0.35);
-  }
-
-  .link {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: #fff;
-    font-size: 13px;
-    font-weight: 620;
-    cursor: default;
-  }
-
-  .link:hover {
-    text-decoration: underline;
-    text-underline-offset: 3px;
+    gap: 6px;
+    margin-top: 6px;
   }
 
   .state {
     display: grid;
     place-content: center;
-    gap: 6px;
-    min-height: 260px;
-    color: color-mix(in oklab, var(--foreground) 64%, transparent);
+    justify-items: center;
+    gap: 8px;
+    min-height: 320px;
+    color: var(--muted-foreground);
     text-align: center;
+    animation: fade-in var(--dur-3) var(--ease-out) both;
   }
 
   .state p {
     margin: 0;
     color: var(--foreground);
-    font-size: 17px;
-    font-weight: 650;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
   }
 
   .state span {
-    max-width: 440px;
+    max-width: 460px;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .panel h2 {
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .sites-title {
+    margin-top: 10px !important;
+  }
+
+  .sub {
+    margin: 0;
+    color: var(--muted-foreground);
     font-size: 13px;
     line-height: 1.45;
   }
 
-  /* Панель «Проверка» справа — как в legacy. */
-  .panel {
-    align-self: start;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 20px 18px;
-    border-radius: 32px;
-    background: var(--glass-fill-strong);
-  }
-
-  .panel h2 {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-  }
-
-  .sub {
-    margin: 0 0 6px;
-    color: color-mix(in oklab, var(--foreground) 70%, transparent);
-    font-size: 13px;
-    line-height: 1.4;
-  }
-
   .wide {
     width: 100%;
-    height: 42px;
-    font-size: 14px;
-  }
-
-  .panel h3 {
-    margin: 10px 2px 0;
-    font-size: 13px;
-    font-weight: 650;
-  }
-
-  .sites {
-    display: flex;
-    flex-direction: column;
-    padding: 4px 14px;
-    border-radius: 16px;
-    background: color-mix(in oklab, var(--foreground) 7%, transparent);
-  }
-
-  .site {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 0;
-    font-size: 13px;
-  }
-
-  .site + .site {
-    border-top: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
-  }
-
-  .site b {
-    flex: 1;
-    font-weight: 600;
-  }
-
-  .state-text {
-    color: color-mix(in oklab, var(--foreground) 62%, transparent);
-    font-size: 12.5px;
-  }
-
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: #34c759;
-  }
-
-  .dot.warn {
-    background: #ffb340;
-  }
-
-  .dot.bad {
-    background: #ff6b5e;
-  }
-
-  .dot.off {
-    background: color-mix(in oklab, var(--foreground) 30%, transparent);
-  }
-
-  .pass {
-    width: 100%;
-    height: 32px;
-    margin: 2px 0 8px;
-    font-size: 12.5px;
+    height: 38px;
   }
 
   .track {
     height: 6px;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 10%, transparent);
     overflow: hidden;
+    border-radius: 3px;
+    background: var(--surface-3);
   }
 
   .bar {
     display: block;
     width: 30%;
     height: 100%;
-    border-radius: 999px;
-    background: var(--primary);
-    transition: width 0.4s ease;
+    border-radius: 3px;
+    background: var(--accent-brand);
+    transition: width var(--dur-3) var(--ease-out);
   }
 
   .bar.pulse {
-    animation: slide 1.4s ease-in-out infinite;
+    animation: indeterminate 1.3s var(--ease-in-out) infinite;
   }
 
-  @keyframes slide {
-    0% {
+  @keyframes indeterminate {
+    from {
       transform: translateX(-100%);
     }
-    100% {
+    to {
       transform: translateX(340%);
     }
+  }
+
+  .sites {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .site {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    font-size: 13.5px;
+  }
+
+  .site + .site,
+  .pass + .site {
+    border-top: 1px solid var(--border);
+  }
+
+  .site b {
+    font-weight: 700;
+  }
+
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--faint-foreground);
+  }
+
+  .dot.ok {
+    background: var(--ok);
+  }
+
+  .dot.warn {
+    background: #f2b544;
+  }
+
+  .dot.bad {
+    background: var(--danger);
+  }
+
+  .state-text {
+    margin-left: auto;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    text-align: right;
+  }
+
+  .pass {
+    margin: 0 12px 10px;
+    height: 32px;
   }
 
   @media (max-width: 1100px) {
@@ -965,7 +963,8 @@
     }
 
     .panel {
-      order: -1;
+      border-left: 0;
+      border-top: 1px solid var(--border);
     }
   }
 </style>
