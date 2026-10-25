@@ -3,6 +3,7 @@
   import { Switch } from "#lib/components/ui/switch/index.js";
   import type { ModCardDto } from "#lib/ipc/library.js";
   import { copiesBadge } from "./duplicates";
+  import { versionLine } from "./cardText";
   import { formatSize } from "./format";
   import { modStatus } from "./status";
   import { typeLabel, typeTag } from "./view";
@@ -73,6 +74,7 @@
         {@const tag = typeTag(mod)}
         {@const status = modStatus(mod)}
         {@const copies = copiesBadge(mod)}
+        {@const version = versionLine(mod)}
         <div
           class="row"
           class:selected={selectedIds.includes(mod.id)}
@@ -99,7 +101,7 @@
             <small>{mod.fileName}</small>
           </span>
           <span><span class="kind-tag {tag}">{typeLabel(tag)}</span></span>
-          <span class="mono">{mod.version ?? "—"}</span>
+          <span class="mono" class:fresh={version?.fresh}>{version?.text ?? "—"}</span>
           <span class="muted">{formatSize(mod.sizeBytes)}</span>
           <span class="states">
             {#if status}<span class="status {status.tone}">{status.text}</span>{/if}
@@ -259,6 +261,10 @@
   }
 
   .status.problem,
+  .fresh {
+    color: var(--accent-brand-text);
+  }
+
   .status.copies.conflict {
     border-color: color-mix(in oklab, var(--danger) 45%, transparent);
     color: var(--danger);

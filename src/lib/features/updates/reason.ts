@@ -12,7 +12,9 @@ const PRERELEASE = /(alpha|beta|rc)/i;
 /** Почему программа считает, что мод обновился. Только то, что знает наверняка. */
 export function reason(finding: UpdateFinding): string {
   const size = sizeChange(finding);
-  if (finding.status === "likely") return "Версия на сайте выше установленной.";
+  if (finding.status === "likely") {
+    return finding.installedVersion ? "На сайте вышла новая версия." : "На сайте вышла версия новее вашего файла.";
+  }
   const ours = finding.installedVersion;
   const theirs = finding.latestVersion;
   if (ours && theirs && PRERELEASE.test(ours) && !PRERELEASE.test(theirs)) {
