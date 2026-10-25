@@ -8,6 +8,7 @@ import {
   selectAll,
   selectOnly,
   single,
+  panelOf,
 } from "./selection";
 
 const order = ["a", "b", "c", "d", "e"];
@@ -121,5 +122,17 @@ describe("действия над выбранными", () => {
   it("невыбранные не трогает", () => {
     expect(bulkPlan(cards, [])).toEqual({ enable: [], disable: [], remove: [] });
     expect(bulkPlan(cards, ["nope"]).remove).toEqual([]);
+  });
+});
+
+describe("panelOf", () => {
+  it("панель справа по числу выбранных", () => {
+    expect(panelOf(EMPTY)).toBe("none");
+    expect(panelOf({ ids: ["a"], anchor: "a" })).toBe("one");
+    expect(panelOf({ ids: ["a", "b"], anchor: "b" })).toBe("many");
+  });
+
+  it("смена мода в открытой панели — та же панель, без перестройки сетки", () => {
+    expect(panelOf({ ids: ["a"], anchor: "a" })).toBe(panelOf({ ids: ["b"], anchor: "b" }));
   });
 });

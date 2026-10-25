@@ -41,6 +41,7 @@
           ? `Обновления: ${updatesBadge.available} ждут решения`
           : item.label}
       >
+        {#if active}<span class="bar" aria-hidden="true"></span>{/if}
         <span class="icon">
           <Icon size={23} weight={active ? "fill" : "regular"} />
           {#if item.href === "/updates" && updatesBadge.available > 0}
@@ -60,6 +61,7 @@
     href="/settings"
     aria-current={settingsActive ? "page" : undefined}
   >
+    {#if settingsActive}<span class="bar" aria-hidden="true"></span>{/if}
     <span class="icon"><SlidersHorizontal size={23} weight={settingsActive ? "fill" : "regular"} /></span>
     <span class="label">Настройки</span>
   </a>
@@ -127,17 +129,18 @@
       color var(--dur-2) var(--ease-out);
   }
 
-  .nav::before {
-    content: "";
+  /* Полоска активного раздела. При смене раздела переезжает к новому пункту
+     (view-transition), а не гаснет и загорается заново. */
+  .bar {
     position: absolute;
     left: -6px;
     top: 50%;
     width: 3px;
-    height: 0;
+    height: 26px;
     border-radius: 2px;
     background: var(--accent-brand);
     transform: translateY(-50%);
-    transition: height var(--dur-3) var(--ease-out);
+    view-transition-name: nav-bar;
   }
 
   .nav:hover {
@@ -148,10 +151,6 @@
   .nav.active {
     background: var(--surface-3);
     color: var(--foreground);
-  }
-
-  .nav.active::before {
-    height: 26px;
   }
 
   .nav.active .icon {
