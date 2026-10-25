@@ -368,8 +368,10 @@
     white-space: nowrap;
   }
 
+  /* По базовой линии: моноширинная версия мельче и без этого «висела» выше «3 МБ». */
   .meta {
     display: flex;
+    align-items: baseline;
     gap: 8px;
     margin: 2px 0 0;
     overflow: hidden;
