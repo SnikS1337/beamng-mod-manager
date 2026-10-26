@@ -209,10 +209,20 @@ impl Role {
 
 /// `None` — состав пуст (архив ещё не прочитан или не читается).
 pub fn role_of(content: &[String]) -> Option<Role> {
+    role_of_with_hint(content, None)
+}
+
+/// Как [`role_of`], но с подсказкой из `mod_info` (`tag_line`). Карьерные паки
+/// (`gameplay/`) и человечки-реквизит (ragdoll/humanoid) — дополнения, даже если
+/// внутри лежит папка `vehicles/`.
+pub fn role_of_with_hint(content: &[String], hint: Option<&str>) -> Option<Role> {
     if content.is_empty() {
         return None;
     }
     let keys: HashSet<String> = content.iter().map(|key| key.to_lowercase()).collect();
+    if keys.iter().any(|key| key.starts_with("gameplay/")) || hint.is_some_and(is_humanoid_hint) {
+        return Some(Role::Addon);
+    }
     let identity = crate::incoming::identity_keys(&keys);
     if identity.iter().any(|key| key.starts_with("vehicles/")) {
         Some(Role::Vehicle)
@@ -221,6 +231,13 @@ pub fn role_of(content: &[String]) -> Option<Role> {
     } else {
         Some(Role::Addon)
     }
+}
+
+fn is_humanoid_hint(hint: &str) -> bool {
+    let hint = hint.to_lowercase();
+    ["ragdoll", "humanoid", "pedestrian", "crash test dummy"]
+        .iter()
+        .any(|word| hint.contains(word))
 }
 
 #[cfg(test)]
@@ -354,5 +371,38 @@ mod tests {
             Some(Role::Addon)
         );
         assert_eq!(role_of(&[]), None);
+    }
+
+    #[test]
+    fn gameplay_pack_with_vehicles_is_addon() {
+        // RLS Career: в архиве есть и vehicles/, и levels/, но это карьерный оверхол.
+        assert_eq!(
+            role_of(&keys(&[
+                "gameplay/overhaul/a.lua",
+                "vehicles/etk800/a.jbeam",
+                "levels/west_coast_usa/a.json",
+            ])),
+            Some(Role::Addon)
+        );
+    }
+
+    #[test]
+    fn humanoid_hint_turns_single_vehicle_into_addon() {
+        // Crash Test Dummy: подпись из mod_info говорит, что это Prop, а не машина.
+        assert_eq!(
+            role_of_with_hint(
+                &keys(&["vehicles/dummy/dummy.jbeam"]),
+                Some("75KG Ragdoll Humanoid"),
+            ),
+            Some(Role::Addon)
+        );
+    }
+
+    #[test]
+    fn ordinary_vehicle_ignores_unrelated_hint() {
+        assert_eq!(
+            role_of_with_hint(&keys(&["vehicles/rs3y8/a.jbeam"]), Some("Sport sedan"),),
+            Some(Role::Vehicle)
+        );
     }
 }

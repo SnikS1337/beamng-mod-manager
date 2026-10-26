@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -253,6 +253,16 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Короткая подпись из `mod_info`: по ней видно, что «машина» на самом деле
+/// человечек-реквизит (`75KG Ragdoll Humanoid`).
+fn mod_info_hint(value: &serde_json::Value) -> Option<&str> {
+    let data = value.get("data")?;
+    data.get("tag_line")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| data.get("title").and_then(serde_json::Value::as_str))
+}
+
 /// Роль мода по составу архива и группы повторов (см. [`bmm_packs::duplicates`]).
 /// Состав — из кэша; ещё не прочитанные архивы не участвуют, пометка появится после
 /// фонового чтения. В группе основной — самый свежий: в списке видна только его
@@ -260,7 +270,8 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
 fn mark_duplicates(
     mut mods: Vec<ModCardDto>,
     preview_keys: &HashMap<String, String>,
-    contents: &std::collections::BTreeMap<String, Vec<String>>,
+    contents: &BTreeMap<String, Vec<String>>,
+    infos: &BTreeMap<String, serde_json::Value>,
     modified: &HashMap<String, i64>,
 ) -> Vec<ModCardDto> {
     let empty: Vec<String> = Vec::new();
@@ -270,9 +281,16 @@ fn mark_duplicates(
             .and_then(|key| contents.get(key))
             .unwrap_or(&empty)
     };
+    let hint_of = |id: &str| {
+        preview_keys
+            .get(id)
+            .and_then(|key| infos.get(key))
+            .and_then(mod_info_hint)
+    };
     for card in &mut mods {
-        card.role = bmm_packs::duplicates::role_of(content_of(&card.id))
-            .map(|role| role.code().to_string());
+        card.role =
+            bmm_packs::duplicates::role_of_with_hint(content_of(&card.id), hint_of(&card.id))
+                .map(|role| role.code().to_string());
     }
     let items: Vec<bmm_packs::duplicates::DupItem> = mods
         .iter()
@@ -679,6 +697,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     *state.previews_by_id.lock().unwrap() = targets;
     let archive_titles = state.previews.titles();
     let archive_problems = state.previews.problems();
+    let archive_infos = state.previews.mod_infos();
 
     let game_version = mods_dir.parent().and_then(info::detect_version);
     let mods: Vec<ModCardDto> = installed_list
@@ -770,7 +789,13 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
             Some((installed.id.clone(), disk.modified_utc?.timestamp()))
         })
         .collect();
-    let mods = mark_duplicates(mods, &preview_keys, &state.previews.contents(), &modified);
+    let mods = mark_duplicates(
+        mods,
+        &preview_keys,
+        &state.previews.contents(),
+        &archive_infos,
+        &modified,
+    );
 
     let ticket_files: HashSet<String> = tickets_before
         .values()
@@ -1601,6 +1626,56 @@ mod tests {
         let main_after = after.mods.iter().find(|card| card.id == main.id).unwrap();
         assert_eq!(main_after.group.len(), 1);
         assert!(!main_after.group_conflict);
+    }
+
+    #[test]
+    fn roles_use_gameplay_and_mod_info_hint() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(
+            &mods.join("career.zip"),
+            &[
+                ("gameplay/overhaul/career.lua", b"x"),
+                ("vehicles/testcar/a.jbeam", b"x"),
+                ("levels/testlevel/a.json", b"x"),
+            ],
+        );
+        write_zip(
+            &mods.join("dummy.zip"),
+            &[
+                ("vehicles/dummy/dummy.jbeam", b"x"),
+                (
+                    "mod_info/ABCD/info.json",
+                    br#"{"tag_line":"75KG Ragdoll Humanoid","title":"Crash Test Dummy"}"#,
+                ),
+            ],
+        );
+        write_zip(
+            &mods.join("testcar.zip"),
+            &[("vehicles/testcar/a.jbeam", b"x")],
+        );
+        write_zip(
+            &mods.join("testmap.zip"),
+            &[("levels/testlevel/a.json", b"x")],
+        );
+        let state = test_state(&temp, &mods);
+
+        let first = load_snapshot(&state).unwrap();
+        assert!(first.mods.iter().all(|card| card.role.is_none()));
+        fill_titles(&state);
+        let snapshot = load_snapshot(&state).unwrap();
+        let role = |file: &str| {
+            snapshot
+                .mods
+                .iter()
+                .find(|card| card.file_name == file)
+                .and_then(|card| card.role.as_deref())
+        };
+        assert_eq!(role("career.zip"), Some("addon"), "gameplay/ — не машина");
+        assert_eq!(role("dummy.zip"), Some("addon"), "humanoid — не машина");
+        assert_eq!(role("testcar.zip"), Some("vehicle"));
+        assert_eq!(role("testmap.zip"), Some("map"));
     }
 
     #[test]
