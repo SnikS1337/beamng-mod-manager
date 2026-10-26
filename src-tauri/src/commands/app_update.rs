@@ -8,8 +8,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use bmm_app_release::{
-    AppVersion, PrepareOptions, UpdateStage, UpdateState, check_url, prepare_update, read_skipped,
-    write_in_place,
+    AppVersion, ManifestInput, PrepareOptions, UpdateStage, UpdateState, check_with_cancel,
+    prepare_update, read_skipped, write_in_place,
 };
 
 use crate::error::AppError;
@@ -33,40 +33,77 @@ struct AppUpdateProgress {
     progress: f64,
 }
 
+/// Итог проверки уходит в окно: автопроверка не возвращает результат командой.
+const STATE_EVENT: &str = "app-update://state";
+
 fn current_version() -> AppVersion {
     AppVersion::parse(env!("CARGO_PKG_VERSION")).unwrap_or_else(|| AppVersion::new(0, 4, 0, 0))
 }
 
-pub(crate) fn auto_check(state: &Arc<AppState>) {
+pub(crate) fn auto_check(app: &AppHandle, state: &Arc<AppState>) {
     let Some(runtime) = state.app_update.clone() else {
         return;
     };
-    let _ = check_update(&runtime);
+    let snapshot = check_update(&runtime);
+    let _ = app.emit(STATE_EVENT, snapshot);
 }
 
 fn check_update(runtime: &Mutex<AppUpdateRuntime>) -> AppUpdateDto {
+    // Сеть не держим под замком: иначе состояние и «Отменить» ждут до 30 секунд.
+    let (local, manifest_url, downloader, skipped_path, cancel) = {
+        let mut guard = lock_runtime(runtime);
+        // Пока идёт скачивание или другая проверка, эту не начинаем.
+        if matches!(
+            guard.state.stage,
+            UpdateStage::Downloading | UpdateStage::Checking
+        ) {
+            return dto(guard.state.clone());
+        }
+        guard.cancel.reset();
+        guard.state.stage = UpdateStage::Checking;
+        guard.state.error = None;
+        (
+            current_version(),
+            guard.manifest_url.clone(),
+            guard.downloader.clone(),
+            guard.skipped_path.clone(),
+            guard.cancel.clone(),
+        )
+    };
+    let skipped = read_skipped(&skipped_path);
+    let next = check_with_cancel(
+        &local,
+        ManifestInput::url(&manifest_url),
+        Some(&downloader),
+        skipped.as_ref(),
+        &cancel,
+    );
+
     let mut guard = lock_runtime(runtime);
-    // Пока идёт скачивание, проверка не должна сбрасывать его отмену и состояние.
-    if guard.state.stage == UpdateStage::Downloading {
+    // Пока шла сеть, состояние могли сменить: отмена, скачивание или новая проверка.
+    if guard.state.stage != UpdateStage::Checking {
         return dto(guard.state.clone());
     }
-    guard.cancel.reset();
-    let local = current_version();
-    let skipped = read_skipped(&guard.skipped_path);
-    let next = check_url(
-        &local,
-        &guard.manifest_url,
-        &guard.downloader,
-        skipped.as_ref(),
-    );
-    guard.state = next.clone();
-    dto(next)
+    if cancel.is_cancelled() {
+        guard.state = UpdateState::failed("Проверка обновления отменена.");
+        return dto(guard.state.clone());
+    }
+    guard.state = next;
+    dto(guard.state.clone())
 }
 
 fn dto(state: UpdateState) -> AppUpdateDto {
     AppUpdateDto {
         current_version: current_version().display(),
         state,
+    }
+}
+
+fn cancel_message(stage: UpdateStage) -> Option<&'static str> {
+    match stage {
+        UpdateStage::Checking => Some("Проверка обновления отменена."),
+        UpdateStage::Downloading => Some("Загрузка обновления отменена."),
+        _ => None,
     }
 }
 
@@ -84,15 +121,18 @@ pub async fn app_update_state(
 
 #[tauri::command]
 pub async fn app_update_check(
+    app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<AppUpdateDto, AppError> {
     let runtime = state
         .app_update
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
-    tauri::async_runtime::spawn_blocking(move || check_update(&runtime))
+    let snapshot = tauri::async_runtime::spawn_blocking(move || check_update(&runtime))
         .await
-        .map_err(|error| AppError::new("task", error.to_string()))
+        .map_err(|error| AppError::new("task", error.to_string()))?;
+    let _ = app.emit(STATE_EVENT, snapshot.clone());
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -121,7 +161,10 @@ pub async fn app_update_download(
 fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)) -> AppUpdateDto {
     let (manifest, downloader, update_dir, cancel) = {
         let mut guard = lock_runtime(runtime);
-        if guard.state.stage == UpdateStage::Downloading {
+        if matches!(
+            guard.state.stage,
+            UpdateStage::Downloading | UpdateStage::Checking
+        ) {
             return dto(guard.state.clone());
         }
         let Some(manifest) = guard.state.manifest.clone() else {
@@ -191,10 +234,13 @@ pub async fn app_update_cancel(
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
     let mut guard = lock_runtime(&runtime);
+    let Some(message) = cancel_message(guard.state.stage) else {
+        return Ok(dto(guard.state.clone()));
+    };
     guard.cancel.cancel();
     guard.prepared = None;
     guard.state.stage = UpdateStage::Failed;
-    guard.state.error = Some("Загрузка обновления отменена.".to_string());
+    guard.state.error = Some(message.to_string());
     Ok(dto(guard.state.clone()))
 }
 
@@ -472,7 +518,7 @@ mod tests {
     use std::io::{self, Read};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use bmm_app_release::{
         CancelToken, HttpResponse, HttpTransport, TransportError, UpdateDownloader, UpdateManifest,
@@ -533,6 +579,46 @@ mod tests {
                 }),
             })
         }
+    }
+
+    /// Запрос «завис», пока тест не разрешит ответ. Нужен, чтобы проверить,
+    /// что состояние обновления и отмена доступны во время сети.
+    struct BlockingTransport {
+        started: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl HttpTransport for BlockingTransport {
+        fn send(&self, _url: &url::Url) -> Result<HttpResponse, TransportError> {
+            let _ = self.started.send(());
+            let _ = self.release.lock().unwrap().recv();
+            let body = format!(
+                r#"{{"version":"9.9.9","url":"https://github.com/x/y/releases/download/v9.9.9/a.exe","size":1000000,"sha256":"{}"}}"#,
+                "a".repeat(64)
+            );
+            Ok(HttpResponse {
+                status: 200,
+                content_length: Some(body.len() as u64),
+                location: None,
+                body: Box::new(std::io::Cursor::new(body.into_bytes())),
+            })
+        }
+    }
+
+    fn runtime_with(
+        temp: &tempfile::TempDir,
+        downloader: UpdateDownloader,
+        state: UpdateState,
+    ) -> Arc<Mutex<AppUpdateRuntime>> {
+        Arc::new(Mutex::new(AppUpdateRuntime {
+            downloader,
+            state,
+            prepared: None,
+            cancel: CancelToken::new(),
+            update_dir: temp.path().join("update"),
+            skipped_path: temp.path().join("update-skip.txt"),
+            manifest_url: "https://github.com/x/y".parse().unwrap(),
+        }))
     }
 
     fn update_runtime(
@@ -627,6 +713,78 @@ mod tests {
         assert!(
             lock_runtime(&runtime).cancel.is_cancelled(),
             "чужую отмену не сбросили"
+        );
+    }
+
+    #[test]
+    fn cancel_text_matches_activity() {
+        assert_eq!(
+            cancel_message(UpdateStage::Checking),
+            Some("Проверка обновления отменена.")
+        );
+        assert_eq!(
+            cancel_message(UpdateStage::Downloading),
+            Some("Загрузка обновления отменена.")
+        );
+        assert_eq!(cancel_message(UpdateStage::Available), None);
+    }
+
+    #[test]
+    fn checking_releases_state_lock_and_keeps_cancelled_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let runtime = runtime_with(
+            &temp,
+            UpdateDownloader::new(Arc::new(BlockingTransport {
+                started: started_tx,
+                release: Mutex::new(release_rx),
+            })),
+            UpdateState::idle(),
+        );
+        let worker = {
+            let runtime = runtime.clone();
+            thread::spawn(move || check_update(&runtime))
+        };
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("проверка не дошла до сети");
+
+        // Раньше check_update держал замок до конца сети: это ожидание зависало.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut guard = loop {
+            match runtime.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    let _ = release_tx.send(());
+                    let _ = worker.join();
+                    panic!("проверка держит замок во время сетевого запроса");
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+            }
+        };
+        assert_eq!(
+            guard.state.stage,
+            UpdateStage::Checking,
+            "во время сети видна стадия проверки"
+        );
+
+        // Так же, как команда «Отменить»: состояние и флаг доступны без ожидания.
+        guard.cancel.cancel();
+        guard.state.stage = UpdateStage::Failed;
+        guard.state.error = Some("Проверка обновления отменена.".to_string());
+        drop(guard);
+        release_tx.send(()).unwrap();
+
+        let result = worker.join().unwrap();
+        assert_eq!(result.state.stage, UpdateStage::Failed);
+        assert_eq!(
+            result.state.error.as_deref(),
+            Some("Проверка обновления отменена."),
+            "результат сети не затирает отмену"
         );
     }
 

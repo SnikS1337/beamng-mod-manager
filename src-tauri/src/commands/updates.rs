@@ -1256,7 +1256,7 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
             let runtime = state.update.clone();
             let settings = state.settings.load().settings;
             if started && settings.check_app_updates {
-                crate::commands::app_update::auto_check(&state);
+                crate::commands::app_update::auto_check(&app, &state);
             }
             let due = if started {
                 settings.auto_check_on_start

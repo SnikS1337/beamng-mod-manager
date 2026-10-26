@@ -26,7 +26,11 @@ pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 /// Сколько перенаправлений разрешено пройти.
 pub const MAX_REDIRECTS: usize = 5;
 /// Заголовок User-Agent по умолчанию.
-pub const DEFAULT_USER_AGENT: &str = "BeamModManager/0.4 (personal use; update checks)";
+pub const DEFAULT_USER_AGENT: &str = concat!(
+    "BeamModManager/",
+    env!("CARGO_PKG_VERSION"),
+    " (personal use; update checks)"
+);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const BUFFER_BYTES: usize = 80 * 1024;
