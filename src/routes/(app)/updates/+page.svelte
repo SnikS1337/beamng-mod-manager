@@ -55,6 +55,9 @@
   let progress = $state<UpdateProgress | null>(null);
   /** Ход проверки при запуске (она идёт сама, без нажатия). */
   let autoProgress = $state<UpdateProgress | null>(null);
+  /** Полоса проверки доходит до конца и только потом уступает кнопкам. */
+  let finishing = $state(false);
+  let finishTimer: ReturnType<typeof setTimeout> | undefined;
   /** Номер запроса проверки при запуске (`AUTO_REQUEST_ID` в окне). */
   const AUTO_REQUEST = 0;
   let error = $state<string | null>(null);
@@ -117,19 +120,38 @@
   onDestroy(() => {
     disposed = true;
     unlisten?.();
+    if (finishTimer) clearTimeout(finishTimer);
     if (checking) void updatesCancel();
   });
 
+  function stopFinishing() {
+    if (finishTimer) clearTimeout(finishTimer);
+    finishTimer = undefined;
+    finishing = false;
+  }
+
+  function finishProgress() {
+    if (finishTimer) clearTimeout(finishTimer);
+    finishing = true;
+    finishTimer = setTimeout(() => {
+      finishing = false;
+      finishTimer = undefined;
+    }, 420);
+  }
+
   function onEvent(event: UpdatesEvent) {
     if (event.requestId === AUTO_REQUEST && event.phase === "progress") {
+      stopFinishing();
       autoProgress = event.progress;
       return;
     }
     if (event.requestId === AUTO_REQUEST && event.phase === "error") {
+      stopFinishing();
       autoProgress = null;
       return;
     }
     if (event.phase === "auto") {
+      const hadProgress = autoProgress !== null;
       autoProgress = null;
       void refreshSites();
       // Фоновая проверка закончилась: показываем найденное, если сами сейчас не проверяем.
@@ -143,11 +165,13 @@
           suggestions: event.suggestions,
         };
         if (event.sources.length > 0) sources = event.sources;
+        if (hadProgress) finishProgress();
       }
       return;
     }
     if (event.requestId !== requestId) return;
     if (event.phase === "progress") {
+      stopFinishing();
       progress = event.progress;
       if (event.sources.length > 0) sources = event.sources;
       return;
@@ -156,6 +180,7 @@
       error = event.error ?? "Проверка не удалась.";
       checking = false;
       progress = null;
+      stopFinishing();
       return;
     }
     const known = new Set(snapshot.suggestions.map((item) => item.modId));
@@ -171,6 +196,7 @@
     if (event.sources.length > 0) sources = event.sources;
     checking = false;
     progress = null;
+    finishProgress();
     if (event.phase === "done" || event.phase === "pages") void refreshSites();
     if (event.phase === "done") {
       const summary = checkSummary(event);
@@ -208,6 +234,7 @@
 
   async function check() {
     if (checking) return;
+    stopFinishing();
     requestId += 1;
     checking = true;
     progress = null;
@@ -223,6 +250,7 @@
   }
 
   async function cancel() {
+    stopFinishing();
     requestId += 1;
     checking = false;
     progress = null;
@@ -232,6 +260,7 @@
 
   async function findPages() {
     if (checking) return;
+    stopFinishing();
     checking = true;
     progress = null;
     error = null;
@@ -433,6 +462,7 @@
 
   async function retrySource(source: string) {
     if (checking) return;
+    stopFinishing();
     requestId += 1;
     checking = true;
     progress = null;
@@ -637,6 +667,8 @@
           {progressText()}
         {:else if autoProgress}
           Проверка при запуске: {progressText(autoProgress)}
+        {:else if finishing}
+          Проверка завершена.
         {:else if snapshot.lastChecked}
           Последняя проверка {formatWhen(snapshot.lastChecked)}.
           {#if failed.length > 0}
@@ -647,10 +679,22 @@
           Ещё не проверяли. Проверим моды, за которыми следим на сайтах.
         {/if}
       </p>
-      {#if checking || autoProgress}
+      {#if checking || autoProgress || finishing}
         {@const shown = checking ? progress : autoProgress}
-        <div class="track"><span class="bar" class:pulse={!shown?.total} style={shown?.total ? `width:${Math.round((shown.done / shown.total) * 100)}%` : undefined}></span></div>
-        <button class="btn-glass wide" type="button" onclick={() => void cancel()}>Остановить</button>
+        <div class="track" class:complete={finishing}>
+          <span
+            class="bar"
+            class:pulse={!finishing && !shown?.total}
+            style={finishing
+              ? "width:100%"
+              : shown?.total
+                ? `width:${Math.round((shown.done / shown.total) * 100)}%`
+                : undefined}
+          ></span>
+        </div>
+        {#if !finishing}
+          <button class="btn-glass wide" type="button" onclick={() => void cancel()}>Остановить</button>
+        {/if}
       {:else}
         <button class="btn-primary wide" type="button" onclick={() => void check()}>
           {offerForce ? "Всё равно проверить" : "Проверить сейчас"}

@@ -10,15 +10,17 @@
     onselect,
     ontoggle,
     resetKey = "",
-    renderedCount = $bindable(0),
+    appearKey = resetKey,
   }: {
     items: ModCardDto[];
     /** Выбранные: одна карточка или несколько. */
     selectedIds: string[];
     onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
     ontoggle: (mod: ModCardDto) => void;
+    /** Когда сбросить прокрутку (фильтр, тип, поиск). */
     resetKey?: string;
-    renderedCount?: number;
+    /** Когда карточки появляются заново. Поиск сюда не входит: иначе каждая буква перезапускает анимацию. */
+    appearKey?: string;
   } = $props();
 
   // Рисуются только видимые ряды (+ по ряду сверху и снизу): сотни модов не тормозят.
@@ -47,15 +49,15 @@
   let bottomPad = $derived(Math.max(0, (rows - endRow) * ROW_HEIGHT - GAP));
 
   $effect(() => {
-    renderedCount = visible.length;
-  });
-
-  $effect(() => {
     resetKey;
     if (viewport) {
       viewport.scrollTop = 0;
       scrollTop = 0;
     }
+  });
+
+  $effect(() => {
+    appearKey;
     // В плавном переходе карточки уже двигаются — своё появление лишнее.
     appear = !untrack(() => motion.active);
     const timer = setTimeout(() => (appear = false), 700);

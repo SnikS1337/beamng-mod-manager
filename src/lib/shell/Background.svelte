@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { page } from "$app/state";
   import { appearance } from "#lib/shell/appearance.svelte.js";
   import { lightSpot } from "./backgroundSpot";
@@ -11,9 +12,19 @@
     (appearance.settings?.animatedBackground ?? true) && (appearance.settings?.uiAnimations ?? true),
   );
   const spot = $derived(lightSpot(page.url.pathname));
+  let paused = $state(false);
+
+  onMount(() => {
+    const sync = () => {
+      paused = document.visibilityState === "hidden";
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  });
 </script>
 
-<div class="bg" class:live aria-hidden="true">
+<div class="bg" class:live class:paused aria-hidden="true">
   <div class="spot" style={`--x:${spot.x}%; --y:${spot.y}%; --power:${spot.power}`}>
     <div class="light warm"></div>
     <div class="light cool"></div>
@@ -46,6 +57,7 @@
 
   :global(.no-motion) .spot {
     transition: none;
+    will-change: auto;
   }
 
   .light {
@@ -87,6 +99,11 @@
 
   .live .cool {
     animation: drift-cool 59s var(--ease-in-out) infinite alternate;
+  }
+
+  /* Свёрнутое окно не должно греть процессор медленным светом. */
+  .paused .light {
+    animation-play-state: paused;
   }
 
   .grid {

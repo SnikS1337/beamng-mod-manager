@@ -222,6 +222,7 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    transition: filter var(--dur-2) var(--ease-out);
   }
 
   .thumb.addon {
@@ -243,6 +244,7 @@
 
   .name b {
     font-weight: 700;
+    transition: color var(--dur-2) var(--ease-out);
   }
 
   .name small {

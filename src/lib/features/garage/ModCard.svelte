@@ -238,7 +238,8 @@
     opacity: 0;
     transition:
       opacity var(--dur-3) var(--ease-out),
-      transform var(--dur-3) var(--ease-out);
+      transform var(--dur-3) var(--ease-out),
+      filter var(--dur-2) var(--ease-out);
   }
 
   .thumb img.loaded {
@@ -372,6 +373,7 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
+    transition: color var(--dur-2) var(--ease-out);
   }
 
   /* По базовой линии: моноширинная версия мельче и без этого «висела» выше «3 МБ». */

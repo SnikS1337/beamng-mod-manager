@@ -522,11 +522,12 @@
             <div class="switch-row">
               <div>
                 <b>Живой фон</b>
-                <small>Мягкий свет акцентного цвета медленно движется по фону.</small>
+                <small>Мягкий свет акцентного цвета медленно движется по фону. Работает при включённых анимациях интерфейса.</small>
               </div>
               <Switch
                 size="lg"
                 checked={draft.animatedBackground}
+                disabled={!draft.uiAnimations}
                 onCheckedChange={(value) => setFlag("animatedBackground", value)}
                 aria-label="Живой фон"
               />

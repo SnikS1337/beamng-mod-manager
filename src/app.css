@@ -567,6 +567,18 @@ input[type="checkbox"]:checked::after {
   animation: none;
 }
 
+/* «Быстро» должно убирать движение целиком, а не только длительности из токенов:
+   у модальных окон, мигания сайтов и полосы проверки длительности заданы явно. */
+.no-motion *,
+.no-motion *::before,
+.no-motion *::after {
+  animation-delay: 0ms !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* Системный флажок Windows движение не гасит: им управляют настройки программы
    (класс .no-motion). Так «Живо» остаётся выбором человека, а не системы. */
 
@@ -648,6 +660,28 @@ html.flow-view::view-transition-old(mods) {
 
 html.flow-view::view-transition-new(mods) {
   animation: flow-page-in var(--dur-3) var(--ease-out) both;
+}
+
+/* Фильтр типа в поиске: карточки переезжают и уходят, как в гараже. */
+html.flow-search .search-grid {
+  view-transition-name: mods;
+  view-transition-group: nearest;
+}
+
+html.flow-search .search-card {
+  view-transition-name: var(--flow);
+  view-transition-class: card;
+  view-transition-group: nearest;
+}
+
+html.flow-search::view-transition-old(page),
+html.flow-search::view-transition-new(page) {
+  animation: none;
+}
+
+html.flow-search::view-transition-old(mods),
+html.flow-search::view-transition-new(mods) {
+  animation: none;
 }
 
 /* Внутри раздела страница не мигает: двигаются карточки и панель. */
