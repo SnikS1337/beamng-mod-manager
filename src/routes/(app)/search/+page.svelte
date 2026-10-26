@@ -9,6 +9,7 @@
   import Car from "phosphor-svelte/lib/Car";
   import { formatSize, plural } from "#lib/features/garage/format.js";
   import { searchKindLabel } from "#lib/features/search/kind.js";
+  import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
     listenSearch,
@@ -324,6 +325,13 @@
     kindFilter === "all" ? cards : cards.filter((card) => card.kind === kindFilter),
   );
 
+  function chooseKind(next: KindFilter) {
+    if (next === kindFilter) return;
+    void motion.run(() => {
+      kindFilter = next;
+    }, "flow-search");
+  }
+
   function errorText(reason: unknown): string {
     if (typeof reason === "string") return reason;
     if (reason && typeof reason === "object" && "message" in reason) {
@@ -393,7 +401,7 @@
         class:on={kindFilter === "all"}
         type="button"
         aria-pressed={kindFilter === "all"}
-        onclick={() => (kindFilter = "all")}
+        onclick={() => chooseKind("all")}
       >
         Все <b>{kindCount("all")}</b>
       </button>
@@ -403,7 +411,7 @@
           class:on={kindFilter === item.id}
           type="button"
           aria-pressed={kindFilter === item.id}
-          onclick={() => (kindFilter = kindFilter === item.id ? "all" : item.id)}
+          onclick={() => chooseKind(kindFilter === item.id ? "all" : item.id)}
         >{item.label} <b>{kindCount(item.id)}</b></button>
       {/each}
     </div>
@@ -432,10 +440,10 @@
       <a class="btn-glass" href="/settings?section=sites">Какие сайты включены</a>
     </div>
   {:else if cards.length > 0}
-    <div class="grid">
+    <div class="grid search-grid">
       {#each shownCards as card (card.id)}
         {@const preview = previewOf(card)}
-        <article class="card">
+        <article class="card search-card" style={`--flow:${flowName(card.id)}`}>
           <div class="cover">
             {#if preview}
               <img src={preview} alt="" loading="lazy" decoding="async" />

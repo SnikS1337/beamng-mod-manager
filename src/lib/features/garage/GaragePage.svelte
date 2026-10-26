@@ -89,7 +89,6 @@
   let selectedId = $derived(single(picked));
   let details = $state<ModDetails | null>(null);
   let detailsLoading = $state(false);
-  let renderedCount = $state(0);
   let bannerDismissed = $state(false);
   let searchEl = $state<HTMLInputElement | null>(null);
   let archiveInput = $state<HTMLInputElement | null>(null);
@@ -1011,7 +1010,7 @@
                 if (!mod.deleted) void toggle(mod);
               }}
               resetKey={`${filter}|${typeFilter}|${query}`}
-              bind:renderedCount
+              appearKey={`${filter}|${typeFilter}`}
             />
           {/if}
         </ModMenu>

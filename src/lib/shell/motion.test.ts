@@ -31,7 +31,7 @@ describe("flowName", () => {
 
   it("годится как CSS-имя для любых путей", () => {
     for (const id of ["C:\\mods\\Лада 2106.zip", "repo/x (1).zip", "", "🚗"]) {
-      expect(flowName(id)).toMatch(/^m-[0-9a-z]+$/);
+      expect(flowName(id)).toMatch(/^m-[0-9a-z]+-[0-9a-z]+$/);
     }
   });
 

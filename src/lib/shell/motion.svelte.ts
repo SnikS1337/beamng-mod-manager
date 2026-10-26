@@ -20,15 +20,18 @@ export function canFlow(doc: FlowDocument | undefined): boolean {
 
 /**
  * Имя карточки для перехода — из id мода. Id бывают путями с любыми знаками,
- * а имя должно быть CSS-идентификатором, поэтому берём хеш FNV-1a.
+ * а имя должно быть CSS-идентификатором, поэтому берём два независимых 32-битных
+ * хеша: для больших библиотек 64 бита практически исключают совпадение имён.
  */
 export function flowName(id: string): string {
-  let hash = 0x811c9dc5;
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
   for (let i = 0; i < id.length; i++) {
-    hash ^= id.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
+    const code = id.charCodeAt(i);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
   }
-  return `m-${(hash >>> 0).toString(36)}`;
+  return `m-${(first >>> 0).toString(36)}-${(second >>> 0).toString(36)}`;
 }
 
 class Motion {
@@ -104,6 +107,9 @@ class Motion {
       await tick();
     });
     this.#current = transition;
+    // При skipTransition() встроенный `ready` отклоняется с AbortError. Мы его не
+    // ждём, но без обработчика WebView пишет «Uncaught (in promise)» в консоль.
+    transition.ready.catch(() => undefined);
     const done = () => {
       const left = (this.#scopes.get(scope) ?? 1) - 1;
       if (left > 0) {

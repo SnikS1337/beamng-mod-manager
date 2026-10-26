@@ -18,6 +18,7 @@
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { incomingQueue } from "./queue.svelte";
   import { trapFocus } from "#lib/shell/focus.js";
+  import { pop, softFade } from "#lib/shell/transitions.js";
   import { installable, preselected, suspiciousFiles, suspiciousText } from "./selection";
 
   type CheckLevel = "ok" | "attention" | "blocked";
@@ -421,7 +422,7 @@
 <svelte:window onkeydown={onkeydown} />
 
 {#if dragActive && !dialogOpen}
-  <div class="drop-layer" aria-hidden="true">
+  <div class="drop-layer" aria-hidden="true" transition:softFade={{ duration: 160 }}>
     <div class="drop-card glass solid liquid-edge">
       <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
         <path
@@ -439,13 +440,20 @@
 {/if}
 
 {#if dialogOpen}
-  <button class="backdrop" type="button" aria-label="Закрыть окно проверки" onclick={close}></button>
+  <button
+    class="backdrop"
+    type="button"
+    aria-label="Закрыть окно проверки"
+    transition:softFade={{ duration: 160 }}
+    onclick={close}
+  ></button>
   <div
     class="dialog glass"
     role="dialog"
     aria-modal="true"
     aria-labelledby="incoming-title"
     use:trapFocus
+    transition:pop={{ duration: 240, y: 10, centered: "both" }}
   >
     <header>
       <div class="heading">
@@ -566,7 +574,6 @@
     padding: 32px 24px;
     border-radius: 14px;
     color: var(--foreground);
-    animation: drop-in 0.35s ease-out;
   }
 
   .drop-card svg {
@@ -609,7 +616,6 @@
     border-radius: 14px;
     color: var(--foreground);
     transform: translate(-50%, -50%);
-    animation: dialog-in 0.34s ease-out;
   }
 
   header {
@@ -877,27 +883,6 @@
     color: var(--foreground);
   }
 
-  @keyframes dialog-in {
-    from {
-      opacity: 0;
-      transform: translate(-50%, calc(-50% + 10px)) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translate(-50%, -50%) scale(1);
-    }
-  }
-
-  @keyframes drop-in {
-    from {
-      opacity: 0;
-      transform: scale(0.94);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
 
   @keyframes sheen {
     from {

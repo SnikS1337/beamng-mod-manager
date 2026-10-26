@@ -13,6 +13,7 @@
   import { palette } from "./palette.svelte";
   import { paletteItems, type PaletteItem } from "./paletteItems";
   import { trapFocus } from "./focus";
+  import { pop, softFade } from "./transitions";
 
   let query = $state("");
   let active = $state(0);
@@ -139,8 +140,20 @@
 <svelte:window onkeydown={onWindowKey} />
 
 {#if palette.open}
-  <div class="scrim" role="presentation" onclick={() => palette.hide()}></div>
-  <div class="palette" role="dialog" aria-modal="true" aria-label="Палитра команд" use:trapFocus>
+  <div
+    class="scrim"
+    role="presentation"
+    transition:softFade={{ duration: 160 }}
+    onclick={() => palette.hide()}
+  ></div>
+  <div
+    class="palette"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Палитра команд"
+    use:trapFocus
+    transition:pop={{ duration: 240, y: 8, centered: "x" }}
+  >
     <label class="field">
       <MagnifyingGlass size={20} />
       <input
@@ -202,7 +215,6 @@
     inset: 0;
     z-index: 90;
     background: var(--overlay);
-    animation: fade-in var(--dur-2) var(--ease-out) both;
   }
 
   .palette {
@@ -220,18 +232,6 @@
     background: var(--surface);
     box-shadow: var(--shadow-2);
     transform: translateX(-50%);
-    animation: palette-in var(--dur-3) var(--ease-out) both;
-  }
-
-  @keyframes palette-in {
-    from {
-      opacity: 0;
-      transform: translate(-50%, -8px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translate(-50%, 0);
-    }
   }
 
   .field {
