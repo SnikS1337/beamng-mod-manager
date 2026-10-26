@@ -120,7 +120,6 @@ try {
 $wv = Reg 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' 'pv'
 if (-not $wv) { $wv = Reg 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' 'pv' }
 $sys.webView2 = $wv
-try { $sys.dotnetSdks = ((& dotnet --list-sdks 2>$null) -join '; ') } catch { $sys.dotnetSdks = $null }
 try {
     $mp = Get-MpComputerStatus -ErrorAction Stop
     $sys.defenderRealtime = $mp.RealTimeProtectionEnabled

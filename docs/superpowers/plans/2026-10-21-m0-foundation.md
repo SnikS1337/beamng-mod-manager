@@ -1,5 +1,8 @@
 # M0: каркас Rust + Tauri 2 + Svelte 5 — план реализации
 
+> **Исторический документ.** Описывает старую C#/WPF-версию или ранний этап переезда. Не является текущей инструкцией. Актуальные сведения — в `README.md`, `docs/STATUS.md` и `docs/BUILD.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Цель:** перестроить репозиторий и получить собираемое приложение `BeamModManager.exe` на Rust + Tauri 2 + Svelte 5 с четырьмя маршрутами, строгим CSP, общим мьютексом со старой версией и зелёными проверками.
@@ -1496,7 +1499,7 @@ jobs:
 
 ```md
 > **Ветка `refactor-rust-poc`.** Идёт переезд на Rust + Tauri 2 + Svelte 5. Спека —
-> [docs/superpowers/specs/2026-10-21-rust-tauri-refactor-design.md](docs/superpowers/specs/2026-10-21-rust-tauri-refactor-design.md).
+> [docs/superpowers/specs/2026-10-21-rust-tauri-refactor-design.md](../specs/2026-10-21-rust-tauri-refactor-design.md).
 > Старое приложение на C#/WPF лежит в `legacy/` как эталон до паритета.
 ```
 
