@@ -590,6 +590,26 @@ input[type="checkbox"]:checked::after {
   animation: none;
 }
 
+/* Смена акцента: новый вид раскрывается кругом от нажатого образца,
+   старый остаётся под ним до конца. */
+html.flow-theme::view-transition-old(root),
+html.flow-theme::view-transition-group(root) {
+  animation: none;
+}
+
+html.flow-theme::view-transition-new(root) {
+  animation: theme-reveal var(--dur-3) var(--ease-out) both;
+}
+
+@keyframes theme-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+  to {
+    clip-path: circle(150% at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+}
+
 ::view-transition-group(*) {
   animation-duration: var(--dur-3);
   animation-timing-function: var(--ease-out);
