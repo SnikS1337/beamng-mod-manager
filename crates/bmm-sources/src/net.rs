@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::Read;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,7 +16,11 @@ use reqwest::header::{
 };
 use url::Url;
 
-pub const USER_AGENT: &str = "BeamModManager/0.4 (personal use; update checks)";
+pub const USER_AGENT: &str = concat!(
+    "BeamModManager/",
+    env!("CARGO_PKG_VERSION"),
+    " (personal use; update checks)"
+);
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// Предел памяти под страницы в кеше: 64 страницы могут быть и по 16 МБ каждая.
 const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
@@ -94,6 +99,52 @@ impl PageFetcher for OfflineFetcher {
             "Не удалось создать сетевой клиент.".to_string(),
         ))
     }
+}
+
+/// Редирект с сайта не должен уводить в локальную сеть или на служебный адрес.
+/// Это не полная защита от DNS rebinding, но закрывает прямой переход на IP/localhost.
+pub fn redirect_allowed(url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let Some(host) = url.host() else {
+        return false;
+    };
+    match host {
+        url::Host::Domain(name) => {
+            let name = name.to_ascii_lowercase();
+            name != "localhost" && !name.ends_with(".localhost")
+        }
+        url::Host::Ipv4(ip) => public_v4(ip),
+        url::Host::Ipv6(ip) => public_v6(ip),
+    }
+}
+
+fn public_v4(ip: Ipv4Addr) -> bool {
+    !(ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast())
+}
+
+fn public_v6(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return public_v4(v4);
+    }
+    !(ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local())
+}
+
+/// Политика редиректов для обычных страниц и картинок: не больше 10 переходов
+/// и только на обычные внешние http/https-адреса.
+pub fn safe_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 || !redirect_allowed(attempt.url()) {
+            attempt.stop()
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 pub fn default_fetcher() -> Arc<dyn PageFetcher> {
@@ -189,7 +240,7 @@ impl HttpPageFetcher {
             .user_agent(user_agent)
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::limited(10))
+            .redirect(safe_redirect_policy())
             .cookie_store(true)
             .build()
             .map_err(|error| FetchError::Message(error.to_string()))?;
@@ -585,11 +636,11 @@ impl PoliteFetcher {
             if let Some(until) = inner.blocked_until
                 && until > Instant::now()
             {
-                let minutes = until.duration_since(Instant::now()).as_secs().div_ceil(60);
+                let wait = until.duration_since(Instant::now());
                 let message = inner
                     .message
                     .clone()
-                    .unwrap_or_else(|| format!("Сайт отдыхает ещё {minutes} мин."));
+                    .unwrap_or_else(|| format!("Сайт отдыхает ещё {}.", wait_text(wait)));
                 self.remember(
                     source,
                     SourceStatus::Unavailable,
@@ -694,7 +745,13 @@ impl PoliteFetcher {
                             "Сайт перегружен (код {}), попробуем позже.",
                             response.status
                         );
-                        if attempt < self.options.retries {
+                        let can_retry = attempt < self.options.retries;
+                        if let Some(blocked) =
+                            self.block_for_retry_after(&entry, source, &response, can_retry)
+                        {
+                            return blocked;
+                        }
+                        if can_retry {
                             let wait = response
                                 .retry_after
                                 .unwrap_or_else(|| self.retry_backoff(attempt));
@@ -708,7 +765,13 @@ impl PoliteFetcher {
                         // Retry-After важнее нашей паузы, а при retries = 0 спать не за что.
                         last_message =
                             format!("Сайт временно недоступен (код {}).", response.status);
-                        if attempt < self.options.retries.min(1) {
+                        let can_retry = attempt < self.options.retries.min(1);
+                        if let Some(blocked) =
+                            self.block_for_retry_after(&entry, source, &response, can_retry)
+                        {
+                            return blocked;
+                        }
+                        if can_retry {
                             let wait = response
                                 .retry_after
                                 .unwrap_or_else(|| self.retry_backoff(attempt));
@@ -784,6 +847,50 @@ impl PoliteFetcher {
     fn retry_backoff(&self, attempt: usize) -> Duration {
         let factor = 1u32 << attempt.min(6);
         (self.options.backoff * factor).min(self.options.max_backoff)
+    }
+
+    /// Сайт назвал `Retry-After`. Если ждать дольше обычного лимита или повтор уже
+    /// не разрешён, не стучимся раньше срока: закрываем источник до него.
+    fn block_for_retry_after(
+        &self,
+        entry: &HostEntry,
+        source: &str,
+        response: &RawResponse,
+        can_retry: bool,
+    ) -> Option<FetchResult> {
+        let wait = response.retry_after?;
+        if wait.is_zero() || (can_retry && wait <= self.options.max_backoff) {
+            return None;
+        }
+        let message = format!("Сайт просит подождать {}.", wait_text(wait));
+        Some(self.block_until(entry, source, message, Instant::now() + wait))
+    }
+
+    fn block_until(
+        &self,
+        entry: &HostEntry,
+        source: &str,
+        message: String,
+        until: Instant,
+    ) -> FetchResult {
+        let mut inner = lock(&entry.inner);
+        inner.failures = 0;
+        inner.status = SourceStatus::Unavailable;
+        inner.message = Some(message.clone());
+        inner.blocked_until = Some(
+            inner
+                .blocked_until
+                .map_or(until, |current| current.max(until)),
+        );
+        let blocked_until = inner.blocked_until;
+        drop(inner);
+        self.remember(
+            source,
+            SourceStatus::Unavailable,
+            Some(message.clone()),
+            blocked_until,
+        );
+        FetchResult::failed(SourceStatus::Unavailable, message)
     }
 
     fn mark_failure(&self, entry: &HostEntry, source: &str, message: String) -> FetchResult {
@@ -918,6 +1025,15 @@ fn make_room(
     true
 }
 
+/// Срок словами для сообщения: секунды до минуты, дальше — минуты.
+fn wait_text(wait: Duration) -> String {
+    if wait >= Duration::from_secs(60) {
+        format!("{} мин.", wait.as_secs().div_ceil(60))
+    } else {
+        format!("{} с.", wait.as_millis().div_ceil(1000).max(1))
+    }
+}
+
 fn cache_key(url: &Url, form: Option<&[(String, String)]>) -> String {
     match form {
         Some(form) => {
@@ -1017,6 +1133,39 @@ mod tests {
     fn fixture(path: &str) -> String {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
         std::fs::read_to_string(root.join(path)).unwrap()
+    }
+
+    #[test]
+    fn redirects_into_local_network_are_rejected() {
+        for raw in [
+            "http://127.0.0.1/x",
+            "http://10.1.2.3/x",
+            "http://192.168.1.1/x",
+            "http://169.254.1.1/x",
+            "http://[::1]/x",
+            "http://[fe80::1]/x",
+            "http://localhost/x",
+            "http://foo.localhost/x",
+            "file:///C:/x",
+        ] {
+            assert!(!redirect_allowed(&url(raw)), "{raw} — локальная сеть");
+        }
+        for raw in [
+            "https://modland.net/x",
+            "http://8.8.8.8/x",
+            "https://[2001:4860:4860::8888]/x",
+        ] {
+            assert!(redirect_allowed(&url(raw)), "{raw} — обычный адрес");
+        }
+    }
+
+    #[test]
+    fn user_agent_uses_the_crate_version() {
+        assert!(
+            USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
+            "{USER_AGENT}"
+        );
+        assert!(!USER_AGENT.contains("/0.4 "), "{USER_AGENT}");
     }
 
     #[test]
@@ -1481,6 +1630,76 @@ mod tests {
             SourceStatus::Unavailable
         );
         assert_eq!(fake.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn long_retry_after_blocks_the_source_instead_of_retrying_early() {
+        let mut busy = response(429, "slow down");
+        busy.retry_after = Some(Duration::from_millis(250));
+        let fake = FakeFetcher::new(vec![Ok(busy), Ok(response(200, "should not be fetched"))]);
+        let mut opts = options();
+        opts.retries = 2;
+        opts.backoff = Duration::from_millis(10);
+        opts.max_backoff = Duration::from_millis(50);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/mod");
+
+        let started = Instant::now();
+        let result = polite.get("site", &page);
+        assert_eq!(result.status, SourceStatus::Unavailable);
+        assert!(
+            result
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("подождать")),
+            "{:?}",
+            result.message
+        );
+        assert_eq!(
+            fake.calls.lock().unwrap().len(),
+            1,
+            "не повторяем раньше Retry-After"
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(150),
+            "не ждём урезанный срок: {:?}",
+            started.elapsed()
+        );
+
+        assert_eq!(polite.status_of("site"), SourceStatus::Unavailable);
+        assert_eq!(
+            polite.get("site", &url("https://example.org/other")).status,
+            SourceStatus::Unavailable
+        );
+        assert_eq!(
+            fake.calls.lock().unwrap().len(),
+            1,
+            "источник отдыхает до указанного срока"
+        );
+    }
+
+    #[test]
+    fn retry_after_is_honored_even_without_retries() {
+        let mut busy = response(503, "busy");
+        busy.retry_after = Some(Duration::from_millis(200));
+        let fake = FakeFetcher::new(vec![Ok(busy), Ok(response(200, "should not be fetched"))]);
+        let mut opts = options();
+        opts.retries = 0;
+        opts.max_backoff = Duration::from_secs(60);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/mod");
+
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Unavailable);
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
+        assert_eq!(
+            polite.get("site", &url("https://example.org/next")).status,
+            SourceStatus::Unavailable
+        );
+        assert_eq!(
+            fake.calls.lock().unwrap().len(),
+            1,
+            "Retry-After соблюдается и без повторов"
+        );
     }
 
     #[test]

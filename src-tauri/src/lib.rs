@@ -135,11 +135,9 @@ pub fn run() {
         page_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         page_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }));
-    let app_update = bmm_app_release::UpdateDownloader::reqwest(concat!(
-        "ModManagerBeamNG/",
-        env!("CARGO_PKG_VERSION")
-    ))
-        .ok()
+    let app_update =
+        bmm_app_release::UpdateDownloader::reqwest(bmm_app_release::DEFAULT_USER_AGENT)
+            .ok()
         .map(|downloader| {
             Arc::new(Mutex::new(AppUpdateRuntime {
                 downloader,

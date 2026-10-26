@@ -64,6 +64,15 @@ export async function listenAppUpdateProgress(
   );
 }
 
+export async function listenAppUpdateState(
+  handler: (snapshot: AppUpdateSnapshot) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<AppUpdateSnapshot>("app-update://state", (event) =>
+    handler(clone(event.payload)),
+  );
+}
+
 export async function appUpdateState(): Promise<AppUpdateSnapshot> {
   if (isTauri()) return invoke<AppUpdateSnapshot>("app_update_state");
   return clone(mock);

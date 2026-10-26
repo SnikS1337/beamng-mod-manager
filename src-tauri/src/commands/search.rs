@@ -277,6 +277,10 @@ pub async fn search_open_modland(
 
 const PREVIEW_HOSTS: &[&str] = &["modland.net", "stmods.org", "modsgaming.ru", "beamng.com"];
 
+fn preview_url_allowed(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https") && bmm_domain::hosts::host_matches(url, PREVIEW_HOSTS)
+}
+
 #[tauri::command]
 pub async fn search_page_preview(
     state: tauri::State<'_, Arc<AppState>>,
@@ -310,7 +314,7 @@ pub async fn search_page_preview(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let cancel = AtomicBool::new(false);
         let listing = mod_source.listing(&parsed, &cancel).ok().flatten()?;
-        let preview = listing.preview_url?;
+        let preview = listing.preview_url.filter(preview_url_allowed)?;
         let image = previews.fetch(&preview).ok().flatten()?;
         Some(format!(
             "http://bmm.localhost/search-preview/{}.{}",
@@ -333,9 +337,7 @@ pub async fn search_preview(
         .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
     let parsed =
         Url::parse(&url).map_err(|_| AppError::new("url", "Некорректный адрес картинки."))?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || !bmm_domain::hosts::host_matches(&parsed, PREVIEW_HOSTS)
-    {
+    if !preview_url_allowed(&parsed) {
         return Err(AppError::new(
             "url",
             "Картинка с этого сайта не загружается.",
@@ -555,6 +557,34 @@ mod tests {
                 confirmed,
             })
             .unwrap();
+    }
+
+    #[test]
+    fn only_known_hosts_are_allowed_for_previews() {
+        for raw in [
+            "https://www.modland.net/i.webp",
+            "http://modland.net/i.jpg",
+            "https://stmods.org/i.jpg",
+            "https://modsgaming.ru/i.png",
+            "https://cdn.beamng.com/i.jpg",
+        ] {
+            assert!(
+                preview_url_allowed(&Url::parse(raw).unwrap()),
+                "{raw} — сайт из списка"
+            );
+        }
+        for raw in [
+            "https://evil.example/i.jpg",
+            "https://modland.net.evil.example/i.jpg",
+            "http://127.0.0.1/i.jpg",
+            "http://localhost/i.jpg",
+            "file:///C:/x.png",
+        ] {
+            assert!(
+                !preview_url_allowed(&Url::parse(raw).unwrap()),
+                "{raw} — чужой адрес"
+            );
+        }
     }
 
     #[test]

@@ -29,6 +29,7 @@
     appUpdateRestart,
     appUpdateState,
     listenAppUpdateProgress,
+    listenAppUpdateState,
     type AppUpdateSnapshot,
   } from "#lib/ipc/appUpdate.js";
 
@@ -90,6 +91,7 @@
   let updateError = $state<string | null>(null);
   let updateProgress = $state(0);
   let unlistenUpdate: (() => void) | undefined;
+  let unlistenUpdateState: (() => void) | undefined;
   let disposed = false;
 
   onMount(() => {
@@ -101,15 +103,24 @@
       if (disposed) stop();
       else unlistenUpdate = stop;
     });
+    void listenAppUpdateState((snapshot) => {
+      appUpdate = snapshot;
+      updateProgress = snapshot.state.progress;
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlistenUpdateState = stop;
+    });
     return () => {
       disposed = true;
       unlistenUpdate?.();
+      unlistenUpdateState?.();
     };
   });
 
   onDestroy(() => {
     disposed = true;
     unlistenUpdate?.();
+    unlistenUpdateState?.();
     if (saveTimer) clearTimeout(saveTimer);
     if (dirty) void save(true);
   });
@@ -896,6 +907,8 @@
               <RotateCcw size={13} />
               Перезапустить
             </button>
+          {:else if appUpdate?.state.stage === "checking"}
+            <button type="button" disabled>Проверяем…</button>
           {:else}
             <button type="button" disabled={updateBusy} onclick={() => void checkAppUpdate()}>
               {updateBusy ? "Проверяем…" : "Проверить обновление"}

@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use bmm_app_release::{
-    AppVersion, BAD_SUFFIX, CancelToken, DownloadError, EXE_NAME, HttpResponse, HttpTransport,
-    InstallError, LocalFeedTransport, MAX_MANIFEST_BYTES, MIN_SIZE, ManifestInput, NEW_SUFFIX,
-    OLD_SUFFIX, PrepareOptions, ReqwestTransport, TransportError, UpdateDownloader, UpdateManifest,
-    UpdateStage, check, check_bytes, check_json, check_url, cleanup, commit_with, evaluate,
-    extract_exe, is_temporary_location, prepare_update, read_skipped, rollback,
+    AppVersion, BAD_SUFFIX, CancelToken, DEFAULT_USER_AGENT, DownloadError, EXE_NAME, HttpResponse,
+    HttpTransport, InstallError, LocalFeedTransport, MAX_MANIFEST_BYTES, MIN_SIZE, ManifestInput,
+    NEW_SUFFIX, OLD_SUFFIX, PrepareOptions, ReqwestTransport, TransportError, UpdateDownloader,
+    UpdateManifest, UpdateStage, check, check_bytes, check_json, check_url, cleanup, commit_with,
+    evaluate, extract_exe, is_temporary_location, prepare_update, read_skipped, rollback,
     rollback_from_running, stage, swap, swap_with, write_in_place, write_in_place_with,
     write_skipped,
 };
@@ -34,6 +34,18 @@ fn url(text: &str) -> Url {
 // ---------------------------------------------------------------------------
 // Манифест и версии
 // ---------------------------------------------------------------------------
+
+#[test]
+fn default_user_agent_uses_the_crate_version() {
+    assert!(
+        DEFAULT_USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
+        "{DEFAULT_USER_AGENT}"
+    );
+    assert!(
+        !DEFAULT_USER_AGENT.contains("/0.4 "),
+        "{DEFAULT_USER_AGENT}"
+    );
+}
 
 #[test]
 fn release_build_detection_matches_legacy() {

@@ -18,6 +18,10 @@ const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 const SELF_CLEAR_WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(120);
 const EVAL_TIMEOUT: Duration = Duration::from_secs(5);
+/// Те же пределы, что у обычного HTTP: страница и картинка не должны
+/// занимать больше памяти только потому, что их принёс WebView2.
+const MAX_HTML_BYTES: usize = 16 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
 pub struct BrowserPages {
     app: Mutex<Option<AppHandle>>,
@@ -157,13 +161,16 @@ impl PageFetcher for BrowserPages {
         if is_challenge_page(&page) {
             return Ok(None);
         }
-        let value = eval_json_timeout(&window, IMAGE_SCRIPT, Duration::from_secs(20))?;
-        image_from_script(&value)
+        let value = eval_json_timeout(&window, &image_script(), Duration::from_secs(20))?;
+        image_from_script(&value, MAX_IMAGE_BYTES)
     }
 }
 
-/// Ответ IMAGE_SCRIPT: `null` — картинки нет, иначе `{type, data}` с base64.
-fn image_from_script(value: &serde_json::Value) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+/// Ответ скрипта картинки: `null` — картинки нет, иначе `{type, data}` с base64.
+fn image_from_script(
+    value: &serde_json::Value,
+    max_bytes: usize,
+) -> Result<Option<(String, Vec<u8>)>, FetchError> {
     if value.is_null() {
         return Ok(None);
     }
@@ -179,7 +186,7 @@ fn image_from_script(value: &serde_json::Value) -> Result<Option<(String, Vec<u8
     let bytes = BASE64
         .decode(encoded)
         .map_err(|_| FetchError::Message("сайт отдал некорректную картинку".to_string()))?;
-    if bytes.is_empty() {
+    if bytes.is_empty() || bytes.len() > max_bytes {
         return Ok(None);
     }
     Ok(Some((content_type, bytes)))
@@ -196,6 +203,7 @@ const IMAGE_SCRIPT: &str = r#"(() => {
     if (xhr.status < 200 || xhr.status >= 300) return null;
     const text = xhr.responseText;
     if (!text.length) return null;
+    if (text.length > __MAX_IMAGE_BYTES__) return null;
     const bytes = new Uint8Array(text.length);
     for (let i = 0; i < text.length; i += 1) bytes[i] = text.charCodeAt(i) & 0xff;
     let binary = '';
@@ -207,6 +215,10 @@ const IMAGE_SCRIPT: &str = r#"(() => {
     return null;
   }
 })()"#;
+
+fn image_script() -> String {
+    IMAGE_SCRIPT.replace("__MAX_IMAGE_BYTES__", &MAX_IMAGE_BYTES.to_string())
+}
 
 fn wait_loaded(window: &WebviewWindow, target: &Url, token: &str) -> Result<(), FetchError> {
     let Some(target_host) = target.host_str() else {
@@ -242,11 +254,25 @@ fn wait_loaded(window: &WebviewWindow, target: &Url, token: &str) -> Result<(), 
 }
 
 pub(crate) fn document_html(window: &WebviewWindow) -> Result<String, FetchError> {
-    let value = eval_json(
-        window,
-        "document.documentElement ? document.documentElement.outerHTML : ''",
-    )?;
-    Ok(value.as_str().unwrap_or_default().to_string())
+    let value = eval_json(window, &html_script(MAX_HTML_BYTES))?;
+    html_from_value(&value, MAX_HTML_BYTES)
+}
+
+fn html_script(limit: usize) -> String {
+    format!(
+        "(() => {{ const root = document.documentElement; if (!root) return ''; const html = root.outerHTML; return html.length > {limit} ? null : html; }})()"
+    )
+}
+
+fn html_from_value(value: &serde_json::Value, limit: usize) -> Result<String, FetchError> {
+    if value.is_null() {
+        return Err(FetchError::TooLarge);
+    }
+    let html = value.as_str().unwrap_or_default();
+    if html.len() > limit {
+        return Err(FetchError::TooLarge);
+    }
+    Ok(html.to_string())
 }
 
 fn eval_json(window: &WebviewWindow, script: &str) -> Result<serde_json::Value, FetchError> {
@@ -295,18 +321,59 @@ mod tests {
     #[test]
     fn image_from_script_decodes_base64() {
         let value = serde_json::json!({"type": "image/png", "data": "iVBORw0KGgo="});
-        let (kind, bytes) = image_from_script(&value).unwrap().unwrap();
+        let (kind, bytes) = image_from_script(&value, MAX_IMAGE_BYTES).unwrap().unwrap();
         assert_eq!(kind, "image/png");
         assert_eq!(bytes, b"\x89PNG\r\n\x1a\n");
         assert!(
-            image_from_script(&serde_json::Value::Null)
+            image_from_script(&serde_json::Value::Null, MAX_IMAGE_BYTES)
                 .unwrap()
                 .is_none()
         );
         let empty = serde_json::json!({"type": "image/png", "data": ""});
-        assert!(image_from_script(&empty).unwrap().is_none());
+        assert!(
+            image_from_script(&empty, MAX_IMAGE_BYTES)
+                .unwrap()
+                .is_none()
+        );
         let broken = serde_json::json!({"type": "image/png", "data": "@@@"});
-        assert!(image_from_script(&broken).is_err());
+        assert!(image_from_script(&broken, MAX_IMAGE_BYTES).is_err());
+    }
+
+    #[test]
+    fn image_payload_limit_is_enforced() {
+        assert!(
+            image_script().contains(&MAX_IMAGE_BYTES.to_string()),
+            "в скрипт подставлен настоящий предел"
+        );
+        let bytes = b"\x89PNG\r\n\x1a\nx";
+        let value = serde_json::json!({
+            "type": "image/png",
+            "data": BASE64.encode(bytes),
+        });
+        assert!(image_from_script(&value, bytes.len()).unwrap().is_some());
+        assert!(
+            image_from_script(&value, bytes.len() - 1)
+                .unwrap()
+                .is_none(),
+            "картинка сверх предела не доходит до кеша"
+        );
+    }
+
+    #[test]
+    fn html_limit_is_checked_before_and_after_the_script() {
+        assert!(html_script(12).contains("> 12 ? null"));
+        assert!(matches!(
+            html_from_value(&serde_json::Value::Null, 12),
+            Err(FetchError::TooLarge)
+        ));
+        assert_eq!(
+            html_from_value(&serde_json::json!("abc"), 3).unwrap(),
+            "abc"
+        );
+        assert!(matches!(
+            html_from_value(&serde_json::json!("abcd"), 3),
+            Err(FetchError::TooLarge)
+        ));
     }
 
     #[test]

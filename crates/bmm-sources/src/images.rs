@@ -10,12 +10,11 @@ use url::Url;
 
 use bmm_domain::atomic;
 
-use crate::net::PageFetcher;
+use crate::net::{PageFetcher, USER_AGENT, safe_redirect_policy};
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 /// Картинки поиска копятся с каждым запросом; больше этого — старые уходят.
 pub const DEFAULT_LIMIT_BYTES: u64 = 300 * 1024 * 1024;
-const USER_AGENT: &str = "BeamModManager/0.4 (personal use; update checks)";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteImage {
@@ -56,6 +55,7 @@ impl RemoteImageCache {
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))
+            .redirect(safe_redirect_policy())
             .build()
             .ok();
         Self {
