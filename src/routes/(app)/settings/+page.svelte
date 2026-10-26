@@ -295,6 +295,7 @@
     dirty = true;
     message = null;
     revision += 1;
+    if (draft) appearance.preview(draft);
     scheduleSave();
   }
 
@@ -346,6 +347,20 @@
     draft.uiAnimations = on;
     draft.animatedBackground = on;
     mark();
+  }
+
+  function selectTheme(id: Theme, event: MouseEvent) {
+    if (!draft || draft.theme === id) return;
+    const root = document.documentElement;
+    const x = event.clientX > 0 ? event.clientX : window.innerWidth / 2;
+    const y = event.clientY > 0 ? event.clientY : window.innerHeight / 2;
+    root.style.setProperty("--theme-x", `${x}px`);
+    root.style.setProperty("--theme-y", `${y}px`);
+    void motion.run(() => {
+      if (!draft) return;
+      draft.theme = id;
+      mark();
+    }, "flow-theme");
   }
 
   function setFlag(
@@ -575,12 +590,7 @@
                 class="swatch"
                 class:active={draft.theme === theme.id}
                 aria-pressed={draft.theme === theme.id}
-                onclick={() => {
-                  if (draft) {
-                    draft.theme = theme.id;
-                    mark();
-                  }
-                }}
+                onclick={(event) => selectTheme(theme.id, event)}
               >
                 <span class="tone" style={`background:${theme.color}`}>
                   {#if draft.theme === theme.id}

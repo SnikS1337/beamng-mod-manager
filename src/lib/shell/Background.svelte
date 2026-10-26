@@ -30,6 +30,7 @@
     <div class="light cool"></div>
   </div>
   <div class="grid"></div>
+  <div class="lantern"></div>
   <div class="grain"></div>
 </div>
 
@@ -116,6 +117,47 @@
     mask-image: radial-gradient(ellipse 90% 70% at 60% 0%, #000 0%, transparent 75%);
   }
 
+  /* Цветной «фонарь» ходит по неподвижной сетке: двигается только свет,
+     линии остаются на месте. */
+  .lantern {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(78vw, 78vh);
+    aspect-ratio: 1;
+    margin-left: calc(min(78vw, 78vh) / -2);
+    margin-top: calc(min(78vw, 78vh) / -2);
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      color-mix(in oklab, var(--accent-brand) 20%, transparent) 0%,
+      color-mix(in oklab, var(--accent-brand) 7%, transparent) 42%,
+      transparent 72%
+    );
+    opacity: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    will-change: transform, opacity;
+  }
+
+  :global(html:not(.dark)) .lantern {
+    mix-blend-mode: multiply;
+  }
+
+  .live .lantern {
+    opacity: 0.7;
+    animation: lantern-roam 34s var(--ease-in-out) infinite alternate;
+  }
+
+  .paused .lantern {
+    animation-play-state: paused;
+  }
+
+  :global(.no-motion) .lantern {
+    animation: none;
+    will-change: auto;
+  }
+
   /* Мелкое зерно убирает полосы на плавных переходах света. Картинка неподвижна. */
   .grain {
     position: absolute;
@@ -142,6 +184,24 @@
     }
     to {
       transform: translate3d(10%, -6%, 0) scale(1.1);
+    }
+  }
+
+  @keyframes lantern-roam {
+    0% {
+      transform: translate3d(-22vw, -14vh, 0) scale(0.9);
+    }
+    25% {
+      transform: translate3d(8vw, -6vh, 0) scale(1.08);
+    }
+    50% {
+      transform: translate3d(24vw, 14vh, 0) scale(1);
+    }
+    75% {
+      transform: translate3d(-4vw, 22vh, 0) scale(1.12);
+    }
+    100% {
+      transform: translate3d(-20vw, 4vh, 0) scale(0.94);
     }
   }
 </style>

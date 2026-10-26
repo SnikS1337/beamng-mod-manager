@@ -15,6 +15,12 @@ class Appearance {
     return this.settings;
   }
 
+  /// Показать настройки сразу, не дожидаясь записи на диск.
+  preview(next: SettingsDto): void {
+    this.settings = next;
+    this.apply();
+  }
+
   async save(next: SettingsDto): Promise<SettingsDto> {
     this.settings = await settingsSave(next);
     this.apply();
