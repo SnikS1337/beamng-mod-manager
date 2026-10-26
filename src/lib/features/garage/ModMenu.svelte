@@ -80,7 +80,7 @@
         {@const mod = target}
         <div class="menu-title">{mod.name}</div>
         <ContextMenu.Item class="menu-item" onSelect={() => onToggle(mod)}>
-          <Power size={16} />{mod.enabled ? "Выключить" : "Включить"}<kbd>Space</kbd>
+          <Power size={16} />{mod.enabled ? "Выключить" : "Включить"}
         </ContextMenu.Item>
         <ContextMenu.Item class="menu-item" onSelect={() => onOpenPage(mod)}>
           <ArrowSquareOut size={16} />Открыть страницу мода

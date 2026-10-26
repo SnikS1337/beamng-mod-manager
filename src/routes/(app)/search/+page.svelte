@@ -38,6 +38,7 @@
   let error = $state<string | null>(null);
   let deciding = $state<string | null>(null);
   let previews = $state<Record<string, string>>({});
+  let previewGeneration = $state(0);
   const requestedPreviews = new Set<string>();
   const requestedPages = new Set<string>();
   let pageRequests = 0;
@@ -45,19 +46,24 @@
   let requestId = 0;
   let input = $state<HTMLInputElement | null>(null);
   let unlisten: (() => void) | undefined;
+  let disposed = false;
+  let listenerReady = Promise.resolve();
+  let markListenerReady: (() => void) | undefined;
+  let listenFailed = false;
 
   const totalListings = $derived(
     cards.reduce((sum, card) => sum + card.listings.length, 0),
   );
 
   $effect(() => {
+    const generation = previewGeneration;
     for (const card of cards) {
       if (previews[card.id] || requestedPreviews.has(card.id)) continue;
       const url = card.listings.find((listing) => listing.previewUrl)?.previewUrl;
       if (url) {
         requestedPreviews.add(card.id);
         void searchPreview(url).then((value) => {
-          if (value) previews[card.id] = value;
+          if (value && generation === previewGeneration) previews[card.id] = value;
         });
         continue;
       }
@@ -69,7 +75,7 @@
       requestedPages.add(card.id);
       void searchPagePreview(listing.source, listing.url)
         .then((value) => {
-          if (value) previews[card.id] = value;
+          if (value && generation === previewGeneration) previews[card.id] = value;
         })
         .catch(() => {});
     }
@@ -79,11 +85,30 @@
 
   onMount(() => {
     input?.focus();
-    void listenSearch(onEvent).then((stop) => {
-      unlisten = stop;
-      listening = true;
+    listenerReady = new Promise<void>((resolve) => {
+      markListenerReady = resolve;
     });
-    return () => unlisten?.();
+    void listenSearch(onEvent)
+      .then((stop) => {
+        if (disposed) {
+          stop();
+          return;
+        }
+        unlisten = stop;
+      })
+      .catch(() => {
+        listenFailed = true;
+        error = "Не удалось подключиться к поиску.";
+      })
+      .finally(() => {
+        listening = true;
+        markListenerReady?.();
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+      markListenerReady?.();
+    };
   });
 
   // «Найти … на сайтах» из палитры команд: /search?q=…
@@ -97,6 +122,7 @@
   });
 
   onDestroy(() => {
+    disposed = true;
     unlisten?.();
     if (searching) void searchCancel(requestId);
   });
@@ -136,11 +162,19 @@
     error = null;
     cards = [];
     sources = [];
+    previewGeneration += 1;
     previews = {};
     requestedPreviews.clear();
     requestedPages.clear();
     pageRequests = 0;
     try {
+      await listenerReady;
+      if (disposed || current !== requestId) return;
+      if (listenFailed) {
+        error = "Не удалось подключиться к поиску.";
+        searching = false;
+        return;
+      }
       await searchStart(text, current);
     } catch (reason) {
       if (current === requestId) {
@@ -168,6 +202,7 @@
     searched = false;
     cards = [];
     sources = [];
+    previewGeneration += 1;
     previews = {};
     requestedPreviews.clear();
     requestedPages.clear();
@@ -242,7 +277,7 @@
 
   function versionText(listing: SearchListing): string {
     const parts: string[] = [];
-    if (listing.modVersion) parts.push(`v${listing.modVersion}`);
+    if (listing.modVersion) parts.push(listing.modVersion);
     if (listing.gameVersion) parts.push(`игра ${listing.gameVersion}`);
     return parts.join(" · ");
   }
@@ -353,7 +388,13 @@
 
   {#if cards.length > 0}
     <div class="filters" role="group" aria-label="Тип">
-      <button class="chip" class:on={kindFilter === "all"} type="button" onclick={() => (kindFilter = "all")}>
+      <button
+        class="chip"
+        class:on={kindFilter === "all"}
+        type="button"
+        aria-pressed={kindFilter === "all"}
+        onclick={() => (kindFilter = "all")}
+      >
         Все <b>{kindCount("all")}</b>
       </button>
       {#each kindFilters as item (item.id)}
@@ -386,7 +427,7 @@
     </div>
   {:else if searched && cards.length === 0 && !searching && !error}
     <div class="state">
-      <p>Ничего не нашли</p>
+      <p class="display">Ничего не нашли</p>
       <span>Попробуйте короче: название машины, карты или автора. Сайты ищут по-разному.</span>
       <a class="btn-glass" href="/settings?section=sites">Какие сайты включены</a>
     </div>
@@ -507,8 +548,8 @@
       </span>
       <p class="start-title rise-in" style="animation-delay:60ms">Найдите мод сразу везде</p>
       <span class="start-text rise-in" style="animation-delay:100ms">
-        Напишите название машины, карты или автора и нажмите «Найти». Одинаковые моды
-        с разных сайтов собираются в одну карточку.
+        Напишите название машины, карты или автора и нажмите «Найти». Один мод
+        с разных сайтов — одна карточка.
       </span>
       <div class="examples rise-in" style="animation-delay:140ms" role="group" aria-label="Примеры запросов">
         <span>Например:</span>
@@ -524,7 +565,7 @@
 
   <aside class="panel" aria-label="Сайты поиска">
     <h2 class="display">Сайты</h2>
-    <p class="sub">Один мод с разных сайтов собран в одну карточку.</p>
+    <p class="sub">Один мод с разных сайтов — одна карточка.</p>
     {#if sources.length > 0}
       <div class="site-list">
         {#each sources as source (source.id)}
@@ -543,7 +584,7 @@
               {:else if source.status === "needsHumanCheck"}
                 просит проверку
               {:else if source.status === "unavailable"}
-                не ответил
+                не отвечает
               {:else if source.count === 0}
                 ничего
               {:else}
@@ -553,7 +594,7 @@
           </div>
           {#if source.id === "modland" && source.status === "needsHumanCheck"}
             <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
-              {passing ? "Ждём, пока сайт пустит…" : "Пройти проверку Modland"}
+              {passing ? "Проходим проверку…" : "Пройти проверку Modland"}
             </button>
           {/if}
         {/each}
@@ -727,7 +768,7 @@
 
   .body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr) 340px;
     flex: 1;
     min-height: 0;
   }
@@ -1106,11 +1147,7 @@
   .state p {
     margin: 0;
     color: var(--foreground);
-    font-family: var(--font-display);
     font-size: 22px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
   }
 
   .state .btn-glass {
@@ -1200,7 +1237,7 @@
   }
 
   .dot.warn {
-    background: #f2b544;
+    background: var(--warning);
   }
 
   .dot.bad {
@@ -1234,9 +1271,17 @@
     text-decoration: underline;
   }
 
+  /* Узкое окно: сайты уходят под результаты, и прокручивается вся страница,
+     а не два независимых списка в половину высоты. */
   @media (max-width: 1100px) {
     .body {
-      grid-template-columns: minmax(0, 1fr);
+      display: block;
+      overflow-y: auto;
+    }
+
+    .results,
+    .panel {
+      overflow: visible;
     }
 
     .panel {

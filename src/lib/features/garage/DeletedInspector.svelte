@@ -37,7 +37,7 @@
     {/if}
   </div>
 
-  <p class="hint">Мод снова появится в папке, игра включит его сама.</p>
+  <p class="hint">Мод вернётся в папку модов и снова включится.</p>
   <button class="btn-primary" type="button" onclick={() => onRestore(card)}>Вернуть</button>
 </aside>
 

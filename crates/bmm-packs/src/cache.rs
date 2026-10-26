@@ -348,6 +348,8 @@ where
             return BTreeMap::new();
         };
         if stamp.0 > max_bytes {
+            // Файл вырос больше предела: старую разобранную копию больше не используем.
+            *self.slot() = None;
             return BTreeMap::new();
         }
         if let Some((cached, map)) = self.slot().as_ref()
@@ -398,10 +400,24 @@ impl CleanValue for String {
 impl CleanValue for Vec<String> {}
 impl CleanValue for serde_json::Value {}
 
+/// Декодирует превью с ограничениями: картинка 20000×20000 иначе съела бы гигабайты
+/// памяти ещё до уменьшения.
+fn decode_limited(bytes: &[u8]) -> Option<image::DynamicImage> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(16_384);
+    limits.max_image_height = Some(16_384);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().ok()
+}
+
 /// Уменьшает картинку до [`PREVIEW_MAX_SIDE`] и пережимает в jpg. `None` — картинка и так
 /// маленькая или не читается (тогда кладём как есть).
 fn shrink(bytes: &[u8]) -> Option<Vec<u8>> {
-    let image = image::load_from_memory(bytes).ok()?;
+    let image = decode_limited(bytes)?;
     let big = image.width() > PREVIEW_MAX_SIDE || image.height() > PREVIEW_MAX_SIDE;
     if !big && bytes.len() as u64 <= PREVIEW_STALE_BYTES {
         return None;
@@ -561,6 +577,15 @@ mod tests {
     }
 
     #[test]
+    fn absurd_dimensions_are_rejected_before_decoding() {
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(17_000, 1, image::Rgb([1, 2, 3]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert!(decode_limited(&png).is_none());
+    }
+
+    #[test]
     fn small_pictures_stay_as_they_are() {
         let dir = tempfile::tempdir().unwrap();
         let cache = PreviewCache::new(dir.path());
@@ -659,5 +684,22 @@ mod tests {
         assert_eq!(cache.title("a"), Some(Some("Toyota".to_string())));
         assert_eq!(cache.title("b"), Some(None));
         assert_eq!(cache.title("c"), None);
+    }
+
+    #[test]
+    fn oversized_file_drops_the_parsed_copy_from_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("titles.json");
+        fs::write(&path, r#"{"a":"A"}"#).unwrap();
+        let map = MapFile::<String>::new(None);
+        assert_eq!(map.load(&path, 64)["a"], "A");
+        assert!(map.cached.lock().unwrap().is_some());
+
+        fs::write(&path, format!(r#"{{"a":"{}"}}"#, "x".repeat(100))).unwrap();
+        assert!(map.load(&path, 64).is_empty());
+        assert!(
+            map.cached.lock().unwrap().is_none(),
+            "старая копия не должна остаться в памяти"
+        );
     }
 }

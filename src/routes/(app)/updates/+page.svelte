@@ -62,7 +62,9 @@
   // никуда не сходила, следующее нажатие проверяет всё заново, как в legacy.
   let offerForce = $state(false);
   let requestId = 0;
+  let readToken = 0;
   let unlisten: (() => void) | undefined;
+  let disposed = false;
 
   const counts = $derived({
     available: snapshot.findings.length,
@@ -85,12 +87,17 @@
   onMount(() => {
     void load();
     void listenUpdates(onEvent).then((stop) => {
+      if (disposed) {
+        stop();
+        return;
+      }
       unlisten = stop;
     });
     // Обновление поставили (из «Загрузок» или вручную) — пункт должен исчезнуть сразу.
     const onLibraryChanged = () => void refresh();
     window.addEventListener("bmm:library-changed", onLibraryChanged);
     return () => {
+      disposed = true;
       unlisten?.();
       window.removeEventListener("bmm:library-changed", onLibraryChanged);
     };
@@ -98,14 +105,17 @@
 
   /** Перечитать список без заставки загрузки. */
   async function refresh() {
+    const token = ++readToken;
     try {
-      snapshot = await updatesSnapshot();
+      const fresh = await updatesSnapshot();
+      if (token === readToken) snapshot = fresh;
     } catch (reason) {
-      error = errorText(reason);
+      if (token === readToken) error = errorText(reason);
     }
   }
 
   onDestroy(() => {
+    disposed = true;
     unlisten?.();
     if (checking) void updatesCancel();
   });
@@ -115,11 +125,17 @@
       autoProgress = event.progress;
       return;
     }
+    if (event.requestId === AUTO_REQUEST && event.phase === "error") {
+      autoProgress = null;
+      return;
+    }
     if (event.phase === "auto") {
       autoProgress = null;
       void refreshSites();
       // Фоновая проверка закончилась: показываем найденное, если сами сейчас не проверяем.
       if (!checking) {
+        readToken += 1;
+        loading = false;
         snapshot = {
           ...snapshot,
           findings: event.findings,
@@ -144,6 +160,8 @@
     }
     const known = new Set(snapshot.suggestions.map((item) => item.modId));
     const found = event.suggestions.filter((item) => !known.has(item.modId)).length;
+    readToken += 1;
+    loading = false;
     snapshot = {
       ...snapshot,
       findings: event.findings,
@@ -175,14 +193,16 @@
   }
 
   async function load() {
+    const token = ++readToken;
     loading = true;
     error = null;
     try {
-      snapshot = await updatesSnapshot();
+      const fresh = await updatesSnapshot();
+      if (token === readToken) snapshot = fresh;
     } catch (reason) {
-      error = errorText(reason);
+      if (token === readToken) error = errorText(reason);
     } finally {
-      loading = false;
+      if (token === readToken) loading = false;
     }
   }
 
@@ -269,7 +289,7 @@
   async function unfollow(finding: UpdateFinding) {
     try {
       snapshot = await updatesUnfollow(finding.modId, finding.source);
-      toasts.show(`Больше не следим за этой страницей «${finding.modName}»`, {
+      toasts.show(`Больше не следим за страницей «${finding.modName}»`, {
         undo: async () => {
           snapshot = await updatesRefollow(finding.modId, finding.source);
         },
@@ -322,23 +342,11 @@
 
   /** «Обновить»: страница мода и полчаса наблюдения за «Загрузками». */
   async function update(finding: UpdateFinding) {
-    await openLink(finding.url);
+    if (!(await openExternal(finding.url))) return;
     await expectDownload();
     toasts.show(
       "Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить",
     );
-  }
-
-  function versionText(finding: UpdateFinding): string {
-    if (finding.installedVersion && finding.latestVersion) {
-      return `${finding.installedVersion} → ${finding.latestVersion}`;
-    }
-    if (finding.latestVersion) return `версия ${finding.latestVersion}`;
-    return "файл изменился";
-  }
-
-  function statusText(finding: UpdateFinding): string {
-    return finding.status === "likely" ? "Обновление" : "Возможно";
   }
 
   function progressText(current: UpdateProgress | null = progress): string {
@@ -468,15 +476,42 @@
       </p>
     </div>
     <div class="tabs" role="tablist" aria-label="Что показать">
-      <button type="button" role="tab" class="tab" class:active={filter === "available"} aria-selected={filter === "available"} onclick={() => setTab("available")}>
+      <button
+        id="updates-tab-available"
+        type="button"
+        role="tab"
+        class="tab"
+        class:active={filter === "available"}
+        aria-selected={filter === "available"}
+        aria-controls="updates-panel"
+        onclick={() => setTab("available")}
+      >
         {#if filter === "available"}<span class="line" aria-hidden="true"></span>{/if}
         Доступные <b>{counts.available}</b>
       </button>
-      <button type="button" role="tab" class="tab" class:active={filter === "hidden"} aria-selected={filter === "hidden"} onclick={() => setTab("hidden")}>
+      <button
+        id="updates-tab-hidden"
+        type="button"
+        role="tab"
+        class="tab"
+        class:active={filter === "hidden"}
+        aria-selected={filter === "hidden"}
+        aria-controls="updates-panel"
+        onclick={() => setTab("hidden")}
+      >
         {#if filter === "hidden"}<span class="line" aria-hidden="true"></span>{/if}
         Пропущенные <b>{counts.hidden}</b>
       </button>
-      <button type="button" role="tab" class="tab" class:active={filter === "pages"} aria-selected={filter === "pages"} onclick={() => setTab("pages")}>
+      <button
+        id="updates-tab-pages"
+        type="button"
+        role="tab"
+        class="tab"
+        class:active={filter === "pages"}
+        aria-selected={filter === "pages"}
+        aria-controls="updates-panel"
+        onclick={() => setTab("pages")}
+      >
         {#if filter === "pages"}<span class="line" aria-hidden="true"></span>{/if}
         Страницы <b>{counts.pages}</b>
       </button>
@@ -488,26 +523,31 @@
   {/if}
 
   <div class="body">
-    <section class="list scroll-area flow-section-body">
+    <div
+      id="updates-panel"
+      class="list scroll-area flow-section-body"
+      role="tabpanel"
+      aria-labelledby={`updates-tab-${filter}`}
+    >
       {#if loading}
-        <div class="state"><p>Загружаем обновления…</p></div>
+        <div class="state"><p class="display">Загружаем обновления…</p></div>
       {:else if filter === "available" && snapshot.findings.length === 0}
         <div class="state">
-          <p>Обновлений нет</p>
+          <p class="display">Обновлений нет</p>
           <span>
             {snapshot.lastChecked
-              ? `Последняя проверка ${formatWhen(snapshot.lastChecked)}. Программа проверяет сама при запуске.`
+              ? `Последняя проверка ${formatWhen(snapshot.lastChecked)}. Проверить снова можно кнопкой «Проверить сейчас».`
               : "Нажмите «Проверить сейчас», чтобы сверить версии со всеми включёнными сайтами."}
           </span>
         </div>
       {:else if filter === "hidden" && snapshot.hidden.length === 0}
         <div class="state">
-          <p>Скрытых версий нет</p>
+          <p class="display">Скрытых версий нет</p>
           <span>Пропущенные версии появятся здесь — их можно вернуть в список.</span>
         </div>
       {:else if filter === "pages" && counts.pages === 0}
         <div class="state">
-          <p>Решать нечего</p>
+          <p class="display">Страниц для проверки нет</p>
           <span>
             Если программа не уверена, что нашла страницу именно вашего мода, она спросит здесь.
           </span>
@@ -523,7 +563,7 @@
                 {#if filter === "hidden"}
                   <span class="chip muted">Пропущено</span>
                 {:else if possible}
-                  <span class="chip possible">Возможно, обновлён</span>
+                  <span class="chip possible">Возможно, обновление</span>
                 {:else}
                   <span class="chip update">Обновление</span>
                 {/if}
@@ -541,11 +581,11 @@
                   <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                 {:else if possible}
                   <button class="btn-primary" type="button" onclick={() => void update(finding)}>Открыть страницу</button>
-                  {@render moreActions(finding, "Версия не изменилась")}
+                  {@render moreActions(finding, "Пропустить это изменение")}
                 {:else}
                   <button class="btn-primary" type="button" onclick={() => void update(finding)}>Обновить</button>
                   <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
-                  {@render moreActions(finding, "Пропустить эту версию")}
+                  {@render moreActions(finding, "Пропустить это обновление")}
                 {/if}
               </div>
             </div>
@@ -558,7 +598,7 @@
             <div class="content">
               <div class="head"><h2>{page.modName}</h2><span class="chip lost">Страница пропала</span></div>
               <p class="why">
-                На {sourceName(page.source)} этой страницы нет уже несколько проверок: мод удалили или перенесли.
+                На сайте {sourceName(page.source)} этой страницы нет уже несколько проверок: мод удалили или перенесли.
                 Обновлений по ней больше не будет.
               </p>
               <p class="where url" title={page.url}>{page.url}</p>
@@ -576,7 +616,7 @@
             <div class="content">
               <div class="head"><h2>{suggestion.modName}</h2><span class="chip possible">Это его страница?</span></div>
               <p class="why">
-                На {sourceName(suggestion.source)} нашлась похожая страница, но уверенности нет: проверьте её.
+                На сайте {sourceName(suggestion.source)} нашлась похожая страница, но уверенности нет: проверьте её.
               </p>
               <p class="where url" title={suggestion.url}>{suggestion.url}</p>
               <div class="actions">
@@ -588,7 +628,7 @@
           </article>
         {/each}
       {/if}
-    </section>
+    </div>
 
     <aside class="panel" aria-label="Проверка обновлений">
       <h2 class="display">Проверка</h2>
@@ -629,7 +669,12 @@
             <span class="site-meta">
               <span class="state-text">{site.text}</span>
               {#if site.retry}
-                <button class="site-retry" type="button" onclick={() => void retrySource(site.id)}>
+                <button
+                  class="site-retry"
+                  type="button"
+                  disabled={checking}
+                  onclick={() => void retrySource(site.id)}
+                >
                   Повторить
                 </button>
               {:else if site.when}
@@ -639,7 +684,7 @@
           </div>
           {#if site.id === "modland" && site.tone === "warn"}
             <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
-              {passing ? "Ждём…" : "Пройти проверку Modland"}
+              {passing ? "Проходим проверку…" : "Пройти проверку Modland"}
             </button>
           {/if}
         {/each}
@@ -901,10 +946,10 @@
   :global(.updates-menu) {
     z-index: 90;
     min-width: 216px;
-    padding: 5px;
+    padding: 6px;
     border: 1px solid var(--border-strong);
     border-radius: 10px;
-    background: var(--surface);
+    background: var(--surface-2);
     box-shadow: var(--shadow-2);
     outline: none;
     transform-origin: var(--bits-dropdown-menu-content-transform-origin);
@@ -941,7 +986,7 @@
 
   :global(.updates-menu .menu-separator) {
     height: 1px;
-    margin: 4px 2px;
+    margin: 5px 4px;
     background: var(--border);
   }
 
@@ -959,11 +1004,7 @@
   .state p {
     margin: 0;
     color: var(--foreground);
-    font-family: var(--font-display);
     font-size: 22px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
   }
 
   .state span {
@@ -1001,7 +1042,7 @@
 
   .wide {
     width: 100%;
-    height: 38px;
+    height: 36px;
   }
 
   .track {
@@ -1082,7 +1123,7 @@
   }
 
   .dot.warn {
-    background: #f2b544;
+    background: var(--warning);
   }
 
   .dot.bad {
@@ -1113,9 +1154,13 @@
     cursor: default;
   }
 
-  .site-retry:hover {
+  .site-retry:hover:not(:disabled) {
     background: var(--surface-3);
     color: var(--foreground);
+  }
+
+  .site-retry:disabled {
+    opacity: 0.5;
   }
 
   .pass {
@@ -1123,9 +1168,16 @@
     height: 32px;
   }
 
+  /* Узкое окно: панель проверки уходит под список, прокручивается всё вместе. */
   @media (max-width: 1100px) {
     .body {
-      grid-template-columns: minmax(0, 1fr);
+      display: block;
+      overflow-y: auto;
+    }
+
+    .list,
+    .panel {
+      overflow: visible;
     }
 
     .panel {

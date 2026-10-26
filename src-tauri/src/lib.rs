@@ -116,8 +116,13 @@ pub fn run() {
                 pages,
             ));
             let trimmer = cache.clone();
+            // Кеш картинок пополняется во время работы: подчищаем его не только при запуске,
+            // иначе за долгую сессию папка растёт без предела.
             std::thread::spawn(move || {
-                trimmer.trim(bmm_sources::images::DEFAULT_LIMIT_BYTES);
+                loop {
+                    trimmer.trim(bmm_sources::images::DEFAULT_LIMIT_BYTES);
+                    std::thread::sleep(std::time::Duration::from_secs(30 * 60));
+                }
             });
             cache
         },
@@ -296,6 +301,16 @@ fn windows_to_close(closed: &str, open: &[String]) -> Vec<String> {
 
 const MAIN_WINDOW: &str = "main";
 
+/// Имя файла кеша приходит из адреса `bmm.localhost`. Пропускаем только ключи,
+/// которые выдаёт программа: без разделителей, двоеточий и переходов вверх.
+fn safe_cache_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+        && !name.contains("..")
+}
+
 fn preview_protocol(
     app: &tauri::AppHandle,
     request: tauri::http::Request<Vec<u8>>,
@@ -310,7 +325,7 @@ fn preview_protocol(
 
     let Some(name) = request.uri().path().strip_prefix("/preview/") else {
         if let Some(name) = request.uri().path().strip_prefix("/search-preview/") {
-            if name.is_empty() || name.contains('/') || name.contains("..") {
+            if !safe_cache_name(name) {
                 return not_found();
             }
             let state = app.state::<Arc<AppState>>();
@@ -334,7 +349,7 @@ fn preview_protocol(
         }
         return not_found();
     };
-    if name.is_empty() || name.contains('/') || name.contains("..") {
+    if !safe_cache_name(name) {
         return not_found();
     }
     let state = app.state::<Arc<AppState>>();
@@ -374,5 +389,25 @@ mod tests {
     fn closing_a_service_window_keeps_the_rest() {
         let open = vec!["main".to_string(), "modland-pages".to_string()];
         assert!(windows_to_close("modland-check", &open).is_empty());
+    }
+
+    #[test]
+    fn preview_names_cannot_escape_the_cache_folder() {
+        assert!(safe_cache_name("0123456789ab.jpg"));
+        assert!(safe_cache_name("0123456789ab.webp"));
+        for name in [
+            "",
+            "..",
+            "../library.json",
+            "..\\library.json",
+            "C:library.json",
+            "/library.json",
+            "a/b.jpg",
+            "a\\b.jpg",
+            "a%2fb.jpg",
+            "a\0.jpg",
+        ] {
+            assert!(!safe_cache_name(name), "пропущено: {name:?}");
+        }
     }
 }

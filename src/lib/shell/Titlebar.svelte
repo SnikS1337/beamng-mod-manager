@@ -1,8 +1,41 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { isTauri } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import ArrowsInSimple from "phosphor-svelte/lib/ArrowsInSimple";
   import Minus from "phosphor-svelte/lib/Minus";
   import Square from "phosphor-svelte/lib/Square";
   import X from "phosphor-svelte/lib/X";
   import { windowAction } from "#lib/ipc/window.js";
+
+  let maximized = $state(false);
+
+  onMount(() => {
+    if (!isTauri()) return;
+    const window = getCurrentWindow();
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    const sync = () => {
+      void window
+        .isMaximized()
+        .then((value) => {
+          if (!disposed) maximized = value;
+        })
+        .catch(() => {});
+    };
+    sync();
+    void window
+      .onResized(sync)
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  });
 </script>
 
 <!-- Своей полосы заголовка нет: окно таскается за верхнюю кромку, за полосу разделов и за
@@ -13,8 +46,13 @@
   <button type="button" aria-label="Свернуть" onclick={() => void windowAction("minimize")}>
     <Minus size={15} />
   </button>
-  <button type="button" aria-label="Развернуть" onclick={() => void windowAction("maximize")}>
-    <Square size={13} />
+  <button
+    type="button"
+    aria-label={maximized ? "Восстановить" : "Развернуть"}
+    title={maximized ? "Восстановить" : "Развернуть"}
+    onclick={() => void windowAction("maximize")}
+  >
+    {#if maximized}<ArrowsInSimple size={15} />{:else}<Square size={13} />{/if}
   </button>
   <button type="button" class="close" aria-label="Закрыть" onclick={() => void windowAction("close")}>
     <X size={15} />

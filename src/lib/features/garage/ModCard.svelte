@@ -46,7 +46,10 @@
 
   $effect(() => {
     const id = mod.id;
-    if (addon) {
+    // Ключ включает версию файла: после замены архива старая картинка не должна
+    // оставаться на карточке, даже если превью у нового файла нет.
+    const key = `${id}|${mod.fileName}|${mod.sizeBytes}|${mod.version ?? ""}|${mod.role ?? ""}`;
+    if (addon || mod.deleted) {
       preview = null;
       return;
     }
@@ -54,13 +57,13 @@
       preview = mod.previewUrl;
       return;
     }
-    if (requested === id) return;
-    requested = id;
+    if (requested === key) return;
+    requested = key;
     preview = null;
     loaded = false;
     void modPreview(id)
       .then((url) => {
-        if (requested === id) preview = url;
+        if (requested === key) preview = url;
       })
       .catch(() => {});
   });

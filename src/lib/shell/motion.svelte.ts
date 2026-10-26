@@ -36,6 +36,8 @@ class Motion {
   active = $state(false);
   #current: ViewTransition | null = null;
   #measures = new Set<() => void>();
+  /** Сколько переходов ещё используют класс: у двух подряд не должен гаснуть раньше времени. */
+  #scopes = new Map<string, number>();
 
   /**
    * Замерить размеры до снимка нового вида. Сетка узнаёт свою ширину через
@@ -92,6 +94,7 @@ class Motion {
     // Новое действие важнее недоигранного: старый переход обрываем, не ждём.
     this.#current?.skipTransition();
     const root = document.documentElement;
+    this.#scopes.set(scope, (this.#scopes.get(scope) ?? 0) + 1);
     root.classList.add(scope);
     this.active = true;
     const transition = document.startViewTransition(async () => {
@@ -102,10 +105,18 @@ class Motion {
     });
     this.#current = transition;
     const done = () => {
+      const left = (this.#scopes.get(scope) ?? 1) - 1;
+      if (left > 0) {
+        this.#scopes.set(scope, left);
+      } else {
+        this.#scopes.delete(scope);
+        root.classList.remove(scope);
+      }
+      // Старый переход мог закончиться уже после начала нового: его класс снят
+      // по счётчику, а «активным» остаётся новый.
       if (this.#current !== transition) return;
       this.#current = null;
       this.active = false;
-      root.classList.remove(scope);
     };
     transition.finished.then(done, done);
     return transition.updateCallbackDone.catch(() => undefined);

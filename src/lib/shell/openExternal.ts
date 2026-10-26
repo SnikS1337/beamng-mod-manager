@@ -14,8 +14,14 @@ export async function openExternal(raw: string): Promise<boolean> {
   }
   try {
     await openUrl(url);
+    return true;
   } catch {
-    window.open(url, "_blank", "noopener");
+    try {
+      if (window.open(url, "_blank", "noopener")) return true;
+    } catch {
+      // Браузер запретил и запасной путь.
+    }
+    toasts.show("Не удалось открыть ссылку в браузере");
+    return false;
   }
-  return true;
 }

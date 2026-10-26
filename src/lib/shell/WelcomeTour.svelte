@@ -7,6 +7,13 @@
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
+  function onkeydown(event: KeyboardEvent) {
+    if (open && event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+    }
+  }
+
   const points = [
     {
       icon: Archive,
@@ -21,7 +28,7 @@
     {
       icon: Search,
       title: "Поиск сразу везде",
-      text: "Modland, STMods, ModsGaming и репозиторий BeamNG; один мод с разных сайтов — одна карточка.",
+      text: "Modland, STMods и ModsGaming; один мод с разных сайтов — одна карточка.",
     },
     {
       icon: Sparkles,
@@ -30,6 +37,8 @@
     },
   ];
 </script>
+
+<svelte:window {onkeydown} />
 
 {#if open}
   <div class="backdrop">

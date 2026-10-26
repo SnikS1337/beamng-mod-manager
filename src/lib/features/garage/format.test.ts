@@ -4,7 +4,6 @@ import {
   formatSize,
   formatWhen,
   headerNote,
-  kindLabel,
   matchesQuery,
   plural,
   words,
@@ -16,6 +15,7 @@ describe("formatSize", () => {
     expect(formatSize(-5)).toBe("—");
   });
   it("килобайты, мегабайты, гигабайты", () => {
+    expect(formatSize(512)).toBe("512 Б");
     expect(formatSize(495_418)).toBe("484 КБ");
     expect(formatSize(37_092_684)).toBe("35 МБ");
     expect(formatSize(1.6 * 1024 ** 3)).toBe("1,6 ГБ");
@@ -40,24 +40,16 @@ describe("headerNote", () => {
   it("без модов, с модами, с обновлениями", () => {
     expect(headerNote(0, 0)).toBe("модов пока нет");
     expect(headerNote(8, 0)).toBe("8 модов");
-    expect(headerNote(8, 1)).toBe("8 модов · 1 ждёт обновления");
-    expect(headerNote(8, 3)).toBe("8 модов · 3 ждут обновления");
-    expect(headerNote(5000, 295)).toBe("5 000 модов · 295 ждут обновления");
+    expect(headerNote(8, 1)).toBe("8 модов · 1 с обновлением");
+    expect(headerNote(8, 3)).toBe("8 модов · 3 с обновлением");
+    expect(headerNote(5000, 295)).toBe("5 000 модов · 295 с обновлением");
     expect(headerNote(21, 0)).toBe("21 мод");
   });
 
   it("копии одного мода: файлов больше, чем модов", () => {
-    expect(headerNote(35, 2, 39)).toBe("35 модов (39 файлов) · 2 ждут обновления");
+    expect(headerNote(35, 2, 39)).toBe("35 модов (39 файлов) · 2 с обновлением");
     expect(headerNote(1, 0, 2)).toBe("1 мод (2 файла)");
     expect(headerNote(8, 0, 8)).toBe("8 модов");
-  });
-});
-
-describe("kindLabel", () => {
-  it("знакомые и незнакомые типы", () => {
-    expect(kindLabel("vehicle")).toBe("Машина");
-    expect(kindLabel("level")).toBe("Карта");
-    expect(kindLabel("что-то")).toBe("Мод");
   });
 });
 
@@ -85,8 +77,12 @@ describe("formatAgo", () => {
     expect(formatAgo("не дата", now)).toBe("");
     expect(ago(0)).toBe("только что");
     expect(ago(18)).toBe("18 минут назад");
+    expect(ago(59)).toBe("59 минут назад");
+    expect(ago(90)).toBe("1 час назад");
     expect(ago(60 * 3)).toBe("3 часа назад");
+    expect(ago(60 * 23 + 59)).toBe("23 часа назад");
     expect(ago(60 * 24 * 2)).toBe("2 дня назад");
+    expect(ago(60 * 24 * 18)).toBe("2 недели назад");
     expect(ago(60 * 24 * 21)).toBe("3 недели назад");
     expect(ago(60 * 24 * 90)).toBe("3 месяца назад");
   });
@@ -101,6 +97,7 @@ describe("formatWhen", () => {
     expect(formatWhen(new Date(2026, 9, 23, 3, 47).toISOString(), now)).toBe("сегодня в 3:47");
     expect(formatWhen(new Date(2026, 9, 22, 21, 10).toISOString(), now)).toBe("вчера в 21:10");
     expect(formatWhen(new Date(2026, 9, 12, 9, 5).toISOString(), now)).toBe("12 октября в 9:05");
+    expect(formatWhen(new Date(2025, 9, 12, 9, 5).toISOString(), now)).toContain("2025");
     expect(formatWhen(undefined, now)).toBe("");
   });
 });

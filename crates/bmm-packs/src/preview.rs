@@ -1,4 +1,4 @@
-use std::io::{Read, Seek};
+use std::io::{self, Read, Seek};
 use std::path::Path;
 
 use zip::ZipArchive;
@@ -7,6 +7,8 @@ use crate::zip_index::{self, Entry, ZipError};
 
 const MAX_HEADER_BYTES: u64 = 512 * 1024;
 const MAX_HEADER_READS: usize = 40;
+/// Превью больше этого не читаем целиком: защита от «zip-бомбы» в чужом архиве.
+pub const MAX_PREVIEW_BYTES: u64 = 30 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewPick {
@@ -44,9 +46,19 @@ pub fn pick(path: &Path) -> Result<Option<PreviewPick>, ZipError> {
 
 pub fn extract(path: &Path, raw_name: &str) -> Result<Vec<u8>, ZipError> {
     let mut archive = crate::zip_index::open_archive(path)?;
-    let mut entry = archive.by_name(raw_name)?;
+    let entry = archive.by_name(raw_name)?;
+    read_limited(entry, MAX_PREVIEW_BYTES).map_err(ZipError::Io)
+}
+
+fn read_limited(reader: impl Read, max_bytes: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    entry.read_to_end(&mut bytes)?;
+    reader.take(max_bytes + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "картинка превью слишком большая",
+        ));
+    }
     Ok(bytes)
 }
 
@@ -446,5 +458,12 @@ mod tests {
         let path = temp.path().join("mod.zip");
         build_zip(&path, &[("scripts/main.lua", b"x".to_vec())]);
         assert!(pick(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn extraction_stops_at_the_preview_limit() {
+        assert_eq!(read_limited(&b"1234"[..], 4).unwrap(), b"1234");
+        let error = read_limited(&b"12345"[..], 4).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

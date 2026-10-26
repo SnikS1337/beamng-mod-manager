@@ -25,11 +25,6 @@ export function copiesBadge(main: ModCardDto): string | null {
   return `${total} ${plural(total, "копия", "копии", "копий")}`;
 }
 
-/** Короткая метка у копии. */
-export function duplicateBadge(duplicate: DuplicateOf): string {
-  return duplicate.exact ? "Копия" : "Другая версия";
-}
-
 /** Что сказать в панели копии. */
 export function duplicateExplain(duplicate: DuplicateOf): { title: string; text: string } {
   const other = duplicate.name ? `«${duplicate.name}»` : "другой мод";

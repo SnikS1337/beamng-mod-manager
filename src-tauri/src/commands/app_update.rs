@@ -41,15 +41,26 @@ pub(crate) fn auto_check(state: &Arc<AppState>) {
     let Some(runtime) = state.app_update.clone() else {
         return;
     };
-    let mut guard = lock_runtime(&runtime);
+    let _ = check_update(&runtime);
+}
+
+fn check_update(runtime: &Mutex<AppUpdateRuntime>) -> AppUpdateDto {
+    let mut guard = lock_runtime(runtime);
+    // Пока идёт скачивание, проверка не должна сбрасывать его отмену и состояние.
+    if guard.state.stage == UpdateStage::Downloading {
+        return dto(guard.state.clone());
+    }
+    guard.cancel.reset();
     let local = current_version();
     let skipped = read_skipped(&guard.skipped_path);
-    guard.state = check_url(
+    let next = check_url(
         &local,
         &guard.manifest_url,
         &guard.downloader,
         skipped.as_ref(),
     );
+    guard.state = next.clone();
+    dto(next)
 }
 
 fn dto(state: UpdateState) -> AppUpdateDto {
@@ -79,22 +90,9 @@ pub async fn app_update_check(
         .app_update
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = lock_runtime(&runtime);
-        guard.cancel.reset();
-        let local = current_version();
-        let skipped = read_skipped(&guard.skipped_path);
-        let next = check_url(
-            &local,
-            &guard.manifest_url,
-            &guard.downloader,
-            skipped.as_ref(),
-        );
-        guard.state = next.clone();
-        dto(next)
-    })
-    .await
-    .map_err(|error| AppError::new("task", error.to_string()))
+    tauri::async_runtime::spawn_blocking(move || check_update(&runtime))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))
 }
 
 #[tauri::command]
@@ -107,7 +105,25 @@ pub async fn app_update_download(
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = lock_runtime(&runtime);
+        let app_for_progress = app.clone();
+        let mut progress = |value: f64| {
+            let _ =
+                app_for_progress.emit("app-update://event", AppUpdateProgress { progress: value });
+        };
+        run_download(&runtime, &mut progress)
+    })
+    .await
+    .map_err(|error| AppError::new("task", error.to_string()))
+}
+
+/// Скачивание и подготовка обновления. Блокировку состояния не держим на время сети:
+/// иначе «Отменить» и чтение состояния ждали бы конца загрузки.
+fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)) -> AppUpdateDto {
+    let (manifest, downloader, update_dir, cancel) = {
+        let mut guard = lock_runtime(runtime);
+        if guard.state.stage == UpdateStage::Downloading {
+            return dto(guard.state.clone());
+        }
         let Some(manifest) = guard.state.manifest.clone() else {
             guard.state = UpdateState::failed("Сначала проверьте обновление.");
             return dto(guard.state.clone());
@@ -116,48 +132,54 @@ pub async fn app_update_download(
         guard.state.stage = UpdateStage::Downloading;
         guard.state.progress = 0.0;
         guard.state.error = None;
-        let app_for_progress = app.clone();
-        let mut progress = |value: f64| {
-            let _ =
-                app_for_progress.emit("app-update://event", AppUpdateProgress { progress: value });
-        };
-        let downloaded = guard.downloader.download_into(
-            &manifest,
-            &guard.update_dir,
-            &mut progress,
-            &guard.cancel,
-        );
-        let result: Result<(), String> = match downloaded {
-            Ok(downloaded) => match std::env::current_exe() {
-                Ok(current) => prepare_update(
-                    &downloaded.path,
-                    &guard.update_dir,
-                    &manifest,
-                    &current_version(),
-                    &current,
-                    &|_| None,
-                    &PrepareOptions::default(),
-                )
-                .map(|prepared| {
-                    guard.prepared = Some(prepared);
-                    guard.state.stage = UpdateStage::ReadyToRestart;
-                    guard.state.progress = 1.0;
-                    guard.state.error = None;
-                })
-                .map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
-            },
+        (
+            manifest,
+            guard.downloader.clone(),
+            guard.update_dir.clone(),
+            guard.cancel.clone(),
+        )
+    };
+
+    let downloaded = downloader.download_into(&manifest, &update_dir, progress, &cancel);
+    if cancel.is_cancelled() {
+        return dto(lock_runtime(runtime).state.clone());
+    }
+    let prepared = match downloaded {
+        Ok(downloaded) => match std::env::current_exe() {
+            Ok(current) => prepare_update(
+                &downloaded.path,
+                &update_dir,
+                &manifest,
+                &current_version(),
+                &current,
+                &|_| None,
+                &PrepareOptions::default(),
+            )
+            .map_err(|error| error.to_string()),
             Err(error) => Err(error.to_string()),
-        };
-        if let Err(error) = result {
+        },
+        Err(error) => Err(error.to_string()),
+    };
+
+    let mut guard = lock_runtime(runtime);
+    // Отмену могли нажать, пока шла подготовка файлов. Её состояние важнее результата.
+    if cancel.is_cancelled() {
+        return dto(guard.state.clone());
+    }
+    match prepared {
+        Ok(prepared) => {
+            guard.prepared = Some(prepared);
+            guard.state.stage = UpdateStage::ReadyToRestart;
+            guard.state.progress = 1.0;
+            guard.state.error = None;
+        }
+        Err(error) => {
             guard.prepared = None;
             guard.state.stage = UpdateStage::Failed;
             guard.state.error = Some(error);
         }
-        dto(guard.state.clone())
-    })
-    .await
-    .map_err(|error| AppError::new("task", error.to_string()))
+    }
+    dto(guard.state.clone())
 }
 
 #[tauri::command]
@@ -170,6 +192,7 @@ pub async fn app_update_cancel(
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
     let mut guard = lock_runtime(&runtime);
     guard.cancel.cancel();
+    guard.prepared = None;
     guard.state.stage = UpdateStage::Failed;
     guard.state.error = Some("Загрузка обновления отменена.".to_string());
     Ok(dto(guard.state.clone()))
@@ -446,10 +469,165 @@ fn wait_for_exit(_pid: u32, _timeout: Duration) {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{self, Read};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::thread;
+    use std::time::Duration;
+
+    use bmm_app_release::{
+        CancelToken, HttpResponse, HttpTransport, TransportError, UpdateDownloader, UpdateManifest,
+    };
+
     use super::*;
 
     fn strings(args: &[&str]) -> Vec<String> {
         args.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    fn manifest(size: u64) -> UpdateManifest {
+        UpdateManifest {
+            version: AppVersion::parse("9.9.9").unwrap(),
+            url: "https://github.com/x/y/releases/download/v9.9.9/app.exe"
+                .parse()
+                .unwrap(),
+            size,
+            sha256: "a".repeat(64),
+            notes: None,
+            published: None,
+        }
+    }
+
+    struct SlowTransport {
+        calls: Arc<AtomicUsize>,
+        stop: Arc<AtomicBool>,
+    }
+
+    struct SlowBody {
+        remaining: u64,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl Read for SlowBody {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.remaining == 0 || self.stop.load(Ordering::SeqCst) {
+                return Ok(0);
+            }
+            thread::sleep(Duration::from_millis(5));
+            let size = (buffer.len() as u64).min(self.remaining).min(4096) as usize;
+            buffer[..size].fill(b'x');
+            self.remaining -= size as u64;
+            Ok(size)
+        }
+    }
+
+    impl HttpTransport for SlowTransport {
+        fn send(&self, _url: &url::Url) -> Result<HttpResponse, TransportError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(HttpResponse {
+                status: 200,
+                content_length: Some(4 * 1024 * 1024),
+                location: None,
+                body: Box::new(SlowBody {
+                    remaining: 4 * 1024 * 1024,
+                    stop: self.stop.clone(),
+                }),
+            })
+        }
+    }
+
+    fn update_runtime(
+        temp: &tempfile::TempDir,
+        transport: Arc<SlowTransport>,
+    ) -> Arc<Mutex<AppUpdateRuntime>> {
+        Arc::new(Mutex::new(AppUpdateRuntime {
+            downloader: UpdateDownloader::new(transport),
+            state: UpdateState {
+                stage: UpdateStage::Available,
+                manifest: Some(manifest(4 * 1024 * 1024)),
+                progress: 0.0,
+                error: None,
+                checked_at: None,
+            },
+            prepared: None,
+            cancel: CancelToken::new(),
+            update_dir: temp.path().join("update"),
+            skipped_path: temp.path().join("update-skip.txt"),
+            manifest_url: "https://github.com/x/y".parse().unwrap(),
+        }))
+    }
+
+    #[test]
+    fn cancelling_a_download_does_not_wait_for_the_network_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = update_runtime(
+            &temp,
+            Arc::new(SlowTransport {
+                calls: calls.clone(),
+                stop: stop.clone(),
+            }),
+        );
+        let worker = {
+            let runtime = runtime.clone();
+            thread::spawn(move || run_download(&runtime, &mut |_| {}))
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if calls.load(Ordering::SeqCst) > 0 {
+                assert_eq!(
+                    lock_runtime(&runtime).state.stage,
+                    UpdateStage::Downloading,
+                    "состояние доступно во время загрузки"
+                );
+                break;
+            }
+            assert!(Instant::now() < deadline, "загрузка не началась");
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        // Так же, как команда «Отменить»: состояние и флаг доступны во время загрузки.
+        {
+            let mut guard = lock_runtime(&runtime);
+            guard.cancel.cancel();
+            guard.state.stage = UpdateStage::Failed;
+            guard.state.error = Some("Загрузка обновления отменена.".to_string());
+        }
+        stop.store(true, Ordering::SeqCst);
+
+        let result = worker.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.state.stage, UpdateStage::Failed);
+        assert_eq!(
+            result.state.error.as_deref(),
+            Some("Загрузка обновления отменена.")
+        );
+        assert!(result.state.manifest.is_some(), "описание не теряется");
+    }
+
+    #[test]
+    fn checking_does_not_reset_a_download_in_progress() {
+        let temp = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = update_runtime(
+            &temp,
+            Arc::new(SlowTransport {
+                calls: calls.clone(),
+                stop: Arc::new(AtomicBool::new(true)),
+            }),
+        );
+        {
+            let mut guard = lock_runtime(&runtime);
+            guard.state.stage = UpdateStage::Downloading;
+            guard.cancel.cancel();
+        }
+        let result = check_update(&runtime);
+        assert_eq!(result.state.stage, UpdateStage::Downloading);
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "сеть не трогали");
+        assert!(
+            lock_runtime(&runtime).cancel.is_cancelled(),
+            "чужую отмену не сбросили"
+        );
     }
 
     #[test]

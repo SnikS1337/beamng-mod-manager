@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { ModCardDto } from "#lib/ipc/library.js";
 import {
   copiesBadge,
-  duplicateBadge,
   duplicateExplain,
   groupMembers,
   isShown,
@@ -62,8 +61,6 @@ describe("группы копий", () => {
   });
 
   it("подписи копий", () => {
-    expect(duplicateBadge({ id: "w", name: "", exact: true })).toBe("Копия");
-    expect(duplicateBadge({ id: "w", name: "", exact: false })).toBe("Другая версия");
     expect(duplicateExplain({ id: "w", name: "weather fx", exact: true }).text).toContain("«weather fx»");
     expect(duplicateExplain({ id: "w", name: "", exact: false }).text).toContain("другой мод");
   });

@@ -2,7 +2,7 @@
   import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { openPath } from "@tauri-apps/plugin-opener";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import Check from "phosphor-svelte/lib/Check";
   import Cpu from "phosphor-svelte/lib/Cpu";
   import Download from "phosphor-svelte/lib/DownloadSimple";
@@ -20,6 +20,7 @@
   import { isTauri } from "@tauri-apps/api/core";
   import { Switch } from "#lib/components/ui/switch/index.js";
   import { appearance } from "#lib/shell/appearance.svelte.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
   import { type SettingsDto } from "#lib/ipc/settings.js";
   import {
     appUpdateCancel,
@@ -89,6 +90,7 @@
   let updateError = $state<string | null>(null);
   let updateProgress = $state(0);
   let unlistenUpdate: (() => void) | undefined;
+  let disposed = false;
 
   onMount(() => {
     void boot();
@@ -96,15 +98,20 @@
     void listenAppUpdateProgress((value) => {
       updateProgress = value;
     }).then((stop) => {
-      unlistenUpdate = stop;
+      if (disposed) stop();
+      else unlistenUpdate = stop;
     });
-    return () => unlistenUpdate?.();
+    return () => {
+      disposed = true;
+      unlistenUpdate?.();
+    };
   });
 
   onDestroy(() => {
+    disposed = true;
     unlistenUpdate?.();
     if (saveTimer) clearTimeout(saveTimer);
-    if (dirty) void save();
+    if (dirty) void save(true);
   });
 
   async function loadAppUpdate() {
@@ -168,6 +175,16 @@
     }
   }
 
+  const releaseNotes = $derived.by(() => {
+    const text = appUpdate?.state.manifest?.notes?.trim();
+    if (!text) return [] as string[];
+    const parts = text
+      .split(/\s+-\s+|\r?\n/)
+      .map((part) => part.trim().replace(/^[-•]\s*/, ""))
+      .filter(Boolean);
+    return parts.length > 1 ? parts : [text];
+  });
+
   function updateStageText(): string {
     const stage = appUpdate?.state.stage;
     switch (stage) {
@@ -208,7 +225,62 @@
     };
   }
 
-  function mark() {
+  const NUMBER_DEFAULTS = {
+    checkTtlHours: 6,
+    autoCheckEveryHours: 0,
+    keepBackups: 3,
+    maxCardChecksPerSource: 150,
+    activeModsWarnAbove: 30,
+  };
+  const numbersValid = $derived(
+    draft
+      ? Object.keys(NUMBER_DEFAULTS).every((key) => {
+          const value = draft?.[key as keyof typeof NUMBER_DEFAULTS];
+          return typeof value === "number" && Number.isFinite(value);
+        })
+      : true,
+  );
+
+  function numberOr(value: unknown, fallback: number): number {
+    return typeof value === "number" && Number.isFinite(value)
+      ? value
+      : fallback;
+  }
+
+  function withNumberFallbacks(value: SettingsDto): SettingsDto {
+    const saved = appearance.settings;
+    return {
+      ...value,
+      checkTtlHours: numberOr(
+        value.checkTtlHours,
+        saved?.checkTtlHours ?? NUMBER_DEFAULTS.checkTtlHours,
+      ),
+      autoCheckEveryHours: numberOr(
+        value.autoCheckEveryHours,
+        saved?.autoCheckEveryHours ?? NUMBER_DEFAULTS.autoCheckEveryHours,
+      ),
+      keepBackups: numberOr(
+        value.keepBackups,
+        saved?.keepBackups ?? NUMBER_DEFAULTS.keepBackups,
+      ),
+      maxCardChecksPerSource: numberOr(
+        value.maxCardChecksPerSource,
+        saved?.maxCardChecksPerSource ?? NUMBER_DEFAULTS.maxCardChecksPerSource,
+      ),
+      activeModsWarnAbove: numberOr(
+        value.activeModsWarnAbove,
+        saved?.activeModsWarnAbove ?? NUMBER_DEFAULTS.activeModsWarnAbove,
+      ),
+    };
+  }
+
+  function mark(event?: Event) {
+    // Пустое числовое поле — незаконченный ввод, а не «ноль»: ждём цифру.
+    const input = event?.currentTarget as HTMLInputElement | null;
+    if (input?.type === "number" && input.value.trim() === "") {
+      revision += 1;
+      return;
+    }
     dirty = true;
     message = null;
     revision += 1;
@@ -220,13 +292,15 @@
     saveTimer = setTimeout(() => void save(), 350);
   }
 
-  async function save() {
+  async function save(useNumberFallbacks = false) {
     if (!draft || saving) return;
+    if (!numbersValid && !useNumberFallbacks) return;
     const rev = revision;
+    const payload = useNumberFallbacks ? withNumberFallbacks(draft) : draft;
     saving = true;
     error = null;
     try {
-      const saved = clone(await appearance.save(draft));
+      const saved = clone(await appearance.save(payload));
       if (revision === rev) {
         draft = saved;
         dirty = false;
@@ -302,7 +376,7 @@
         mark();
       }
     } catch (reason) {
-      error = errorText(reason);
+      toasts.show(errorText(reason));
     }
   }
 
@@ -319,7 +393,7 @@
         mark();
       }
     } catch (reason) {
-      error = errorText(reason);
+      toasts.show(errorText(reason));
     }
   }
 
@@ -332,9 +406,9 @@
   async function openFolder(path: string | null) {
     if (!path) return;
     try {
-      await openPath(path);
+      await revealItemInDir(path);
     } catch (reason) {
-      error = errorText(reason);
+      toasts.show(errorText(reason));
     }
   }
 
@@ -343,7 +417,7 @@
     if (reason && typeof reason === "object" && "message" in reason) {
       return String((reason as { message: unknown }).message);
     }
-    return "Не удалось сохранить настройки.";
+    return "Не удалось выполнить действие.";
   }
 </script>
 
@@ -354,14 +428,19 @@
     </div>
     <div class="head-actions">
       <span class="save-state">
-        <span class="save-dot" class:busy={(saving || dirty) && !error} class:failed={!!error}></span>
+        <span
+          class="save-dot"
+          class:busy={(saving || dirty) && !error && numbersValid}
+          class:invalid={!numbersValid && !error}
+          class:failed={!!error}
+        ></span>
         {error
           ? "Не сохранено"
-          : saving
-            ? "Сохраняем…"
-            : dirty
+          : !numbersValid
+            ? "Проверьте числа"
+            : saving || dirty
               ? "Сохраняем…"
-              : message ?? "Сохраняется само"}
+              : message ?? "Сохраняется автоматически"}
       </span>
     </div>
   </header>
@@ -530,7 +609,7 @@
             disabled={!draft.modsFolder}
             onclick={() => void openFolder(draft?.modsFolder ?? null)}
           >
-            Открыть
+            Показать
           </button>
         </div>
       </div>
@@ -551,7 +630,7 @@
             disabled={!draft.userFolder}
             onclick={() => void openFolder(draft?.userFolder ?? null)}
           >
-            Открыть
+            Показать
           </button>
         </div>
       </div>
@@ -595,7 +674,7 @@
             bind:value={draft.activeModsWarnAbove}
             oninput={mark}
           />
-          <span>модов</span>
+          <span>файлов</span>
         </div>
       </div>
 
@@ -684,7 +763,7 @@
       <div class="row">
         <div class="row-text">
           <label for="auto-every">Проверять, пока программа открыта, каждые</label>
-          <small>0 — только при запуске и по кнопке.</small>
+          <small>0 — не проверять по расписанию, только при запуске и по кнопке.</small>
         </div>
         <div class="unit">
           <input
@@ -782,13 +861,17 @@
         <section id="settings-program" class="block">
           <div class="block-head">
             <h2 class="display">Программа</h2>
-        <span>версия {appUpdate?.currentVersion ?? "1.0.0"}</span>
+        <span>версия {appUpdate?.currentVersion ?? "…"}</span>
       </div>
       <div class="update-row">
         <div class="update-main">
           <p>{updateStageText()}</p>
-          {#if appUpdate?.state.manifest?.notes}
-            <span>{appUpdate.state.manifest.notes}</span>
+          {#if releaseNotes.length > 0}
+            <ul class="update-notes">
+              {#each releaseNotes as note}
+                <li>{note}</li>
+              {/each}
+            </ul>
           {/if}
           {#if updateError}
             <span class="update-error">{updateError}</span>
@@ -866,8 +949,9 @@
     transition: background-color var(--dur-2) var(--ease-out);
   }
 
-  .save-dot.busy {
-    background: #f2b544;
+  .save-dot.busy,
+  .save-dot.invalid {
+    background: var(--warning);
   }
 
   .save-dot.failed {
@@ -1373,6 +1457,18 @@
   }
 
   .update-main span {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+
+  .update-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 2px 0 0;
+    padding-left: 18px;
+    list-style: disc;
     color: var(--muted-foreground);
     font-size: 12.5px;
     line-height: 1.45;

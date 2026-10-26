@@ -51,7 +51,7 @@ describe("checkSummary", () => {
                 ...base,
                 sources: [source({ postponed: 4 }), source({ postponed: 1 })],
             }).text,
-        ).toBe("Новых версий нет. Отложено, проверяли недавно: 5");
+        ).toBe("Новых версий нет. Отложено до следующего раза: 5");
     });
 
     it("предлагает проверить заново, если сайты не трогали", () => {
@@ -66,7 +66,10 @@ describe("checkSummary", () => {
 
     it("считает найденное", () => {
         expect(checkSummary({ ...base, newCount: 2 }).text).toBe(
-            "Нашли обновления: 2",
+            "Нашли обновления: 2 мода",
+        );
+        expect(checkSummary({ ...base, newCount: 5 }).text).toBe(
+            "Нашли обновления: 5 модов",
         );
     });
 
@@ -74,7 +77,7 @@ describe("checkSummary", () => {
         const down = source({ status: "unavailable", displayName: "Modland" });
         const summary = checkSummary({ ...base, requests: 0, sources: [down] });
         expect(summary.offerForce).toBe(false);
-        expect(summary.text).toBe("Новых версий нет. Не ответили: Modland");
+        expect(summary.text).toBe("Не ответили: Modland");
         const human = source({
             status: "needsHumanCheck",
             displayName: "Modland",
@@ -82,6 +85,27 @@ describe("checkSummary", () => {
         expect(checkSummary({ ...base, sources: [human] }).text).toContain(
             "Modland: нужно пройти проверку",
         );
+    });
+
+    it("разделяет проверку и отказ сайта", () => {
+        const human = source({
+            status: "needsHumanCheck",
+            displayName: "Modland",
+        });
+        const down = source({ status: "unavailable", displayName: "STMods" });
+        const summary = checkSummary({ ...base, sources: [human, down] });
+        expect(summary.text).toBe(
+            "Новых версий нет. Modland: нужно пройти проверку на сайте. Не ответили: STMods",
+        );
+    });
+
+    it("не обещает проверку, когда все сайты выключены", () => {
+        expect(
+            checkSummary({ ...base, requests: 0, sources: [] }),
+        ).toEqual({
+            text: "Нет включённых сайтов — проверять нечего",
+            offerForce: false,
+        });
     });
 
     it("говорит, что проверили не всё, когда кончилось время", () => {
@@ -99,7 +123,7 @@ describe("checkSummary", () => {
   it("сообщает, что сайт изменился или страницы пропали", () => {
     const changed = source({ displayName: "STMods", layoutChanged: true, missing: 2 });
     expect(checkSummary({ ...base, sources: [changed] }).text).toBe(
-      "Новых версий нет. STMods: сайт изменился, часть модов не прочитали. Страницы пропали с сайта: 2",
+      "Новых версий нет. STMods: сайт изменился, часть модов не прочитали. Пропавшие страницы: 2",
     );
   });
 });
@@ -144,7 +168,7 @@ describe("updateHeadline", () => {
                 site({ displayName: "Modland", status: "unavailable" }),
             ], now),
         ).toEqual({
-            text: "2 мода ждут решения · проверено не всё",
+            text: "2 мода с обновлением · проверено не всё",
             tone: "warn",
         });
         expect(failedSites([

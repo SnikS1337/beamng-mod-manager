@@ -1,5 +1,6 @@
 export function formatSize(bytes: number): string {
   if (!bytes || bytes <= 0) return "—";
+  if (bytes < 1024) return `${Math.round(bytes)} Б`;
   if (bytes < 1024 * 1024) {
     return `${Math.round(bytes / 1024)} КБ`;
   }
@@ -39,24 +40,9 @@ export function headerNote(count: number, updates: number, files = count): strin
       ? `${modsLabel(count)} (${groupDigits(files)} ${plural(files, "файл", "файла", "файлов")})`
       : modsLabel(count);
   if (updates > 0) {
-    return `${base} · ${updates} ${plural(updates, "ждёт", "ждут", "ждут")} обновления`;
+    return `${base} · ${updates} с обновлением`;
   }
   return base;
-}
-
-export function kindLabel(kind: string): string {
-  switch (kind) {
-    case "vehicle":
-      return "Машина";
-    case "level":
-      return "Карта";
-    case "sound":
-      return "Звук";
-    case "script":
-      return "Скрипт";
-    default:
-      return "Мод";
-  }
 }
 
 export function formatDate(iso: string): string {
@@ -103,16 +89,16 @@ export function formatAgo(iso: string | null | undefined, now = Date.now()): str
   if (!iso) return "";
   const at = new Date(iso).getTime();
   if (Number.isNaN(at)) return "";
-  const minutes = Math.max(0, Math.round((now - at) / 60000));
+  const minutes = Math.max(0, Math.floor((now - at) / 60000));
   if (minutes < 1) return "только что";
   if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")} назад`;
-  const hours = Math.round(minutes / 60);
+  const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} ${plural(hours, "час", "часа", "часов")} назад`;
-  const days = Math.round(hours / 24);
+  const days = Math.floor(hours / 24);
   if (days < 14) return `${days} ${plural(days, "день", "дня", "дней")} назад`;
-  const weeks = Math.round(days / 7);
+  const weeks = Math.floor(days / 7);
   if (weeks < 9) return `${weeks} ${plural(weeks, "неделю", "недели", "недель")} назад`;
-  const months = Math.round(days / 30);
+  const months = Math.floor(days / 30);
   return `${months} ${plural(months, "месяц", "месяца", "месяцев")} назад`;
 }
 
@@ -126,6 +112,10 @@ export function formatWhen(iso: string | null | undefined, now = new Date()): st
   const diff = Math.round((day(now) - day(date)) / 86400000);
   if (diff === 0) return `сегодня в ${time}`;
   if (diff === 1) return `вчера в ${time}`;
-  const label = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(date);
+  const label = new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "long",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  }).format(date);
   return `${label} в ${time}`;
 }
