@@ -5,7 +5,8 @@
 
 ## Что нужно
 
-- Windows 10/11 с WebView2;
+- Windows 10/11 с Microsoft Edge WebView2 Runtime (обычно уже есть; при отсутствии
+  установить отдельно — программа покажет ссылку при запуске);
 - Node.js 24 (SvelteKit 3 требует минимум 22.17);
 - Rust 1.95+ с target `x86_64-pc-windows-msvc`;
 - Visual Studio Build Tools 2022: workload «C++ build tools» и Windows SDK.
@@ -37,7 +38,7 @@ npm run tauri build -- --no-bundle
 `target/release/BeamModManager.exe`. Установщик не используется: выпуск — portable
 zip с exe и `latest.json`.
 
-На 2026-10-26 проходят 636 тестов Rust (1 ignored) и 90 тестов фронтенда.
+На 2026-10-26 проходят 637 тестов Rust (1 ignored) и 90 тестов фронтенда.
 
 ## Если хост ARM64
 
