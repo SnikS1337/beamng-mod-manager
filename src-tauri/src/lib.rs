@@ -5,6 +5,7 @@ mod named_mutex;
 mod state;
 #[cfg(test)]
 mod test_support;
+mod webview2;
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -29,6 +30,9 @@ use tauri::Manager;
 pub fn run() {
     if let Some(arguments) = commands::app_update::installer_args() {
         commands::app_update::run_installer(arguments);
+        return;
+    }
+    if !webview2::ensure_available() {
         return;
     }
     let _instance = match named_mutex::acquire() {
