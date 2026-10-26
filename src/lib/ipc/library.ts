@@ -151,10 +151,11 @@ let mockLibrary: LibrarySnapshot | null = null;
 const mockDeletedCards = new Map<string, ModCardDto>();
 
 function recount(snapshot: LibrarySnapshot): void {
-  snapshot.counts.all = snapshot.mods.length;
-  snapshot.counts.enabled = snapshot.mods.filter((mod) => mod.enabled).length;
-  snapshot.counts.updates = snapshot.mods.filter((mod) => mod.update !== "none").length;
-  snapshot.counts.unchecked = snapshot.mods.filter((mod) => mod.unchecked).length;
+  const visible = snapshot.mods.filter((mod) => !mod.duplicateOf);
+  snapshot.counts.all = visible.length;
+  snapshot.counts.enabled = visible.filter((mod) => mod.enabled).length;
+  snapshot.counts.updates = visible.filter((mod) => mod.update !== "none").length;
+  snapshot.counts.unchecked = visible.filter((mod) => mod.unchecked).length;
   snapshot.counts.deleted = snapshot.deleted.length;
 }
 

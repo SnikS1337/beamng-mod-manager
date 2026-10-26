@@ -17,6 +17,8 @@ use url::Url;
 
 pub const USER_AGENT: &str = "BeamModManager/0.4 (personal use; update checks)";
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// Предел памяти под страницы в кеше: 64 страницы могут быть и по 16 МБ каждая.
+const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceStatus {
@@ -854,13 +856,13 @@ impl PoliteFetcher {
 
     fn store_cache(&self, key: String, response: RawResponse) {
         let mut cache = lock(&self.cache);
-        if cache.len() >= self.options.cache_capacity
-            && let Some(oldest) = cache
-                .iter()
-                .min_by_key(|(_, entry)| entry.stored)
-                .map(|(key, _)| key.clone())
-        {
-            cache.remove(&oldest);
+        if !make_room(
+            &mut cache,
+            self.options.cache_capacity,
+            MAX_CACHE_BYTES,
+            response.text.len(),
+        ) {
+            return;
         }
         cache.insert(
             key,
@@ -883,11 +885,37 @@ impl PoliteFetcher {
                 *inner = HostInner::default();
             }
         }
-        self.sources
-            .lock()
-            .unwrap()
-            .insert(source.to_string(), SourceState::default());
+        lock(&self.sources).insert(source.to_string(), SourceState::default());
     }
+}
+
+/// Освобождает место под новую страницу. `false` — страницу не кешируем:
+/// она одна больше допустимого объёма кеша.
+fn make_room(
+    cache: &mut HashMap<String, CacheEntry>,
+    capacity: usize,
+    max_bytes: usize,
+    incoming: usize,
+) -> bool {
+    if capacity == 0 || incoming > max_bytes {
+        return false;
+    }
+    let mut total: usize = cache.values().map(|entry| entry.response.text.len()).sum();
+    while !cache.is_empty()
+        && (cache.len() >= capacity || total.saturating_add(incoming) > max_bytes)
+    {
+        let Some(oldest) = cache
+            .iter()
+            .min_by_key(|(_, entry)| entry.stored)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        if let Some(entry) = cache.remove(&oldest) {
+            total = total.saturating_sub(entry.response.text.len());
+        }
+    }
+    true
 }
 
 fn cache_key(url: &Url, form: Option<&[(String, String)]>) -> String {
@@ -1453,6 +1481,51 @@ mod tests {
             SourceStatus::Unavailable
         );
         assert_eq!(fake.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn cache_evicts_oldest_to_stay_within_limits() {
+        let now = Instant::now();
+        let mut cache = HashMap::new();
+        for (key, offset) in [("a", 0), ("b", 1), ("c", 2)] {
+            cache.insert(
+                key.to_string(),
+                CacheEntry {
+                    stored: now + Duration::from_millis(offset),
+                    response: response(200, "1234"),
+                },
+            );
+        }
+        assert!(make_room(&mut cache, 10, 10, 4));
+        assert_eq!(cache.len(), 1, "старые ушли, новое поместилось");
+        assert!(cache.contains_key("c"));
+
+        // Влезает только одна страница — значит, и храним одну.
+        let mut cache = HashMap::new();
+        cache.insert(
+            "old".to_string(),
+            CacheEntry {
+                stored: now,
+                response: response(200, "1234"),
+            },
+        );
+        assert!(make_room(&mut cache, 1, 1024, 4));
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn cache_does_not_keep_a_page_bigger_than_the_limit() {
+        let mut cache = HashMap::new();
+        cache.insert(
+            "old".to_string(),
+            CacheEntry {
+                stored: Instant::now(),
+                response: response(200, "1234"),
+            },
+        );
+        assert!(!make_room(&mut cache, 10, 10, 20));
+        assert_eq!(cache.len(), 1, "старое не вытесняем без нужды");
+        assert!(!make_room(&mut cache, 0, 10, 1), "нулевая ёмкость");
     }
 
     #[test]

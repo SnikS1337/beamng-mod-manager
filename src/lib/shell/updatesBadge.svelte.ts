@@ -9,12 +9,13 @@ import { toasts } from "#lib/shell/toasts.svelte.js";
 class UpdatesBadge {
   available = $state(0);
   private started = false;
+  private refreshId = 0;
 
   start(): void {
     if (this.started) return;
     this.started = true;
     this.refresh();
-    void listenUpdates((event) => this.onEvent(event));
+    void listenUpdates((event) => this.onEvent(event)).catch(() => {});
     // Поставили обновление или сняли страницу — число на значке меняется сразу.
     if (typeof window !== "undefined") {
       window.addEventListener("bmm:library-changed", () => this.refresh());
@@ -22,20 +23,22 @@ class UpdatesBadge {
   }
 
   refresh(): void {
+    const id = ++this.refreshId;
     void updatesSnapshot()
       .then((snapshot) => {
-        this.available = snapshot.findings.length;
+        if (id === this.refreshId) this.available = snapshot.findings.length;
       })
       .catch(() => {});
   }
 
   private onEvent(event: UpdatesEvent): void {
     if (event.phase === "progress" || event.phase === "error") return;
+    this.refreshId += 1;
     this.available = event.findings.length;
     if (event.phase === "auto" && event.newCount > 0) {
       const count = event.newCount;
       toasts.show(
-        `Нашлись обновления: ${count} ${plural(count, "мод", "мода", "модов")}. Они в разделе «Обновления»`,
+        `Нашли обновления: ${count} ${plural(count, "мод", "мода", "модов")}. Они в разделе «Обновления»`,
       );
     }
   }

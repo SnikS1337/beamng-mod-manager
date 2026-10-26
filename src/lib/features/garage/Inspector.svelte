@@ -1,6 +1,6 @@
 <script lang="ts">
   import { openExternal } from "#lib/shell/openExternal.js";
-  import { openPath } from "@tauri-apps/plugin-opener";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { sourceName } from "#lib/ipc/search.js";
   import {
     modPreview,
@@ -191,9 +191,9 @@
   async function openFolder() {
     if (!details?.folder) return;
     try {
-      await openPath(details.folder);
+      await revealItemInDir(details.folder);
     } catch {
-      // В браузере и без прав просто ничего не делаем.
+      toasts.show("Не удалось открыть папку с модом");
     }
   }
 </script>
@@ -301,18 +301,18 @@
         </div>
       {/if}
       {#if details.binding}
-        <div><span>Следим на</span><b>{sourceName(details.binding.source)}</b></div>
+        <div><span>Страница</span><b>{sourceName(details.binding.source)}</b></div>
       {:else}
-        <div><span>Обновления</span><b title="Укажите страницу мода — и программа будет проверять обновления">не проверяются</b></div>
+        <div><span>Обновления</span><b title="Укажите страницу мода — и программа будет проверять обновления">нет страницы</b></div>
       {/if}
     </div>
 
     {#if details.checkingDeclined}
       <div class="update-actions">
-        <span>Проверка обновлений отключена.</span>
+        <span>Проверка обновлений отключена</span>
         {#if onResumeChecking}
           <button type="button" onclick={() => void resumeChecking()} disabled={updateBusy}>
-            Снова проверять
+            Включить проверку
           </button>
         {/if}
       </div>
@@ -325,7 +325,7 @@
         {/if}
         {#if onDeclineChecking}
           <button type="button" onclick={() => void declineChecking()} disabled={updateBusy}>
-            Не проверять
+            Не проверять обновления
           </button>
         {/if}
       </div>
@@ -408,7 +408,7 @@
         </button>
       {/if}
       <button class="btn-glass" type="button" onclick={() => void openFolder()} disabled={!details.folder}>
-        Открыть папку
+        Показать в папке
       </button>
     </div>
     {#if canDelete}

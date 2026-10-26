@@ -12,6 +12,7 @@
   import { libraryLoad } from "#lib/ipc/library.js";
   import { palette } from "./palette.svelte";
   import { paletteItems, type PaletteItem } from "./paletteItems";
+  import { trapFocus } from "./focus";
 
   let query = $state("");
   let active = $state(0);
@@ -52,6 +53,11 @@
     if (isShortcut(event, "k")) {
       event.preventDefault();
       palette.toggle();
+      return;
+    }
+    if (palette.open && event.key === "Escape") {
+      event.preventDefault();
+      palette.hide();
     }
   }
 
@@ -134,7 +140,7 @@
 
 {#if palette.open}
   <div class="scrim" role="presentation" onclick={() => palette.hide()}></div>
-  <div class="palette" role="dialog" aria-modal="true" aria-label="Палитра команд">
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Палитра команд" use:trapFocus>
     <label class="field">
       <MagnifyingGlass size={20} />
       <input
@@ -143,6 +149,9 @@
         type="text"
         placeholder="Мод, команда или раздел"
         aria-label="Мод, команда или раздел"
+        role="combobox"
+        aria-expanded="true"
+        aria-autocomplete="list"
         aria-controls="palette-list"
         aria-activedescendant={items[active]?.id}
         {onkeydown}

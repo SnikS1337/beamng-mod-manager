@@ -186,6 +186,7 @@ pub struct DownloadedUpdate {
 }
 
 /// Сеть обновлений: описание и архив.
+#[derive(Clone)]
 pub struct UpdateDownloader {
     transport: Arc<dyn HttpTransport>,
 }

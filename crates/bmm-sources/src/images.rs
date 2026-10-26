@@ -108,21 +108,35 @@ impl RemoteImageCache {
 
     pub fn cached(&self, url: &Url) -> Option<RemoteImage> {
         let key = key_of(url);
+        let mut found: Vec<(std::time::SystemTime, &'static str, PathBuf)> = Vec::new();
         for extension in ["jpg", "jpeg", "png", "webp"] {
             let path = self.root.join(format!("{key}.{extension}"));
-            if path.is_file() {
-                // Нужна снова — в конец очереди на удаление.
-                let _ = std::fs::File::options()
-                    .append(true)
-                    .open(&path)
-                    .and_then(|file| file.set_modified(std::time::SystemTime::now()));
-                return Some(RemoteImage {
-                    key,
-                    extension: extension.to_string(),
-                });
+            let Ok(metadata) = std::fs::metadata(&path) else {
+                continue;
+            };
+            if metadata.is_file() {
+                found.push((
+                    metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+                    extension,
+                    path,
+                ));
             }
         }
-        None
+        // Старые версии могли сохранить один и тот же адрес в другом формате. Берём
+        // самый свежий файл, иначе картинка навсегда остаётся прежней.
+        found.sort_by_key(|(modified, _, _)| *modified);
+        let (_, extension, path) = found.pop()?;
+        let _ = std::fs::File::options()
+            .append(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+        for (_, _, older) in found {
+            let _ = std::fs::remove_file(older);
+        }
+        Some(RemoteImage {
+            key,
+            extension: extension.to_string(),
+        })
     }
 
     pub fn fetch(&self, url: &Url) -> Result<Option<RemoteImage>, ImageError> {
@@ -200,6 +214,13 @@ impl RemoteImageCache {
         std::fs::create_dir_all(&self.root).map_err(|error| ImageError::Io(error.to_string()))?;
         atomic::write_atomic(&self.root.join(format!("{key}.{extension}")), &bytes)
             .map_err(|error| ImageError::Io(error.to_string()))?;
+        // Сайт мог отдать тот же адрес уже другим форматом. Старый файл иначе
+        // находится первым и картинка навсегда остаётся прежней.
+        for other in ["jpg", "jpeg", "png", "webp"] {
+            if other != extension {
+                let _ = std::fs::remove_file(self.root.join(format!("{key}.{other}")));
+            }
+        }
         Ok(Some(RemoteImage { key, extension }))
     }
 
@@ -227,7 +248,8 @@ fn extension_of(content_type: &str, url: &Url) -> Option<String> {
     if content_type.starts_with("image/webp") {
         return Some("webp".to_string());
     }
-    if !content_type.starts_with("image/") && !content_type.is_empty() {
+    if !content_type.is_empty() {
+        // gif, svg, avif и прочее не выдаём за jpg/png по расширению адреса.
         return None;
     }
     url.path()
@@ -356,5 +378,56 @@ mod tests {
         assert_eq!(extension_of("", &url).as_deref(), Some("webp"));
         assert_eq!(extension_of("image/jpeg", &url).as_deref(), Some("jpg"));
         assert_eq!(extension_of("text/html", &url), None);
+        assert_eq!(extension_of("image/svg+xml", &url), None);
+        assert_eq!(
+            extension_of("application/octet-stream", &url),
+            None,
+            "неверный тип не подменяем расширением"
+        );
+    }
+
+    #[test]
+    fn cached_prefers_the_newest_file_and_drops_old_formats() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = RemoteImageCache::new(temp.path());
+        let url = Url::parse("https://example.org/changed.jpg").unwrap();
+        let key = key_of(&url);
+        let old = temp.path().join(format!("{key}.jpg"));
+        let new = temp.path().join(format!("{key}.png"));
+        std::fs::write(&old, b"old").unwrap();
+        std::fs::write(&new, b"new").unwrap();
+        let past = std::time::SystemTime::now() - Duration::from_secs(60);
+        std::fs::File::options()
+            .append(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+
+        let image = cache.cached(&url).unwrap();
+        assert_eq!(image.extension, "png");
+        assert!(new.is_file());
+        assert!(!old.exists(), "старый формат убран");
+    }
+
+    #[test]
+    fn new_image_type_replaces_the_old_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = RemoteImageCache::new(temp.path());
+        let url = Url::parse("https://example.org/changed.jpg").unwrap();
+        let key = key_of(&url);
+
+        // Раньше сайт отдавал jpeg, теперь — png по тому же адресу.
+        std::fs::write(temp.path().join(format!("{key}.jpg")), b"old").unwrap();
+        let image = cache
+            .store(&url, "image/png", b"\x89PNG\r\n\x1a\nnew".to_vec())
+            .unwrap()
+            .unwrap();
+        assert_eq!(image.extension, "png");
+        assert!(!temp.path().join(format!("{key}.jpg")).exists());
+        assert_eq!(
+            cache.cached(&url).map(|image| image.extension),
+            Some("png".to_string())
+        );
     }
 }

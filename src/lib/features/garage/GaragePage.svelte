@@ -15,7 +15,7 @@
   } from "#lib/ipc/updates.js";
   import { isTauri } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { openPath } from "@tauri-apps/plugin-opener";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
   import Plus from "phosphor-svelte/lib/Plus";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
@@ -94,9 +94,10 @@
   let searchEl = $state<HTMLInputElement | null>(null);
   let archiveInput = $state<HTMLInputElement | null>(null);
   let detailsToken = 0;
+  let loadToken = 0;
 
   const stateFilters: { id: Exclude<Filter, "all">; label: string }[] = [
-    { id: "updates", label: "Есть обновление" },
+    { id: "updates", label: "С обновлением" },
     { id: "unchecked", label: "Без страницы" },
     { id: "disabled", label: "Выключены" },
   ];
@@ -248,23 +249,28 @@
   });
 
   async function load(force = false) {
+    const token = ++loadToken;
     loading = !force;
     refreshing = force;
     error = null;
     try {
-      snapshot = await libraryLoad();
+      const next = await libraryLoad();
+      if (token !== loadToken) return;
+      snapshot = next;
       if (
         selectedId &&
-        !snapshot.mods.some((mod) => mod.id === selectedId) &&
-        !snapshot.deleted.some((mod) => mod.id === selectedId)
+        !next.mods.some((mod) => mod.id === selectedId) &&
+        !next.deleted.some((mod) => mod.id === selectedId)
       ) {
         picked = EMPTY;
       }
     } catch (reason) {
-      error = errorText(reason);
+      if (token === loadToken) error = errorText(reason);
     } finally {
-      loading = false;
-      refreshing = false;
+      if (token === loadToken) {
+        loading = false;
+        refreshing = false;
+      }
     }
   }
 
@@ -293,7 +299,7 @@
       await updatesUnfollow(card.id, source);
       updatesBadge.refresh();
       await load(true);
-      showToast(`Больше не следим за этой страницей «${trimName(card.name)}»`, {
+      showToast(`Больше не следим за страницей «${trimName(card.name)}»`, {
         undo: async () => {
           await updatesRefollow(card.id, source);
           updatesBadge.refresh();
@@ -363,7 +369,7 @@
       updatesBadge.refresh();
       await load(true);
       await refreshDetails(card.id);
-      showToast(`Не проверяем обновления «${trimName(card.name)}»`, {
+      showToast(`Проверка обновлений отключена: «${trimName(card.name)}»`, {
         undo: async () => {
           try {
             await updatesUndoDecline(card.id);
@@ -388,7 +394,7 @@
       updatesBadge.refresh();
       await load(true);
       await refreshDetails(card.id);
-      showToast(`Снова проверяем обновления «${trimName(card.name)}»`);
+      showToast(`Проверка обновлений включена: «${trimName(card.name)}»`);
     } catch (reason) {
       showToast(errorText(reason));
     }
@@ -431,7 +437,9 @@
       mod.enabled = target;
       mod.pending = result.outcome === "queued" ? "queued" : "none";
       if (snapshot) {
-        snapshot.counts.enabled = snapshot.mods.filter((item) => item.enabled).length;
+        snapshot.counts.enabled = snapshot.mods.filter(
+          (item) => item.enabled && !item.duplicateOf,
+        ).length;
       }
       if (details?.id === mod.id) {
         details = { ...details, enabled: target };
@@ -673,16 +681,17 @@
     return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
   }
 
+  /** Space на кнопке/ссылке уже означает нажатие — не переключаем мод вторым действием. */
+  function activatesControl(event: KeyboardEvent): boolean {
+    const target = event.target as HTMLElement | null;
+    return !!target?.closest("button, a, [role='button'], [role='switch'], [role='menuitem']");
+  }
+
   function onkeydown(event: KeyboardEvent) {
     if (isShortcut(event, "f")) {
       event.preventDefault();
       searchEl?.focus();
       searchEl?.select();
-      return;
-    }
-    if (isShortcut(event, "z")) {
-      event.preventDefault();
-      void undoToast();
       return;
     }
     if (event.key === "Escape") {
@@ -694,6 +703,11 @@
       return;
     }
     if (isTyping(event)) return;
+    if (isShortcut(event, "z")) {
+      event.preventDefault();
+      void undoToast();
+      return;
+    }
     if (isShortcut(event, "a") && filtered.length > 0) {
       event.preventDefault();
       picked = selectAll(filtered.filter((mod) => !mod.deleted).map((mod) => mod.id));
@@ -711,7 +725,7 @@
       void deleteSelected();
       return;
     }
-    if (event.key === " " && selected && !selected.deleted) {
+    if (event.key === " " && selected && !selected.deleted && !activatesControl(event)) {
       event.preventDefault();
       void toggle(selected);
       return;
@@ -769,7 +783,7 @@
   async function showFolderOf(mod: ModCardDto) {
     try {
       const found = await modDetails(mod.id);
-      if (found.folder) await openPath(found.folder);
+      if (found.folder) await revealItemInDir(found.folder);
     } catch (reason) {
       showToast(errorText(reason));
     }
@@ -786,7 +800,7 @@
   function emptyTitle(): string {
     if (snapshot?.folderError) return "Не нашли папку с модами";
     if (query) return "Нет такого мода";
-    if (filter === "updates") return "Всё свежее";
+    if (filter === "updates") return "Всё актуально";
     if (filter === "unchecked") return "Все моды проверяются";
     if (filter === "disabled") return "Выключенных нет";
     if (typeFilter !== "all") return "Таких модов нет";
@@ -799,11 +813,11 @@
       return snapshot.folderError;
     }
     if (query) return "Проверьте написание. Ищем только среди ваших модов.";
-    if (filter === "updates") return "Обновлений нет. Проверить снова можно на экране «Обновления».";
+    if (filter === "updates") return "Обновлений нет. Проверить снова можно в разделе «Обновления».";
     if (filter === "unchecked") return "У всех модов есть страница — обновления проверяются.";
     if (filter === "disabled") return "Все моды включены.";
     if (typeFilter !== "all") return "Сбросьте фильтр типа, чтобы увидеть остальные.";
-    if (filter === "deleted") return "Удалённые моды появятся здесь после подтверждения.";
+    if (filter === "deleted") return "Здесь появятся моды, которые вы удалите.";
     return "Найдите мод в поиске или перетащите архив на окно.";
   }
 </script>

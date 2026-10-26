@@ -32,7 +32,7 @@ export function updateHeadline(
     if (availableCount > 0) {
         const failed = failedSites(sites);
         return {
-            text: `${availableCount} ${plural(availableCount, "мод ждёт", "мода ждут", "модов ждут")} решения${failed.length > 0 ? " · проверено не всё" : ""}`,
+            text: `${availableCount} ${plural(availableCount, "мод", "мода", "модов")} с обновлением${failed.length > 0 ? " · проверено не всё" : ""}`,
             tone: failed.length > 0 ? "warn" : "ok",
         };
     }
@@ -60,8 +60,16 @@ type Done = Pick<
 export function checkSummary(event: Done): CheckSummary {
     // Остановили сами — говорить нечего.
     if (event.cancelled) return { text: null, offerForce: false };
+    if (event.sources.length === 0 && event.requests === 0) {
+        return {
+            text: "Нет включённых сайтов — проверять нечего",
+            offerForce: false,
+        };
+    }
 
-    const failed = event.sources.filter((source) => source.status !== "ok");
+    const human = event.sources.filter((source) => source.status === "needsHumanCheck");
+    const down = event.sources.filter((source) => source.status === "unavailable");
+    const failed = [...human, ...down];
     const postponed = event.sources.reduce(
         (sum, source) => sum + source.postponed,
         0,
@@ -69,36 +77,37 @@ export function checkSummary(event: Done): CheckSummary {
     const parts: string[] = [];
 
     if (event.newCount > 0) {
-        parts.push(`Нашли обновления: ${event.newCount}`);
+        parts.push(
+            `Нашли обновления: ${event.newCount} ${plural(event.newCount, "мод", "мода", "модов")}`,
+        );
     } else if (event.requests === 0 && failed.length === 0) {
         return {
             text: "Всё проверено недавно. Нажмите ещё раз, чтобы проверить заново",
             offerForce: true,
         };
-    } else {
+    } else if (event.requests > 0) {
         parts.push("Новых версий нет");
     }
 
-    if (failed.length > 0) {
-        const names = failed.map((source) => source.displayName).join(", ");
-        parts.push(
-            failed.some((source) => source.status === "needsHumanCheck")
-                ? `${names}: нужно пройти проверку на сайте`
-                : `Не ответили: ${names}`,
-        );
+    if (human.length > 0) {
+        const names = human.map((source) => source.displayName).join(", ");
+        parts.push(`${names}: нужно пройти проверку на сайте`);
+    }
+    if (down.length > 0) {
+        parts.push(`Не ответили: ${down.map((source) => source.displayName).join(", ")}`);
     }
     const changed = event.sources.filter((source) => source.status === "ok" && source.layoutChanged);
-  if (changed.length > 0) {
-    parts.push(
-      `${changed.map((source) => source.displayName).join(", ")}: сайт изменился, часть модов не прочитали`,
-    );
-  }
-  const missing = event.sources.reduce((sum, source) => sum + source.missing, 0);
-  if (missing > 0) parts.push(`Страницы пропали с сайта: ${missing}`);
-  if (event.stoppedByTime) {
+    if (changed.length > 0) {
+        parts.push(
+            `${changed.map((source) => source.displayName).join(", ")}: сайт изменился, часть модов не прочитали`,
+        );
+    }
+    const missing = event.sources.reduce((sum, source) => sum + source.missing, 0);
+    if (missing > 0) parts.push(`Пропавшие страницы: ${missing}`);
+    if (event.stoppedByTime) {
         parts.push("Проверили не всё — остальное в следующий раз");
     } else if (postponed > 0) {
-        parts.push(`Отложено, проверяли недавно: ${postponed}`);
+        parts.push(`Отложено до следующего раза: ${postponed}`);
     }
     return { text: parts.join(". "), offerForce: false };
 }

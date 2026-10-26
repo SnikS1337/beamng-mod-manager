@@ -17,6 +17,7 @@
   import { formatSize, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { incomingQueue } from "./queue.svelte";
+  import { trapFocus } from "#lib/shell/focus.js";
   import { installable, preselected, suspiciousFiles, suspiciousText } from "./selection";
 
   type CheckLevel = "ok" | "attention" | "blocked";
@@ -50,7 +51,9 @@
   const totalSize = $derived(items.reduce((sum, item) => sum + item.size, 0));
 
   const installLabel = $derived.by(() => {
-    if (picked.length > 1) return `Установить ${picked.length}`;
+    if (picked.length > 1) {
+      return `Установить ${picked.length} ${plural(picked.length, "мод", "мода", "модов")}`;
+    }
     if (picked.length === 1 && picked[0].kind === "update") return "Обновить";
     return "Установить";
   });
@@ -442,6 +445,7 @@
     role="dialog"
     aria-modal="true"
     aria-labelledby="incoming-title"
+    use:trapFocus
   >
     <header>
       <div class="heading">

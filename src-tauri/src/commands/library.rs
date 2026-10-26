@@ -201,6 +201,10 @@ pub async fn mod_fix_packaging(
 }
 
 fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
+    let _guard = state
+        .load_lock
+        .lock()
+        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
     let target = state
         .previews_by_id
         .lock()
@@ -813,9 +817,14 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         })
         .collect();
 
-    let enabled = mods.iter().filter(|item| item.enabled).count();
-    let unchecked = mods.iter().filter(|item| item.unchecked).count();
-    let updates = mods.iter().filter(|item| item.update != "none").count();
+    // Счётчики фильтров — по видимым карточкам, а не по файлам: скрытая копия
+    // не должна давать «С обновлением 2» при одной карточке в списке.
+    let visible = || mods.iter().filter(|item| item.duplicate_of.is_none());
+    let all = visible().count();
+    let enabled = visible().filter(|item| item.enabled).count();
+    let unchecked = visible().filter(|item| item.unchecked).count();
+    let updates = visible().filter(|item| item.update != "none").count();
+    let enabled_files = mods.iter().filter(|item| item.enabled).count();
     let warning = join_warnings(
         settings_load.warnings,
         scan_warnings,
@@ -824,12 +833,12 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         library_warnings(state.library.load_warnings(), state.library.save_error()),
     );
     let many_enabled = (settings.active_mods_warn_above > 0
-        && enabled as i32 > settings.active_mods_warn_above)
-        .then(|| many_enabled_text(enabled));
+        && enabled_files as i32 > settings.active_mods_warn_above)
+        .then(|| many_enabled_text(enabled_files));
 
     Ok(LibrarySnapshot {
         counts: FilterCounts {
-            all: mods.len(),
+            all,
             enabled,
             updates,
             unchecked,
@@ -1258,9 +1267,6 @@ fn ensure_preview(state: &AppState, id: &str) -> Option<String> {
         return None;
     };
     let bytes = preview::extract(&target.path, &pick.raw_name).ok()?;
-    if bytes.len() > 30 * 1024 * 1024 {
-        return None;
-    }
     let (_, extension) = state
         .previews
         .put_image(&target.key, &pick.extension, &bytes)
@@ -1302,12 +1308,13 @@ fn kind_of(mod_type: &str) -> &'static str {
     }
 }
 
-/// «Включено 3 333 мода. Игра может грузиться дольше»: разряды и падеж.
+/// «Включено 3 333 файла. Игра может грузиться дольше»: разряды и падеж.
+/// Считаются файлы: включённые копии одного мода тоже замедляют загрузку.
 fn many_enabled_text(count: usize) -> String {
     format!(
         "Включено {} {}. Игра может грузиться дольше",
         group_digits(count),
-        plural(count, "мод", "мода", "модов")
+        plural(count, "файл", "файла", "файлов")
     )
 }
 
@@ -1577,6 +1584,9 @@ mod tests {
         assert_eq!(main.group, vec![copy.id.clone()]);
         assert!(main.group_conflict, "включены обе — игра загрузит обе");
         assert_eq!(main.role.as_deref(), Some("addon"));
+        // Счётчики фильтров — по карточкам, а не по файлам: копия скрыта за основной.
+        assert_eq!(snapshot.counts.all, 2);
+        assert_eq!(snapshot.counts.enabled, 2);
         let rs3 = snapshot
             .mods
             .iter()
@@ -1597,12 +1607,12 @@ mod tests {
     fn many_enabled_text_has_digits_and_right_case() {
         assert_eq!(
             many_enabled_text(39),
-            "Включено 39 модов. Игра может грузиться дольше"
+            "Включено 39 файлов. Игра может грузиться дольше"
         );
-        assert!(many_enabled_text(21).starts_with("Включено 21 мод."));
-        assert!(many_enabled_text(3_333).starts_with("Включено 3 333 мода."));
-        assert!(many_enabled_text(111).starts_with("Включено 111 модов."));
-        assert!(many_enabled_text(20_000).starts_with("Включено 20 000 модов."));
+        assert!(many_enabled_text(21).starts_with("Включено 21 файл."));
+        assert!(many_enabled_text(3_333).starts_with("Включено 3 333 файла."));
+        assert!(many_enabled_text(111).starts_with("Включено 111 файлов."));
+        assert!(many_enabled_text(20_000).starts_with("Включено 20 000 файлов."));
         assert_eq!(group_digits(999), "999");
         assert_eq!(group_digits(1_000), "1 000");
     }
