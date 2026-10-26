@@ -1,24 +1,28 @@
 # Сборка и проверки
 
-Новое приложение: Rust + Tauri 2 + SvelteKit 3 (SPA) + Svelte 5 + Tailwind CSS 4.
-Старый C#/WPF лежит в `legacy/` и не собирается в новом CI.
+Приложение: Rust + Tauri 2 + SvelteKit 3 (SPA) + Svelte 5 + Tailwind CSS 4.
+Старый C#/WPF лежит в `legacy/` и в новой сборке и CI не участвует.
 
 ## Что нужно
 
-- Windows 10/11 с WebView2 (на целевой машине уже есть);
+- Windows 10/11 с WebView2;
 - Node.js 24 (SvelteKit 3 требует минимум 22.17);
-- Rust stable (минимум 1.95 — его требует sysinfo) с target `x86_64-pc-windows-msvc`;
+- Rust 1.95+ с target `x86_64-pc-windows-msvc`;
 - Visual Studio Build Tools 2022: workload «C++ build tools» и Windows SDK.
 
 TypeScript остаётся 6.0.x: svelte-check пока не поддерживает TypeScript 7.
-`components.json` пока ссылается на `$lib`: shadcn-svelte CLI ещё не описывает SvelteKit 3 (конфиг в `vite.config.js`, импорты `#lib/…`). Готовые компоненты в `src/lib/components/ui` собираются без CLI; новые через CLI добавлять после проверки.
-Зависимости раз в неделю проверяет Dependabot (`.github/dependabot.yml`), PR идут в `refactor-rust-poc`.
+`components.json` ссылается на старый алиас `$lib`; готовые shadcn-svelte-компоненты
+лежат в `src/lib/components/ui` и собираются без CLI. Новые компоненты через CLI
+добавлять после проверки, что он понимает SvelteKit 3 (конфиг в `vite.config.js`,
+импорты `#lib/…`). Dependabot (`.github/dependabot.yml`) раз в неделю проверяет
+npm, Cargo и GitHub Actions; PR идут в `refactor-rust-poc`.
 
-## Обычная x64-машина
+## Обычная сборка (x64)
 
 ```bash
 npm ci
 npm run check
+npm test
 npm run build
 
 cargo fmt --all --check
@@ -29,20 +33,23 @@ npm run tauri dev
 npm run tauri build -- --no-bundle
 ```
 
-Готовый exe — `target/release/BeamModManager.exe` (в CI), отладочный — `target/debug/BeamModManager.exe`.
-Портативная сборка выпуска — zip с этим exe и `latest.json`; установщик не используется.
+Отладочный бинарник — `target/debug/bmm-desktop.exe`; release-сборка Tauri кладёт
+`target/release/BeamModManager.exe`. Установщик не используется: выпуск — portable
+zip с exe и `latest.json`.
 
-## Windows on ARM (эта машина)
+На 2026-10-26 проходят 623 теста Rust (1 ignored) и 90 тестов фронтенда.
 
-Здесь Rust по умолчанию поставился как `aarch64-pc-windows-msvc`, но MSVC ARM64-тулсета нет.
-Собираем x64 — он же релизный:
+## Если хост ARM64
+
+Если Rust установлен как `aarch64-pc-windows-msvc`, а MSVC ARM64-тулсета нет,
+собирайте x64 — он же релизный:
 
 ```bash
 rustup toolchain install stable-x86_64-pc-windows-msvc --force-non-host --profile minimal
 rustup component add rustfmt clippy --toolchain stable-x86_64-pc-windows-msvc
 ```
 
-Команды запускаются из окружения MSVC x64. Проще через временный `.bat`:
+Запускайте команды из окружения MSVC x64. Можно через временный `.bat`:
 
 ```bat
 @echo off
@@ -52,33 +59,57 @@ if errorlevel 1 exit /b 1
 cargo +stable-x86_64-pc-windows-msvc %*
 ```
 
-Для Tauri-сборки добавьте `set RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-msvc` и запускайте
-`npm run tauri build -- --no-bundle --debug`. Иначе Tauri возьмёт ARM64-хост и линковка упадёт
-на несовпадении объектов и библиотек.
+Для Tauri добавьте `set RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-msvc` и запускайте
+`npm run tauri build -- --no-bundle --debug`, иначе Tauri возьмёт ARM64-хост.
 
 ## Почему имена крейтов без «update», «install», «setup»
 
-Windows UAC считает exe с таким словом в имени установщиком и требует повышение (ошибка 740).
-Тестовый exe `bmm_appupdate-*.exe` из-за этого не запускается. Поэтому крейты называются
-`bmm-app-release`, `bmm-packs`, `bmm-checks`, а команды и тексты могут оставаться про обновления
-и установку.
+Windows UAC считает exe с таким словом в имени установщиком и требует повышение
+(ошибка 740). Поэтому крейты называются `bmm-app-release`, `bmm-packs`,
+`bmm-checks`, а команды и тексты могут оставаться про обновления и установку.
 
 ## CI
 
-`.github/workflows/ci.yml` — windows-2025, x64: форматирование, clippy, тесты Rust, проверка
-типов и сборка фронтенда, сборка окна. Старый workflow лежит в `legacy/.github/workflows/` и
-GitHub его не запускает.
+`.github/workflows/ci.yml` — `windows-2025`, x64: `npm ci`, `svelte-check`, Vitest,
+сборка фронтенда, `cargo fmt`, `clippy -D warnings`, `cargo test`. Полная сборка окна
+запускается только вручную (`workflow_dispatch`), потому что release-сборка с LTO
+долгая; выпуск всё равно проверяется отдельным workflow.
+
+Старый C# workflow лежит в `legacy/.github/workflows/` и GitHub его не запускает.
 
 ## Релиз и обновление программы
 
-`.github/workflows/release.yml` запускается на тег `v*`. Перед тегом версия должна совпадать в
-`Cargo.toml`, `package.json` и `src-tauri/tauri.conf.json` — workflow это проверяет и падает,
-если версии разошлись. Сборка делает портативный `BeamModManager-<версия>.zip`, считает
-SHA-256, пишет `latest.json` и публикует GitHub Release. Установленное приложение проверяет
-`releases/latest/download/latest.json`, скачивает архив, проверяет хеш/размер и после
-подтверждения перезапускается через отдельный процесс `--install-update` с откатом.
+`.github/workflows/release.yml` запускается на тег `v*`. Перед тегом версия должна
+совпадать в `Cargo.toml`, `package.json` и `src-tauri/tauri.conf.json`; workflow
+проверяет это и падает при расхождении. Он же требует непустой раздел `## <версия>`
+в `CHANGES.md`.
+
+Сборка делает `BeamModManager-<версия>.zip`, считает SHA-256, пишет `latest.json`
+и публикует GitHub Release. Приложение читает `releases/latest/download/latest.json`,
+скачивает архив, проверяет размер и хеш и после кнопки «Перезапустить» заменяет exe
+через отдельный процесс `--install-update` с откатом.
+
+Сейчас в манифестах **1.0.3**, в `CHANGES.md` уже описан **1.0.4**. Перед тегом
+`v1.0.4` нужно поднять версию во всех трёх файлах и выпустить новую сборку.
+
+## Значок
+
+Исходники лежат в `design/icon`: `python3 tools/icon/make_icon.py` перерисовывает SVG и
+PNG-размеры (нужны Playwright с Chromium и Pillow). Набор для приложения в
+`src-tauri/icons` (ICO, ICNS, PNG и значки Store) собирается из крупного исходника:
+
+```bash
+npm run tauri icon -- design/icon/app-large.svg
+```
+
+Файлы в `src-tauri/icons` вручную не правим — при следующей сборке значка они заменятся.
 
 ## Данные при проверках
 
-Приложение использует `%LOCALAPPDATA%\BeamModManager` (тот же каталог, что старая версия).
-Тесты домена пишут только во временные каталоги.
+Приложение использует `%LOCALAPPDATA%\BeamModManager` (тот же каталог, что старая
+версия). Тесты домена и архивов пишут только во временные каталоги. Реальная папка
+модов и игра для ручной проверки: `.dev\mods`/`.dev\mds` в Desktop-worktree и
+`C:\Users\Admin\Desktop\BeamNG.drive`.
+
+Для сбора сведений о BeamNG на другой машине есть `tools/windows/collect-beamng-info.ps1`:
+он только читает файлы игры и складывает zip на рабочем столе.

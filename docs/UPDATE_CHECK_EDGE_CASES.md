@@ -1,5 +1,8 @@
 # Проверка обновлений: краевые случаи и принятые решения
 
+> **Исторический документ.** Описывает старую C#/WPF-версию или ранний этап переезда. Не является текущей инструкцией: актуальные сведения — в [README](../README.md), [STATUS](STATUS.md) и [BUILD](BUILD.md).
+
+
 Интерфейс запускает проверку только через `UpdateCoordinator.CheckAsync`. Всё ниже покрыто тестами (`UpdateRunnerTests`, `UpdateCoordinatorTests`).
 Связанные документы: [TIME.md](TIME.md) (время и паузы), [AUDIT.md](AUDIT.md) (сквозная проверка), что видит человек: [DESIGN_FLOWS.md](DESIGN_FLOWS.md) раздел 5.
 

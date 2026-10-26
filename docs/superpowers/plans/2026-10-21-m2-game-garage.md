@@ -1,5 +1,8 @@
 # M2: игра, скан модов и экран «Моды» — план реализации
 
+> **Исторический документ.** Описывает старую C#/WPF-версию или ранний этап переезда. Не является текущей инструкцией. Актуальные сведения — в `README.md`, `docs/STATUS.md` и `docs/BUILD.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Цель:** приложение показывает настоящие моды из папки игры, читает `db.json`, включает и выключает их как игра, строит превью и отдаёт рабочий экран «Моды» с виртуальной сеткой и правой панелью.

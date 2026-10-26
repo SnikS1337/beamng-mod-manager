@@ -5,8 +5,11 @@
 белые балки, оранжевые узлы. Мелкие размеры нарисованы отдельно (меньше деталей, толще линии),
 а не уменьшены: в 16 px диагонали и узлы слиплись бы в кашу.
 
-Запуск: python3 tools/icon/make_icon.py — пишет design/icon/*.svg и src/BeamModManager.App/app.ico
-(растрирует Chromium из Playwright, собирает ICO через Pillow).
+Запуск: python3 tools/icon/make_icon.py — перерисовывает исходники design/icon/*.svg
+и PNG-размеры (растрирует Chromium из Playwright, сохраняет через Pillow).
+Значки приложения собираются из крупного исходника командой Tauri CLI:
+    npm run tauri icon -- design/icon/app-large.svg
+(она обновляет src-tauri/icons: ICO, ICNS, PNG и значки Store).
 """
 import io
 import os
@@ -14,7 +17,6 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OUT_SVG = os.path.join(ROOT, "design", "icon")
-OUT_ICO = os.path.join(ROOT, "src", "BeamModManager.App", "app.ico")
 
 PLATE = "#1B2547"
 TOP, LEFT, RIGHT = "#3E5294", "#212B4E", "#2E3D72"
@@ -83,10 +85,8 @@ def main():
             images[px] = Image.open(io.BytesIO(png)).convert("RGBA")
             images[px].save(os.path.join(OUT_SVG, f"app-{px}.png"))
         b.close()
-    sizes = sorted(images, reverse=True)
-    big = images[sizes[0]]
-    big.save(OUT_ICO, format="ICO", sizes=[(s, s) for s in sizes], append_images=[images[s] for s in sizes[1:]])
-    print("ok:", OUT_ICO, sizes)
+    print("ok:", OUT_SVG)
+    print("Дальше: npm run tauri icon -- design/icon/app-large.svg")
 
 
 if __name__ == "__main__":
