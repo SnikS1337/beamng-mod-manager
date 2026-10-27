@@ -62,7 +62,7 @@
     requested = key;
     preview = null;
     loaded = false;
-    void modPreview(id)
+    void modPreview(id, key)
       .then((url) => {
         if (requested === key) preview = url;
       })

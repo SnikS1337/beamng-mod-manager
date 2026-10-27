@@ -220,7 +220,7 @@ pub async fn app_update_download(
 /// Скачивание и подготовка обновления. Блокировку состояния не держим на время сети:
 /// иначе «Отменить» и чтение состояния ждали бы конца загрузки.
 fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)) -> AppUpdateDto {
-    let (manifest, downloader, update_dir, cancel) = {
+    let (manifest, downloader, update_dir, cancel, attempt) = {
         let mut guard = lock_runtime(runtime);
         if matches!(
             guard.state.stage,
@@ -232,7 +232,11 @@ fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)
             guard.state = UpdateState::failed("Сначала проверьте обновление.");
             return dto(guard.state.clone());
         };
-        guard.cancel.reset();
+        // Новая попытка получает свой токен отмены: старый поток не «оживёт»
+        // от reset() и не станет писать в тот же файл.
+        guard.attempt = guard.attempt.wrapping_add(1);
+        let attempt = guard.attempt;
+        guard.cancel = bmm_app_release::CancelToken::new();
         guard.state.stage = UpdateStage::Downloading;
         guard.state.progress = 0.0;
         guard.state.error = None;
@@ -241,10 +245,17 @@ fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)
             guard.downloader.clone(),
             guard.update_dir.clone(),
             guard.cancel.clone(),
+            attempt,
         )
     };
 
-    let downloaded = downloader.download_into(&manifest, &update_dir, progress, &cancel);
+    let downloaded = downloader.download_into_named(
+        &manifest,
+        &update_dir,
+        &format!("update-{attempt}.zip"),
+        progress,
+        &cancel,
+    );
     if cancel.is_cancelled() {
         return dto(lock_runtime(runtime).state.clone());
     }
@@ -267,7 +278,8 @@ fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)
 
     let mut guard = lock_runtime(runtime);
     // Отмену могли нажать, пока шла подготовка файлов. Её состояние важнее результата.
-    if cancel.is_cancelled() {
+    // Номер попытки отсекает старый поток, который проснулся после новой загрузки.
+    if cancel.is_cancelled() || guard.attempt != attempt {
         return dto(guard.state.clone());
     }
     match prepared {
@@ -314,10 +326,10 @@ pub async fn app_update_restart(
         .app_update
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
-    let guard = lock_runtime(&runtime);
+    let mut guard = lock_runtime(&runtime);
     let prepared = guard
         .prepared
-        .as_ref()
+        .take()
         .ok_or_else(|| AppError::new("update", "Обновление ещё не скачано."))?;
     let mut command = std::process::Command::new(&prepared.new_exe);
     command
@@ -327,9 +339,11 @@ pub async fn app_update_restart(
         .arg(&prepared.current_exe)
         .arg("--backup")
         .arg(&prepared.backup);
-    command
-        .spawn()
-        .map_err(|error| AppError::new("update", error.to_string()))?;
+    if let Err(error) = command.spawn() {
+        // Установщик не запустился — оставляем обновление готовым к повтору.
+        guard.prepared = Some(prepared);
+        return Err(AppError::new("update", error.to_string()));
+    }
     drop(guard);
     app.exit(0);
     Ok(())
@@ -447,6 +461,12 @@ fn roll_back(arguments: &InstallerArgs) {
             .arg(current_version().display())
             .spawn();
     }
+}
+
+/// Прежняя версия сообщает, почему новая не записалась: `--update-failed <текст>`.
+pub fn update_failed_message() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    flag_value(&args, "--update-failed")
 }
 
 /// Запуск после самообновления: `--after-update <pid установщика>`.
@@ -676,6 +696,7 @@ mod tests {
             state,
             prepared: None,
             cancel: CancelToken::new(),
+            attempt: 0,
             update_dir: temp.path().join("update"),
             skipped_path: temp.path().join("update-skip.txt"),
             manifest_url: "https://github.com/x/y".parse().unwrap(),
@@ -697,6 +718,7 @@ mod tests {
             },
             prepared: None,
             cancel: CancelToken::new(),
+            attempt: 0,
             update_dir: temp.path().join("update"),
             skipped_path: temp.path().join("update-skip.txt"),
             manifest_url: "https://github.com/x/y".parse().unwrap(),

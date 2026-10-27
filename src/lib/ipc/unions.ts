@@ -7,6 +7,15 @@ export type PendingState = "none" | "enabling" | "disabling" | "queued";
 export type ModRole = "vehicle" | "map" | "addon";
 export type PackagingProblem = "wrapped" | "loose" | "not_mod";
 
+export type BindErrorCode =
+  | "invalidUrl"
+  | "unknownSite"
+  | "notModPage"
+  | "modMissing"
+  | "pageMissing"
+  | "humanCheck"
+  | "pageOpen";
+
 export type UpdateStatusText = "none" | "likely" | "possible";
 export type UpdateSiteStatus = "ok" | "human_check" | "unavailable" | "off";
 export type UpdateSourceStatus = "ok" | "needsHumanCheck" | "unavailable";

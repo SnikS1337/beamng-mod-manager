@@ -271,7 +271,17 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
     if let Some((href, end)) = anchors.first()
         && let Some(url) = join_url(basis.url.as_str(), href)
     {
-        let after = &without_comments[*end..without_comments.len().min(*end + 300)];
+        // Окно после ссылки режем по границе символа: страницы на кириллице иначе
+        // паникуют на `&s[end..end + 300]`, если 300 попал внутрь UTF-8.
+        let tail = &without_comments[*end..];
+        let mut cut = 0;
+        for (index, ch) in tail.char_indices() {
+            if index + ch.len_utf8() > 300 {
+                break;
+            }
+            cut = index + ch.len_utf8();
+        }
+        let after = &tail[..cut];
         if let Some(value) = parse_size(&strip_tags(after)) {
             size = Some(value);
         }
@@ -436,6 +446,19 @@ mod tests {
         assert_eq!(detail.author.as_deref(), Some("Carlovers Games"));
         assert!(detail.size_bytes.unwrap_or_default() > 60_000_000);
         assert_eq!(detail.offers[0].url.path(), "/load/0-0-1-123015-20");
+    }
+
+    #[test]
+    fn detail_window_cuts_on_char_boundary() {
+        // 151 кириллическая буква — 302 байта: старое окно в 300 байт попадало
+        // внутрь символа и паниковало на реальных страницах.
+        let list = parse_list(&fixture("list-page.html"));
+        let html = format!(
+            r#"<a class="filedowl-a" href="/load/0-0-1-160435-20">Скачать</a>{}"#,
+            "я".repeat(151)
+        );
+        let detail = parse_detail(&html, &list[0]);
+        assert_eq!(detail.offers.len(), 1);
     }
 
     #[test]

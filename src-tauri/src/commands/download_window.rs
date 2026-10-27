@@ -149,16 +149,26 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         .build()
         .map_err(|error| AppError::new("window", error.to_string()))?;
 
-    let panel = window
-        .add_child(
-            WebviewBuilder::new(PANEL_LABEL, panel_url(&app)),
-            LogicalPosition::new(0.0, 0.0),
-            LogicalSize::new(window_width, window_height),
-        )
-        .map_err(|error| AppError::new("panel", error.to_string()))?;
+    let panel = match window.add_child(
+        WebviewBuilder::new(PANEL_LABEL, panel_url(&app)),
+        LogicalPosition::new(0.0, 0.0),
+        LogicalSize::new(window_width, window_height),
+    ) {
+        Ok(panel) => panel,
+        Err(error) => {
+            // Окно уже зарегистрировано: без уборки повтор откроет пустую панель.
+            let _ = window.close();
+            return Err(AppError::new("panel", error.to_string()));
+        }
+    };
     let download_app = app.clone();
     let site_builder = WebviewBuilder::new(SITE_LABEL, WebviewUrl::External(url))
         .initialization_script(SITE_HELPERS)
+        // Первый адрес проверен выше; каждый следующий переход и редирект тоже
+        // не должен уводить в localhost/частную сеть.
+        .on_navigation(|url| {
+            url.scheme() == "about" || bmm_sources::net::redirect_allowed(url)
+        })
         .on_download(move |_webview, event| {
             match event {
                 DownloadEvent::Requested { url, destination } => {
@@ -276,19 +286,26 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         });
     let site_width = (window_width - side_space(window_width)).max(320.0);
     let site_height = (window_height - SITE_VERTICAL_SPACE).max(300.0);
-    let site = window
-        .add_child(
-            site_builder,
-            LogicalPosition::new(SITE_X, SITE_Y),
-            LogicalSize::new(site_width, site_height),
-        )
-        .map_err(|error| AppError::new("site", error.to_string()))?;
+    let site = match window.add_child(
+        site_builder,
+        LogicalPosition::new(SITE_X, SITE_Y),
+        LogicalSize::new(site_width, site_height),
+    ) {
+        Ok(site) => site,
+        Err(error) => {
+            let _ = window.close();
+            return Err(AppError::new("site", error.to_string()));
+        }
+    };
 
-    window
-        .show()
-        .map_err(|error| AppError::new("window", error.to_string()))?;
-    site.set_focus()
-        .map_err(|error| AppError::new("site", error.to_string()))?;
+    if let Err(error) = window.show() {
+        let _ = window.close();
+        return Err(AppError::new("window", error.to_string()));
+    }
+    if let Err(error) = site.set_focus() {
+        let _ = window.close();
+        return Err(AppError::new("site", error.to_string()));
+    }
     let _ = panel;
     Ok(())
 }

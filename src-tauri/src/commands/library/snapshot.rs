@@ -42,6 +42,22 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 disk.enabled = false;
             }
         }
+    } else {
+        // db.json занят/недочитан: не считаем все моды включёнными и не
+        // перезаписываем библиотеку. Выключенное состояние берём из неё.
+        let known: HashMap<String, bool> = state
+            .library
+            .mods()
+            .into_iter()
+            .map(|item| (item.file_name.to_lowercase(), item.enabled))
+            .collect();
+        for disk in &mut scan_result.mods {
+            if let Some(enabled) = known.get(&disk.file_name.to_lowercase())
+                && !enabled
+            {
+                disk.enabled = false;
+            }
+        }
     }
 
     // Пока тост удаления жив, запись библиотеки должна пережить сверку: подставляем фиктивный файл,
@@ -171,9 +187,10 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         );
     }
     *state.previews_by_id.lock().unwrap() = targets;
-    let archive_titles = state.previews.titles();
-    let archive_problems = state.previews.problems();
-    let archive_infos = state.previews.mod_infos();
+    let archive_titles = state.previews.titles_shared();
+    let archive_problems = state.previews.problems_shared();
+    let archive_infos = state.previews.mod_infos_shared();
+    let archive_contents = state.previews.contents_shared();
 
     let game_version = mods_dir.parent().and_then(info::detect_version);
     let mods: Vec<ModCardDto> = installed_list
@@ -268,7 +285,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     let mods = mark_duplicates(
         mods,
         &preview_keys,
-        &state.previews.contents(),
+        &archive_contents,
         &archive_infos,
         &modified,
     );

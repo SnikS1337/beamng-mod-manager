@@ -15,7 +15,7 @@ describe("тосты", () => {
     expect(toasts.current).toBeNull();
   });
 
-  it("новый тост закрепляет действие прежнего", () => {
+  it("новый тост закрепляет прежнее действие, чтобы мод не пропал из «Удалённых»", () => {
     const commit = vi.fn();
     toasts.show("Мод удалён", { undo: vi.fn(), commit });
     toasts.show("Другое");

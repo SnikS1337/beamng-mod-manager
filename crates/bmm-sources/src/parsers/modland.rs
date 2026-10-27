@@ -74,9 +74,10 @@ pub fn parse_list(html: &str) -> Vec<Listing> {
             }
             if category.is_none()
                 && let Some(anchor_url) = join_url(BASE, &href)
-                && anchor_url
-                    .host_str()
-                    .is_some_and(|host| host.ends_with("modland.net"))
+                && anchor_url.host_str().is_some_and(|host| {
+                    let host = host.trim_end_matches('.').to_ascii_lowercase();
+                    host == "modland.net" || host.ends_with(".modland.net")
+                })
             {
                 let segments: Vec<&str> = anchor_url
                     .path_segments()

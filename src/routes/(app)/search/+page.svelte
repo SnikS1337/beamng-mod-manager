@@ -245,6 +245,7 @@
     const a = card.listings[0];
     const b = other.listings[0];
     if (!a || !b) return;
+    const at = requestId;
     deciding = card.id;
     error = null;
     try {
@@ -254,10 +255,12 @@
         { source: b.source, sourceId: b.sourceId },
         same,
       );
+      // Пока шёл ответ, могли запустить новый поиск: его выдача новее.
+      if (at !== requestId) return;
       cards = event.cards;
       sources = event.sources;
     } catch (reason) {
-      error = errorText(reason);
+      if (at === requestId) error = errorText(reason);
     } finally {
       deciding = null;
     }

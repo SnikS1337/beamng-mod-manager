@@ -14,6 +14,9 @@ const MAX_BYTES: u64 = 1024 * 1024;
 pub struct SettingsLoadResult {
     pub settings: AppSettings,
     pub warnings: Vec<String>,
+    /// Файл не прочитался: сохранять поверх него нельзя, иначе настройки
+    /// по умолчанию затрут настоящие.
+    pub save_blocked: bool,
 }
 
 impl SettingsLoadResult {
@@ -51,6 +54,7 @@ impl SettingsStore {
             return SettingsLoadResult {
                 settings: AppSettings::default(),
                 warnings: Vec::new(),
+                save_blocked: false,
             };
         }
 
@@ -66,6 +70,7 @@ impl SettingsStore {
                 return SettingsLoadResult {
                     settings: AppSettings::default(),
                     warnings: vec![format!("не удалось прочитать настройки: {error}")],
+                    save_blocked: true,
                 };
             }
         };
@@ -191,7 +196,11 @@ impl SettingsStore {
         }
         .normalize();
 
-        SettingsLoadResult { settings, warnings }
+        SettingsLoadResult {
+            settings,
+            warnings,
+            save_blocked: false,
+        }
     }
 
     pub fn save(&self, settings: &AppSettings) -> std::io::Result<()> {
@@ -216,6 +225,7 @@ impl SettingsStore {
         SettingsLoadResult {
             settings: AppSettings::default(),
             warnings: vec![warning],
+            save_blocked: false,
         }
     }
 }
@@ -315,6 +325,19 @@ mod tests {
         let path = dir.join("settings.json");
         fs::write(&path, text).unwrap();
         SettingsStore::new(path, fixed_clock())
+    }
+
+    #[test]
+    fn unreadable_settings_file_blocks_saving() {
+        // Папка вместо файла: прочитать нельзя, но и перезаписывать нельзя —
+        // иначе настройки по умолчанию затрут файл, который станет доступен позже.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::create_dir_all(&path).unwrap();
+        let store = SettingsStore::new(path, fixed_clock());
+        let result = store.load();
+        assert!(result.save_blocked);
+        assert!(!result.warnings.is_empty());
     }
 
     #[test]

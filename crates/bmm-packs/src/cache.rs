@@ -15,6 +15,8 @@ const CONTENTS_FILE: &str = "contents.json";
 const MOD_INFO_FILE: &str = "mod_info.json";
 const TITLES_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const CONTENTS_MAX_BYTES: u64 = 32 * 1024 * 1024;
+/// `mod_info` хранит только нужные поля; 64 МБ хватает большой библиотеке.
+const MOD_INFO_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Мод-сборник может нести сотни папок машин; для сравнения хватит первых.
 const CONTENT_KEYS_PER_MOD: usize = 500;
 
@@ -186,6 +188,12 @@ impl PreviewCache {
             .load(&self.root.join(PROBLEMS_FILE), TITLES_MAX_BYTES)
     }
 
+    /// Та же карта, но без копирования: чтение снимков не должно клонировать мегабайты.
+    pub fn problems_shared(&self) -> Arc<BTreeMap<String, String>> {
+        self.problems
+            .shared(&self.root.join(PROBLEMS_FILE), TITLES_MAX_BYTES)
+    }
+
     pub fn put_problems(&self, entries: &[(String, Option<String>)]) -> std::io::Result<()> {
         if entries.is_empty() {
             return Ok(());
@@ -203,6 +211,11 @@ impl PreviewCache {
     pub fn contents(&self) -> BTreeMap<String, Vec<String>> {
         self.contents
             .load(&self.root.join(CONTENTS_FILE), CONTENTS_MAX_BYTES)
+    }
+
+    pub fn contents_shared(&self) -> Arc<BTreeMap<String, Vec<String>>> {
+        self.contents
+            .shared(&self.root.join(CONTENTS_FILE), CONTENTS_MAX_BYTES)
     }
 
     pub fn put_contents(&self, entries: &[(String, Vec<String>)]) -> std::io::Result<()> {
@@ -223,7 +236,12 @@ impl PreviewCache {
     /// `mod_info` из архивов по ключу превью: `{"id": …, "data": {…}}`, `null` — нет.
     pub fn mod_infos(&self) -> BTreeMap<String, serde_json::Value> {
         self.mod_infos
-            .load(&self.root.join(MOD_INFO_FILE), CONTENTS_MAX_BYTES)
+            .load(&self.root.join(MOD_INFO_FILE), MOD_INFO_MAX_BYTES)
+    }
+
+    pub fn mod_infos_shared(&self) -> Arc<BTreeMap<String, serde_json::Value>> {
+        self.mod_infos
+            .shared(&self.root.join(MOD_INFO_FILE), MOD_INFO_MAX_BYTES)
     }
 
     pub fn put_mod_infos(&self, entries: &[(String, serde_json::Value)]) -> std::io::Result<()> {
@@ -243,8 +261,13 @@ impl PreviewCache {
             .load(&self.root.join(TITLES_FILE), TITLES_MAX_BYTES)
     }
 
+    pub fn titles_shared(&self) -> Arc<BTreeMap<String, String>> {
+        self.titles
+            .shared(&self.root.join(TITLES_FILE), TITLES_MAX_BYTES)
+    }
+
     pub fn title(&self, key: &str) -> Option<Option<String>> {
-        let titles = self.titles();
+        let titles = self.titles_shared();
         titles.get(key).map(|title| {
             if title.is_empty() {
                 None
@@ -343,19 +366,25 @@ where
     }
 
     fn load(&self, path: &Path, max_bytes: u64) -> BTreeMap<String, T> {
+        (*self.shared(path, max_bytes)).clone()
+    }
+
+    /// Разобранная карта без копирования: снимок списка читает её целиком,
+    /// и клонировать десятки мегабайт на каждый показ незачем.
+    fn shared(&self, path: &Path, max_bytes: u64) -> Arc<BTreeMap<String, T>> {
         let Some(stamp) = stamp_of(path) else {
             *self.slot() = None;
-            return BTreeMap::new();
+            return Arc::new(BTreeMap::new());
         };
         if stamp.0 > max_bytes {
             // Файл вырос больше предела: старую разобранную копию больше не используем.
             *self.slot() = None;
-            return BTreeMap::new();
+            return Arc::new(BTreeMap::new());
         }
         if let Some((cached, map)) = self.slot().as_ref()
             && *cached == stamp
         {
-            return (**map).clone();
+            return Arc::clone(map);
         }
         let mut map: BTreeMap<String, T> = fs::read_to_string(path)
             .ok()
@@ -366,7 +395,8 @@ where
                 value.clean_with(clean);
             }
         }
-        *self.slot() = Some((stamp, Arc::new(map.clone())));
+        let map = Arc::new(map);
+        *self.slot() = Some((stamp, Arc::clone(&map)));
         map
     }
 
@@ -514,6 +544,25 @@ mod tests {
         let fresh = PreviewCache::new(dir.path());
         assert_eq!(fresh.titles().len(), 1);
         assert!(fresh.problems().is_empty());
+    }
+
+    #[test]
+    fn shared_map_is_not_cloned_until_the_file_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path());
+        cache
+            .put_titles(&[("a".to_string(), Some("A".to_string()))])
+            .unwrap();
+        let first = cache.titles_shared();
+        let second = cache.titles_shared();
+        assert!(Arc::ptr_eq(&first, &second), "чтение не копирует карту");
+        fs::write(dir.path().join(TITLES_FILE), r#"{"a":"Changed","b":"B"}"#).unwrap();
+        let third = cache.titles_shared();
+        assert!(
+            !Arc::ptr_eq(&second, &third),
+            "правка файла сбрасывает копию"
+        );
+        assert_eq!(third["a"], "Changed");
     }
 
     #[test]

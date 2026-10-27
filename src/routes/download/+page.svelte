@@ -121,9 +121,12 @@
     installError = null;
   }
 
+  let prepareToken = 0;
+
   async function prepare(path: string): Promise<void> {
     if (!path || path === handledPath || installing) return;
     handledPath = path;
+    const token = ++prepareToken;
     resetArchive();
     inspecting = true;
     installError = null;
@@ -132,6 +135,10 @@
     detail = "Смотрим структуру, опасные пути и подозрительные файлы.";
     try {
       const [found] = await incomingInspect([path]);
+      if (token !== prepareToken) {
+        if (found) void incomingDiscard(found.workDir).catch(() => {});
+        return;
+      }
       if (!found) throw new Error("Не удалось проверить архив.");
       archive = found;
       selected = found.items.map(preselected);
@@ -147,11 +154,14 @@
         detail = "Можно установить — прошлая версия останется в копиях.";
       }
     } catch (reason) {
-      installError = errorText(reason);
-      status = "Не удалось проверить архив";
-      detail = installError;
+      if (token === prepareToken) {
+        handledPath = "";
+        installError = errorText(reason);
+        status = "Не удалось проверить архив";
+        detail = installError;
+      }
     } finally {
-      inspecting = false;
+      if (token === prepareToken) inspecting = false;
     }
   }
 

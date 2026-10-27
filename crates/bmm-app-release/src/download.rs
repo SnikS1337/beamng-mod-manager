@@ -252,10 +252,22 @@ impl UpdateDownloader {
         progress: &mut dyn FnMut(f64),
         cancel: &CancelToken,
     ) -> Result<DownloadedUpdate, DownloadError> {
+        self.download_into_named(manifest, update_dir, "update.zip", progress, cancel)
+    }
+
+    /// То же, но с именем файла попытки: две загрузки не пишут в один `.part`.
+    pub fn download_into_named(
+        &self,
+        manifest: &UpdateManifest,
+        update_dir: &Path,
+        file_name: &str,
+        progress: &mut dyn FnMut(f64),
+        cancel: &CancelToken,
+    ) -> Result<DownloadedUpdate, DownloadError> {
         let directory = update_dir.join(manifest.version.display());
         fs::create_dir_all(&directory)
             .map_err(|error| DownloadError::io("не удалось создать папку обновления", error))?;
-        let path = directory.join("update.zip");
+        let path = directory.join(file_name);
         self.download(manifest, &path, progress, cancel)?;
         Ok(DownloadedUpdate {
             path,

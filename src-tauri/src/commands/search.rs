@@ -287,7 +287,13 @@ pub async fn search_open_modland(
     crate::commands::updates::open_modland_check(app, state, url).await
 }
 
-const PREVIEW_HOSTS: &[&str] = &["modland.net", "stmods.org", "modsgaming.ru", "beamng.com"];
+const PREVIEW_HOSTS: &[&str] = &[
+    "modland.net",
+    "stmods.org",
+    "modsgaming.ru",
+    "modsgaming.us",
+    "beamng.com",
+];
 
 fn preview_url_allowed(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https") && bmm_domain::hosts::host_matches(url, PREVIEW_HOSTS)
@@ -578,6 +584,7 @@ mod tests {
             "http://modland.net/i.jpg",
             "https://stmods.org/i.jpg",
             "https://modsgaming.ru/i.png",
+            "https://www.modsgaming.us/_ld/i.jpg",
             "https://cdn.beamng.com/i.jpg",
         ] {
             assert!(

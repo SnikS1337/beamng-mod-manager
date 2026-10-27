@@ -225,9 +225,17 @@
 
   // Панель «Проверка»: состояние сайтов и время последней проверки — из снимка.
   async function refreshSites() {
+    const token = readToken;
     try {
       const fresh = await updatesSnapshot();
-      snapshot = { ...snapshot, sites: fresh.sites, lastChecked: fresh.lastChecked, lost: fresh.lost };
+      if (token === readToken) {
+        snapshot = {
+          ...snapshot,
+          sites: fresh.sites,
+          lastChecked: fresh.lastChecked,
+          lost: fresh.lost,
+        };
+      }
     } catch {
       // Панель просто останется прежней.
     }
@@ -289,6 +297,7 @@
   }
 
   async function dismiss(finding: UpdateFinding) {
+    readToken += 1;
     try {
       snapshot = await updatesDismiss(finding.modId);
     } catch (reason) {
@@ -297,6 +306,7 @@
   }
 
   async function restore(finding: UpdateFinding) {
+    readToken += 1;
     try {
       snapshot = await updatesRestore(finding.modId);
     } catch (reason) {
@@ -305,17 +315,22 @@
   }
 
   async function confirmPage(suggestion: PageSuggestion) {
+    readToken += 1;
     try {
       snapshot = await updatesConfirmPage(suggestion.modId);
       toasts.show(`Следим за страницей «${suggestion.modName}»`, {
         undo: async () => {
+          readToken += 1;
           snapshot = await updatesUndoPage(suggestion);
         },
       });
       // Подтверждённую страницу проверяем сразу: иначе обновление появится
       // только после следующего запуска проверки.
+      const token = readToken;
       void updatesCheckMod(suggestion.modId)
-        .then((next) => (snapshot = next))
+        .then((next) => {
+          if (token === readToken) snapshot = next;
+        })
         .catch(() => {});
     } catch (reason) {
       error = errorText(reason);
@@ -323,7 +338,9 @@
   }
 
   async function verifyPage(suggestion: PageSuggestion) {
-    if (verifying) return;
+    // Проверка занимает десятки секунд и идёт через общий браузер страниц:
+    // вторую строку запускать нельзя, даже если нажали на другую карточку.
+    if (verifying !== null) return;
     verifying = suggestion.modId;
     verifyErrors = { ...verifyErrors, [suggestion.modId]: null };
     try {
@@ -340,10 +357,12 @@
   }
 
   async function rejectPage(suggestion: PageSuggestion) {
+    readToken += 1;
     try {
       snapshot = await updatesRejectPage(suggestion.modId);
       toasts.show(`Страница «${suggestion.modName}» отклонена`, {
         undo: async () => {
+          readToken += 1;
           snapshot = await updatesUndoPage(suggestion);
         },
       });
@@ -353,10 +372,12 @@
   }
 
   async function unfollow(finding: UpdateFinding) {
+    readToken += 1;
     try {
       snapshot = await updatesUnfollow(finding.modId, finding.source);
       toasts.show(`Больше не следим за страницей «${finding.modName}»`, {
         undo: async () => {
+          readToken += 1;
           snapshot = await updatesRefollow(finding.modId, finding.source);
         },
       });
@@ -367,6 +388,7 @@
 
   /** «Страница пропала»: искать новую (сразу запускаем поиск) или просто перестать следить. */
   async function forgetLost(page: LostPage, searchAgain: boolean) {
+    readToken += 1;
     try {
       snapshot = await updatesForgetLost(page.modId, page.source, searchAgain);
       if (searchAgain) {
@@ -374,6 +396,7 @@
       } else {
         toasts.show(`Больше не следим за «${page.modName}»`, {
           undo: async () => {
+            readToken += 1;
             snapshot = await updatesRefollow(page.modId, page.source);
           },
         });
@@ -722,7 +745,7 @@
                 <button
                   class="btn-ghost"
                   type="button"
-                  disabled={verifying === suggestion.modId}
+                  disabled={verifying !== null}
                   onclick={() => void verifyPage(suggestion)}
                 >
                   {verifying === suggestion.modId ? "Проверяем…" : "Проверить на других сайтах"}

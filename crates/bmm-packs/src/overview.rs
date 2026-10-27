@@ -215,8 +215,14 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
 /// страницы и версией), а иногда и сам автор. То же самое игра потом пишет в db.json,
 /// но читать архив можно сразу, не дожидаясь запуска игры. `None` — такой записи нет.
 pub fn mod_info(path: &Path) -> Option<(String, Value)> {
-    let index = zip_index::read_index(path).ok()?;
-    let entry = index.entries.iter().find_map(|entry| {
+    try_mod_info(path).ok().flatten()
+}
+
+/// Как [`mod_info`], но ошибка чтения архива отличается от «записи нет»:
+/// вызывающий решает, кэшировать ли пустой ответ или повторить позже.
+pub fn try_mod_info(path: &Path) -> Result<Option<(String, Value)>, zip_index::ZipError> {
+    let index = zip_index::read_index(path)?;
+    let Some(entry) = index.entries.iter().find_map(|entry| {
         let parts: Vec<&str> = entry.name.split('/').collect();
         match parts.as_slice() {
             [root, id, file]
@@ -228,9 +234,24 @@ pub fn mod_info(path: &Path) -> Option<(String, Value)> {
             }
             _ => None,
         }
-    })?;
-    let value = info_value(path, &entry.1)?;
-    value.is_object().then_some((entry.0, value))
+    }) else {
+        return Ok(None);
+    };
+    let mut archive = zip_index::open_archive(path)?;
+    let mut info = match archive.by_name(&entry.1) {
+        Ok(info) => info,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if info.size() > MAX_INFO_BYTES {
+        return Ok(None);
+    }
+    let mut text = String::new();
+    info.read_to_string(&mut text)?;
+    let Ok(value) = json5::from_str::<Value>(&text) else {
+        return Ok(None);
+    };
+    Ok(value.is_object().then_some((entry.0, value)))
 }
 
 fn info_value(path: &Path, entry: &str) -> Option<Value> {
@@ -520,6 +541,16 @@ mod tests {
         let plain = temp.path().join("plain.zip");
         build_zip(&plain, &[("vehicles/car/a.jbeam", b"x")]);
         assert!(mod_info(&plain).is_none());
+    }
+
+    #[test]
+    fn unreadable_archive_is_an_error_not_missing_info() {
+        // Такой ответ нельзя кэшировать как «записи нет»: архив занят или недокачан.
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("broken.zip");
+        std::fs::write(&path, b"not a zip").unwrap();
+        assert!(try_mod_info(&path).is_err());
+        assert!(mod_info(&path).is_none());
     }
 
     #[test]

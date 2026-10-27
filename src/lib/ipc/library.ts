@@ -218,9 +218,23 @@ export async function modDetails(id: string): Promise<ModDetails> {
   };
 }
 
-export async function modPreview(id: string): Promise<string | null> {
-  if (!isTauri()) return null;
-  return invoke<string | null>("mod_preview", { id });
+const previewRequests = new Map<string, Promise<string | null>>();
+
+export function modPreview(id: string, key = id): Promise<string | null> {
+  const existing = previewRequests.get(key);
+  if (existing) return existing;
+  const request = (async () => {
+    if (!isTauri()) return null;
+    return invoke<string | null>("mod_preview", { id });
+  })();
+  previewRequests.set(key, request);
+  // Неудачу не кешируем: архив мог быть занят, при возврате карточки попробуем снова.
+  void request
+    .then((url) => {
+      if (url === null) previewRequests.delete(key);
+    })
+    .catch(() => previewRequests.delete(key));
+  return request;
 }
 
 export async function modDelete(id: string): Promise<DeletedTicket> {

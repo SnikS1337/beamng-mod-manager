@@ -150,17 +150,29 @@ pub fn restore_deleted(
         return result;
     };
     let guessed = filename::from_file_name(&name);
-    let base_id = name.to_lowercase();
-    let mut mod_id = base_id.clone();
-    let mut suffix = 2;
-    while store.get_mod(&mod_id).is_some() {
-        mod_id = format!("{base_id}#{suffix}");
-        suffix += 1;
-    }
-    let title = if guessed.name.trim().is_empty() {
-        name.strip_suffix(".zip").unwrap_or(&name).to_string()
-    } else {
-        guessed.name
+    // Если запись библиотеки ещё жива (файл вернули из бэкапа), сохраняем её id:
+    // так не теряются привязка страницы, отказ от проверки и имя, заданное человеком.
+    let existing = store
+        .mods()
+        .into_iter()
+        .find(|item| item.file_name.eq_ignore_ascii_case(&name));
+    let (mod_id, title) = match existing {
+        Some(item) => (item.id, item.name),
+        None => {
+            let base_id = name.to_lowercase();
+            let mut mod_id = base_id.clone();
+            let mut suffix = 2;
+            while store.get_mod(&mod_id).is_some() {
+                mod_id = format!("{base_id}#{suffix}");
+                suffix += 1;
+            }
+            let title = if guessed.name.trim().is_empty() {
+                name.strip_suffix(".zip").unwrap_or(&name).to_string()
+            } else {
+                guessed.name
+            };
+            (mod_id, title)
+        }
     };
     store.upsert_mod(InstalledMod {
         id: mod_id,
@@ -169,7 +181,7 @@ pub fn restore_deleted(
         version: guessed.version,
         size_bytes: fs::metadata(path).ok().map(|meta| meta.len() as i64),
         installed_at_utc: now,
-        enabled: true,
+        enabled: path.parent() == Some(installer.layout().mods_dir.as_path()),
     });
     result
 }
@@ -310,6 +322,31 @@ mod tests {
             enabled: true,
         });
         assert!(deleted(&installer, &store).is_empty());
+    }
+
+    #[test]
+    fn restore_deleted_reuses_the_library_entry() {
+        let (temp, installer) = setup();
+        let source = temp.path().join("source.zip");
+        zip(&source);
+        installer.install_from_path(&source, "old.zip", InstallOptions::default());
+        installer.remove("old.zip");
+        let store = InMemoryLibraryStore::new();
+        let item = deleted(&installer, &store).into_iter().next().unwrap();
+        store.upsert_mod(InstalledMod {
+            id: "keep-id".to_string(),
+            name: "Моё имя".to_string(),
+            file_name: "old.zip".to_string(),
+            version: None,
+            size_bytes: Some(1),
+            installed_at_utc: now(),
+            enabled: false,
+        });
+        let restored = restore_deleted(&installer, &store, &item, None, now());
+        assert!(restored.success, "{}", restored.message);
+        let saved = store.get_mod("keep-id").expect("id сохранён");
+        assert_eq!(saved.name, "Моё имя");
+        assert!(saved.enabled, "файл вернулся в mods");
     }
 
     #[test]

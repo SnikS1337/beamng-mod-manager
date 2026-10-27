@@ -110,6 +110,48 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Оставляет в `mod_info` только поля, которые читает окно: остальное (описания,
+/// картинки, длинные списки) раздувало кеш до мегабайт на мод.
+fn compact_mod_info(value: &serde_json::Value) -> serde_json::Value {
+    if value.is_null() {
+        return serde_json::Value::Null;
+    }
+    let Some(object) = value.as_object() else {
+        return serde_json::Value::Null;
+    };
+    let Some(id) = object.get("id").and_then(serde_json::Value::as_str) else {
+        return serde_json::Value::Null;
+    };
+    let data = object.get("data").and_then(serde_json::Value::as_object);
+    let mut picked = serde_json::Map::new();
+    for key in [
+        "tag_line",
+        "title",
+        "name",
+        "version",
+        "version_string",
+        "username",
+        "author",
+        "last_update",
+    ] {
+        let Some(value) = data.and_then(|data| data.get(key)) else {
+            continue;
+        };
+        let short = value
+            .as_str()
+            .is_some_and(|text| text.chars().count() <= 300);
+        if short {
+            picked.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(value) = data.and_then(|data| data.get("resource_id"))
+        && (value.is_number() || value.is_string())
+    {
+        picked.insert("resource_id".to_string(), value.clone());
+    }
+    serde_json::json!({ "id": id, "data": picked })
+}
+
 /// Короткая подпись из `mod_info`: по ней видно, что «машина» на самом деле
 /// человечек-реквизит (`75KG Ragdoll Humanoid`).
 pub(crate) fn mod_info_hint(value: &serde_json::Value) -> Option<&str> {
@@ -249,11 +291,18 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
         .values()
         .cloned()
         .collect();
-    let known = state.previews.titles();
-    let known_problems = state.previews.problems();
-    let known_contents = state.previews.contents();
-    let known_infos = state.previews.mod_infos();
+    let known = state.previews.titles_shared();
+    let known_problems = state.previews.problems_shared();
+    let known_contents = state.previews.contents_shared();
+    let known_infos = state.previews.mod_infos_shared();
     let mut infos: Vec<(String, serde_json::Value)> = Vec::new();
+    // Старые записи хранили весь info.json; сжимаем их при первом чтении.
+    for (key, value) in known_infos.iter() {
+        let compact = compact_mod_info(value);
+        if compact != *value {
+            infos.push((key.clone(), compact));
+        }
+    }
     let mut found: Vec<(String, Option<String>)> = Vec::new();
     let mut problems: Vec<(String, Option<String>)> = Vec::new();
     let mut contents: Vec<(String, Vec<String>)> = Vec::new();
@@ -308,10 +357,18 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
             && !infos.iter().any(|(key, _)| *key == target.key)
             && target.path.is_file()
         {
-            let value = overview::mod_info(&target.path)
-                .map(|(id, data)| serde_json::json!({ "id": id, "data": data }))
-                .unwrap_or(serde_json::Value::Null);
-            infos.push((target.key.clone(), value));
+            match overview::try_mod_info(&target.path) {
+                Ok(Some((id, data))) => {
+                    infos.push((
+                        target.key.clone(),
+                        compact_mod_info(&serde_json::json!({ "id": id, "data": data })),
+                    ));
+                }
+                // Записи нет — это известный ответ, кэшируем, чтобы не читать архив снова.
+                Ok(None) => infos.push((target.key.clone(), serde_json::Value::Null)),
+                // Архив занят/недочитан: не кэшируем, попробуем в следующий раз.
+                Err(_) => {}
+            }
         }
         if found.len() + problems.len() + contents.len() + infos.len() >= 100 {
             flush(&mut found, &mut problems, &mut contents, &mut infos);
@@ -413,7 +470,7 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
         .iter()
         .map(|(file, enabled)| (file.as_str(), *enabled))
         .collect();
-    let outcome = db.set_active(&changes, || false);
+    let outcome = db.set_active(&changes, process::is_running);
     if outcome.success()
         || matches!(
             outcome.outcome,
@@ -430,7 +487,7 @@ fn apply_repo_info(
     db: &bmm_game::db::GameDbReadResult,
     disks_by_file: &HashMap<String, &DiskMod>,
 ) {
-    let infos = state.previews.mod_infos();
+    let infos = state.previews.mod_infos_shared();
     let _batch = state.library.batch();
     for installed in state.library.mods() {
         if state.library.is_checking_declined(&installed.id) {
@@ -521,10 +578,34 @@ pub(crate) fn toggle_mod(
         return Err(AppError::new("not_found", "Мод не найден."));
     };
     let layout = ModLayout::in_app_folder(&mods_dir, state.paths.root());
-    let disk = scan::scan_mods(&layout)
-        .mods
-        .into_iter()
-        .find(|item| item.file_name.eq_ignore_ascii_case(&installed.file_name))
+    // Обычный путь берём из уже построенного снимка: полный scan_mods на каждый
+    // toggle — это O(всех модов) на клик и минуты на массовых действиях.
+    let disk = state
+        .previews_by_id
+        .lock()
+        .unwrap()
+        .get(id)
+        .filter(|target| target.file_name.eq_ignore_ascii_case(&installed.file_name))
+        .and_then(|target| {
+            let metadata = std::fs::metadata(&target.path).ok()?;
+            Some(DiskMod {
+                file_name: target.file_name.clone(),
+                enabled: target.sub_folder.is_some()
+                    || target.path.parent() == Some(layout.mods_dir.as_path()),
+                size_bytes: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
+                sub_folder: target.sub_folder.clone(),
+                modified_utc: metadata
+                    .modified()
+                    .ok()
+                    .map(chrono::DateTime::<chrono::Utc>::from),
+            })
+        })
+        .or_else(|| {
+            scan::scan_mods(&layout)
+                .mods
+                .into_iter()
+                .find(|item| item.file_name.eq_ignore_ascii_case(&installed.file_name))
+        })
         .ok_or_else(|| AppError::new("missing", "Файл мода не найден."))?;
 
     if process::is_running() {
@@ -544,10 +625,11 @@ pub(crate) fn toggle_mod(
             return Err(AppError::new("move", moved.message));
         }
         let db = GameModDb::new(&mods_dir);
-        let _ = db.set_active(&[(&disk.file_name, true)], || false);
+        let _ = db.set_active(&[(&disk.file_name, true)], process::is_running);
         let mut updated = installed;
         updated.enabled = true;
         state.library.upsert_mod(updated);
+        clear_pending(state, &disk.file_name);
         return Ok(ToggleResult {
             outcome: "done".to_string(),
             enabled: true,
@@ -556,12 +638,13 @@ pub(crate) fn toggle_mod(
     }
 
     let db = GameModDb::new(&mods_dir);
-    let result = db.set_active(&[(&disk.file_name, enabled)], || false);
+    let result = db.set_active(&[(&disk.file_name, enabled)], process::is_running);
     match result.outcome {
         SetActiveOutcome::Done | SetActiveOutcome::Unchanged => {
             let mut updated = installed;
             updated.enabled = enabled;
             state.library.upsert_mod(updated);
+            clear_pending(state, &disk.file_name);
             Ok(ToggleResult {
                 outcome: if result.outcome == SetActiveOutcome::Done {
                     "done"
@@ -578,6 +661,7 @@ pub(crate) fn toggle_mod(
             let mut updated = installed;
             updated.enabled = true;
             state.library.upsert_mod(updated);
+            clear_pending(state, &disk.file_name);
             Ok(ToggleResult {
                 outcome: "done".to_string(),
                 enabled: true,
@@ -600,6 +684,7 @@ pub(crate) fn toggle_mod(
             let mut updated = installed;
             updated.enabled = false;
             state.library.upsert_mod(updated);
+            clear_pending(state, &disk.file_name);
             Ok(ToggleResult {
                 outcome: "done".to_string(),
                 enabled: false,
@@ -613,6 +698,17 @@ pub(crate) fn toggle_mod(
             "game_db",
             format!("Не удалось изменить db.json: {other:?}"),
         )),
+    }
+}
+
+fn clear_pending(state: &AppState, file_name: &str) {
+    let mut pending = state.pending.lock().unwrap();
+    let before = pending.len();
+    pending.retain(|key, _| !key.eq_ignore_ascii_case(file_name));
+    let changed = pending.len() != before;
+    drop(pending);
+    if changed {
+        let _ = state.save_pending();
     }
 }
 
@@ -653,6 +749,7 @@ fn try_live_toggle(
                     let mut updated = installed.clone();
                     updated.enabled = enabled;
                     state.library.upsert_mod(updated);
+                    clear_pending(state, &disk.file_name);
                     Some(ToggleResult {
                         outcome: "done".to_string(),
                         enabled,
@@ -1111,6 +1208,42 @@ mod tests {
         let main_after = after.mods.iter().find(|card| card.id == main.id).unwrap();
         assert_eq!(main_after.group.len(), 1);
         assert!(!main_after.group_conflict);
+    }
+
+    #[test]
+    fn mod_info_cache_keeps_only_needed_fields() {
+        let full = serde_json::json!({
+            "id": "abc",
+            "data": {
+                "tag_line": "Hint",
+                "title": "Title",
+                "name": "Name",
+                "version": "1.0",
+                "version_string": "1.1",
+                "resource_id": 42,
+                "username": "user",
+                "author": "author",
+                "last_update": "2026-10-20T10:00:00Z",
+                "description": "x".repeat(10_000),
+                "screenshots": [1, 2, 3]
+            }
+        });
+        let compact = compact_mod_info(&full);
+        assert_eq!(compact["id"], "abc");
+        assert_eq!(mod_info_hint(&compact), Some("Hint"));
+        assert!(
+            compact["data"].get("description").is_none(),
+            "длинное описание в кеше не нужно"
+        );
+        let repo = bmm_game::db::RepoInfo::from_mod_data("abc", &compact["data"]);
+        assert_eq!(repo.version.as_deref(), Some("1.1"));
+        assert_eq!(repo.title.as_deref(), Some("Title"));
+        assert_eq!(repo.author.as_deref(), Some("user"));
+        assert_eq!(repo.resource_id, Some(42));
+        assert!(repo.page_url().is_some());
+
+        assert!(compact_mod_info(&serde_json::Value::Null).is_null());
+        assert!(compact_mod_info(&serde_json::json!({"data": {}})).is_null());
     }
 
     #[test]

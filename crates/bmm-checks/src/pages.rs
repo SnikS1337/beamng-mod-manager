@@ -297,17 +297,8 @@ pub fn find_pages_with(
         }
         result.searched += 1;
 
-        let _gate = gate();
-        // За время поиска мод могли удалить, привязать вручную или отказаться от проверки.
-        if store.get_mod(&installed.id).is_none()
-            || store.is_checking_declined(&installed.id)
-            || store
-                .bindings()
-                .iter()
-                .any(|binding| binding.mod_id == installed.id)
-        {
-            continue;
-        }
+        // Страницу с размером и автором читаем до защёлки: иначе «Следить» и
+        // ручная привязка ждут сеть до двух минут.
         let author = author_of(&installed.id);
         let mut guess = PageGuesser::pick_with_author(
             installed,
@@ -338,6 +329,18 @@ pub fn find_pages_with(
                 author.as_deref(),
                 &enriched,
             );
+        }
+
+        let _gate = gate();
+        // За время поиска мод могли удалить, привязать вручную или отказаться от проверки.
+        if store.get_mod(&installed.id).is_none()
+            || store.is_checking_declined(&installed.id)
+            || store
+                .bindings()
+                .iter()
+                .any(|binding| binding.mod_id == installed.id)
+        {
+            continue;
         }
         if let Some(guess) = guess {
             let binding = ModBinding {
