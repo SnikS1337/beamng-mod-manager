@@ -258,6 +258,7 @@ pub fn run() {
             commands::downloads::downloads_expect,
             commands::download_window::download_open,
             commands::download_window::download_panel_state,
+            commands::download_window::download_ready,
             commands::download_window::download_close,
             commands::updates::updates_open_modland,
             commands::settings::settings_load,
