@@ -3,6 +3,7 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
+  "webviews": ["download-panel"],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",

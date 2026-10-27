@@ -118,6 +118,12 @@ export async function incomingDiscard(workDir: string): Promise<void> {
   }
 }
 
+/** Удалить скачанный архив после успешной установки (если включено в настройках). */
+export async function incomingRemoveSource(path: string): Promise<boolean> {
+  if (isTauri()) return invoke<boolean>("incoming_remove_source", { path });
+  return false;
+}
+
 function titleOf(fileName: string): string {
   return fileName.replace(/\.(zip|rar|7z)$/i, "").replace(/[_-]+/g, " ");
 }

@@ -126,6 +126,70 @@ pub async fn incoming_undo(
         .map_err(|error| AppError::new("task", error.to_string()))?
 }
 
+/// Удалить скачанный архив после успешной установки. Только если это включено
+/// в настройках и файл действительно лежит в одной из папок загрузок.
+#[tauri::command]
+pub async fn incoming_remove_source(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<bool, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || remove_download_source(&state, &path))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+fn remove_download_source(state: &AppState, path: &str) -> Result<bool, AppError> {
+    let settings = state.settings.load().settings;
+    if !settings.delete_downloads_after_install {
+        return Ok(false);
+    }
+    let path = PathBuf::from(path);
+    if !is_download_source(&path, &settings, state.paths.root()) {
+        return Ok(false);
+    }
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(AppError::new("io", error.to_string())),
+    }
+}
+
+fn is_download_source(
+    path: &Path,
+    settings: &bmm_domain::settings::AppSettings,
+    app_root: &Path,
+) -> bool {
+    if !path.is_file()
+        || !path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "zip" | "rar" | "7z"
+                )
+            })
+    {
+        return false;
+    }
+    let Ok(path) = fs::canonicalize(path) else {
+        return false;
+    };
+    let mut dirs = Vec::new();
+    if let Some(folder) = settings.downloads_folder.as_deref() {
+        dirs.push(PathBuf::from(folder));
+    }
+    if let Some(folder) = crate::commands::downloads::downloads_folder() {
+        dirs.push(folder);
+    }
+    dirs.push(app_root.join("downloads"));
+    dirs.extend(settings.watch_folders.iter().map(PathBuf::from));
+    dirs.iter()
+        .filter_map(|folder| fs::canonicalize(folder).ok())
+        .any(|folder| path.starts_with(folder))
+}
+
 #[tauri::command]
 pub async fn incoming_discard(work_dir: String) -> Result<(), AppError> {
     let root = incoming_root();
@@ -686,6 +750,53 @@ mod tests {
             "IncomingTicket",
         );
         undo_install(&state, &ticket).unwrap();
+    }
+
+    #[test]
+    fn delete_source_is_limited_to_download_folders() {
+        let temp = tempfile::tempdir().unwrap();
+        let downloads = temp.path().join("downloads");
+        let other = temp.path().join("other");
+        std::fs::create_dir_all(&downloads).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let inside = downloads.join("mod.zip");
+        let outside = other.join("mod.zip");
+        std::fs::write(&inside, b"x").unwrap();
+        std::fs::write(&outside, b"x").unwrap();
+        let settings = bmm_domain::settings::AppSettings {
+            downloads_folder: Some(downloads.display().to_string()),
+            ..bmm_domain::settings::AppSettings::default()
+        };
+        let app_root = temp.path().join("app");
+        assert!(is_download_source(&inside, &settings, &app_root));
+        assert!(!is_download_source(&outside, &settings, &app_root));
+        std::fs::write(downloads.join("readme.txt"), b"x").unwrap();
+        assert!(!is_download_source(
+            &downloads.join("readme.txt"),
+            &settings,
+            &app_root
+        ));
+    }
+
+    #[test]
+    fn remove_source_respects_the_switch() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_support::test_state(&temp, temp.path());
+        let downloads = temp.path().join("downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        let path = downloads.join("mod.zip");
+        std::fs::write(&path, b"x").unwrap();
+        let mut settings = state.settings.load().settings;
+        settings.downloads_folder = Some(downloads.display().to_string());
+        settings.delete_downloads_after_install = false;
+        state.settings.save(&settings).unwrap();
+        assert!(!remove_download_source(&state, &path.display().to_string()).unwrap());
+        assert!(path.is_file(), "выключенная настройка ничего не удаляет");
+
+        settings.delete_downloads_after_install = true;
+        state.settings.save(&settings).unwrap();
+        assert!(remove_download_source(&state, &path.display().to_string()).unwrap());
+        assert!(!path.exists(), "включённая настройка удаляет архив");
     }
 
     #[test]

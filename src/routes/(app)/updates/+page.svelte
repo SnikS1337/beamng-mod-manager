@@ -5,6 +5,7 @@
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
+  import { downloadOpen } from "#lib/ipc/download.js";
   import { onDestroy, onMount } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
   import { formatAgo, formatWhen, plural } from "#lib/features/garage/format.js";
@@ -369,8 +370,20 @@
     await openExternal(url);
   }
 
-  /** «Обновить»: страница мода и полчаса наблюдения за «Загрузками». */
+  /** «Обновить»: окно загрузки; если оно недоступно — браузер и наблюдение за «Загрузками». */
   async function update(finding: UpdateFinding) {
+    try {
+      await downloadOpen({
+        modName: finding.modName,
+        installedVersion: finding.installedVersion,
+        latestVersion: finding.latestVersion,
+        pageUrl: finding.url,
+        previewUrl: finding.previewUrl ?? null,
+      });
+      return;
+    } catch {
+      // Ниже — прежний путь: системный браузер и «Загрузки».
+    }
     if (!(await openExternal(finding.url))) return;
     await expectDownload();
     toasts.show(

@@ -4,6 +4,8 @@ export interface SettingsDto {
   allowDownloads: boolean;
   modsFolder: string | null;
   userFolder: string | null;
+  downloadsFolder: string | null;
+  deleteDownloadsAfterInstall: boolean;
   checkTtlHours: number;
   autoCheckOnStart: boolean;
   checkAppUpdates: boolean;
@@ -32,6 +34,8 @@ export async function settingsLoad(): Promise<SettingsDto> {
     allowDownloads: false,
     modsFolder: "C:\\Users\\Player\\AppData\\Local\\BeamNG\\BeamNG.drive\\current\\mods",
     userFolder: null,
+    downloadsFolder: null,
+    deleteDownloadsAfterInstall: false,
     checkTtlHours: 6,
     autoCheckOnStart: true,
     checkAppUpdates: true,

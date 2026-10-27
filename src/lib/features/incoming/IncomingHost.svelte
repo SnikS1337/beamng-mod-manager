@@ -8,6 +8,7 @@
     incomingDiscard,
     incomingInspect,
     incomingInstall,
+    incomingRemoveSource,
     incomingUndo,
     isArchivePath,
     type IncomingArchiveDto,
@@ -28,6 +29,7 @@
   }
 
   let current = $state<IncomingArchiveDto | null>(null);
+  let currentDownloaded = $state(false);
   let busy = $state(false);
   let busyName = $state("");
   let selected = $state<boolean[]>([]);
@@ -133,6 +135,7 @@
     const item = incomingQueue.shift();
     if (!item) return;
     const path = item.path;
+    const downloaded = item.downloaded;
     pumping = true;
     const token = ++session;
     busy = true;
@@ -153,15 +156,18 @@
         }
         return;
       }
-      openArchive(archive);
+      openArchive(archive, downloaded);
     } catch (reason) {
       if (token === session) {
-        openArchive({
-          source: path,
-          problem: errorText(reason),
-          workDir: "",
-          items: [],
-        });
+        openArchive(
+          {
+            source: path,
+            problem: errorText(reason),
+            workDir: "",
+            items: [],
+          },
+          downloaded,
+        );
       }
     } finally {
       if (token === session) busy = false;
@@ -170,8 +176,9 @@
     }
   }
 
-  function openArchive(archive: IncomingArchiveDto): void {
+  function openArchive(archive: IncomingArchiveDto, downloaded = false): void {
     current = archive;
+    currentDownloaded = downloaded;
     selected = archive.items.map(preselected);
   }
 
@@ -184,6 +191,7 @@
     }
     const archive = current;
     current = null;
+    currentDownloaded = false;
     selected = [];
     if (archive?.workDir) void incomingDiscard(archive.workDir).catch(() => {});
     void pump();
@@ -233,8 +241,15 @@
         }
       });
       const workDir = archive.workDir;
+      const leftInArchive = archive.items.some(
+        (item, index) => installable(item) && !selected[index],
+      );
+      if (currentDownloaded && failures.length === 0 && !leftInArchive) {
+        void incomingRemoveSource(archive.source).catch(() => {});
+      }
       session += 1;
       current = null;
+      currentDownloaded = false;
       selected = [];
       if (workDir) void incomingDiscard(workDir).catch(() => {});
       window.dispatchEvent(

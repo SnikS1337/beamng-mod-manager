@@ -12,7 +12,8 @@ crate-type = ["rlib"]
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.5", features = [] }
+# unstable: multiwebview для окна загрузки (сайт слева, панель этапов справа)
+tauri = { version = "2.12.5", features = ["unstable"] }
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-dialog = "2"

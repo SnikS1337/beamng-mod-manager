@@ -383,7 +383,7 @@
     mark();
   }
 
-  async function pickFolder(field: "modsFolder" | "userFolder") {
+  async function pickFolder(field: "modsFolder" | "userFolder" | "downloadsFolder") {
     if (!draft) return;
     if (!isTauri()) {
       message = "Выбор папки доступен в приложении.";
@@ -393,7 +393,12 @@
       const picked = await open({
         directory: true,
         multiple: false,
-        title: field === "modsFolder" ? "Папка модов (…\\mods)" : "Папка пользователя игры",
+        title:
+          field === "modsFolder"
+            ? "Папка модов (…\\mods)"
+            : field === "userFolder"
+              ? "Папка пользователя игры"
+              : "Куда скачивать обновления",
         // Открываем там, где папка уже выбрана, а не в последней случайной.
         defaultPath: draft[field] || undefined,
       });
@@ -404,6 +409,12 @@
     } catch (reason) {
       toasts.show(errorText(reason));
     }
+  }
+
+  function resetDownloadsFolder(): void {
+    if (!draft) return;
+    draft.downloadsFolder = null;
+    mark();
   }
 
   async function addWatchFolder() {
@@ -715,6 +726,46 @@
             }
           }}
           aria-label="Разрешить предлагать скачанные моды"
+        />
+      </div>
+
+      <div class="row">
+        <div class="row-text">
+          <label for="downloads-folder">Куда скачивать обновления</label>
+          <small>По умолчанию системные «Загрузки». Сюда попадут архивы из окна загрузки.</small>
+        </div>
+        <div class="path-row">
+          <input
+            id="downloads-folder"
+            readonly
+            value={draft.downloadsFolder ?? ""}
+            placeholder="системные «Загрузки»"
+            title={draft.downloadsFolder ?? "Системные «Загрузки»"}
+          />
+          <button type="button" onclick={() => void pickFolder("downloadsFolder")}>
+            <FolderOpen size={13} />
+            Выбрать
+          </button>
+          <button type="button" disabled={!draft.downloadsFolder} onclick={resetDownloadsFolder}>
+            Сбросить
+          </button>
+        </div>
+      </div>
+
+      <div class="switch-row">
+        <div>
+          <b>Удалять скачанный архив после установки</b>
+          <small>Файл из «Загрузок» или окна загрузки удалится, когда мод встанет. Копия прошлой версии останется.</small>
+        </div>
+        <Switch
+          size="lg"
+          checked={draft.deleteDownloadsAfterInstall}
+          onCheckedChange={(value) => {
+            if (!draft) return;
+            draft.deleteDownloadsAfterInstall = value;
+            mark();
+          }}
+          aria-label="Удалять скачанный архив после установки"
         />
       </div>
 
