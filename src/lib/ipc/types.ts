@@ -1,4 +1,1 @@
-export interface AppError {
-  code: string;
-  message: string;
-}
+export type { AppError } from "./generated.js";

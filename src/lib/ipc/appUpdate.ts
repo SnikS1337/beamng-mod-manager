@@ -1,36 +1,14 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type AppUpdateStage =
-  | "idle"
-  | "checking"
-  | "upToDate"
-  | "available"
-  | "downloading"
-  | "readyToRestart"
-  | "failed";
+import type { AppUpdateSnapshot } from "./generated.js";
 
-export interface AppUpdateManifest {
-  version: string;
-  url: string;
-  size: number;
-  sha256: string;
-  notes: string | null;
-  published: string | null;
-}
-
-export interface AppUpdateState {
-  stage: AppUpdateStage;
-  manifest: AppUpdateManifest | null;
-  progress: number;
-  error: string | null;
-  checkedAt: string | null;
-}
-
-export interface AppUpdateSnapshot {
-  currentVersion: string;
-  state: AppUpdateState;
-}
+export type {
+  AppUpdateManifest,
+  AppUpdateSnapshot,
+  AppUpdateState,
+} from "./generated.js";
+export type { AppUpdateStage } from "./unions.js";
 
 let mock: AppUpdateSnapshot = {
   currentVersion: "1.0.2",

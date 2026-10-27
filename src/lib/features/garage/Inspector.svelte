@@ -11,6 +11,7 @@
     type VersionRow,
   } from "#lib/ipc/library.js";
   import { expectDownload } from "#lib/ipc/incoming.js";
+  import type { AppError } from "#lib/ipc/types.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import X from "phosphor-svelte/lib/X";
   import Car from "phosphor-svelte/lib/Car";
@@ -75,8 +76,8 @@
     onRestoreVersion: (version: VersionRow) => void;
     /** «Это другой мод»: программа следит не за той страницей. */
     onUnfollow?: (source: string) => void;
-    /** «Указать страницу»: `null` — получилось, иначе причина, почему нет. */
-    onBindPage?: (url: string) => Promise<string | null>;
+    /** «Указать страницу»: `null` — получилось, иначе код и причина, почему нет. */
+    onBindPage?: (url: string) => Promise<AppError | null>;
     /** Найти страницу на сайтах, не дожидаясь 14-дневной паузы. */
     onFindPage?: () => void;
     findingPage?: boolean;
@@ -94,7 +95,7 @@
   let preview = $state<string | null>(null);
   let binding = $state(false);
   let pageUrl = $state("");
-  let bindError = $state<string | null>(null);
+  let bindError = $state<AppError | null>(null);
   let bindBusy = $state(false);
   let updateBusy = $state(false);
 
@@ -140,7 +141,7 @@
     bindError = null;
   });
 
-  const needsCheck = $derived(!!bindError && bindError.includes("человек"));
+  const needsCheck = $derived(bindError?.code === "humanCheck");
 
   async function bindPage(event?: SubmitEvent) {
     event?.preventDefault();
@@ -377,7 +378,7 @@
           disabled={bindBusy}
         />
         {#if bindError}
-          <p class="bind-error">{bindError}</p>
+          <p class="bind-error">{bindError.message}</p>
           {#if needsCheck && onPassCheck}
             <button class="btn-glass" type="button" onclick={() => void passCheck()} disabled={bindBusy}>
               Пройти проверку сайта

@@ -36,6 +36,8 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 sha2 = "0.11.1"
 base64 = "0.23.1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# TypeScript-типы DTO генерируются из Rust: поля не разъедутся с окном.
+ts-rs = "12.0.1"
 
 [profile.release]
 codegen-units = 1

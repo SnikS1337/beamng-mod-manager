@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+use ts_rs::TS;
 
 use bmm_domain::settings::AppSettings;
 
@@ -76,8 +77,8 @@ pub(crate) fn expect_folder(folder: &Path) {
     );
 }
 
-#[derive(Debug, Serialize, Clone)]
-struct DownloadReady {
+#[derive(Debug, Serialize, Clone, TS)]
+pub(crate) struct DownloadReady {
     path: String,
 }
 

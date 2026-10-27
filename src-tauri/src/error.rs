@@ -1,6 +1,7 @@
 use serde::Serialize;
+use ts_rs::TS;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppError {
     pub code: String,

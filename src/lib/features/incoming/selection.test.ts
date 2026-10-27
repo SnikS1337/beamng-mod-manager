@@ -17,6 +17,7 @@ function item(patch: Partial<IncomingItemDto> = {}): IncomingItemDto {
     blocked: false,
     warnings: false,
     findings: [],
+    similarTo: null,
     ...patch,
   };
 }

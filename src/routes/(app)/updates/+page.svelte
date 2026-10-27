@@ -44,7 +44,14 @@
 
   type Filter = "available" | "hidden" | "pages";
 
-  let snapshot = $state<UpdatesSnapshot>({ findings: [], hidden: [], suggestions: [] });
+  let snapshot = $state<UpdatesSnapshot>({
+    findings: [],
+    hidden: [],
+    suggestions: [],
+    sites: [],
+    lastChecked: null,
+    lost: [],
+  });
   let sources = $state<UpdateSource[]>([]);
   let loading = $state(true);
   let checking = $state(false);

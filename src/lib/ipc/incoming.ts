@@ -2,66 +2,25 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 
 import { mockAddInstalled } from "./library";
 
-export type IncomingKind = "new" | "update" | "alreadyInstalled";
-export type FindingSeverity = "info" | "warning" | "block";
+import type {
+  IncomingArchiveDto,
+  IncomingFindingDto,
+  IncomingInstallRequest,
+  IncomingInstallResult,
+  IncomingItemDto,
+  IncomingTicket,
+} from "./generated.js";
 
-export interface IncomingFindingDto {
-  severity: FindingSeverity;
-  code: string;
-  message: string;
-  entry: string | null;
-}
-
-export interface IncomingItemDto {
-  zipPath: string;
-  fileName: string;
-  size: number;
-  title: string;
-  kind: IncomingKind;
-  replaces: string | null;
-  replacesEnabled: boolean;
-  replacesSubFolder: string | null;
-  locked: boolean;
-  repacked: boolean;
-  blocked: boolean;
-  warnings: boolean;
-  findings: IncomingFindingDto[];
-  /** Похоже, такая машина уже стоит другим модом. */
-  similarTo?: { fileName: string; title: string } | null;
-}
-
-export interface IncomingArchiveDto {
-  source: string;
-  problem: string | null;
-  workDir: string;
-  items: IncomingItemDto[];
-}
-
-export interface IncomingInstallRequest {
-  zipPath: string;
-  fileName: string;
-  replaces: string | null;
-  allowWarnings: boolean;
-}
-
-export interface IncomingInstallResult {
-  success: boolean;
-  message: string | null;
-  warning: string | null;
-  fileName: string;
-  replaces: string | null;
-  backupId: string | null;
-  wasDisabled: boolean;
-  sameName: boolean;
-}
-
-export interface IncomingTicket {
-  fileName: string;
-  replaces: string | null;
-  backupId: string | null;
-  wasDisabled: boolean;
-  sameName: boolean;
-}
+export type {
+  IncomingArchiveDto,
+  IncomingFindingDto,
+  IncomingInstallRequest,
+  IncomingInstallResult,
+  IncomingItemDto,
+  IncomingTicket,
+  SimilarModDto,
+} from "./generated.js";
+export type { FindingSeverity, IncomingKind } from "./unions.js";
 
 export const ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z"] as const;
 
@@ -170,6 +129,7 @@ function mockArchive(path: string): IncomingArchiveDto {
     blocked,
     warnings: findings.some((finding) => finding.severity === "warning"),
     findings,
+    similarTo: null,
   } satisfies Omit<IncomingItemDto, "fileName" | "title" | "kind" | "replaces">;
 
   const items: IncomingItemDto[] = [];

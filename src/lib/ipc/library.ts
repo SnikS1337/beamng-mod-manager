@@ -1,134 +1,29 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type {
+  DeletedTicket,
+  LibrarySnapshot,
+  ModCardDto,
+  ModDetails,
+  ToggleResult,
+  VersionRow,
+} from "./generated.js";
+import type { ModKind } from "./unions.js";
 
-export type ModKind = "vehicle" | "level" | "sound" | "script" | "unknown";
-export type PendingState = "none" | "enabling" | "disabling" | "queued";
-
-export interface CompatDto {
-  modFor: string | null;
-  game: string | null;
-  text: string | null;
-  differs: boolean;
-}
-
-export interface ModCardDto {
-  id: string;
-  name: string;
-  fileName: string;
-  version: string | null;
-  sizeBytes: number;
-  enabled: boolean;
-  subFolder: string | null;
-  kind: ModKind;
-  previewUrl: string | null;
-  compat: CompatDto;
-  update: "none" | "likely" | "possible";
-  updateVersion: string | null;
-  unchecked: boolean;
-  pending: PendingState;
-  fromGameRepo: boolean;
-  deleted: boolean;
-  copies: number;
-  savedAt: string | null;
-  /** Почему игра не загрузит архив; null — в порядке. */
-  problem: PackagingProblem | null;
-  /** Повторяет другой мод — основной в группе; отдельной карточки не показываем. */
-  duplicateOf: DuplicateOf | null;
-  /** У основного в группе — id остальных копий и версий. */
-  group: string[];
-  /** В группе включено больше одного: игра загрузит все. */
-  groupConflict: boolean;
-  /** По составу архива: своя машина, своя карта или дополнение; null — ещё не прочитан. */
-  role: ModRole | null;
-}
-
-export type ModRole = "vehicle" | "map" | "addon";
-
-export interface DuplicateOf {
-  id: string;
-  name: string;
-  /** Тот же архив; иначе другая версия тех же машин или карт. */
-  exact: boolean;
-}
-
-export type PackagingProblem = "wrapped" | "loose" | "not_mod";
-
-export interface FilterCounts {
-  all: number;
-  enabled: number;
-  updates: number;
-  unchecked: number;
-  deleted: number;
-}
-
-export interface LibrarySnapshot {
-  mods: ModCardDto[];
-  counts: FilterCounts;
-  folder: string | null;
-  folderError: string | null;
-  gameVersion: string | null;
-  gameRunning: boolean;
-  warning: string | null;
-  manyEnabled: string | null;
-  deleted: ModCardDto[];
-}
-
-export interface DeletedTicket {
-  id: string;
-  fileName: string;
-  backupId: string;
-  wasInDisabled: boolean;
-  name: string;
-}
-
-export interface VersionRow {
-  backupId: string;
-  fileName: string;
-  version: string | null;
-  savedAt: string | null;
-  sizeBytes: number;
-}
-
-export interface ArchiveDto {
-  vehicles: string[];
-  levels: string[];
-  hasScripts: boolean;
-  luaFiles: number;
-  files: number;
-  unpackedBytes: number;
-  warnings: string[];
-  unreadable: boolean;
-  title: string | null;
-}
-
-export interface BindingDto {
-  source: string;
-  url: string;
-  confirmed: boolean;
-}
-
-export interface ModDetails {
-  id: string;
-  name: string;
-  fileName: string;
-  version: string | null;
-  sizeBytes: number;
-  enabled: boolean;
-  installedAt: string;
-  folder: string | null;
-  kind: ModKind;
-  compat: CompatDto;
-  archive: ArchiveDto | null;
-  previewUrl: string | null;
-  binding: BindingDto | null;
-  checkingDeclined: boolean;
-}
-
-export interface ToggleResult {
-  outcome: string;
-  enabled: boolean;
-  message: string | null;
-}
+export type {
+  ArchiveDto,
+  BindingDto,
+  CompatDto,
+  DeletedTicket,
+  DuplicateOf,
+  FilterCounts,
+  LibrarySnapshot,
+  ModCardDto,
+  ModDetails,
+  ToggleResult,
+  VersionRow,
+} from "./generated.js";
+export type { ModKind, ModRole, PackagingProblem, PendingState } from "./unions.js";
 
 const TITLES = [
   "Gavril D-Series",

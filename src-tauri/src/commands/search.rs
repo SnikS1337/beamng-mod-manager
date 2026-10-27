@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+use ts_rs::TS;
 use url::Url;
 
 use bmm_domain::filename;
@@ -20,9 +21,11 @@ use bmm_sources::sources::SourceStatus;
 use crate::error::AppError;
 use crate::state::AppState;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SearchOffer")]
 pub struct OfferDto {
+    #[ts(type = "SearchOfferKind")]
     pub kind: String,
     pub host: String,
     pub url: String,
@@ -30,8 +33,9 @@ pub struct OfferDto {
     pub size_bytes: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SearchListing")]
 pub struct SearchListingDto {
     pub source: String,
     pub source_id: String,
@@ -45,6 +49,7 @@ pub struct SearchListingDto {
     pub category: Option<String>,
     pub size_bytes: Option<i64>,
     pub preview_url: Option<String>,
+    #[ts(type = "SearchPrice")]
     pub price: String,
     pub offers: Vec<OfferDto>,
     pub published_at: Option<String>,
@@ -53,35 +58,42 @@ pub struct SearchListingDto {
     pub installed: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SearchCard")]
 pub struct SearchCardDto {
     pub id: String,
     pub title: String,
+    #[ts(type = "SearchPriceSummary")]
     pub price: String,
     pub possible_same_as: Vec<String>,
     pub relevance: f64,
     pub installed: bool,
     /// «vehicle», «map», «addon» или нет, если сайт не сказал.
+    #[ts(type = "ModRole | null")]
     pub kind: Option<String>,
     pub listings: Vec<SearchListingDto>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SearchSource")]
 pub struct SearchSourceDto {
     pub id: String,
     pub display_name: String,
+    #[ts(type = "SearchSourceStatus")]
     pub status: String,
     pub count: usize,
     pub note: Option<String>,
     pub pending: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SearchEvent")]
 pub struct SearchEventDto {
     pub request_id: u64,
+    #[ts(type = "SearchPhase")]
     pub phase: String,
     pub cards: Vec<SearchCardDto>,
     pub sources: Vec<SearchSourceDto>,
@@ -682,8 +694,8 @@ mod tests {
     }
 
     #[test]
-    fn search_window_and_rust_agree_on_fields_and_values() {
-        use crate::test_support::{assert_matches_ts, ts_field_values, ts_union};
+    fn search_window_and_rust_agree_on_values() {
+        use crate::test_support::ts_union;
         use bmm_domain::models::{Offer, OfferKind};
         use bmm_sources::search::ModCard;
 
@@ -715,24 +727,8 @@ mod tests {
             }],
             listings: Vec::new(),
         };
-        let index = InstalledIndex::from_store(&InMemoryLibraryStore::new());
-        let event = serde_json::to_value(to_event(&response, 1, "done", &index, None)).unwrap();
-        assert_matches_ts(&event, "search.ts", "SearchEvent");
-        assert_matches_ts(&event["cards"][0], "search.ts", "SearchCard");
-        assert_matches_ts(
-            &event["cards"][0]["listings"][0],
-            "search.ts",
-            "SearchListing",
-        );
-        assert_matches_ts(
-            &event["cards"][0]["listings"][0]["offers"][0],
-            "search.ts",
-            "SearchOffer",
-        );
-        assert_matches_ts(&event["sources"][0], "search.ts", "SearchSource");
-
         // Каждое значение, которое может прийти из Rust, окно знает.
-        let kinds = ts_field_values("search.ts", "SearchCard", "kind");
+        let kinds = ts_union("unions.ts", "ModRole");
         for kind in [
             bmm_domain::text::ModKind::Vehicle,
             bmm_domain::text::ModKind::Map,
@@ -744,7 +740,7 @@ mod tests {
                 kind.code()
             );
         }
-        let summaries = ts_union("search.ts", "SearchPriceSummary");
+        let summaries = ts_union("unions.ts", "SearchPriceSummary");
         for price in [
             PriceSummary::Unknown,
             PriceSummary::Free,
@@ -753,11 +749,11 @@ mod tests {
         ] {
             assert!(summaries.contains(price_summary(price)));
         }
-        let prices = ts_union("search.ts", "SearchPrice");
+        let prices = ts_union("unions.ts", "SearchPrice");
         for price in [PriceStatus::Unknown, PriceStatus::Free, PriceStatus::Paid] {
             assert!(prices.contains(price_status(price)));
         }
-        let statuses = ts_union("search.ts", "SearchSourceStatus");
+        let statuses = ts_union("unions.ts", "SearchSourceStatus");
         for status in [
             SourceStatus::Ok,
             SourceStatus::NeedsHumanCheck,
@@ -767,7 +763,7 @@ mod tests {
             report.status = status;
             assert!(statuses.contains(&source_dto(&report).status));
         }
-        let offer_kinds = ts_field_values("search.ts", "SearchOffer", "kind");
+        let offer_kinds = ts_union("unions.ts", "SearchOfferKind");
         for kind in [
             OfferKind::Direct,
             OfferKind::ExternalHost,
@@ -782,7 +778,7 @@ mod tests {
             };
             assert!(offer_kinds.contains(&offer_dto(&offer).kind));
         }
-        let phases = ts_field_values("search.ts", "SearchEvent", "phase");
+        let phases = ts_union("unions.ts", "SearchPhase");
         for phase in ["partial", "done", "error", "regroup"] {
             assert!(phases.contains(phase));
         }

@@ -616,6 +616,47 @@ pub fn bind_page(
     true
 }
 
+/// Почему ручную страницу не удалось привязать.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindErrorCode {
+    InvalidUrl,
+    UnknownSite,
+    NotModPage,
+    ModMissing,
+    PageMissing,
+    HumanCheck,
+    PageOpen,
+}
+
+impl BindErrorCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidUrl => "invalidUrl",
+            Self::UnknownSite => "unknownSite",
+            Self::NotModPage => "notModPage",
+            Self::ModMissing => "modMissing",
+            Self::PageMissing => "pageMissing",
+            Self::HumanCheck => "humanCheck",
+            Self::PageOpen => "pageOpen",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindError {
+    pub code: BindErrorCode,
+    pub message: String,
+}
+
+impl BindError {
+    fn new(code: BindErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
 /// «Указать страницу»: человек вставил ссылку на страницу мода. Страница открывается
 /// сразу — так видно, что это действительно страница мода, и версия с размером
 /// известны без следующей проверки. Возвращает прочитанную запись или понятную причину.
@@ -626,39 +667,65 @@ pub fn bind_url(
     url: &str,
     cancel: &AtomicBool,
     now: DateTime<FixedOffset>,
-) -> Result<Listing, String> {
-    let url = url::Url::parse(url.trim())
-        .map_err(|_| "Это не ссылка. Скопируйте адрес страницы мода из браузера.".to_string())?;
+) -> Result<Listing, BindError> {
+    let url = url::Url::parse(url.trim()).map_err(|_| {
+        BindError::new(
+            BindErrorCode::InvalidUrl,
+            "Это не ссылка. Скопируйте адрес страницы мода из браузера.",
+        )
+    })?;
     let source = sources
         .iter()
         .find(|source| source.owns(&url))
         .ok_or_else(|| {
-            "Этот сайт программа не знает: подойдут STMods, ModsGaming, Modland и репозиторий BeamNG."
-                .to_string()
+            BindError::new(
+                BindErrorCode::UnknownSite,
+                "Этот сайт программа не знает: подойдут STMods, ModsGaming, Modland и репозиторий BeamNG.",
+            )
         })?;
     if !source.is_mod_page(&url) {
-        return Err(format!(
-            "Это не страница мода на {}: откройте сам мод и скопируйте его адрес.",
-            source.display_name()
+        return Err(BindError::new(
+            BindErrorCode::NotModPage,
+            format!(
+                "Это не страница мода на {}: откройте сам мод и скопируйте его адрес.",
+                source.display_name()
+            ),
         ));
     }
     if store.get_mod(mod_id).is_none() {
-        return Err("Мод не найден. Обновите список.".to_string());
+        return Err(BindError::new(
+            BindErrorCode::ModMissing,
+            "Мод не найден. Обновите список.",
+        ));
     }
     let listing = match source.listing(&url, cancel) {
         Ok(Some(listing)) => listing,
         Ok(None) => {
-            return Err(format!(
-                "На {} по этой ссылке нет мода: страница удалена или адрес неполный.",
-                source.display_name()
+            return Err(BindError::new(
+                BindErrorCode::PageMissing,
+                format!(
+                    "На {} по этой ссылке нет мода: страница удалена или адрес неполный.",
+                    source.display_name()
+                ),
             ));
         }
         Err(error) => {
-            return Err(format!("Страница не открылась: {}", error.message));
+            let code = if error.status == bmm_sources::sources::SourceStatus::NeedsHumanCheck {
+                BindErrorCode::HumanCheck
+            } else {
+                BindErrorCode::PageOpen
+            };
+            return Err(BindError::new(
+                code,
+                format!("Страница не открылась: {}", error.message),
+            ));
         }
     };
     if !bind_page(store, mod_id, &listing, None, true, now) {
-        return Err("Мод не найден. Обновите список.".to_string());
+        return Err(BindError::new(
+            BindErrorCode::ModMissing,
+            "Мод не найден. Обновите список.",
+        ));
     }
     Ok(listing)
 }
@@ -1428,11 +1495,19 @@ mod tests {
         let bind = |url: &str| {
             bind_url(&store, &sources, "a", url, &AtomicBool::new(false), now()).unwrap_err()
         };
-        assert!(bind("не ссылка").contains("не ссылка"));
-        assert!(bind("https://unknown.example/mod").contains("не знает"));
-        assert!(bind("https://modsgaming.test/").contains("не страница мода"));
-        assert!(bind("https://modsgaming.test/missing").contains("нет мода"));
-        assert!(
+        let invalid = bind("не ссылка");
+        assert_eq!(invalid.code, BindErrorCode::InvalidUrl);
+        assert!(invalid.message.contains("не ссылка"));
+        let unknown = bind("https://unknown.example/mod");
+        assert_eq!(unknown.code, BindErrorCode::UnknownSite);
+        assert!(unknown.message.contains("не знает"));
+        let not_page = bind("https://modsgaming.test/");
+        assert_eq!(not_page.code, BindErrorCode::NotModPage);
+        assert!(not_page.message.contains("не страница мода"));
+        let missing = bind("https://modsgaming.test/missing");
+        assert_eq!(missing.code, BindErrorCode::PageMissing);
+        assert!(missing.message.contains("нет мода"));
+        assert_eq!(
             bind_url(
                 &store,
                 &[] as &[Arc<dyn ModSource>],
@@ -1441,7 +1516,9 @@ mod tests {
                 &AtomicBool::new(false),
                 now()
             )
-            .is_err()
+            .unwrap_err()
+            .code,
+            BindErrorCode::UnknownSite
         );
         assert!(store.bindings().is_empty());
     }
