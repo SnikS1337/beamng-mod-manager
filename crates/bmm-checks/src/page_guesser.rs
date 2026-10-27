@@ -313,7 +313,7 @@ impl PageGuesser {
 const GENERIC_AUTHORS: &[&str] = &["beamng", "beamnggmbh", "unknown", "неизвестен", "author"];
 
 /// Авторы известны с обеих сторон и совпадают хотя бы одним именем.
-fn authors_match(archive: Option<&str>, listing: Option<&str>) -> bool {
+pub(crate) fn authors_match(archive: Option<&str>, listing: Option<&str>) -> bool {
     let known = |text: Option<&str>| {
         text.is_some_and(|text| {
             let key = author_key(Some(text));

@@ -38,6 +38,27 @@ export interface PageSuggestion {
   url: string;
 }
 
+export interface PageMatch {
+  source: string;
+  title: string;
+  url: string;
+  version: string | null;
+  size: number | null;
+  author: string | null;
+  similarity: number;
+  sameSize: boolean;
+  sameVersion: boolean;
+  sameAuthor: boolean;
+}
+
+export interface PageVerification {
+  pageSource: string;
+  pageTitle: string;
+  pageUrl: string;
+  pageSize: number | null;
+  matches: PageMatch[];
+}
+
 export interface UpdateSource {
   id: string;
   displayName: string;
@@ -338,6 +359,18 @@ export async function updatesFindPages(requestId: number): Promise<void> {
 export async function updatesFindPage(modId: string): Promise<UpdatesSnapshot> {
   if (isTauri()) return invoke<UpdatesSnapshot>("updates_find_page", { modId });
   return clone(mockSnapshot);
+}
+
+/** Открыть страницу и поискать её же на других сайтах — без привязки. */
+export async function updatesVerifyPage(modId: string): Promise<PageVerification> {
+  if (isTauri()) return invoke<PageVerification>("updates_verify_page", { modId });
+  return {
+    pageSource: "stmods",
+    pageTitle: "Проверочная страница",
+    pageUrl: "https://stmods.org/",
+    pageSize: null,
+    matches: [],
+  };
 }
 
 export async function updatesConfirmPage(modId: string): Promise<UpdatesSnapshot> {

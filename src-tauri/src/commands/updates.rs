@@ -73,6 +73,31 @@ pub struct PageSuggestionDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PageMatchDto {
+    pub source: String,
+    pub title: String,
+    pub url: String,
+    pub version: Option<String>,
+    pub size: Option<i64>,
+    pub author: Option<String>,
+    pub similarity: f64,
+    pub same_size: bool,
+    pub same_version: bool,
+    pub same_author: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageVerificationDto {
+    pub page_source: String,
+    pub page_title: String,
+    pub page_url: String,
+    pub page_size: Option<i64>,
+    pub matches: Vec<PageMatchDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateSourceDto {
     pub id: String,
     pub display_name: String,
@@ -656,6 +681,50 @@ pub async fn updates_find_page(
     })
     .await
     .map_err(|error| AppError::new("task", error.to_string()))
+}
+
+#[tauri::command]
+pub async fn updates_verify_page(
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+) -> Result<PageVerificationDto, AppError> {
+    let state = state.inner().clone();
+    let search = page_search_service(&state)
+        .ok_or_else(|| AppError::new("pages", "Поиск страниц недоступен."))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let verification = bmm_checks::pages::verify_page(
+            state.library.as_ref(),
+            search.as_ref(),
+            &mod_id,
+            &AtomicBool::new(false),
+            &|id| page_title(&state, id),
+        )
+        .ok_or_else(|| AppError::new("pages", "Не удалось открыть страницу мода для проверки."))?;
+        Ok(PageVerificationDto {
+            page_source: verification.page_source,
+            page_title: verification.page_title,
+            page_url: verification.page_url.to_string(),
+            page_size: verification.page_size,
+            matches: verification
+                .matches
+                .into_iter()
+                .map(|item| PageMatchDto {
+                    source: item.source,
+                    title: item.title,
+                    url: item.url.to_string(),
+                    version: item.version,
+                    size: item.size,
+                    author: item.author,
+                    similarity: item.similarity,
+                    same_size: item.same_size,
+                    same_version: item.same_version,
+                    same_author: item.same_author,
+                })
+                .collect(),
+        })
+    })
+    .await
+    .map_err(|error| AppError::new("task", error.to_string()))?
 }
 
 #[tauri::command]

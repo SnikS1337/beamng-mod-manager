@@ -9,7 +9,7 @@
   import { downloadOpen } from "#lib/ipc/download.js";
   import { onDestroy, onMount } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
-  import { formatAgo, formatWhen, plural } from "#lib/features/garage/format.js";
+  import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { checkSummary, failedSites, updateHeadline } from "#lib/features/updates/summary.js";
   import { motion } from "#lib/shell/motion.svelte.js";
@@ -29,9 +29,11 @@
     updatesRestore,
     updatesRetrySource,
     updatesSnapshot,
+    updatesVerifyPage,
     updatesStart,
     updatesUndoPage,
     type PageSuggestion,
+    type PageVerification,
     type LostPage,
     type UpdateFinding,
     type UpdateProgress,
@@ -48,6 +50,9 @@
   let checking = $state(false);
   let passing = $state(false);
   let filter = $state<Filter>("available");
+  let verifying = $state<string | null>(null);
+  let verifications = $state<Record<string, PageVerification | null>>({});
+  let verifyErrors = $state<Record<string, string | null>>({});
 
   function setTab(next: Filter) {
     if (next === filter) return;
@@ -307,6 +312,23 @@
         .catch(() => {});
     } catch (reason) {
       error = errorText(reason);
+    }
+  }
+
+  async function verifyPage(suggestion: PageSuggestion) {
+    if (verifying) return;
+    verifying = suggestion.modId;
+    verifyErrors = { ...verifyErrors, [suggestion.modId]: null };
+    try {
+      const result = await updatesVerifyPage(suggestion.modId);
+      verifications = { ...verifications, [suggestion.modId]: result };
+    } catch (reason) {
+      verifyErrors = {
+        ...verifyErrors,
+        [suggestion.modId]: errorText(reason),
+      };
+    } finally {
+      verifying = null;
     }
   }
 
@@ -678,6 +700,7 @@
           </article>
         {/each}
         {#each snapshot.suggestions as suggestion (suggestion.modId + suggestion.source)}
+          {@const verification = verifications[suggestion.modId]}
           <article class="card compact">
             <div class="photo"><Package size={48} weight="thin" /></div>
             <div class="content">
@@ -689,8 +712,56 @@
               <div class="actions">
                 <button class="btn-primary" type="button" onclick={() => void confirmPage(suggestion)}>Следить</button>
                 <button class="btn-ghost" type="button" onclick={() => void openLink(suggestion.url)}>Открыть страницу</button>
+                <button
+                  class="btn-ghost"
+                  type="button"
+                  disabled={verifying === suggestion.modId}
+                  onclick={() => void verifyPage(suggestion)}
+                >
+                  {verifying === suggestion.modId ? "Проверяем…" : "Проверить на других сайтах"}
+                </button>
                 <button class="btn-ghost" type="button" onclick={() => void rejectPage(suggestion)}>Это другой мод</button>
               </div>
+              {#if verifying === suggestion.modId}
+                <p class="verify-note">Ищем эту страницу на других сайтах…</p>
+              {:else if verifyErrors[suggestion.modId]}
+                <p class="verify-note error">{verifyErrors[suggestion.modId]}</p>
+              {:else if verification}
+                <div class="verify">
+                  <div class="verify-head">
+                    <b>Проверка страницы</b>
+                    <span>
+                      {sourceName(verification.pageSource)}
+                      {#if verification.pageSize} · {formatSize(verification.pageSize)}{/if}
+                    </span>
+                  </div>
+                  {#if verification.matches.length === 0}
+                    <p class="verify-empty">
+                      На других включённых сайтах совпадений нет — страница есть только на
+                      {sourceName(verification.pageSource)}. Проверьте её глазами.
+                    </p>
+                  {:else}
+                    {#each verification.matches as match (match.source + match.url)}
+                      <div class="verify-row">
+                        <div class="verify-title">
+                          <b>{sourceName(match.source)}</b>
+                          <span>{match.title}</span>
+                        </div>
+                        <small>
+                          {match.version ? `версия ${match.version}` : "версия не указана"}
+                          · {match.size ? formatSize(match.size) : "размер не указан"}
+                          {#if match.sameSize} · размер совпал{/if}
+                          {#if match.sameVersion} · версия совпала{/if}
+                          {#if match.sameAuthor} · автор совпал{/if}
+                        </small>
+                        <button class="btn-ghost" type="button" onclick={() => void openLink(match.url)}>
+                          Открыть
+                        </button>
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              {/if}
             </div>
           </article>
         {/each}
@@ -1017,6 +1088,91 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-top: 6px;
+  }
+
+  .verify-note {
+    margin: 2px 0 0;
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+
+  .verify-note.error {
+    color: var(--danger);
+  }
+
+  .verify {
+    display: grid;
+    gap: 6px;
+    margin-top: 4px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-2);
+  }
+
+  .verify-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .verify-head b {
+    font-size: 12.5px;
+  }
+
+  .verify-head span {
+    color: var(--muted-foreground);
+    font-size: 11.5px;
+  }
+
+  .verify-empty {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
+
+  .verify-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 3px 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+
+  .verify-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .verify-title b {
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+
+  .verify-title span {
+    overflow: hidden;
+    color: var(--foreground);
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .verify-row small {
+    grid-column: 1;
+    color: var(--muted-foreground);
+    font-size: 10.5px;
+  }
+
+  .verify-row :global(.btn-ghost) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
   }
 
   .more {
