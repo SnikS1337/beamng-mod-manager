@@ -2,6 +2,7 @@
   import { openExternal } from "#lib/shell/openExternal.js";
   import { page } from "$app/state";
   import Package from "phosphor-svelte/lib/Package";
+  import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
@@ -16,6 +17,7 @@
   import {
     listenUpdates,
     updatesCancel,
+    updatesCheckMod,
     updatesConfirmPage,
     updatesDismiss,
     updatesFindPages,
@@ -298,6 +300,11 @@
           snapshot = await updatesUndoPage(suggestion);
         },
       });
+      // Подтверждённую страницу проверяем сразу: иначе обновление появится
+      // только после следующего запуска проверки.
+      void updatesCheckMod(suggestion.modId)
+        .then((next) => (snapshot = next))
+        .catch(() => {});
     } catch (reason) {
       error = errorText(reason);
     }
@@ -379,6 +386,7 @@
         latestVersion: finding.latestVersion,
         pageUrl: finding.url,
         previewUrl: finding.previewUrl ?? null,
+        role: finding.role ?? null,
       });
       return;
     } catch {
@@ -599,7 +607,15 @@
         {#each filter === "available" ? snapshot.findings : snapshot.hidden as finding (finding.modId)}
           {@const possible = finding.status !== "likely"}
           <article class="card">
-            <div class="photo">{#if finding.previewUrl}<img src={finding.previewUrl} alt="" loading="lazy" />{:else}<Package size={48} weight="thin" />{/if}</div>
+            <div class="photo">
+              {#if finding.previewUrl && finding.role !== "addon"}
+                <img src={finding.previewUrl} alt="" loading="lazy" />
+              {:else if finding.role === "addon"}
+                <PuzzlePiece size={48} weight="thin" />
+              {:else}
+                <Package size={48} weight="thin" />
+              {/if}
+            </div>
             <div class="content">
               <div class="head">
                 <h2>{finding.modName}</h2>
@@ -637,7 +653,15 @@
       {:else}
         {#each snapshot.lost ?? [] as page (page.modId + page.source)}
           <article class="card compact">
-            <div class="photo">{#if page.previewUrl}<img src={page.previewUrl} alt="" loading="lazy" />{:else}<Package size={48} weight="thin" />{/if}</div>
+            <div class="photo">
+              {#if page.previewUrl && page.role !== "addon"}
+                <img src={page.previewUrl} alt="" loading="lazy" />
+              {:else if page.role === "addon"}
+                <PuzzlePiece size={48} weight="thin" />
+              {:else}
+                <Package size={48} weight="thin" />
+              {/if}
+            </div>
             <div class="content">
               <div class="head"><h2>{page.modName}</h2><span class="chip lost">Страница пропала</span></div>
               <p class="why">

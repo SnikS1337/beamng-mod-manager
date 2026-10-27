@@ -1,5 +1,6 @@
 <script lang="ts">
   import Car from "phosphor-svelte/lib/Car";
+  import Check from "phosphor-svelte/lib/Check";
   import { Switch } from "#lib/components/ui/switch/index.js";
   import type { ModCardDto } from "#lib/ipc/library.js";
   import { copiesBadge } from "./duplicates";
@@ -60,6 +61,7 @@
 <div class="list">
   <div class="head">
     <span></span>
+    <span></span>
     <span>Название</span>
     <span class="type-cell">Тип</span>
     <span class="version-cell">Версия</span>
@@ -100,6 +102,22 @@
             title={`${mod.name} — ${mod.fileName}`}
             onclick={(event) => select(event, mod.id)}
           ></button>
+          <button
+            class="check"
+            type="button"
+            role="checkbox"
+            aria-checked={selectedIds.includes(mod.id)}
+            aria-label={selectedIds.includes(mod.id)
+              ? `Снять выбор с «${mod.name}»`
+              : `Выбрать «${mod.name}»`}
+            title={selectedIds.includes(mod.id) ? "Снять выбор" : "Выбрать для действий"}
+            onclick={(event) => {
+              event.stopPropagation();
+              onselect(mod.id, { ctrl: true, shift: false });
+            }}
+          >
+            {#if selectedIds.includes(mod.id)}<Check size={11} weight="bold" />{/if}
+          </button>
           <span class="thumb" class:addon={mod.role === "addon"}>
             {#if mod.previewUrl && mod.role !== "addon"}
               <img src={mod.previewUrl} alt="" loading="lazy" decoding="async" />
@@ -149,7 +167,7 @@
   .head,
   .row {
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr) 108px 84px 76px minmax(120px, 210px) 52px;
+    grid-template-columns: 24px 56px minmax(0, 1fr) 108px 84px 76px minmax(120px, 210px) 52px;
     align-items: center;
     gap: 10px;
     padding: 0 10px;
@@ -205,6 +223,43 @@
   .select:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: -2px;
+  }
+
+  .check {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    background: var(--surface);
+    color: var(--foreground);
+    opacity: 0.55;
+    cursor: pointer;
+    transition:
+      opacity var(--dur-1) var(--ease-out),
+      background-color var(--dur-1) var(--ease-out),
+      border-color var(--dur-1) var(--ease-out);
+  }
+
+  .row:hover .check,
+  .check:focus-visible,
+  .check[aria-checked="true"] {
+    opacity: 1;
+  }
+
+  .check:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .check[aria-checked="true"] {
+    border-color: var(--accent-brand);
+    background: var(--accent-brand);
+    color: var(--accent-brand-contrast);
   }
 
   .thumb {
@@ -316,7 +371,7 @@
   @container (max-width: 760px) {
     .head,
     .row {
-      grid-template-columns: 52px minmax(0, 1fr) 84px minmax(0, 180px) 48px;
+      grid-template-columns: 24px 52px minmax(0, 1fr) 84px minmax(0, 180px) 48px;
     }
 
     .type-cell,

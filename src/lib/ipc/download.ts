@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { ModRole } from "./library.js";
 
 export interface DownloadRequest {
   modName: string;
@@ -7,6 +8,7 @@ export interface DownloadRequest {
   latestVersion: string | null;
   pageUrl: string;
   previewUrl: string | null;
+  role: ModRole | null;
 }
 
 export interface DownloadPanelEvent {
@@ -22,6 +24,7 @@ const DEMO: DownloadRequest = {
   latestVersion: "1.5",
   pageUrl: "https://modsfire.com/abc123",
   previewUrl: null,
+  role: "vehicle",
 };
 
 export async function downloadOpen(request: DownloadRequest): Promise<void> {

@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::atomic;
 use crate::clock::{Clock, system_clock};
-use crate::settings::{AppSettings, BackgroundTheme, UiMode};
+use crate::settings::{AppSettings, BackgroundStyle, BackgroundTheme, UiMode};
 
 const MAX_BYTES: u64 = 1024 * 1024;
 
@@ -146,6 +146,12 @@ impl SettingsStore {
             liquid_glass: bool_field(root, "LiquidGlass", defaults.liquid_glass, &mut warnings),
             mode: UiMode::from_i32(int_field(root, "Mode", 0, &mut warnings)),
             theme: BackgroundTheme::from_i32(int_field(root, "Theme", 0, &mut warnings)),
+            background: BackgroundStyle::from_i32(int_field(
+                root,
+                "Background",
+                defaults.background.as_i32(),
+                &mut warnings,
+            )),
             ui_animations: bool_field(root, "UiAnimations", defaults.ui_animations, &mut warnings),
             animated_background: bool_field(
                 root,
@@ -565,6 +571,7 @@ mod tests {
             liquid_glass: false,
             mode: UiMode::Light,
             theme: BackgroundTheme::Forest,
+            background: BackgroundStyle::Nebula,
             ui_animations: false,
             animated_background: false,
             fireflies: false,
@@ -592,10 +599,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = store_with(
             dir.path(),
-            r#"{ "Theme": 42, "Mode": "Light", "WindowWidth": true }"#,
+            r#"{ "Theme": 42, "Background": 42, "Mode": "Light", "WindowWidth": true }"#,
         );
         let result = store.load();
         assert_eq!(result.settings.theme, BackgroundTheme::Night);
+        assert_eq!(result.settings.background, BackgroundStyle::Accent);
         assert_eq!(result.settings.mode, UiMode::Dark);
         assert_eq!(result.settings.window_width, 0);
         assert_eq!(result.warnings.len(), 2, "{:?}", result.warnings);

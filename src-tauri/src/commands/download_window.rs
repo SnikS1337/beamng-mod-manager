@@ -1,8 +1,9 @@
 //! Окно загрузки обновления: слева страница мода/файлообменника,
 //! справа — панель с этапами. Оба вида — child webview одного нативного окна.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::webview::{DownloadEvent, NewWindowResponse};
@@ -20,6 +21,8 @@ const SITE_X: f64 = 24.0;
 const SITE_Y: f64 = 116.0;
 /// Слева и справа от страницы: отступ, правая панель и ещё один отступ.
 const SITE_SIDE_SPACE: f64 = 448.0;
+/// На узком окне панель уже, иначе странице не остаётся места.
+const SITE_SIDE_SPACE_NARROW: f64 = 360.0;
 /// Сверху (шапка и адрес) и снизу (подпись) от страницы.
 const SITE_VERTICAL_SPACE: f64 = 176.0;
 
@@ -31,6 +34,8 @@ pub struct DownloadRequest {
     pub latest_version: Option<String>,
     pub page_url: String,
     pub preview_url: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,6 +48,25 @@ struct DownloadPanelEvent {
 }
 
 static CONTEXT: Mutex<Option<DownloadRequest>> = Mutex::new(None);
+static INTERCEPTED: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn mark_intercepted(path: &Path) {
+    let mut paths = INTERCEPTED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if paths.len() >= 128 {
+        paths.clear();
+    }
+    paths.insert(path.to_path_buf());
+}
+
+fn take_intercepted(path: &Path) -> bool {
+    INTERCEPTED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(path)
+}
 
 #[tauri::command]
 pub fn download_panel_state() -> Option<DownloadRequest> {
@@ -63,10 +87,10 @@ pub fn download_close(app: AppHandle) {
 pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(), AppError> {
     let url = Url::parse(&request.page_url)
         .map_err(|_| AppError::new("url", "Некорректный адрес страницы мода."))?;
-    if !matches!(url.scheme(), "http" | "https") {
+    if !page_url_allowed(&url) {
         return Err(AppError::new(
             "url",
-            "Открывать можно только страницы http и https.",
+            "Открывать можно только внешние страницы http и https.",
         ));
     }
     *CONTEXT.lock().unwrap_or_else(|error| error.into_inner()) = Some(request.clone());
@@ -80,8 +104,11 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         .paths
         .root()
         .to_path_buf();
-    let downloads = crate::commands::downloads::download_folder(&settings, &app_root)
-        .ok_or_else(|| AppError::new("downloads", "Не нашли папку, куда сохранить архив."))?;
+    let (mods_dir, _) = crate::commands::library::resolve_folder(&settings);
+    let downloads =
+        crate::commands::downloads::download_folder(&settings, &app_root, mods_dir.as_deref())
+            .ok_or_else(|| AppError::new("downloads", "Не нашли папку, куда сохранить архив."))?;
+    crate::commands::downloads::expect_folder(&downloads);
 
     if let Some(window) = app.get_window(WINDOW_LABEL) {
         if let Some(site) = app.get_webview(SITE_LABEL) {
@@ -113,6 +140,7 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         .map_err(|error| AppError::new("panel", error.to_string()))?;
     let download_app = app.clone();
     let site_builder = WebviewBuilder::new(SITE_LABEL, WebviewUrl::External(url))
+        .initialization_script(SITE_HELPERS)
         .on_download(move |_webview, event| {
             match event {
                 DownloadEvent::Requested { url, destination } => {
@@ -124,6 +152,25 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
                         // Картинки, установщики и прочее пусть качает сам WebView2.
                         return true;
                     }
+                    let state = download_app.state::<std::sync::Arc<crate::state::AppState>>();
+                    let settings = state.settings.load().settings;
+                    let app_root = state.paths.root().to_path_buf();
+                    let (mods_dir, _) = crate::commands::library::resolve_folder(&settings);
+                    let Some(downloads) = crate::commands::downloads::download_folder(
+                        &settings,
+                        &app_root,
+                        mods_dir.as_deref(),
+                    ) else {
+                        emit_state(
+                            &download_app,
+                            2,
+                            "Не удалось начать загрузку",
+                            "Не нашли папку, куда сохранить архив.",
+                            Some("Проверьте доступ к папке загрузки.".to_string()),
+                        );
+                        return false;
+                    };
+                    crate::commands::downloads::expect_folder(&downloads);
                     let path = unique_path(&downloads, &name);
                     if std::fs::create_dir_all(&downloads).is_err() {
                         emit_state(
@@ -136,6 +183,7 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
                         return false;
                     }
                     crate::commands::downloads::note_caught(&path);
+                    mark_intercepted(&path);
                     *destination = path;
                     emit_state(
                         &download_app,
@@ -146,9 +194,10 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
                     );
                 }
                 DownloadEvent::Finished { path, success, .. } => {
+                    let intercepted = path.as_deref().is_some_and(take_intercepted);
                     if success {
                         if let Some(path) = path
-                            && path.starts_with(&downloads)
+                            && intercepted
                             && is_archive_name(&path)
                         {
                             emit_state(
@@ -214,8 +263,8 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
                 NewWindowResponse::Deny
             }
         });
-    let site_width = (window_width - SITE_SIDE_SPACE).max(520.0);
-    let site_height = (window_height - SITE_VERTICAL_SPACE).max(420.0);
+    let site_width = (window_width - side_space(window_width)).max(320.0);
+    let site_height = (window_height - SITE_VERTICAL_SPACE).max(300.0);
     let site = window
         .add_child(
             site_builder,
@@ -245,10 +294,17 @@ fn window_size(app: &AppHandle) -> (f64, f64) {
             (work.width as f64 / scale, work.height as f64 / scale)
         })
         .unwrap_or((1240.0, 820.0));
-    (
-        (width.min(1240.0) - 32.0).max(1000.0),
-        (height.min(820.0) - 32.0).max(680.0),
-    )
+    let width = (width - 32.0).clamp(760.0, 1240.0).min(width - 16.0);
+    let height = (height - 32.0).clamp(560.0, 820.0).min(height - 16.0);
+    (width.max(480.0), height.max(420.0))
+}
+
+fn side_space(window_width: f64) -> f64 {
+    if window_width < 1000.0 {
+        SITE_SIDE_SPACE_NARROW
+    } else {
+        SITE_SIDE_SPACE
+    }
 }
 
 /// В dev панель — маршрут Vite (`/download`), в собранной программе — готовый asset.
@@ -267,6 +323,12 @@ fn is_download_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "blob" | "data")
 }
 
+/// Страницу мода открываем только во внешнем браузере WebView2: localhost,
+/// частные адреса и служебные схемы не должны попадать в него из выдачи сайта.
+fn page_url_allowed(url: &Url) -> bool {
+    bmm_sources::net::redirect_allowed(url)
+}
+
 fn is_archive_name(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -277,6 +339,26 @@ fn is_archive_name(path: &Path) -> bool {
             )
         })
 }
+
+/// Ссылки «скачать» на страницах модов часто открываются в новой вкладке. Встроенному
+/// окну нужна та же вкладка, иначе WebView2 теряет загрузку; рекламу и чужие popup не трогаем.
+const SITE_HELPERS: &str = r#"
+(() => {
+  const downloadPath = /\/download_file\.php|\/download(?:[/?]|$)|\/d\/[a-z0-9]+/i;
+  document.addEventListener("click", (event) => {
+    const anchor = event.target && event.target.closest
+      ? event.target.closest("a[target=_blank]")
+      : null;
+    if (!anchor) return;
+    let next;
+    try { next = new URL(anchor.href, location.href); } catch { return; }
+    if (next.host !== location.host) return;
+    if (!downloadPath.test(next.pathname + next.search)) return;
+    event.preventDefault();
+    location.href = next.href;
+  }, true);
+})();
+"#;
 
 fn emit_state(app: &AppHandle, step: u8, title: &str, detail: &str, error: Option<String>) {
     let _ = app.emit_to(
@@ -329,7 +411,56 @@ fn download_name(url: &Url, destination: &Path) -> String {
     if safe.is_empty() {
         "mod.zip".to_string()
     } else {
-        safe.chars().take(160).collect()
+        avoid_reserved(preserve_extension(&safe, 160))
+    }
+}
+
+/// Обрезка не должна съедать расширение: иначе длинное имя перестаёт считаться
+/// архивом и WebView2 кладёт файл мимо перехвата.
+fn preserve_extension(name: &str, max: usize) -> String {
+    if name.chars().count() <= max {
+        return name.to_string();
+    }
+    let path = Path::new(name);
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    if extension.is_empty() {
+        return name.chars().take(max).collect();
+    }
+    let stem_max = max.saturating_sub(extension.chars().count());
+    let stem: String = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("mod")
+        .chars()
+        .take(stem_max)
+        .collect();
+    if stem.is_empty() {
+        format!("mod{extension}")
+    } else {
+        format!("{stem}{extension}")
+    }
+}
+
+fn avoid_reserved(name: String) -> String {
+    let stem = Path::new(&name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("");
+    let reserved = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if reserved
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    {
+        format!("_{name}")
+    } else {
+        name
     }
 }
 
@@ -381,6 +512,20 @@ mod tests {
     }
 
     #[test]
+    fn long_download_name_keeps_archive_extension() {
+        let url = Url::parse("https://example.com/files/mod.zip").unwrap();
+        let long = format!("{}.zip", "a".repeat(300));
+        let name = download_name(&url, Path::new(&long));
+        assert!(name.ends_with(".zip"), "{name}");
+        assert!(name.chars().count() <= 160, "{name}");
+        assert_eq!(
+            download_name(&url, Path::new("CON.zip")),
+            "_CON.zip",
+            "зарезервированное имя Windows"
+        );
+    }
+
+    #[test]
     fn only_archives_are_caught() {
         assert!(is_archive_name(Path::new("mod.zip")));
         assert!(is_archive_name(Path::new("mod.RAR")));
@@ -412,5 +557,25 @@ mod tests {
         assert!(!is_download_url(
             &Url::parse("file:///C:/Windows/System32/calc.exe").unwrap()
         ));
+    }
+
+    #[test]
+    fn page_urls_must_be_public_http() {
+        for raw in [
+            "https://stmods.org/beamng_drive/mods/example/",
+            "http://example.com/page",
+        ] {
+            assert!(page_url_allowed(&Url::parse(raw).unwrap()), "{raw}");
+        }
+        for raw in [
+            "http://127.0.0.1/service",
+            "http://localhost/service",
+            "http://192.168.1.10/router",
+            "http://[::1]/service",
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+        ] {
+            assert!(!page_url_allowed(&Url::parse(raw).unwrap()), "{raw}");
+        }
     }
 }

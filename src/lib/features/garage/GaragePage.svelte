@@ -7,6 +7,7 @@
     listenUpdates,
     updatesCheckMod,
     updatesDeclineMod,
+    updatesFindPage,
     updatesOpenModland,
     updatesRefollow,
     updatesResumeMod,
@@ -274,6 +275,7 @@
   }
 
   let fixing = $state(false);
+  let findingPage = $state(false);
 
   async function fixSelected() {
     if (!selected || fixing) return;
@@ -357,6 +359,29 @@
       }
     } catch (reason) {
       showToast(errorText(reason));
+    }
+  }
+
+  async function findPageSelected(): Promise<void> {
+    const card = selected;
+    if (!card || findingPage) return;
+    findingPage = true;
+    try {
+      const next = await updatesFindPage(card.id);
+      updatesBadge.refresh();
+      await load(true);
+      await refreshDetails(card.id);
+      if (next.suggestions.some((item) => item.modId === card.id)) {
+        showToast("Есть похожая страница — подтвердите её в «Обновлениях»");
+      } else if (details?.binding) {
+        showToast(`Нашли страницу «${trimName(card.name)}»`);
+      } else {
+        showToast("Страницу найти не удалось");
+      }
+    } catch (reason) {
+      showToast(errorText(reason));
+    } finally {
+      findingPage = false;
     }
   }
 
@@ -1051,6 +1076,8 @@
         onFix={() => void fixSelected()}
         onUnfollow={(source) => void unfollowSelected(source)}
         onBindPage={bindSelected}
+        onFindPage={() => void findPageSelected()}
+        {findingPage}
         onPassCheck={updatesOpenModland}
         onCheckUpdates={checkUpdatesSelected}
         onDeclineChecking={declineCheckingSelected}

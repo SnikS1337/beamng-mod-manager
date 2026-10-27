@@ -34,6 +34,10 @@ pub struct UpdateFindingDto {
     pub dismissed: bool,
     /// Картинка мода (как на карточке), если уже есть в кэше.
     pub preview_url: Option<String>,
+    /// `vehicle`, `map` или `addon`. У дополнений картинка из архива случайная,
+    /// поэтому её не показываем.
+    #[serde(default)]
+    pub role: Option<String>,
     pub installed_size: Option<i64>,
     pub latest_size: Option<i64>,
     /// Когда программа заметила изменение на сайте (RFC 3339).
@@ -117,6 +121,8 @@ pub struct LostPageDto {
     pub source: String,
     pub url: String,
     pub preview_url: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -610,6 +616,49 @@ pub async fn updates_find_pages(
 }
 
 #[tauri::command]
+pub async fn updates_find_page(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    let state = state.inner().clone();
+    if state
+        .library
+        .bindings()
+        .iter()
+        .any(|binding| binding.mod_id == mod_id)
+    {
+        return Err(AppError::new("pages", "У мода уже есть страница."));
+    }
+    let runtime = state
+        .update
+        .clone()
+        .ok_or_else(|| AppError::new("pages", "Поиск страниц недоступен."))?;
+    let Some(guard) = PageBusyGuard::acquire(runtime.page_busy.clone()) else {
+        return Err(AppError::new("pages", "Поиск страниц уже идёт."));
+    };
+    runtime.page_cancel.store(false, Ordering::SeqCst);
+    let cancel = runtime.page_cancel.clone();
+    let state_for_task = state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        // Снимаем 14-дневную паузу только у выбранного мода.
+        state_for_task.library.set_page_search(&mod_id, None);
+        let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            run_page_search(&app, &state_for_task, 0, &cancel)
+        }))
+        .unwrap_or_default();
+        if report.followed > 0 {
+            let _batch = state_for_task.library.batch();
+            let _ = runtime.coordinator.check(false, None);
+        }
+        build_snapshot(&state_for_task)
+    })
+    .await
+    .map_err(|error| AppError::new("task", error.to_string()))
+}
+
+#[tauri::command]
 pub async fn updates_confirm_page(
     state: tauri::State<'_, Arc<AppState>>,
     mod_id: String,
@@ -951,6 +1000,17 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         .iter()
         .map(|(id, target)| (id.clone(), target.key.clone()))
         .collect();
+    let contents = state.previews.contents();
+    let infos = state.previews.mod_infos();
+    let role_of = |mod_id: &str| -> Option<String> {
+        let key = keys.get(mod_id)?;
+        let empty: &[String] = &[];
+        let content = contents.get(key).map(Vec::as_slice).unwrap_or(empty);
+        let hint = infos
+            .get(key)
+            .and_then(crate::commands::library::mod_info_hint);
+        bmm_packs::duplicates::role_of_with_hint(content, hint).map(|role| role.code().to_string())
+    };
     let name_of = |mod_id: &str| -> String {
         keys.get(mod_id)
             .and_then(|key| titles.get(key))
@@ -971,7 +1031,8 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
     let finding = |finding: UpdateFinding| -> UpdateFindingDto {
         let check = store.get_check(&finding.mod_id, &finding.source);
         let mut dto = finding_dto(&name_of, finding);
-        dto.preview_url = preview_of(&dto.mod_id);
+        dto.role = role_of(&dto.mod_id);
+        dto.preview_url = preview_for_role(dto.role.as_deref(), preview_of(&dto.mod_id));
         dto.installed_size = store.get_mod(&dto.mod_id).and_then(|item| item.size_bytes);
         dto.latest_size = check.as_ref().and_then(|check| check.last_size);
         dto.noticed_at = check
@@ -1070,12 +1131,16 @@ fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         last_checked,
         lost: bmm_checks::BindingRepair::dead(store)
             .into_iter()
-            .map(|dead| LostPageDto {
-                mod_name: name_of(&dead.installed.id),
-                preview_url: preview_of(&dead.installed.id),
-                mod_id: dead.installed.id,
-                source: dead.binding.source,
-                url: dead.binding.url.to_string(),
+            .map(|dead| {
+                let role = role_of(&dead.installed.id);
+                LostPageDto {
+                    mod_name: name_of(&dead.installed.id),
+                    preview_url: preview_for_role(role.as_deref(), preview_of(&dead.installed.id)),
+                    role,
+                    mod_id: dead.installed.id,
+                    source: dead.binding.source,
+                    url: dead.binding.url.to_string(),
+                }
             })
             .collect(),
     }
@@ -1093,10 +1158,17 @@ fn finding_dto(name_of: &dyn Fn(&str) -> String, finding: UpdateFinding) -> Upda
         url: finding.url.to_string(),
         dismissed: finding.is_dismissed,
         preview_url: None,
+        role: None,
         installed_size: None,
         latest_size: None,
         noticed_at: None,
     }
+}
+
+/// У дополнений картинка из архива — случайная текстура, поэтому она не нужна
+/// ни в «Обновлениях», ни в окне скачивания.
+fn preview_for_role(role: Option<&str>, preview: Option<String>) -> Option<String> {
+    if role == Some("addon") { None } else { preview }
 }
 
 fn suggestion_dto(name_of: &dyn Fn(&str) -> String, binding: ModBinding) -> PageSuggestionDto {
@@ -1255,9 +1327,6 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
         loop {
             let runtime = state.update.clone();
             let settings = state.settings.load().settings;
-            if started && settings.check_app_updates {
-                crate::commands::app_update::auto_check(&app, &state);
-            }
             let due = if started {
                 settings.auto_check_on_start
             } else if settings.auto_check_every_hours > 0 {
@@ -1266,6 +1335,11 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
             } else {
                 false
             };
+            // Проверку самой программы делаем на старте и по тому же расписанию,
+            // но не чаще: иначе GitHub дёргался бы каждую минуту.
+            if settings.check_app_updates && (started || due) {
+                crate::commands::app_update::auto_check(&app, &state);
+            }
             started = false;
             if due && let Some(runtime) = runtime {
                 {
@@ -1798,6 +1872,19 @@ mod tests {
             "новую страницу можно искать сразу"
         );
         assert!(forget_lost(&state, "m1", "stmods", false).is_err());
+    }
+
+    #[test]
+    fn addon_preview_is_hidden() {
+        let preview = || Some("http://bmm.localhost/preview/cup.png".to_string());
+        assert_eq!(preview_for_role(Some("addon"), preview()), None);
+        assert_eq!(preview_for_role(Some("vehicle"), preview()), preview());
+        assert_eq!(preview_for_role(Some("map"), preview()), preview());
+        assert_eq!(
+            preview_for_role(None, preview()),
+            preview(),
+            "пока роль неизвестна, картинку не выключаем"
+        );
     }
 
     #[test]

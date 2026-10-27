@@ -25,12 +25,14 @@
 </script>
 
 <div class="bg" class:live class:paused aria-hidden="true">
+  <div class="wash"></div>
   <div class="spot" style={`--x:${spot.x}%; --y:${spot.y}%; --power:${spot.power}`}>
     <div class="light warm"></div>
     <div class="light cool"></div>
   </div>
   <div class="grid"></div>
   <div class="lantern"></div>
+  <div class="lantern alt"></div>
   <div class="grain"></div>
 </div>
 
@@ -42,6 +44,38 @@
     overflow: hidden;
     pointer-events: none;
     background: var(--background);
+  }
+
+  /* Цветная «погода» окна: три мягких пятна, без движения и перерисовки. */
+  .wash {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(
+        58% 68% at 10% 6%,
+        color-mix(in oklab, var(--backdrop-a) 27%, transparent),
+        transparent 72%
+      ),
+      radial-gradient(
+        48% 58% at 90% 14%,
+        color-mix(in oklab, var(--backdrop-b) 23%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        55% 55% at 76% 88%,
+        color-mix(in oklab, var(--backdrop-c) 12%, transparent),
+        transparent 76%
+      ),
+      linear-gradient(
+        135deg,
+        color-mix(in oklab, var(--backdrop-c) 7%, transparent),
+        transparent 62%
+      );
+    opacity: 0.95;
+  }
+
+  :global(html:not(.dark)) .wash {
+    opacity: 0.88;
   }
 
   /* Точка света: у каждого раздела своя, переезд — секунду, с мягким торможением. */
@@ -73,8 +107,8 @@
     height: 90%;
     background: radial-gradient(
       closest-side,
-      color-mix(in oklab, var(--accent-brand) 11%, transparent),
-      color-mix(in oklab, var(--accent-brand) 4%, transparent) 55%,
+      color-mix(in oklab, var(--backdrop-a) 11%, transparent),
+      color-mix(in oklab, var(--backdrop-a) 4%, transparent) 55%,
       transparent
     );
   }
@@ -87,7 +121,7 @@
     height: 75%;
     background: radial-gradient(
       closest-side,
-      color-mix(in oklab, var(--accent-brand) 5%, transparent),
+      color-mix(in oklab, var(--backdrop-b) 5%, transparent),
       transparent
     );
   }
@@ -130,14 +164,26 @@
     border-radius: 50%;
     background: radial-gradient(
       circle,
-      color-mix(in oklab, var(--accent-brand) 20%, transparent) 0%,
-      color-mix(in oklab, var(--accent-brand) 7%, transparent) 42%,
+      color-mix(in oklab, var(--backdrop-a) 20%, transparent) 0%,
+      color-mix(in oklab, var(--backdrop-a) 7%, transparent) 42%,
       transparent 72%
     );
     opacity: 0;
     pointer-events: none;
     mix-blend-mode: screen;
     will-change: transform, opacity;
+  }
+
+  .lantern.alt {
+    width: min(62vw, 62vh);
+    margin-left: calc(min(62vw, 62vh) / -2);
+    margin-top: calc(min(62vw, 62vh) / -2);
+    background: radial-gradient(
+      circle,
+      color-mix(in oklab, var(--backdrop-b) 17%, transparent) 0%,
+      color-mix(in oklab, var(--backdrop-b) 6%, transparent) 40%,
+      transparent 70%
+    );
   }
 
   :global(html:not(.dark)) .lantern {
@@ -147,6 +193,11 @@
   .live .lantern {
     opacity: 0.7;
     animation: lantern-roam 34s var(--ease-in-out) infinite alternate;
+  }
+
+  .live .lantern.alt {
+    opacity: 0.5;
+    animation: lantern-roam-alt 47s var(--ease-in-out) infinite alternate;
   }
 
   .paused .lantern {
@@ -202,6 +253,21 @@
     }
     100% {
       transform: translate3d(-20vw, 4vh, 0) scale(0.94);
+    }
+  }
+
+  @keyframes lantern-roam-alt {
+    0% {
+      transform: translate3d(18vw, 10vh, 0) scale(1.05);
+    }
+    35% {
+      transform: translate3d(-16vw, 18vh, 0) scale(0.92);
+    }
+    70% {
+      transform: translate3d(-24vw, -10vh, 0) scale(1.1);
+    }
+    100% {
+      transform: translate3d(10vw, -20vh, 0) scale(0.96);
     }
   }
 </style>

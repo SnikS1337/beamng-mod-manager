@@ -76,6 +76,8 @@ pub struct IncomingInstallRequest {
 pub struct IncomingInstallResult {
     pub success: bool,
     pub message: Option<String>,
+    /// Установлено, но запись библиотеки обновилась не полностью.
+    pub warning: Option<String>,
     pub file_name: String,
     pub replaces: Option<String>,
     pub backup_id: Option<String>,
@@ -219,10 +221,11 @@ fn inspect_paths(state: &AppState, paths: &[String]) -> Result<Vec<IncomingArchi
             error.unwrap_or_else(|| "Папка модов не найдена.".to_string()),
         ));
     };
+    let keep = settings.keep_backups.max(1) as usize;
     let installer = bmm_packs::install::ModInstaller::new(
         bmm_packs::scan::ModLayout::in_app_folder(&mods_dir, state.paths.root()),
         bmm_domain::clock::system_clock(),
-        Arc::new(|| 3),
+        Arc::new(move || keep),
     );
     let installed = installed_archives(state, &installer);
     let root = incoming_root();
@@ -417,7 +420,44 @@ fn install_items(
             ..bmm_packs::install::InstallOptions::default()
         };
         if let Some(replaced) = &request.replaces {
+            if replaced.is_empty()
+                || replaced.contains(['/', '\\'])
+                || replaced == "."
+                || replaced == ".."
+            {
+                results.push(IncomingInstallResult {
+                    success: false,
+                    message: Some("Недопустимое имя установленного файла.".to_string()),
+                    warning: None,
+                    file_name: request.file_name.clone(),
+                    replaces: Some(replaced.clone()),
+                    backup_id: None,
+                    was_disabled: false,
+                    same_name: false,
+                });
+                continue;
+            }
+            // Мод из подпапки игры (репозиторий) не заменяем: игра держит его сама,
+            // и рядом появилась бы вторая копия.
+            let in_mods = installer.layout().mods_dir.join(replaced).is_file();
+            let in_disabled = installer.layout().disabled_dir.join(replaced).is_file();
+            if !in_mods && !in_disabled {
+                results.push(IncomingInstallResult {
+                    success: false,
+                    message: Some(
+                        "Установленная версия лежит в подпапке игры — обновите её там.".to_string(),
+                    ),
+                    warning: None,
+                    file_name: request.file_name.clone(),
+                    replaces: Some(replaced.clone()),
+                    backup_id: None,
+                    was_disabled: false,
+                    same_name: false,
+                });
+                continue;
+            }
             let update = installer.update_from_path(replaced, &source, &request.file_name, options);
+            let mut warning = None;
             if update.install.success
                 && !replaced.eq_ignore_ascii_case(&request.file_name)
                 && let Some(path) = update.install.path.as_ref()
@@ -426,12 +466,17 @@ fn install_items(
                     .ok()
                     .and_then(|meta| i64::try_from(meta.len()).ok())
                     .unwrap_or(0);
-                bmm_domain::library::rename_file(
+                if !bmm_domain::library::rename_file(
                     state.library.as_ref(),
                     replaced,
                     &request.file_name,
                     size,
-                );
+                ) {
+                    warning = Some(
+                        "Файл установлен, но запись библиотеки не обновилась — перечитайте список."
+                            .to_string(),
+                    );
+                }
             }
             let backup_id = if update.install.success {
                 installer
@@ -444,6 +489,7 @@ fn install_items(
             results.push(IncomingInstallResult {
                 success: update.install.success,
                 message: update.install.message,
+                warning,
                 file_name: request.file_name.clone(),
                 replaces: Some(replaced.clone()),
                 backup_id,
@@ -455,6 +501,7 @@ fn install_items(
             results.push(IncomingInstallResult {
                 success: install.success,
                 message: install.message,
+                warning: None,
                 file_name: request.file_name.clone(),
                 replaces: None,
                 backup_id: None,
@@ -479,10 +526,11 @@ fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppE
             error.unwrap_or_else(|| "Папка модов не найдена.".to_string()),
         ));
     };
+    let keep = settings.keep_backups.max(1) as usize;
     let installer = bmm_packs::install::ModInstaller::new(
         bmm_packs::scan::ModLayout::in_app_folder(&mods_dir, state.paths.root()),
         bmm_domain::clock::system_clock(),
-        Arc::new(|| 3),
+        Arc::new(move || keep),
     );
     if let Some(replaced) = &ticket.replaces {
         if !ticket.same_name {
@@ -504,12 +552,17 @@ fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppE
                     .and_then(|path| fs::metadata(path).ok())
                     .and_then(|meta| i64::try_from(meta.len()).ok())
                     .unwrap_or(0);
-                bmm_domain::library::rename_file(
+                if !bmm_domain::library::rename_file(
                     state.library.as_ref(),
                     &ticket.file_name,
                     replaced,
                     size,
-                );
+                ) {
+                    return Err(AppError::new(
+                        "undo",
+                        "Файл восстановлен, но запись библиотеки не обновилась — перечитайте список.",
+                    ));
+                }
             }
         }
         Ok(())
@@ -651,6 +704,15 @@ mod tests {
         make_zip(&v1, b"one");
         make_zip(&v2, b"two");
         let installer = installer_for_test(&state);
+        state.library.upsert_mod(bmm_domain::library::InstalledMod {
+            id: "car_v1.zip".to_string(),
+            name: "Car".to_string(),
+            file_name: "car_v1.zip".to_string(),
+            version: Some("1.0".to_string()),
+            size_bytes: Some(3),
+            installed_at_utc: system_clock()(),
+            enabled: true,
+        });
         assert!(
             installer
                 .install_from_path(&v1, "car_v1.zip", InstallOptions::default())

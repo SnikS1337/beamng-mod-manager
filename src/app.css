@@ -115,6 +115,11 @@
   --glass-border: var(--border);
   --grid-line: rgb(22 24 28 / 0.04);
 
+  /* Палитра фона: по умолчанию повторяет акцент, пресеты ниже меняют её отдельно. */
+  --backdrop-a: var(--accent-brand);
+  --backdrop-b: var(--accent-brand);
+  --backdrop-c: var(--accent-brand);
+
   --font-sans: "Manrope", "Segoe UI", system-ui, sans-serif;
   --font-display: "Oswald", "Manrope", "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
@@ -206,6 +211,38 @@
   --accent-brand-contrast: #111214;
   --accent-brand-soft: rgb(220 223 227 / 0.1);
   --accent-brand-text: #eceef0;
+}
+
+/* Фон. Акцент остаётся цветом интерфейса, а «погода» окна — отдельно. */
+.backdrop-accent {
+  --backdrop-a: var(--accent-brand);
+  --backdrop-b: var(--accent-brand);
+  --backdrop-c: var(--accent-brand);
+}
+.backdrop-aurora {
+  --backdrop-a: #2dd4bf;
+  --backdrop-b: #8b5cf6;
+  --backdrop-c: #38bdf8;
+}
+.backdrop-sunset {
+  --backdrop-a: #fb7185;
+  --backdrop-b: #f59e0b;
+  --backdrop-c: #a855f7;
+}
+.backdrop-ocean {
+  --backdrop-a: #22d3ee;
+  --backdrop-b: #3b82f6;
+  --backdrop-c: #14b8a6;
+}
+.backdrop-nebula {
+  --backdrop-a: #a855f7;
+  --backdrop-b: #ec4899;
+  --backdrop-c: #6366f1;
+}
+.backdrop-mono {
+  --backdrop-a: #94a3b8;
+  --backdrop-b: #cbd5e1;
+  --backdrop-c: #64748b;
 }
 
 .no-motion {

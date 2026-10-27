@@ -33,6 +33,41 @@ impl Serialize for BackgroundTheme {
     }
 }
 
+/// Палитра фона: акцентная или самостоятельный градиент.
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundStyle {
+    Accent = 0,
+    Aurora = 1,
+    Sunset = 2,
+    Ocean = 3,
+    Nebula = 4,
+    Mono = 5,
+}
+
+impl BackgroundStyle {
+    pub fn from_i32(value: i32) -> Self {
+        match value {
+            1 => Self::Aurora,
+            2 => Self::Sunset,
+            3 => Self::Ocean,
+            4 => Self::Nebula,
+            5 => Self::Mono,
+            _ => Self::Accent,
+        }
+    }
+
+    pub fn as_i32(self) -> i32 {
+        self as i32
+    }
+}
+
+impl Serialize for BackgroundStyle {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i32(self.as_i32())
+    }
+}
+
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiMode {
@@ -83,6 +118,7 @@ pub struct AppSettings {
     pub liquid_glass: bool,
     pub mode: UiMode,
     pub theme: BackgroundTheme,
+    pub background: BackgroundStyle,
     pub ui_animations: bool,
     pub animated_background: bool,
     pub fireflies: bool,
@@ -116,6 +152,7 @@ impl Default for AppSettings {
             liquid_glass: true,
             mode: UiMode::Dark,
             theme: BackgroundTheme::Night,
+            background: BackgroundStyle::Accent,
             ui_animations: true,
             animated_background: true,
             fireflies: true,
@@ -155,6 +192,7 @@ impl AppSettings {
             liquid_glass: self.liquid_glass,
             mode: self.mode,
             theme: self.theme,
+            background: self.background,
             ui_animations: self.ui_animations,
             animated_background: self.animated_background,
             fireflies: self.fireflies,

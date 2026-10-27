@@ -35,6 +35,7 @@
 
   type Theme = SettingsDto["theme"];
   type Mode = SettingsDto["mode"];
+  type Backdrop = SettingsDto["background"];
 
   // Акцент. Имена тем прежние, чтобы сохранённые настройки не сбросились.
   const THEMES: { id: Theme; label: string; desc: string; color: string }[] = [
@@ -43,6 +44,50 @@
     { id: "dusk", label: "Красный", desc: "гоночный", color: "#ff4f4f" },
     { id: "forest", label: "Зелёный", desc: "мягкий", color: "#33c47c" },
     { id: "graphite", label: "Графит", desc: "без цвета", color: "#dcdfe3" },
+  ];
+  const BACKDROPS: {
+    id: Backdrop;
+    label: string;
+    desc: string;
+    gradient: string;
+  }[] = [
+    {
+      id: "accent",
+      label: "Акцент",
+      desc: "как интерфейс",
+      gradient:
+        "linear-gradient(135deg, var(--accent-brand), color-mix(in oklab, var(--accent-brand) 30%, #ffffff))",
+    },
+    {
+      id: "aurora",
+      label: "Сияние",
+      desc: "бирюза и фиолет",
+      gradient: "linear-gradient(135deg, #2dd4bf, #8b5cf6 55%, #38bdf8)",
+    },
+    {
+      id: "sunset",
+      label: "Закат",
+      desc: "тёплый и мягкий",
+      gradient: "linear-gradient(135deg, #fb7185, #f59e0b 55%, #a855f7)",
+    },
+    {
+      id: "ocean",
+      label: "Океан",
+      desc: "глубина и прохлада",
+      gradient: "linear-gradient(135deg, #22d3ee, #3b82f6 55%, #14b8a6)",
+    },
+    {
+      id: "nebula",
+      label: "Туманность",
+      desc: "фиолет и маджента",
+      gradient: "linear-gradient(135deg, #a855f7, #ec4899 55%, #6366f1)",
+    },
+    {
+      id: "mono",
+      label: "Графит",
+      desc: "без цвета",
+      gradient: "linear-gradient(135deg, #94a3b8, #cbd5e1 55%, #64748b)",
+    },
   ];
   const MODES: { id: Mode; label: string; icon: typeof Moon }[] = [
     { id: "dark", label: "Тёмная", icon: Moon },
@@ -252,6 +297,17 @@
       : true,
   );
 
+  const downloadsInsideMods = $derived.by(() => {
+    const downloads = draft?.downloadsFolder?.trim();
+    const mods = draft?.modsFolder?.trim();
+    if (!downloads || !mods) return false;
+    const normalize = (path: string) =>
+      path.replace(/[\\/]+$/, "").toLowerCase();
+    const inside = normalize(downloads);
+    const parent = normalize(mods);
+    return inside === parent || inside.startsWith(`${parent}\\`) || inside.startsWith(`${parent}/`);
+  });
+
   function numberOr(value: unknown, fallback: number): number {
     return typeof value === "number" && Number.isFinite(value)
       ? value
@@ -346,6 +402,12 @@
     const on = kind === "beauty";
     draft.uiAnimations = on;
     draft.animatedBackground = on;
+    mark();
+  }
+
+  function selectBackdrop(id: Backdrop) {
+    if (!draft || draft.background === id) return;
+    draft.background = id;
     mark();
   }
 
@@ -615,6 +677,32 @@
               </button>
             {/each}
           </div>
+
+          <span class="group-title">Фон</span>
+          <div class="backdrop-grid">
+            {#each BACKDROPS as item (item.id)}
+              <button
+                type="button"
+                class="backdrop-swatch"
+                class:active={draft.background === item.id}
+                aria-pressed={draft.background === item.id}
+                onclick={() => selectBackdrop(item.id)}
+              >
+                <span class="backdrop-tone" style={`background:${item.gradient}`}>
+                  {#if draft.background === item.id}
+                    <Check size={14} weight="bold" />
+                  {/if}
+                </span>
+                <span class="backdrop-text">
+                  <b>{item.label}</b>
+                  <small>{item.desc}</small>
+                </span>
+              </button>
+            {/each}
+          </div>
+          <p class="group-hint">
+            Цвет интерфейса и фон можно выбрать отдельно. «Акцент» повторяет цвет кнопок.
+          </p>
         </div>
       </div>
     </section>
@@ -751,6 +839,12 @@
           </button>
         </div>
       </div>
+      {#if downloadsInsideMods}
+        <p class="field-warning">
+          Эта папка внутри папки модов: игра увидит скачанный архив как ещё один мод.
+          Выберите папку вне модов — иначе программа будет сохранять архивы в системные «Загрузки».
+        </p>
+      {/if}
 
       <div class="switch-row">
         <div>
@@ -1343,6 +1437,70 @@
     font-size: 11.5px;
   }
 
+  .group-hint {
+    margin: 7px 0 0;
+    color: var(--faint-foreground);
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
+
+  .backdrop-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .backdrop-swatch {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--foreground);
+    text-align: left;
+    cursor: default;
+    transition:
+      transform var(--dur-1) var(--ease-out),
+      border-color var(--dur-2) var(--ease-out);
+  }
+
+  .backdrop-swatch:hover {
+    transform: translateY(-1px);
+    border-color: var(--faint-foreground);
+  }
+
+  .backdrop-swatch.active {
+    border-color: var(--accent-brand);
+    box-shadow: 0 0 0 1px var(--accent-brand);
+  }
+
+  .backdrop-tone {
+    display: grid;
+    place-items: center;
+    height: 46px;
+    border-radius: 7px;
+    color: #fff;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+  }
+
+  .backdrop-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .backdrop-text b {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .backdrop-text small {
+    color: var(--faint-foreground);
+    font-size: 11px;
+  }
+
   .row {
     display: flex;
     flex-wrap: wrap;
@@ -1455,6 +1613,17 @@
     color: var(--muted-foreground);
     font-size: 12.5px;
     line-height: 1.4;
+  }
+
+  .field-warning {
+    margin: -2px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--warning-border);
+    border-radius: 8px;
+    background: var(--warning-soft);
+    color: var(--warning);
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .unit {

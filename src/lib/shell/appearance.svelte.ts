@@ -1,6 +1,7 @@
 import { settingsLoad, settingsSave, type SettingsDto } from "#lib/ipc/settings.js";
 
 const THEMES = ["night", "deep", "dusk", "forest", "graphite"] as const;
+const BACKDROPS = ["accent", "aurora", "sunset", "ocean", "nebula", "mono"] as const;
 
 class Appearance {
   settings = $state<SettingsDto | null>(null);
@@ -38,6 +39,10 @@ class Appearance {
     root.classList.toggle("no-motion", !this.settings.uiAnimations);
     for (const theme of THEMES) {
       root.classList.toggle(`theme-${theme}`, this.settings.theme === theme);
+    }
+    const background = this.settings.background ?? "accent";
+    for (const backdrop of BACKDROPS) {
+      root.classList.toggle(`backdrop-${backdrop}`, background === backdrop);
     }
   }
 }

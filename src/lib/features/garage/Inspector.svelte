@@ -40,6 +40,8 @@
     onRestoreVersion,
     onUnfollow,
     onBindPage,
+    onFindPage,
+    findingPage = false,
     onPassCheck,
     onCheckUpdates,
     onDeclineChecking,
@@ -75,6 +77,9 @@
     onUnfollow?: (source: string) => void;
     /** «Указать страницу»: `null` — получилось, иначе причина, почему нет. */
     onBindPage?: (url: string) => Promise<string | null>;
+    /** Найти страницу на сайтах, не дожидаясь 14-дневной паузы. */
+    onFindPage?: () => void;
+    findingPage?: boolean;
     /** Сайт просит подтвердить, что вы человек: открыть его проверку. `true` — пройдена. */
     onPassCheck?: () => Promise<boolean>;
     /** Проверить обновления только этого мода по его странице. */
@@ -393,6 +398,11 @@
     <div class="links">
       {#if onBindPage && !details.binding?.confirmed && !binding}
         <button class="btn-glass" type="button" onclick={() => (binding = true)}>Указать страницу</button>
+      {/if}
+      {#if onFindPage && !details.binding && !binding}
+        <button class="btn-glass" type="button" disabled={findingPage} onclick={onFindPage}>
+          {findingPage ? "Ищем…" : "Найти на сайтах"}
+        </button>
       {/if}
       {#if details.binding}
         <button class="btn-glass" type="button" onclick={() => void openPage()}>Открыть страницу</button>
