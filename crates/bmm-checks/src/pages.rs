@@ -10,10 +10,11 @@ use chrono::{DateTime, FixedOffset};
 
 use bmm_domain::library::{CheckState, InstalledMod, LibraryStore, ModBinding, PageSearch};
 use bmm_domain::models::Listing;
+use bmm_domain::text::TitleNormalizer;
 use bmm_sources::search::SearchService;
 
 use crate::bindings::gate;
-use crate::page_guesser::PageGuesser;
+use crate::page_guesser::{CERTAIN_SIZE_RATIO, MIN_NAME, PageGuesser};
 use crate::runner::UpdateProgress;
 
 /// Итог подбора страниц.
@@ -33,6 +34,140 @@ impl PageSearchReport {
     pub fn has_suggestions(&self) -> bool {
         self.found > 0
     }
+}
+
+/// Похожая страница того же мода на другом сайте.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageMatch {
+    pub source: String,
+    pub title: String,
+    pub url: url::Url,
+    pub version: Option<String>,
+    pub size: Option<i64>,
+    pub author: Option<String>,
+    pub similarity: f64,
+    pub same_size: bool,
+    pub same_version: bool,
+    pub same_author: bool,
+}
+
+/// Результат ручной проверки страницы по другим источникам.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageVerification {
+    pub page_source: String,
+    pub page_title: String,
+    pub page_url: url::Url,
+    pub page_size: Option<i64>,
+    pub matches: Vec<PageMatch>,
+}
+
+/// Открывает выбранную страницу и ищет её же на других включённых сайтах.
+/// Ничего не привязывает: это доказательства для человека.
+pub fn verify_page(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    mod_id: &str,
+    cancel: &AtomicBool,
+    title_of: &dyn Fn(&str) -> Option<String>,
+) -> Option<PageVerification> {
+    let binding = store
+        .bindings()
+        .into_iter()
+        .find(|binding| binding.mod_id == mod_id)?;
+    let page_source = search
+        .sources()
+        .iter()
+        .find(|source| source.id() == binding.source)?;
+    let page = page_source.listing(&binding.url, cancel).ok()??;
+
+    let mut queries = vec![page.title.clone()];
+    if let Some(title) = title_of(mod_id).filter(|title| !title.trim().is_empty())
+        && !queries
+            .iter()
+            .any(|query| query.eq_ignore_ascii_case(&title))
+    {
+        queries.push(title);
+    }
+
+    let mut candidates: Vec<Listing> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for query in &queries {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let response = search.search(query, cancel, None);
+        let found = if response.listings.is_empty() {
+            response
+                .cards
+                .into_iter()
+                .flat_map(|card| card.listings)
+                .collect()
+        } else {
+            response.listings
+        };
+        for listing in found {
+            if listing.source == page.source {
+                continue;
+            }
+            if seen.insert((listing.source.clone(), listing.source_id.clone())) {
+                candidates.push(listing);
+            }
+        }
+    }
+
+    let mut matches: Vec<PageMatch> = candidates
+        .into_iter()
+        .filter_map(|listing| {
+            let similarity = TitleNormalizer::similarity(&page.title, &listing.title);
+            let same_size = match (page.size_bytes, listing.size_bytes) {
+                (Some(mine), Some(theirs)) if mine > 0 && theirs > 0 => {
+                    mine.min(theirs) as f64 / mine.max(theirs) as f64 >= CERTAIN_SIZE_RATIO
+                }
+                _ => false,
+            };
+            let same_version =
+                page.mod_version.is_some() && page.mod_version == listing.mod_version;
+            let same_author = crate::page_guesser::authors_match(
+                page.author.as_deref(),
+                listing.author.as_deref(),
+            );
+            if similarity < MIN_NAME && !same_size && !same_version {
+                return None;
+            }
+            Some(PageMatch {
+                source: listing.source,
+                title: listing.title,
+                url: listing.url,
+                version: listing.mod_version,
+                size: listing.size_bytes,
+                author: listing.author,
+                similarity,
+                same_size,
+                same_version,
+                same_author,
+            })
+        })
+        .collect();
+    matches.sort_by(|a, b| {
+        let score = |item: &PageMatch| {
+            item.similarity
+                + if item.same_size { 0.15 } else { 0.0 }
+                + if item.same_version { 0.1 } else { 0.0 }
+                + if item.same_author { 0.15 } else { 0.0 }
+        };
+        score(b)
+            .partial_cmp(&score(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    matches.truncate(5);
+
+    Some(PageVerification {
+        page_source: page.source,
+        page_title: page.title,
+        page_url: page.url,
+        page_size: page.size_bytes,
+        matches,
+    })
 }
 
 /// Подбирает страницы для модов без привязок.
@@ -629,6 +764,56 @@ mod tests {
         )
     }
 
+    struct VerifySite {
+        id: &'static str,
+        page: Option<Listing>,
+        results: Vec<Listing>,
+    }
+
+    impl VerifySite {
+        fn new(id: &'static str, page: Option<Listing>, results: Vec<Listing>) -> Arc<Self> {
+            Arc::new(Self { id, page, results })
+        }
+    }
+
+    impl ModSource for VerifySite {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+        fn display_name(&self) -> &'static str {
+            self.id
+        }
+        fn supports_search(&self) -> bool {
+            true
+        }
+        fn home(&self) -> Url {
+            Url::parse(&format!("https://{}.test/", self.id)).unwrap()
+        }
+        fn owns(&self, url: &Url) -> bool {
+            url.host_str()
+                .is_some_and(|host| host == format!("{}.test", self.id))
+        }
+        fn is_mod_page(&self, _url: &Url) -> bool {
+            true
+        }
+        fn feed_covers(&self, _url: &Url) -> bool {
+            true
+        }
+        fn search(&self, _query: &str, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(self.results.clone())
+        }
+        fn feed_page(&self, _page: u32, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+        fn listing(
+            &self,
+            _url: &Url,
+            _cancel: &AtomicBool,
+        ) -> Result<Option<Listing>, SourceError> {
+            Ok(self.page.clone())
+        }
+    }
+
     #[test]
     fn searches_archive_title_and_file_name() {
         let store = InMemoryLibraryStore::new();
@@ -658,6 +843,51 @@ mod tests {
             "второй запрос по имени файла нашёл страницу"
         );
         assert!(site.calls.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[test]
+    fn verifies_a_page_against_another_site() {
+        let store = InMemoryLibraryStore::new();
+        let mut maps = installed("maps", "MapsFromRCD.zip");
+        maps.size_bytes = Some(68_513_955);
+        store.upsert_mod(maps);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "maps".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "123015".to_string(),
+                url: Url::parse("https://modsgaming.test/rcd").unwrap(),
+                confirmed: false,
+            })
+            .unwrap();
+
+        let mut page = listing("123015", "RCD - Russian Car Drift v1.1 (0.40.x)");
+        page.url = Url::parse("https://modsgaming.test/rcd").unwrap();
+        page.size_bytes = Some(68_513_955);
+        page.mod_version = Some("1.1".to_string());
+        page.author = Some("TurboDiesel".to_string());
+        let mut mirror = listing("mirror", "RCD Russian Car Drift 1.1");
+        mirror.source = "stmods".to_string();
+        mirror.url = Url::parse("https://stmods.test/rcd").unwrap();
+        mirror.size_bytes = Some(68_513_955);
+        mirror.mod_version = Some("1.1".to_string());
+        mirror.author = Some("TurboDiesel".to_string());
+
+        let primary = VerifySite::new("modsgaming", Some(page.clone()), Vec::new());
+        let other = VerifySite::new("stmods", None, vec![mirror]);
+        let service = SearchService::new(
+            vec![primary, other],
+            Arc::new(|_| SourceStatus::Ok),
+            SearchOptions::default(),
+            None,
+        );
+        let result = verify_page(&store, &service, "maps", &AtomicBool::new(false), &|_| None)
+            .expect("страница проверяется");
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].source, "stmods");
+        assert!(result.matches[0].same_size);
+        assert!(result.matches[0].same_version);
+        assert!(result.matches[0].same_author);
     }
 
     #[test]
