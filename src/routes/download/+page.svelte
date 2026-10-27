@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { isTauri } from "@tauri-apps/api/core";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import Check from "phosphor-svelte/lib/Check";
   import Lock from "phosphor-svelte/lib/Lock";
   import Package from "phosphor-svelte/lib/Package";
+  import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
   import X from "phosphor-svelte/lib/X";
+  import { expectDownload } from "#lib/ipc/incoming.js";
+  import { safeExternalUrl } from "#lib/url.js";
   import {
     downloadClose,
     downloadPanelState,
@@ -63,6 +67,18 @@
     await downloadClose().catch(() => {});
   }
 
+  async function openInBrowser(): Promise<void> {
+    const url = safeExternalUrl(context?.pageUrl ?? "");
+    if (!url) return;
+    try {
+      await openUrl(url);
+    } catch {
+      return;
+    }
+    await expectDownload();
+    await close();
+  }
+
   onMount(() => {
     let disposed = false;
     const stops: (() => void)[] = [];
@@ -102,8 +118,10 @@
 <div class="page">
   <header class="head" data-tauri-drag-region>
     <div class="cover">
-      {#if context?.previewUrl}
+      {#if context?.previewUrl && context?.role !== "addon"}
         <img src={context.previewUrl} alt="" />
+      {:else if context?.role === "addon"}
+        <PuzzlePiece size={26} weight="thin" />
       {:else}
         <Package size={26} weight="thin" />
       {/if}
@@ -158,7 +176,10 @@
   </aside>
 
   <footer class="foot">
-    Менеджер сам ничего не нажимает на странице и не обходит ожидание и рекламу.
+    <span>Менеджер сам ничего не нажимает на странице и не обходит ожидание и рекламу.</span>
+    <button type="button" class="browser" onclick={() => void openInBrowser()}>
+      Сайт не открывается? Открыть в браузере
+    </button>
   </footer>
 </div>
 
@@ -439,9 +460,45 @@
     position: absolute;
     right: 24px;
     bottom: 24px;
+    display: grid;
+    gap: 7px;
     width: 376px;
     color: var(--faint-foreground);
     font-size: 11px;
     line-height: 1.45;
+  }
+
+  .foot .browser {
+    justify-self: start;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-brand-text);
+    font: inherit;
+    font-size: 11.5px;
+    text-align: left;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
+  .foot .browser:hover {
+    color: var(--foreground);
+  }
+
+  @media (max-width: 1000px) {
+    .urlbar,
+    .site-hole {
+      width: calc(100% - 360px);
+    }
+
+    .steps {
+      width: 288px;
+      padding: 8px 12px 8px 16px;
+    }
+
+    .foot {
+      width: 288px;
+    }
   }
 </style>

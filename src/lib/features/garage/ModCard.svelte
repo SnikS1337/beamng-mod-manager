@@ -1,5 +1,6 @@
 <script lang="ts">
   import Car from "phosphor-svelte/lib/Car";
+  import Check from "phosphor-svelte/lib/Check";
   import MapTrifold from "phosphor-svelte/lib/MapTrifold";
   import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
   import FileCode from "phosphor-svelte/lib/FileCode";
@@ -109,6 +110,20 @@
     title={`${mod.name} — ${mod.fileName}`}
     onclick={select}
   ></button>
+  <button
+    class="check"
+    type="button"
+    role="checkbox"
+    aria-checked={selected}
+    aria-label={selected ? `Снять выбор с «${mod.name}»` : `Выбрать «${mod.name}»`}
+    title={selected ? "Снять выбор" : "Выбрать для действий"}
+    onclick={(event) => {
+      event.stopPropagation();
+      onselect(mod.id, { ctrl: true, shift: false });
+    }}
+  >
+    {#if selected}<Check size={12} weight="bold" />{/if}
+  </button>
   <div class="thumb" class:addon>
     {#if addon}
       {@const Icon = icon}
@@ -130,10 +145,12 @@
       <span class="placeholder"><Icon size={40} weight="thin" /></span>
     {/if}
 
-    <span class="kind-tag {tag}">{typeLabel(tag)}</span>
-    {#if status}
-      <span class="status {status.tone}">{status.text}</span>
-    {/if}
+    <span class="badges">
+      <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+      {#if status}
+        <span class="status {status.tone}">{status.text}</span>
+      {/if}
+    </span>
     {#if copies}
       <span
         class="copies"
@@ -223,6 +240,47 @@
     outline-offset: 2px;
   }
 
+  /* Ненавязчивый выбор пачки: виден всегда, ярче — при наведении и выборе. */
+  .check {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--surface) 76%, transparent);
+    color: var(--foreground);
+    opacity: 0.5;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    transition:
+      opacity var(--dur-1) var(--ease-out),
+      background-color var(--dur-1) var(--ease-out),
+      border-color var(--dur-1) var(--ease-out);
+  }
+
+  .card:hover .check,
+  .check:focus-visible,
+  .check[aria-checked="true"] {
+    opacity: 1;
+  }
+
+  .check:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .check[aria-checked="true"] {
+    border-color: var(--accent-brand);
+    background: var(--accent-brand);
+    color: var(--accent-brand-contrast);
+  }
+
   .thumb {
     position: relative;
     flex: none;
@@ -280,23 +338,32 @@
     font-weight: 700;
   }
 
-  .kind-tag {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-  }
-
-  .status {
+  .badges {
     position: absolute;
     top: 10px;
     right: 10px;
-    height: 22px;
-    padding: 0 8px;
-    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    max-width: calc(100% - 44px);
+  }
+
+  .kind-tag {
+    position: static;
+  }
+
+  .status {
     display: inline-flex;
     align-items: center;
+    height: 22px;
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0 8px;
+    border-radius: 5px;
     font-size: 11px;
     font-weight: 700;
+    text-overflow: ellipsis;
     white-space: nowrap;
     animation: pop-in var(--dur-3) var(--ease-out) both;
   }

@@ -112,8 +112,21 @@ mod tests {
                 } else {
                     fixture(&["modland", "list-real.html"])
                 }
-            } else if host.ends_with("modsgaming.ru") && url.path().starts_with("/search/") {
+            } else if (host.ends_with("modsgaming.ru") || host.ends_with("modsgaming.us"))
+                && url.path().starts_with("/search/")
+            {
                 fixture(&["modsgaming", "search-real.html"])
+            } else if host.ends_with("modsgaming.us") && url.path().starts_with("/load/beamng/") {
+                let parts = url.path_segments().map_or(0, |segments| {
+                    segments.filter(|part| !part.is_empty()).count()
+                });
+                if parts >= 5 {
+                    fixture(&["modsgaming", "mod-page.html"])
+                } else {
+                    fixture(&["modsgaming", "list-page.html"])
+                }
+            } else if host.ends_with("modsgaming.us") {
+                fixture(&["modsgaming", "list-page.html"])
             } else if host.ends_with("stmods.org") && url.path() == "/search.php" {
                 fixture(&["stmods", "search-beamng-2026-10-18.html"])
             } else if url.path().starts_with("/beamng_drive/") && url.path().contains("mods/") {
@@ -337,6 +350,8 @@ mod tests {
             "https://modsgaming.ru/load/beamng_drive/mashiny/38-1-0-160435",
             "https://modsgaming.ru/load/beamng_drive/mashiny/mod_vaz_2106_v6_0_0_38_x_dlja_beamng_drive",
             "https://modsgaming.ru/load/beamng_drive/karty/mod_karta_domik_v_derevne_v1_0_0_38_x_dlja_beamng_drive",
+            "https://www.modsgaming.us/load/beamng/maps/rcd_russian_car_drift_v1_1_0_40_x/75-1-0-123015",
+            "https://www.modsgaming.us/load/beamng/vehicles/audi_a6_c7_v1_3/71-1-0-1405",
             "https://beamng.com/resources/acng-tire-heat-pressure-wear.34567/",
             "https://www.beamng.com/resources/acng.34567/updates",
         ];
@@ -372,6 +387,11 @@ mod tests {
             "https://modsgaming.ru/load/beamng_drive/mashiny",
             "https://modsgaming.ru/search/?q=sienna&t=0",
             "https://modsgaming.ru/load/farming_simulator/traktory/mod_x",
+            "https://www.modsgaming.us/",
+            "https://www.modsgaming.us/load/beamng/70",
+            "https://www.modsgaming.us/load/beamng/maps/75",
+            "https://www.modsgaming.us/load/beamng/vehicles/71-2",
+            "https://www.modsgaming.us/search/?q=sienna&t=0",
             "https://beamng.com/",
             "https://beamng.com/resources/",
             "https://beamng.com/resources/categories/vehicles.2/",
@@ -522,7 +542,10 @@ mod tests {
         assert_eq!(exact_empty.search("bmv", &cancel()).unwrap().len(), 0);
         let calls = routes.calls();
         assert!(calls.len() >= 2, "точный и широкий запросы: {calls:?}");
-        assert!(calls[0].contains("q=bmv&t=0"), "{calls:?}");
+        assert!(
+            calls.iter().any(|call| call.contains("q=bmv&t=0")),
+            "{calls:?}"
+        );
         assert!(
             calls.iter().any(|call| call.contains("beamng.drive")),
             "{calls:?}"

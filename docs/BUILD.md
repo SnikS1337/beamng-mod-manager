@@ -38,7 +38,7 @@ npm run tauri build -- --no-bundle
 `target/release/BeamModManager.exe`. Установщик не используется: выпуск — portable
 zip с exe и `latest.json`.
 
-На 2026-10-26 проходят 648 тестов Rust (1 ignored) и 90 тестов фронтенда.
+На 2026-10-27 проходят 654 теста Rust (1 ignored) и 90 тестов фронтенда.
 
 ## Если хост ARM64
 

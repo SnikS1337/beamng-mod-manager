@@ -47,6 +47,7 @@ export interface IncomingInstallRequest {
 export interface IncomingInstallResult {
   success: boolean;
   message: string | null;
+  warning: string | null;
   fileName: string;
   replaces: string | null;
   backupId: string | null;
@@ -98,6 +99,7 @@ export async function incomingInstall(
   return requests.map((request) => ({
     success: true,
     message: null,
+    warning: null,
     fileName: request.fileName,
     replaces: request.replaces,
     backupId: request.replaces ? `0000000001_20261022-120000-000_${request.replaces}` : null,

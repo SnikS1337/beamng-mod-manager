@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use bmm_checks::UpdateCheckOptions;
-use bmm_domain::settings::{AppSettings, BackgroundTheme, UiMode};
+use bmm_domain::settings::{AppSettings, BackgroundStyle, BackgroundTheme, UiMode};
 
 use crate::error::AppError;
 use crate::state::AppState;
@@ -29,6 +29,7 @@ pub struct SettingsDto {
     pub liquid_glass: bool,
     pub mode: String,
     pub theme: String,
+    pub background: String,
     pub ui_animations: bool,
     pub animated_background: bool,
     pub fireflies: bool,
@@ -69,6 +70,15 @@ impl SettingsDto {
                 BackgroundTheme::Graphite => "graphite",
             }
             .to_string(),
+            background: match settings.background {
+                BackgroundStyle::Accent => "accent",
+                BackgroundStyle::Aurora => "aurora",
+                BackgroundStyle::Sunset => "sunset",
+                BackgroundStyle::Ocean => "ocean",
+                BackgroundStyle::Nebula => "nebula",
+                BackgroundStyle::Mono => "mono",
+            }
+            .to_string(),
             ui_animations: settings.ui_animations,
             animated_background: settings.animated_background,
             fireflies: settings.fireflies,
@@ -105,6 +115,14 @@ impl SettingsDto {
             "forest" => BackgroundTheme::Forest,
             "graphite" => BackgroundTheme::Graphite,
             _ => BackgroundTheme::Night,
+        };
+        settings.background = match self.background.as_str() {
+            "aurora" => BackgroundStyle::Aurora,
+            "sunset" => BackgroundStyle::Sunset,
+            "ocean" => BackgroundStyle::Ocean,
+            "nebula" => BackgroundStyle::Nebula,
+            "mono" => BackgroundStyle::Mono,
+            _ => BackgroundStyle::Accent,
         };
         settings.ui_animations = self.ui_animations;
         settings.animated_background = self.animated_background;
@@ -178,6 +196,7 @@ mod tests {
         changed.liquid_glass = !changed.liquid_glass;
         changed.mode = UiMode::Light;
         changed.theme = BackgroundTheme::Forest;
+        changed.background = BackgroundStyle::Nebula;
         changed.ui_animations = !changed.ui_animations;
         changed.animated_background = !changed.animated_background;
         changed.fireflies = !changed.fireflies;

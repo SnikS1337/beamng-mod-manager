@@ -255,7 +255,7 @@ fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
 
 /// Короткая подпись из `mod_info`: по ней видно, что «машина» на самом деле
 /// человечек-реквизит (`75KG Ragdoll Humanoid`).
-fn mod_info_hint(value: &serde_json::Value) -> Option<&str> {
+pub(crate) fn mod_info_hint(value: &serde_json::Value) -> Option<&str> {
     let data = value.get("data")?;
     data.get("tag_line")
         .and_then(serde_json::Value::as_str)

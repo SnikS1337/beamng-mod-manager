@@ -20,6 +20,8 @@ const EXPECT_FOR: Duration = Duration::from_secs(30 * 60);
 
 /// До какого момента (мс от начала эпохи) ждём скачанное обновление.
 static EXPECT_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Папка, в которую окно загрузки положит файл: сторож должен смотреть и её.
+static EXPECT_FOLDER: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Файлы, которые окно загрузки уже забрало само: сторож не должен предлагать их второй раз.
 static CAUGHT: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -53,6 +55,21 @@ fn expecting() -> bool {
 /// «Обновить» открыл страницу мода: следующие полчаса смотрим «Загрузки».
 #[tauri::command]
 pub fn downloads_expect() {
+    *EXPECT_FOLDER
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = None;
+    EXPECT_UNTIL.store(
+        now_millis() + EXPECT_FOR.as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Встроенное окно загрузки знает точную папку: даже если перехват не сработает,
+/// сторож предложит готовый архив из неё.
+pub(crate) fn expect_folder(folder: &Path) {
+    *EXPECT_FOLDER
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(folder.to_path_buf());
     EXPECT_UNTIL.store(
         now_millis() + EXPECT_FOR.as_millis() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -159,11 +176,32 @@ pub fn spawn(app: AppHandle, state: Arc<AppState>) {
 }
 
 fn watch_folders(settings: &bmm_domain::settings::AppSettings, expecting: bool) -> Vec<PathBuf> {
+    let expected = expecting.then(|| {
+        EXPECT_FOLDER
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    });
+    let expected = expected.flatten();
     let mut folders: Vec<PathBuf> = Vec::new();
-    if (settings.allow_downloads || expecting)
+    if let Some(folder) = &expected {
+        folders.push(folder.clone());
+    }
+    if (settings.allow_downloads || (expecting && expected.is_none()))
         && let Some(downloads) = downloads_folder()
     {
         folders.push(downloads);
+    }
+    if settings.allow_downloads
+        && let Some(folder) = settings
+            .downloads_folder
+            .as_deref()
+            .map(str::trim)
+            .filter(|folder| !folder.is_empty())
+            .map(PathBuf::from)
+            .filter(|folder| folder.is_absolute())
+    {
+        folders.push(folder);
     }
     for folder in &settings.watch_folders {
         folders.push(PathBuf::from(folder));
@@ -189,7 +227,13 @@ fn is_candidate(path: &Path) -> bool {
 
 /// Папка, куда окно загрузки кладёт архивы: выбранная, иначе системные «Загрузки»,
 /// иначе папка данных программы. Проверяем запись, а не только существование.
-pub(crate) fn download_folder(settings: &AppSettings, app_root: &Path) -> Option<PathBuf> {
+/// Папку внутри папки модов пропускаем: иначе игра увидит скачанный архив как мод,
+/// а установщик откажется заменять файл, который уже лежит на месте.
+pub(crate) fn download_folder(
+    settings: &AppSettings,
+    app_root: &Path,
+    mods_dir: Option<&Path>,
+) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(folder) = settings
         .downloads_folder
@@ -198,6 +242,7 @@ pub(crate) fn download_folder(settings: &AppSettings, app_root: &Path) -> Option
         .filter(|folder| !folder.is_empty())
         .map(PathBuf::from)
         .filter(|folder| folder.is_absolute())
+        .filter(|folder| mods_dir.is_none_or(|mods| !is_inside(folder, mods)))
     {
         candidates.push(folder);
     }
@@ -206,6 +251,26 @@ pub(crate) fn download_folder(settings: &AppSettings, app_root: &Path) -> Option
     }
     candidates.push(app_root.join("downloads"));
     pick_writable(candidates)
+}
+
+fn is_inside(path: &Path, folder: &Path) -> bool {
+    let path = std::fs::canonicalize(path)
+        .or_else(|_| std::path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf());
+    let folder = std::fs::canonicalize(folder)
+        .or_else(|_| std::path::absolute(folder))
+        .unwrap_or_else(|_| folder.to_path_buf());
+    #[cfg(windows)]
+    {
+        let path = path.to_string_lossy().to_lowercase();
+        let folder = folder.to_string_lossy().to_lowercase();
+        let folder = folder.trim_end_matches(['\\', '/']);
+        path == folder || path.starts_with(&format!("{folder}\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        path.starts_with(&folder)
+    }
 }
 
 fn pick_writable(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
@@ -321,7 +386,7 @@ mod tests {
             ..AppSettings::default()
         };
         assert_eq!(
-            download_folder(&settings, temp.path()),
+            download_folder(&settings, temp.path(), None),
             Some(custom.clone())
         );
     }
@@ -333,7 +398,7 @@ mod tests {
             downloads_folder: Some("relative/Downloads".to_string()),
             ..AppSettings::default()
         };
-        let chosen = download_folder(&settings, temp.path()).expect("запасная папка");
+        let chosen = download_folder(&settings, temp.path(), None).expect("запасная папка");
         assert_ne!(chosen, PathBuf::from("relative/Downloads"));
         assert!(chosen.is_absolute());
     }
@@ -347,9 +412,24 @@ mod tests {
             downloads_folder: Some(file.display().to_string()),
             ..AppSettings::default()
         };
-        let chosen = download_folder(&settings, temp.path()).expect("запасная папка");
+        let chosen = download_folder(&settings, temp.path(), None).expect("запасная папка");
         assert_ne!(chosen, file);
         assert!(writable_dir(&chosen));
+    }
+
+    #[test]
+    fn downloads_folder_inside_mods_is_ignored() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        let inside = mods.join("downloads");
+        std::fs::create_dir_all(&inside).unwrap();
+        let settings = AppSettings {
+            downloads_folder: Some(inside.display().to_string()),
+            ..AppSettings::default()
+        };
+        let chosen = download_folder(&settings, temp.path(), Some(&mods)).expect("запасная папка");
+        assert_ne!(chosen, inside);
+        assert!(!is_inside(&chosen, &mods));
     }
 
     #[test]

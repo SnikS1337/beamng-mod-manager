@@ -1,5 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
+export type BackgroundStyle = "accent" | "aurora" | "sunset" | "ocean" | "nebula" | "mono";
+
 export interface SettingsDto {
   allowDownloads: boolean;
   modsFolder: string | null;
@@ -17,6 +19,7 @@ export interface SettingsDto {
   liquidGlass: boolean;
   mode: "dark" | "light" | "system";
   theme: "night" | "deep" | "dusk" | "forest" | "graphite";
+  background: BackgroundStyle;
   uiAnimations: boolean;
   animatedBackground: boolean;
   fireflies: boolean;
@@ -47,6 +50,7 @@ export async function settingsLoad(): Promise<SettingsDto> {
     liquidGlass: true,
     mode: "dark",
     theme: "night",
+    background: "accent",
     uiAnimations: true,
     animatedBackground: true,
     fireflies: true,

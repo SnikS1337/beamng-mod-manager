@@ -147,15 +147,6 @@
         return;
       }
       if (!archive) throw new Error("Не удалось проверить архив.");
-      if (
-        item.downloaded &&
-        (archive.problem !== null || !archive.items.some(installable))
-      ) {
-        if (archive.workDir) {
-          void incomingDiscard(archive.workDir).catch(() => {});
-        }
-        return;
-      }
       openArchive(archive, downloaded);
     } catch (reason) {
       if (token === session) {
@@ -224,8 +215,10 @@
       );
       const tickets: IncomingTicket[] = [];
       const failures: { title: string; message: string }[] = [];
+      const warnings: string[] = [];
       results.forEach((result, index) => {
         if (result.success) {
+          if (result.warning) warnings.push(result.warning);
           tickets.push({
             fileName: result.fileName,
             replaces: result.replaces,
@@ -275,6 +268,7 @@
               }
             : undefined,
       });
+      if (warnings.length > 0) toasts.show(warnings[0]);
     } catch (reason) {
       toasts.show(errorText(reason));
     } finally {

@@ -15,6 +15,9 @@ use super::common;
 use super::{ModSource, SourceError};
 
 static ROOT: LazyLock<Url> = LazyLock::new(|| Url::parse(parser::BASE).unwrap());
+/// Старые привязки могли быть сохранены на прежний домен: карточку по прямой
+/// ссылке ещё читаем, но поиск и лента работают уже на новом сайте.
+static LEGACY_ROOT: LazyLock<Url> = LazyLock::new(|| Url::parse("https://modsgaming.ru/").unwrap());
 
 pub struct ModsGamingSource {
     fetcher: Arc<PoliteFetcher>,
@@ -27,10 +30,9 @@ impl ModsGamingSource {
 
     fn feed_url(page: u32) -> Url {
         if page <= 1 {
-            ROOT.join("load/beamng_drive/mashiny/38").unwrap()
+            ROOT.join("load/beamng/70").unwrap()
         } else {
-            ROOT.join(&format!("load/beamng_drive/mashiny/38-{page}"))
-                .unwrap()
+            ROOT.join(&format!("load/beamng/70-{page}")).unwrap()
         }
     }
 
@@ -96,7 +98,7 @@ impl ModSource for ModsGamingSource {
     }
 
     fn owns(&self, url: &Url) -> bool {
-        common::belongs_to(&ROOT, url)
+        common::belongs_to(&ROOT, url) || common::belongs_to(&LEGACY_ROOT, url)
     }
 
     fn is_mod_page(&self, url: &Url) -> bool {
@@ -104,10 +106,23 @@ impl ModSource for ModsGamingSource {
             return false;
         }
         let parts = common::segments(url);
-        if parts.len() < 4
-            || !parts[0].eq_ignore_ascii_case("load")
-            || !parts[1].eq_ignore_ascii_case("beamng_drive")
+        if !parts
+            .first()
+            .is_some_and(|part| part.eq_ignore_ascii_case("load"))
         {
+            return false;
+        }
+        let Some(kind) = parts.get(1) else {
+            return false;
+        };
+        let min_parts = if kind.eq_ignore_ascii_case("beamng") {
+            5
+        } else if kind.eq_ignore_ascii_case("beamng_drive") {
+            4
+        } else {
+            return false;
+        };
+        if parts.len() < min_parts {
             return false;
         }
         let last = parts.last().copied().unwrap_or("");
@@ -115,9 +130,7 @@ impl ModSource for ModsGamingSource {
     }
 
     fn feed_covers(&self, url: &Url) -> bool {
-        url.path()
-            .to_lowercase()
-            .starts_with("/load/beamng_drive/mashiny/")
+        url.path().to_lowercase().starts_with("/load/beamng/")
     }
 
     fn search(&self, query: &str, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
@@ -125,6 +138,8 @@ impl ModSource for ModsGamingSource {
         if query.is_empty() {
             return Ok(Vec::new());
         }
+        // uCoz отдаёт поиск только после захода на сайт: нужна сессионная cookie.
+        let _ = common::load(&self.fetcher, self.id(), &ROOT, None, cancel);
         if query.to_lowercase().contains("beamng") {
             return self.read(query, 1, 2, cancel);
         }

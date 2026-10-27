@@ -247,6 +247,7 @@ pub fn run() {
             commands::updates::updates_dismiss,
             commands::updates::updates_restore,
             commands::updates::updates_find_pages,
+            commands::updates::updates_find_page,
             commands::updates::updates_confirm_page,
             commands::updates::updates_reject_page,
             commands::updates::updates_undo_page,

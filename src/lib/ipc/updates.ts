@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { ModRole } from "./library.js";
 
 export type UpdateStatusText = "none" | "likely" | "possible";
 
@@ -13,6 +14,7 @@ export interface UpdateFinding {
   url: string;
   dismissed: boolean;
   previewUrl?: string | null;
+  role?: ModRole | null;
   installedSize?: number | null;
   latestSize?: number | null;
   /** Когда программа заметила изменение на сайте (ISO). */
@@ -63,6 +65,7 @@ export interface LostPage {
   source: string;
   url: string;
   previewUrl?: string | null;
+  role?: ModRole | null;
 }
 
 export interface UpdatesSnapshot {
@@ -103,6 +106,7 @@ function mockInitial(): UpdatesSnapshot {
         modName: "Gavril Roamer Classic",
         source: "stmods",
         url: "https://stmods.org/beamng_drive/mods/roamer_classic/",
+        role: "vehicle",
       },
     ],
     findings: [
@@ -115,6 +119,7 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "1.5",
         url: "https://stmods.org/beamng_drive/mods/bmw_m2_g87/",
         dismissed: false,
+        role: "vehicle",
         installedSize: 142 * 1024 * 1024,
         latestSize: 151 * 1024 * 1024,
         noticedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
@@ -128,6 +133,7 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "2.2",
         url: "https://modsgaming.ru/load/beamng_drive/mashiny/38-1-0-160200",
         dismissed: false,
+        role: "vehicle",
         installedSize: 410 * 1024 * 1024,
         latestSize: 438 * 1024 * 1024,
         noticedAt: new Date(Date.now() - 21 * 86400000).toISOString(),
@@ -141,6 +147,7 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "0.1",
         url: "https://www.modland.net/beamng.drive-mods/maps/karta-priozersk.html",
         dismissed: false,
+        role: "map",
       },
     ],
     hidden: [
@@ -153,6 +160,7 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "1.0",
         url: "https://stmods.org/beamng_drive/mods/gavril/",
         dismissed: true,
+        role: "vehicle",
       },
     ],
     suggestions: [
@@ -324,6 +332,12 @@ export async function updatesFindPages(requestId: number): Promise<void> {
       error: null,
     });
   }, 500);
+}
+
+/** Найти страницу одного мода, не дожидаясь 14-дневной паузы. */
+export async function updatesFindPage(modId: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_find_page", { modId });
+  return clone(mockSnapshot);
 }
 
 export async function updatesConfirmPage(modId: string): Promise<UpdatesSnapshot> {
