@@ -259,7 +259,38 @@ fn is_unsafe_path(name: &str) -> bool {
     name.split('/').any(|segment| {
         segment == ".."
             || (segment.chars().count() >= 2 && segment.chars().all(|c| c == '.' || c == ' '))
+            || is_windows_device(segment)
     })
+}
+
+/// `CON`, `NUL`, `COM1`… Windows открывает как устройство даже с расширением.
+fn is_windows_device(segment: &str) -> bool {
+    let stem = segment
+        .split('.')
+        .next()
+        .unwrap_or(segment)
+        .trim_end_matches(['.', ' '])
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
+}
+
+#[cfg(test)]
+mod device_name_tests {
+    use super::is_unsafe_path;
+
+    #[test]
+    fn windows_devices_are_rejected_at_any_depth() {
+        for name in ["CON", "con.txt", "folder/NUL.zip", "a/COM1", "LPT9.log"] {
+            assert!(is_unsafe_path(name), "{name}");
+        }
+        for name in ["console.txt", "COM0", "LPT10", "auxiliary/a.txt"] {
+            assert!(!is_unsafe_path(name), "{name}");
+        }
+    }
 }
 
 /// Расширение файла с точкой, без учёта хвостовых точек и пробелов (как Windows).

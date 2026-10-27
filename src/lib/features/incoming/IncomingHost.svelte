@@ -48,7 +48,9 @@
   const items = $derived(current?.items ?? []);
   const dialogOpen = $derived(busy || current !== null);
   const picked = $derived(items.filter((item, index) => selected[index] && installable(item)));
-  const several = $derived(items.length > 1);
+  const several = $derived(
+    items.length > 1 || items.some((item) => suspiciousFiles(item).length > 0),
+  );
   const hasUpdate = $derived(picked.some((item) => item.kind === "update"));
   const canInstall = $derived(
     !busy &&
@@ -145,7 +147,9 @@
   });
 
   async function pump(): Promise<void> {
-    if (pumping) return;
+    // Не забираем следующий архив, пока открыт текущий или идёт установка:
+    // иначе окно подменится, а workDir неудачного архива потеряется.
+    if (pumping || installing || current || busy) return;
     const item = incomingQueue.shift();
     if (!item) return;
     const path = item.path;
@@ -264,7 +268,10 @@
           detail: { fileNames: tickets.map((ticket) => ticket.fileName) },
         }),
       );
-      toasts.show(toastText(chosen, tickets.length, failures), {
+      const text = warnings.length > 0
+        ? `${toastText(chosen, tickets.length, failures)} ${warnings[0]}`
+        : toastText(chosen, tickets.length, failures);
+      toasts.show(text, {
         undo:
           tickets.length > 0
             ? async () => {
@@ -282,7 +289,6 @@
               }
             : undefined,
       });
-      if (warnings.length > 0) toasts.show(warnings[0]);
     } catch (reason) {
       toasts.show(errorText(reason));
     } finally {

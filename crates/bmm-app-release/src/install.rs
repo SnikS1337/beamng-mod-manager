@@ -88,6 +88,8 @@ pub enum InstallError {
 /// Достать exe из скачанного архива в папку подготовки. В архиве нужен ровно
 /// один `BeamModManager.exe` в корне; пути с папками и `..` не принимаются.
 /// `version_of` читает версию exe (в Tauri — из ресурсов файла Windows).
+/// Если версию прочитать нельзя, распаковка не блокируется: целостность архива
+/// уже подтверждена размером и SHA-256 из описания.
 pub fn extract_exe(
     zip_path: &Path,
     staging_dir: &Path,
@@ -144,13 +146,14 @@ pub fn extract_exe(
         let _ = fs::remove_file(&destination);
         return Err(InstallError::NotWindowsExe);
     }
-    let actual = version_of(&destination);
-    if actual != Some(expected) {
+    // Версию exe не всегда можно прочитать (нет ресурса версии): тогда верим
+    // размеру и SHA-256 архива, которые уже проверены до распаковки.
+    if let Some(actual) = version_of(&destination)
+        && actual != expected
+    {
         let _ = fs::remove_file(&destination);
         return Err(InstallError::VersionMismatch {
-            found: actual
-                .map(AppVersion::display)
-                .unwrap_or_else(|| "?".to_string()),
+            found: actual.display(),
             expected: expected.display(),
         });
     }

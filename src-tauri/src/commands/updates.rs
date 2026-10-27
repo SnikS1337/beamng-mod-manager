@@ -164,12 +164,14 @@ async fn start_updates(
         .update
         .clone()
         .ok_or_else(|| AppError::new("updates", "Проверка обновлений недоступна."))?;
-    runtime.page_cancel.store(false, Ordering::SeqCst);
     let page_cancel = runtime.page_cancel.clone();
     let page_busy = runtime.page_busy.clone();
     let settings = state.settings.load().settings;
     {
-        let mut enabled = runtime.enabled.lock().unwrap();
+        let mut enabled = runtime
+            .enabled
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         enabled.clear();
         for source in runtime.sources.iter() {
             if !settings
@@ -208,6 +210,9 @@ async fn start_updates(
                 if !report.cancelled
                     && let Some(_guard) = PageBusyGuard::acquire(page_busy)
                 {
+                    // Сбрасываем отмену только когда поиск страниц действительно наш:
+                    // иначе «Проверка» снимет отмену чужого поиска.
+                    page_cancel.store(false, Ordering::SeqCst);
                     // Подбор — подсказка: его сбой не должен съедать итог проверки.
                     let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
                         run_page_search(&app, &state_for_task, request_id, &page_cancel)
@@ -539,6 +544,7 @@ fn modland_window(app: &AppHandle, url: url::Url) -> Result<WebviewWindow, AppEr
         return Ok(window);
     }
     WebviewWindowBuilder::new(app, MODLAND_CHECK_LABEL, WebviewUrl::External(url))
+        .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
         .title("Проверка Modland")
         .inner_size(980.0, 720.0)
         .min_inner_size(520.0, 420.0)
@@ -678,6 +684,23 @@ mod tests {
             .single()
             .unwrap()
             .fixed_offset()
+    }
+
+    #[test]
+    fn bind_error_codes_match_window_union() {
+        use crate::test_support::ts_union;
+        let codes = ts_union("unions.ts", "BindErrorCode");
+        for code in [
+            bmm_checks::pages::BindErrorCode::InvalidUrl,
+            bmm_checks::pages::BindErrorCode::UnknownSite,
+            bmm_checks::pages::BindErrorCode::NotModPage,
+            bmm_checks::pages::BindErrorCode::ModMissing,
+            bmm_checks::pages::BindErrorCode::PageMissing,
+            bmm_checks::pages::BindErrorCode::HumanCheck,
+            bmm_checks::pages::BindErrorCode::PageOpen,
+        ] {
+            assert!(codes.contains(code.as_str()), "окно не знает код {code:?}");
+        }
     }
 
     #[test]

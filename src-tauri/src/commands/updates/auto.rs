@@ -90,7 +90,10 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
             started = false;
             if due && let Some(runtime) = runtime {
                 {
-                    let mut enabled = runtime.enabled.lock().unwrap();
+                    let mut enabled = runtime
+                        .enabled
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner());
                     enabled.clear();
                     for source in runtime.sources.iter() {
                         if !settings
@@ -143,15 +146,43 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                     .iter()
                     .map(|source| (source.id().to_string(), source.display_name().to_string()))
                     .collect();
-                let event = done_event(
-                    AUTO_REQUEST_ID,
-                    build_snapshot(&state),
-                    &report,
-                    &names,
-                    Some("auto"),
-                    None,
-                );
-                let _ = app.emit("updates://event", event);
+                // Паника при сборке итога не должна навсегда останавливать расписание.
+                if contained(|| {
+                    let event = done_event(
+                        AUTO_REQUEST_ID,
+                        build_snapshot(&state),
+                        &report,
+                        &names,
+                        Some("auto"),
+                        None,
+                    );
+                    let _ = app.emit("updates://event", event);
+                })
+                .is_none()
+                {
+                    let _ = contained(|| {
+                        let _ = app.emit(
+                            "updates://event",
+                            UpdatesEventDto {
+                                request_id: AUTO_REQUEST_ID,
+                                phase: "auto".to_string(),
+                                progress: None,
+                                findings: Vec::new(),
+                                hidden: Vec::new(),
+                                suggestions: Vec::new(),
+                                sources: Vec::new(),
+                                new_count: 0,
+                                up_to_date: 0,
+                                requests: 0,
+                                cancelled: false,
+                                stopped_by_time: false,
+                                error: Some(
+                                    "Не удалось собрать итог фоновой проверки.".to_string(),
+                                ),
+                            },
+                        );
+                    });
+                }
                 last = std::time::Instant::now();
             }
             std::thread::sleep(std::time::Duration::from_secs(60));

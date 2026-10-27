@@ -63,6 +63,8 @@ pub struct AppUpdateRuntime {
     pub state: UpdateState,
     pub prepared: Option<PreparedUpdate>,
     pub cancel: CancelToken,
+    /// Номер попытки скачивания: старый поток не должен затирать новое состояние.
+    pub attempt: u64,
     pub update_dir: PathBuf,
     pub skipped_path: PathBuf,
     pub manifest_url: url::Url,

@@ -360,8 +360,17 @@
     saveTimer = setTimeout(() => void save(), 350);
   }
 
+  let saveQueued = false;
+  let queuedFallbacks = false;
+
   async function save(useNumberFallbacks = false) {
-    if (!draft || saving) return;
+    if (!draft) return;
+    if (saving) {
+      // Сохранение уже идёт: не теряем правку, досохраним после него.
+      saveQueued = true;
+      queuedFallbacks ||= useNumberFallbacks;
+      return;
+    }
     if (!numbersValid && !useNumberFallbacks) return;
     const rev = revision;
     const payload = useNumberFallbacks ? withNumberFallbacks(draft) : draft;
@@ -378,7 +387,14 @@
       error = errorText(reason);
     } finally {
       saving = false;
-      if (dirty && revision !== rev) scheduleSave();
+      if (saveQueued) {
+        const fallbacks = queuedFallbacks;
+        saveQueued = false;
+        queuedFallbacks = false;
+        if (dirty) void save(fallbacks);
+      } else if (dirty && revision !== rev) {
+        scheduleSave();
+      }
     }
   }
 

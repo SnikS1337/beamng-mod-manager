@@ -85,6 +85,23 @@ pub fn scan_mods(layout: &ModLayout) -> ScanResult {
     result
 }
 
+/// Симлинк или junction: чужую папку не обходим. `is_symlink` не видит
+/// junction, а `fs::metadata` по нему уводит сканер наружу.
+fn is_reparse(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 fn scan_flat(dir: &Path, enabled: bool, seen: &mut HashSet<String>, result: &mut ScanResult) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -94,7 +111,7 @@ fn scan_flat(dir: &Path, enabled: bool, seen: &mut HashSet<String>, result: &mut
         let Ok(metadata) = fs::symlink_metadata(&path) else {
             continue;
         };
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
+        if is_reparse(&metadata) || !metadata.is_file() {
             continue;
         }
         let Some(file_name) = path
@@ -134,7 +151,7 @@ fn scan_subfolders(
         let Ok(metadata) = fs::symlink_metadata(&path) else {
             continue;
         };
-        if metadata.file_type().is_symlink() {
+        if is_reparse(&metadata) {
             continue;
         }
         if metadata.is_dir() {
@@ -321,6 +338,47 @@ mod tests {
             .map(|item| item.file_name.as_str())
             .collect();
         assert_eq!(names, vec!["a.zip", "nested.zip", "off.zip"]);
+    }
+
+    #[test]
+    fn junction_is_not_followed() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = temp.path().join("outside");
+        write_file(&outside.join("foreign.zip"), b"x");
+        let mods = temp.path().join("mods");
+        write_file(&mods.join("own.zip"), b"x");
+        let link = mods.join("link");
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&link)
+                .arg(&outside)
+                .status();
+            if !matches!(status, Ok(status) if status.success()) {
+                return; // среда не разрешает junction — проверка не применима
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = &link;
+            return;
+        }
+        let layout = ModLayout {
+            mods_dir: mods,
+            disabled_dir: temp.path().join("disabled"),
+            backup_dir: temp.path().join("backups"),
+        };
+        let names: Vec<String> = scan_mods(&layout)
+            .mods
+            .into_iter()
+            .map(|item| item.file_name)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["own.zip".to_string()],
+            "чужой junction не обходим"
+        );
     }
 
     #[test]

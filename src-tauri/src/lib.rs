@@ -57,6 +57,7 @@ pub fn run() {
         eprintln!("[bmm] не удалось создать каталоги данных: {error}");
     }
     commands::app_update::remember_rolled_back(&paths.root().join("update-skip.txt"));
+    let update_failure = commands::app_update::update_failed_message();
 
     let matches = Arc::new(MatchDecisionStore::new(
         Some(paths.matches()),
@@ -122,8 +123,8 @@ pub fn run() {
                 pages,
             ));
             let trimmer = cache.clone();
-            // Кеш картинок пополняется во время работы: подчищаем его не только при запуске,
-            // иначе за долгую сессию папка растёт без предела.
+            // Первая чистка — сразу при старте: приложение часто закрыто, и таймер
+            // сам по себе ничего не чистит. Дальше — только для долгой сессии.
             std::thread::spawn(move || {
                 loop {
                     trimmer.trim(bmm_sources::images::DEFAULT_LIMIT_BYTES);
@@ -147,9 +148,13 @@ pub fn run() {
         .map(|downloader| {
             Arc::new(Mutex::new(AppUpdateRuntime {
                 downloader,
-                state: bmm_app_release::UpdateState::idle(),
+                state: update_failure
+                    .clone()
+                    .map(bmm_app_release::UpdateState::failed)
+                    .unwrap_or_else(bmm_app_release::UpdateState::idle),
                 prepared: None,
                 cancel: bmm_app_release::CancelToken::new(),
+                attempt: 0,
                 update_dir: paths.update_dir(),
                 // Там же, где у 0.3.x: папку обновления чистят после каждого обновления.
                 skipped_path: paths.root().join("update-skip.txt"),
@@ -203,6 +208,11 @@ pub fn run() {
         .setup(move |app| {
             browser_pages.attach(app.handle().clone());
             let state = app.state::<Arc<AppState>>().inner().clone();
+            // Прерванная установка оставляет в папке модов тяжёлые `.part`.
+            // Убираем только старые: свежий файл может принадлежать идущей установке.
+            if let Ok(installer) = commands::versions::installer_for(&state) {
+                installer.cleanup_stale_temp(std::time::Duration::from_secs(60 * 60));
+            }
             commands::downloads::spawn(app.handle().clone(), state.clone());
             commands::updates::spawn_auto_check(app.handle().clone(), state);
             if std::env::args().any(|arg| arg == "--probe") {

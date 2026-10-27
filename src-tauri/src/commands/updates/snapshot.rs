@@ -5,7 +5,7 @@ use super::*;
 pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
     let store = state.library.as_ref();
     // Как на карточках модов: название и картинка из архива, если уже прочитаны.
-    let titles = state.previews.titles();
+    let titles = state.previews.titles_shared();
     let keys: HashMap<String, String> = state
         .previews_by_id
         .lock()
@@ -13,8 +13,8 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         .iter()
         .map(|(id, target)| (id.clone(), target.key.clone()))
         .collect();
-    let contents = state.previews.contents();
-    let infos = state.previews.mod_infos();
+    let contents = state.previews.contents_shared();
+    let infos = state.previews.mod_infos_shared();
     let role_of = |mod_id: &str| -> Option<String> {
         let key = keys.get(mod_id)?;
         let empty: &[String] = &[];

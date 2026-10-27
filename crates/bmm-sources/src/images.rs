@@ -156,6 +156,9 @@ impl RemoteImageCache {
     }
 
     fn download(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, ImageError> {
+        if !safe_redirect_policy_allows(url) {
+            return Err(ImageError::Network);
+        }
         let client = self.client.as_ref().ok_or(ImageError::Network)?;
         let response = client
             .get(url.clone())
@@ -227,6 +230,16 @@ impl RemoteImageCache {
     pub fn path(&self, image: &RemoteImage) -> PathBuf {
         self.root.join(format!("{}.{}", image.key, image.extension))
     }
+}
+
+#[cfg(not(test))]
+fn safe_redirect_policy_allows(url: &Url) -> bool {
+    crate::net::redirect_allowed(url)
+}
+
+#[cfg(test)]
+fn safe_redirect_policy_allows(_: &Url) -> bool {
+    true
 }
 
 fn key_of(url: &Url) -> String {

@@ -11,7 +11,6 @@ use bmm_domain::atomic;
 
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
 const BACKUP_SUFFIX: &str = ".bmm-bak";
-const TEMP_SUFFIX: &str = ".bmm-tmp";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoInfo {
@@ -44,11 +43,17 @@ impl RepoInfo {
             resource_id: data.get("resource_id").and_then(number_or_string),
             title: text(&["title", "name"]),
             author: text(&["username", "author"]),
-            last_update: data
-                .get("last_update")
-                .and_then(Value::as_str)
-                .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-                .map(|date| date.fixed_offset()),
+            last_update: data.get("last_update").and_then(|value| {
+                value
+                    .as_str()
+                    .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+                    .map(|date| date.fixed_offset())
+                    .or_else(|| {
+                        value.as_i64().and_then(|seconds| {
+                            DateTime::from_timestamp(seconds, 0).map(|date| date.fixed_offset())
+                        })
+                    })
+            }),
         }
     }
 
@@ -72,9 +77,9 @@ pub struct GameModEntry {
 
 impl GameModEntry {
     pub fn in_mods_root(&self) -> bool {
-        self.full_path
-            .as_deref()
-            .is_none_or(|path| path.eq_ignore_ascii_case(&format!("/mods/{}", self.file_name)))
+        self.full_path.as_deref().is_none_or(|path| {
+            normalize_full_path(path) == format!("mods/{}", normalize_full_path(&self.file_name))
+        })
     }
 
     pub fn is_at(&self, sub_folder: Option<&str>) -> bool {
@@ -82,11 +87,17 @@ impl GameModEntry {
             return true;
         };
         let expected = match sub_folder {
-            Some(folder) => format!("/mods/{folder}/{}", self.file_name),
-            None => format!("/mods/{}", self.file_name),
+            Some(folder) => format!("mods/{folder}/{}", self.file_name),
+            None => format!("mods/{}", self.file_name),
         };
-        full.eq_ignore_ascii_case(&expected)
+        normalize_full_path(full) == normalize_full_path(&expected)
     }
+}
+
+fn normalize_full_path(path: &str) -> String {
+    path.replace('\\', "/")
+        .trim_start_matches('/')
+        .to_ascii_lowercase()
 }
 
 #[derive(Debug)]
@@ -183,7 +194,10 @@ impl GameModDb {
     pub fn read(&self) -> GameDbReadResult {
         let metadata = match fs::metadata(&self.path) {
             Ok(metadata) => metadata,
-            Err(_) => return GameDbReadResult::missing(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return GameDbReadResult::missing();
+            }
+            Err(_) => return unreadable("файл db.json не открылся"),
         };
         if metadata.len() > MAX_BYTES {
             return unreadable("файл db.json слишком большой");
@@ -213,10 +227,20 @@ impl GameModDb {
 
         let metadata = match fs::metadata(&self.path) {
             Ok(metadata) => metadata,
-            Err(_) => return result(SetActiveOutcome::NoDb, Vec::new(), None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return result(SetActiveOutcome::NoDb, Vec::new(), None);
+            }
+            Err(_) => return result(SetActiveOutcome::IoError, Vec::new(), None),
         };
         let mtime = metadata.modified().ok();
         let length = metadata.len();
+        if length > MAX_BYTES {
+            return result(
+                SetActiveOutcome::Unreadable,
+                Vec::new(),
+                Some("файл db.json слишком большой".to_string()),
+            );
+        }
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
             Err(_) => return result(SetActiveOutcome::IoError, Vec::new(), None),
@@ -285,7 +309,9 @@ impl GameModDb {
                 );
             }
         };
-        let temp = PathBuf::from(format!("{}{TEMP_SUFFIX}", self.path.display()));
+        // Уникальный временный файл: два экземпляра приложения не должны
+        // писать в один `db.json.bmm-tmp` и подменять недописанный файл.
+        let temp = atomic::unique_temp_path(&self.path);
         if let Err(error) = atomic::write_atomic_with_temp(&self.path, &temp, json.as_bytes()) {
             return result(
                 SetActiveOutcome::IoError,
@@ -504,6 +530,14 @@ mod repo_info_tests {
             &serde_json::json!({"name": "Hands on the Wheel", "version": "0.3.0", "author": "1Matzh"}),
         );
         assert_eq!(own.version.as_deref(), Some("0.3.0"));
+
+        // В реальном db.json дата бывает Unix-числом, а не RFC3339.
+        let numeric =
+            RepoInfo::from_mod_data("X", &serde_json::json!({"last_update": 1_791_803_568i64}));
+        assert_eq!(
+            numeric.last_update.map(|date| date.timestamp()),
+            Some(1_791_803_568)
+        );
         assert_eq!(own.title.as_deref(), Some("Hands on the Wheel"));
         assert_eq!(own.author.as_deref(), Some("1Matzh"));
         assert_eq!(own.page_url(), None, "не из репозитория — страницы нет");

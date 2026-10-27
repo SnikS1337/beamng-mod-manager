@@ -23,6 +23,8 @@ class Toasts {
   show(message: string, options: ToastOptions = {}): void {
     const previous = this.current;
     if (previous?.timer) clearTimeout(previous.timer);
+    // Предыдущее действие финализируем: удалённый мод иначе остаётся в
+    // скрытом тикете и пропадает из «Удалённых» до перезапуска.
     if (previous?.commit) void Promise.resolve(previous.commit()).catch(() => {});
     const duration =
       options.duration ?? (options.undo ? 6000 : message.length > 48 ? 5000 : 3000);

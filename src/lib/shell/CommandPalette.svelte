@@ -1,6 +1,6 @@
 <script lang="ts">
   import { isShortcut } from "./keys";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
@@ -34,15 +34,19 @@
     active = 0;
     void tick().then(() => input?.focus());
     // Палитру открыли не из гаража, а моды ещё не загружались — подгружаем для поиска.
-    if (palette.mods.length === 0 && !loadingMods) {
-      loadingMods = true;
-      void libraryLoad()
-        .then((snapshot) => {
-          if (palette.mods.length === 0) palette.mods = snapshot.mods;
-        })
-        .catch(() => {})
-        .finally(() => (loadingMods = false));
-    }
+    // Длину списка читаем без зависимости: иначе загрузка модов перезапускает
+    // эффект и стирает уже введённый запрос.
+    untrack(() => {
+      if (palette.mods.length === 0 && !loadingMods) {
+        loadingMods = true;
+        void libraryLoad()
+          .then((snapshot) => {
+            if (palette.mods.length === 0) palette.mods = snapshot.mods;
+          })
+          .catch(() => {})
+          .finally(() => (loadingMods = false));
+      }
+    });
   });
 
   $effect(() => {

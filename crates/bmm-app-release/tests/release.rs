@@ -1193,6 +1193,22 @@ fn prepare_rejects_non_newer_and_wrong_archive_version() {
     .unwrap_err();
     assert!(error.to_string().contains("версия"), "{error}");
     assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
+
+    // Без ресурса версии (как в текущем приложении) обновление не блокируется:
+    // архив уже сверен по размеру и SHA-256.
+    assert!(
+        prepare_update(
+            &archive,
+            &rig.update_dir,
+            &manifest,
+            &local,
+            &rig.exe,
+            &|_| None,
+            &options,
+        )
+        .is_ok(),
+        "неизвестная версия exe не должна ломать самообновление"
+    );
 }
 
 // ---------------------------------------------------------------------------

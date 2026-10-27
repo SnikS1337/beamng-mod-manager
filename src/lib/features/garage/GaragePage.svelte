@@ -235,6 +235,8 @@
       detailsLoading = false;
       return;
     }
+    // Не показываем данные прошлого мода, пока грузится новый.
+    if (untrack(() => details?.id) !== selectedId) details = null;
     const token = ++detailsToken;
     detailsLoading = true;
     void modDetails(selectedId)
@@ -242,7 +244,10 @@
         if (token === detailsToken) details = value;
       })
       .catch((reason: unknown) => {
-        if (token === detailsToken) error = errorText(reason);
+        if (token === detailsToken) {
+          details = null;
+          showToast(errorText(reason));
+        }
       })
       .finally(() => {
         if (token === detailsToken) detailsLoading = false;
@@ -712,7 +717,13 @@
     return !!target?.closest("button, a, [role='button'], [role='switch'], [role='menuitem']");
   }
 
+  function modalOpen(): boolean {
+    return document.querySelector('[aria-modal="true"], dialog[open]') !== null;
+  }
+
   function onkeydown(event: KeyboardEvent) {
+    // Под модалкой горячие клавиши гаража не должны менять моды за ней.
+    if (modalOpen()) return;
     if (isShortcut(event, "f")) {
       event.preventDefault();
       searchEl?.focus();

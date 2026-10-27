@@ -257,7 +257,7 @@ fn installed_archives(
     installer: &bmm_packs::install::ModInstaller,
 ) -> Vec<InstalledArchive> {
     let scan = scan::scan_mods(installer.layout());
-    let titles = state.previews.titles();
+    let titles = state.previews.titles_shared();
     let mut result = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for disk in scan.mods {

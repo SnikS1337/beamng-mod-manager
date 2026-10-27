@@ -112,7 +112,8 @@ pub fn redirect_allowed(url: &Url) -> bool {
     };
     match host {
         url::Host::Domain(name) => {
-            let name = name.to_ascii_lowercase();
+            // Хвостовая точка — тот же localhost для резолвера: `localhost.`.
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
             name != "localhost" && !name.ends_with(".localhost")
         }
         url::Host::Ipv4(ip) => public_v4(ip),
@@ -121,18 +122,41 @@ pub fn redirect_allowed(url: &Url) -> bool {
 }
 
 fn public_v4(ip: Ipv4Addr) -> bool {
-    !(ip.is_private()
-        || ip.is_loopback()
-        || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.is_broadcast())
+    let [a, b, c, _] = ip.octets();
+    // Диапазоны, которые не должны получать запросы от имени сайта:
+    // this-network, private, CGNAT, loopback, link-local, IETF,
+    // documentation, benchmarking, multicast и reserved.
+    !(a == 0
+        || a == 10
+        || a == 127
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 169 && b == 254)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 192 && b == 168)
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 224)
 }
 
 fn public_v6(ip: Ipv6Addr) -> bool {
-    if let Some(v4) = ip.to_ipv4_mapped() {
+    if let Some(v4) = ip.to_ipv4_mapped().or_else(|| ip.to_ipv4()) {
         return public_v4(v4);
     }
-    !(ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local())
+    let segments = ip.segments();
+    let first = segments[0];
+    // unspecified/loopback, unique-local (fc00::/7), link-local (fe80::/10),
+    // documentation (2001:db8::/32), 6to4/NAT64 и multicast.
+    !(ip.is_unspecified()
+        || ip.is_loopback()
+        || (first & 0xfe00) == 0xfc00
+        || (first & 0xffc0) == 0xfe80
+        || (first == 0x2001 && segments[1] == 0x0db8)
+        || (first == 0x2002)
+        || (first == 0x0064 && segments[1] == 0xff9b)
+        || (first & 0xff00) == 0xff00)
 }
 
 /// Политика редиректов для обычных страниц и картинок: не больше 10 переходов
@@ -306,6 +330,7 @@ impl HttpPageFetcher {
 
 impl PageFetcher for HttpPageFetcher {
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
+        ensure_public(url)?;
         self.send(self.client.get(url.clone()))
     }
 
@@ -315,6 +340,7 @@ impl PageFetcher for HttpPageFetcher {
         etag: Option<&str>,
         last_modified: Option<&str>,
     ) -> Result<RawResponse, FetchError> {
+        ensure_public(url)?;
         let mut request = self.client.get(url.clone());
         if let Some(etag) = etag {
             request = request.header(IF_NONE_MATCH, etag);
@@ -326,6 +352,7 @@ impl PageFetcher for HttpPageFetcher {
     }
 
     fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
+        ensure_public(url)?;
         let body = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(form)
             .finish();
@@ -336,6 +363,23 @@ impl PageFetcher for HttpPageFetcher {
                 .body(body),
         )
     }
+}
+
+#[cfg(not(test))]
+fn ensure_public(url: &Url) -> Result<(), FetchError> {
+    if redirect_allowed(url) {
+        Ok(())
+    } else {
+        Err(FetchError::Message(
+            "Адрес ведёт в локальную сеть или служебный диапазон.".to_string(),
+        ))
+    }
+}
+
+// Юнит-тесты поднимают локальный HTTP-сервер; в выпуске проверка всегда включена.
+#[cfg(test)]
+fn ensure_public(_: &Url) -> Result<(), FetchError> {
+    Ok(())
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> FetchError {
@@ -349,14 +393,19 @@ fn map_reqwest_error(error: reqwest::Error) -> FetchError {
 }
 
 pub fn parse_retry_after(value: Option<&str>, now: SystemTime) -> Option<Duration> {
+    const MAX_WAIT: Duration = Duration::from_secs(3600);
     let value = value?.trim();
     if let Ok(seconds) = value.parse::<u64>() {
-        return Some(Duration::from_secs(seconds.min(3600)));
+        let wait = Duration::from_secs(seconds);
+        return (!wait.is_zero()).then_some(wait.min(MAX_WAIT));
     }
     let when = chrono::DateTime::parse_from_rfc2822(value).ok()?;
     let when = Duration::from_secs(when.timestamp().max(0) as u64);
     let now = now.duration_since(UNIX_EPOCH).ok()?;
-    Some(when.saturating_sub(now))
+    let wait = when.saturating_sub(now);
+    // Дату в далёком будущем не ждём десятилетиями: источник не должен
+    // оставаться закрытым до перезапуска из-за одного заголовка.
+    (!wait.is_zero()).then_some(wait.min(MAX_WAIT))
 }
 
 pub fn decode_body(bytes: &[u8], content_type: Option<&str>) -> String {
@@ -1145,13 +1194,31 @@ mod tests {
             "http://[::1]/x",
             "http://[fe80::1]/x",
             "http://localhost/x",
+            "http://localhost./x",
             "http://foo.localhost/x",
+            "http://foo.localhost./x",
+            "http://100.64.0.1/x",
+            "http://100.100.100.200/x",
+            "http://192.0.0.1/x",
+            "http://192.0.2.1/x",
+            "http://198.18.0.1/x",
+            "http://198.51.100.1/x",
+            "http://203.0.113.1/x",
+            "http://224.0.0.1/x",
+            "http://240.0.0.1/x",
+            "http://[2002::1]/x",
+            "http://[64:ff9b::1]/x",
+            "http://[2001:db8::1]/x",
+            "http://[fc00::1]/x",
+            "http://[fe80::1]/x",
+            "http://[ff02::1]/x",
             "file:///C:/x",
         ] {
             assert!(!redirect_allowed(&url(raw)), "{raw} — локальная сеть");
         }
         for raw in [
             "https://modland.net/x",
+            "https://stmods.org/x",
             "http://8.8.8.8/x",
             "https://[2001:4860:4860::8888]/x",
         ] {
@@ -1331,6 +1398,19 @@ mod tests {
         assert_eq!(
             parse_retry_after(Some(&date), now),
             Some(Duration::from_secs(30))
+        );
+        assert_eq!(parse_retry_after(Some("0"), now), None);
+        let past = chrono::DateTime::from_timestamp(1_699_999_000, 0)
+            .unwrap()
+            .to_rfc2822();
+        assert_eq!(parse_retry_after(Some(&past), now), None);
+        let far = chrono::DateTime::from_timestamp(4_102_444_800, 0)
+            .unwrap()
+            .to_rfc2822();
+        assert_eq!(
+            parse_retry_after(Some(&far), now),
+            Some(Duration::from_secs(3600)),
+            "далёкую дату режем часом, а не ждём до 2100 года"
         );
     }
 

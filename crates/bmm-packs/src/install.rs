@@ -381,7 +381,7 @@ impl ModInstaller {
         if let Err(error) = fs::create_dir_all(to) {
             return OpResult::fail(io_message(&error));
         }
-        match fs::rename(&src, &dst) {
+        match move_file(&src, &dst) {
             Ok(()) => OpResult::ok(format!("Мод {verb}."), Some(dst)),
             Err(error) => OpResult::fail(io_message(&error)),
         }
@@ -430,7 +430,7 @@ impl ModInstaller {
         if let Err(error) = fs::create_dir_all(dir) {
             return OpResult::fail(io_message(&error));
         }
-        match fs::rename(&source, &target) {
+        match move_file(&source, &target) {
             Ok(()) => OpResult::ok("Возвращено.", Some(target)),
             Err(error) => OpResult::fail(io_message(&error)),
         }
@@ -558,7 +558,7 @@ impl ModInstaller {
             self.restore_moved(&moved, &dir.join(&current));
             return OpResult::fail(io_message(&error));
         }
-        if let Err(error) = fs::rename(&source, &target) {
+        if let Err(error) = move_file(&source, &target) {
             self.restore_moved(&moved, &dir.join(&current));
             return OpResult::fail(io_message(&error));
         }
@@ -666,7 +666,7 @@ impl ModInstaller {
         let sequence = next_sequence(&dir);
         let stamp = (self.now)().format("%Y%m%d-%H%M%S-%3f");
         let destination = dir.join(format!("{sequence:010}_{stamp}_{name}"));
-        fs::rename(path, &destination)?;
+        move_file(path, &destination)?;
         Ok(destination)
     }
 
@@ -674,7 +674,7 @@ impl ModInstaller {
         if let Some(moved) = moved
             && !target.exists()
         {
-            let _ = fs::rename(moved, target);
+            let _ = move_file(moved, target);
         }
     }
 
@@ -691,7 +691,7 @@ impl ModInstaller {
             self.restore_moved(&moved, &target);
             return OpResult::fail(io_message(&error));
         }
-        if let Err(error) = fs::rename(source, &target) {
+        if let Err(error) = move_file(source, &target) {
             self.restore_moved(&moved, &target);
             return OpResult::fail(io_message(&error));
         }
@@ -773,6 +773,26 @@ fn io_failure(error: &io::Error) -> (InstallError, String) {
         (InstallError::Io, DISK_FULL_MESSAGE.to_string())
     } else {
         (InstallError::Io, error.to_string())
+    }
+}
+
+/// Перенос файла. `rename` не работает между дисками (моды на D:, бэкапы в
+/// `%LOCALAPPDATA%`); там копируем и удаляем исходник с откатом при ошибке.
+fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if matches!(error.raw_os_error(), Some(17) | Some(18)) => {
+            if let Err(error) = fs::copy(from, to) {
+                let _ = fs::remove_file(to);
+                return Err(error);
+            }
+            if let Err(error) = fs::remove_file(from) {
+                let _ = fs::remove_file(to);
+                return Err(error);
+            }
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 

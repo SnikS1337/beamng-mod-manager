@@ -182,6 +182,7 @@ pub fn read_listing(
 }
 
 pub fn belongs_to(root: &Url, url: &Url) -> bool {
+    // Старые http-ссылки Modland ещё встречаются в базе; не ломаем их.
     if !matches!(url.scheme(), "http" | "https") {
         return false;
     }

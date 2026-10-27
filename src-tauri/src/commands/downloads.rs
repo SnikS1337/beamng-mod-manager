@@ -114,7 +114,10 @@ impl Scanner {
                     continue;
                 }
                 if take_caught(&path) {
+                    // Файл уже ведёт окно загрузки: его панель сама предложит установку.
+                    // Второй раз через `incoming://download` — это двойной диалог.
                     self.pending.remove(&path);
+                    self.seen.insert(path);
                     continue;
                 }
                 let Ok(metadata) = entry.metadata() else {
@@ -282,10 +285,14 @@ fn writable_dir(path: &Path) -> bool {
     if std::fs::create_dir_all(path).is_err() {
         return false;
     }
+    // Счётчик, а не только миллисекунды: параллельные проверки в одном процессе
+    // иначе выбирают одно имя и мешают друг другу.
+    static PROBE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let probe = path.join(format!(
-        ".bmm-write-{}-{}",
+        ".bmm-write-{}-{}-{}",
         std::process::id(),
-        now_millis()
+        now_millis(),
+        PROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     match OpenOptions::new().write(true).create_new(true).open(&probe) {
         Ok(_) => {
@@ -460,6 +467,12 @@ mod tests {
             scanner
                 .scan(&[folder], start + Duration::from_secs(1))
                 .is_empty()
+        );
+        assert!(
+            scanner
+                .scan(&[temp.path().to_path_buf()], start + Duration::from_secs(3))
+                .is_empty(),
+            "после того как окно загрузки забрало файл, сторож не должен предлагать его снова"
         );
     }
 

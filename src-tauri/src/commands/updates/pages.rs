@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Одиночный поиск не должен выдавать себя за авто-проверку (id 0).
+const SINGLE_PAGE_REQUEST_ID: u64 = u64::MAX;
+
 #[tauri::command]
 pub async fn updates_find_pages(
     app: AppHandle,
@@ -80,7 +83,7 @@ pub async fn updates_find_page(
         // Снимаем 14-дневную паузу только у выбранного мода.
         state_for_task.library.set_page_search(&mod_id, None);
         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            run_page_search(&app, &state_for_task, 0, &cancel)
+            run_page_search(&app, &state_for_task, SINGLE_PAGE_REQUEST_ID, &cancel)
         }))
         .unwrap_or_default();
         if report.followed > 0 {
@@ -196,13 +199,19 @@ pub(crate) fn refollow(state: &AppState, mod_id: &str, source: &str) -> Result<(
         list.remove(index)
     };
     if bmm_checks::refollow_page(state.library.as_ref(), &saved) {
-        Ok(())
-    } else {
-        Err(AppError::new(
-            "pages",
-            "Страницу не вернуть: мод удалён или за ним уже следят по другой странице.",
-        ))
+        return Ok(());
     }
+    let mut list = unfollowed();
+    if !list
+        .iter()
+        .any(|item| item.binding.mod_id == mod_id && item.binding.source == saved.binding.source)
+    {
+        list.push(saved);
+    }
+    Err(AppError::new(
+        "pages",
+        "Страницу не вернуть: мод удалён или за ним уже следят по другой странице.",
+    ))
 }
 
 #[tauri::command]
@@ -297,6 +306,11 @@ pub async fn updates_undo_page(
         url,
         confirmed: false,
     };
-    bmm_checks::undo_page(state.library.as_ref(), &binding, Utc::now().fixed_offset());
+    if !bmm_checks::undo_page(state.library.as_ref(), &binding, Utc::now().fixed_offset()) {
+        return Err(AppError::new(
+            "pages",
+            "Предложение страницы не вернуть: мод удалён или за ним уже следят по другой странице.",
+        ));
+    }
     Ok(build_snapshot(&state))
 }

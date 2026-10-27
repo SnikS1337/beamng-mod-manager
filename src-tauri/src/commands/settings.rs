@@ -1,6 +1,6 @@
 //! Чтение и сохранение настроек приложения.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -156,11 +156,23 @@ pub async fn settings_save(
 /// Сохранить то, что пришло из окна, поверх текущих настроек. Поля, которых в окне
 /// нет (размер окна, отказ от медленной проверки), не трогаются. Возвращает то, что
 /// реально легло на диск — после приведения к допустимым значениям.
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
+
 pub(crate) fn save_settings(
     state: &AppState,
     settings: &SettingsDto,
 ) -> Result<SettingsDto, AppError> {
-    let mut current = state.settings.load().settings;
+    // Два окна/два быстрых сохранения не должны делать read-modify-write
+    // из одного и того же старого снимка и терять второе изменение.
+    let _save = SAVE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let loaded = state.settings.load();
+    if loaded.save_blocked {
+        return Err(AppError::new(
+            "settings",
+            "Не удалось прочитать файл настроек. Чтобы не потерять данные, сохранение остановлено: проверьте доступ к файлу и перезапустите программу.",
+        ));
+    }
+    let mut current = loaded.settings;
     settings.apply_to(&mut current);
     state
         .settings

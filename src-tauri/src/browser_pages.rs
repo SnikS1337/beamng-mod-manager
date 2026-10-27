@@ -66,6 +66,7 @@ impl BrowserPages {
             .parse()
             .expect("статический адрес about:blank");
         let created = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External(blank))
+            .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
             .title("Modland")
             .position(-32000.0, -32000.0)
             .inner_size(1024.0, 900.0)
