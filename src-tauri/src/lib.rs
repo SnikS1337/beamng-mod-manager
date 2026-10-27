@@ -5,6 +5,8 @@ mod named_mutex;
 mod state;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod ts_export;
 mod webview2;
 
 use std::borrow::Cow;

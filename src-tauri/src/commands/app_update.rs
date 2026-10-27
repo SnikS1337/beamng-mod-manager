@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use chrono::SecondsFormat;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+use ts_rs::TS;
 
 use bmm_app_release::{
     AppVersion, ManifestInput, PrepareOptions, UpdateStage, UpdateState, check_with_cancel,
@@ -20,11 +22,70 @@ fn lock_runtime(runtime: &Mutex<AppUpdateRuntime>) -> MutexGuard<'_, AppUpdateRu
     runtime.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "AppUpdateSnapshot")]
 pub struct AppUpdateDto {
     pub current_version: String,
-    pub state: UpdateState,
+    pub state: AppUpdateStateDto,
+}
+
+/// То же, что `UpdateState` из `bmm-app-release`, но с датами строками:
+/// окно разбирает их само, а типы для окна рождаются здесь.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "AppUpdateState")]
+pub struct AppUpdateStateDto {
+    #[ts(type = "AppUpdateStage")]
+    pub stage: String,
+    pub manifest: Option<AppUpdateManifestDto>,
+    pub progress: f64,
+    pub error: Option<String>,
+    pub checked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "AppUpdateManifest")]
+pub struct AppUpdateManifestDto {
+    pub version: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+    pub notes: Option<String>,
+    pub published: Option<String>,
+}
+
+impl AppUpdateStateDto {
+    fn from_state(state: UpdateState) -> Self {
+        Self {
+            stage: match state.stage {
+                UpdateStage::Idle => "idle",
+                UpdateStage::Checking => "checking",
+                UpdateStage::UpToDate => "upToDate",
+                UpdateStage::Available => "available",
+                UpdateStage::Downloading => "downloading",
+                UpdateStage::ReadyToRestart => "readyToRestart",
+                UpdateStage::Failed => "failed",
+            }
+            .to_string(),
+            manifest: state.manifest.map(|manifest| AppUpdateManifestDto {
+                version: manifest.version.display(),
+                url: manifest.url.to_string(),
+                size: manifest.size,
+                sha256: manifest.sha256,
+                notes: manifest.notes,
+                published: manifest
+                    .published
+                    .map(|at| at.to_rfc3339_opts(SecondsFormat::AutoSi, true)),
+            }),
+            progress: state.progress,
+            error: state.error,
+            checked_at: state
+                .checked_at
+                .map(|at| at.to_rfc3339_opts(SecondsFormat::AutoSi, true)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,7 +156,7 @@ fn check_update(runtime: &Mutex<AppUpdateRuntime>) -> AppUpdateDto {
 fn dto(state: UpdateState) -> AppUpdateDto {
     AppUpdateDto {
         current_version: current_version().display(),
-        state,
+        state: AppUpdateStateDto::from_state(state),
     }
 }
 
@@ -683,7 +744,7 @@ mod tests {
 
         let result = worker.join().unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(result.state.stage, UpdateStage::Failed);
+        assert_eq!(result.state.stage, "failed");
         assert_eq!(
             result.state.error.as_deref(),
             Some("Загрузка обновления отменена.")
@@ -708,7 +769,7 @@ mod tests {
             guard.cancel.cancel();
         }
         let result = check_update(&runtime);
-        assert_eq!(result.state.stage, UpdateStage::Downloading);
+        assert_eq!(result.state.stage, "downloading");
         assert_eq!(calls.load(Ordering::SeqCst), 0, "сеть не трогали");
         assert!(
             lock_runtime(&runtime).cancel.is_cancelled(),
@@ -780,7 +841,7 @@ mod tests {
         release_tx.send(()).unwrap();
 
         let result = worker.join().unwrap();
-        assert_eq!(result.state.stage, UpdateStage::Failed);
+        assert_eq!(result.state.stage, "failed");
         assert_eq!(
             result.state.error.as_deref(),
             Some("Проверка обновления отменена."),
@@ -797,15 +858,12 @@ mod tests {
         );
         let state = bmm_app_release::check_json(&current_version(), &manifest, None);
         let value = serde_json::to_value(dto(state)).unwrap();
-        crate::test_support::assert_matches_ts(&value, "appUpdate.ts", "AppUpdateSnapshot");
-        crate::test_support::assert_matches_ts(&value["state"], "appUpdate.ts", "AppUpdateState");
         let manifest = &value["state"]["manifest"];
-        crate::test_support::assert_matches_ts(manifest, "appUpdate.ts", "AppUpdateManifest");
         // Версия — строкой «9.9.9», а не разобранным числом: окно её только печатает.
         assert_eq!(manifest["version"], "9.9.9");
         assert_eq!(value["state"]["stage"], "available");
 
-        let stages = crate::test_support::ts_union("appUpdate.ts", "AppUpdateStage");
+        let stages = crate::test_support::ts_union("unions.ts", "AppUpdateStage");
         for stage in [
             UpdateStage::Idle,
             UpdateStage::Checking,

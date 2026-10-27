@@ -10,6 +10,7 @@ use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl,
 };
+use ts_rs::TS;
 use url::Url;
 
 use crate::error::AppError;
@@ -26,7 +27,7 @@ const SITE_SIDE_SPACE_NARROW: f64 = 360.0;
 /// Сверху (шапка и адрес) и снизу (подпись) от страницы.
 const SITE_VERTICAL_SPACE: f64 = 176.0;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadRequest {
     pub mod_name: String,
@@ -35,12 +36,13 @@ pub struct DownloadRequest {
     pub page_url: String,
     pub preview_url: Option<String>,
     #[serde(default)]
+    #[ts(type = "ModRole | null")]
     pub role: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct DownloadPanelEvent {
+pub(crate) struct DownloadPanelEvent {
     step: u8,
     title: String,
     detail: String,

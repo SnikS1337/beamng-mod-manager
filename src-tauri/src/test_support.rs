@@ -1,9 +1,8 @@
-//! Общее для тестов: состояние программы во временной папке и сверка того, что Rust
-//! отдаёт интерфейсу, с типами в `src/lib/ipc/*.ts`.
+//! Общее для тестов: состояние программы во временной папке и сверка строковых
+//! значений из Rust с `src/lib/ipc/unions.ts`.
 //!
-//! Связка Rust ↔ интерфейс держится на именах полей. Переименуй поле с одной
-//! стороны — и интерфейс молча получит `undefined` (настройка не сохранится, метка
-//! пропадёт). Компилятор этого не видит, поэтому сверяем здесь.
+//! Формы полей DTO в TypeScript рождаются из Rust (`ts_export`), а вот строки
+//! (`kind`, `status`, `phase`) ts-rs не видит: в Rust это `String`. Их и сверяем.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -15,7 +14,6 @@ use bmm_domain::paths::AppPaths;
 use bmm_domain::settings::AppSettings;
 use bmm_domain::settings_store::SettingsStore;
 use bmm_packs::cache::PreviewCache;
-use serde_json::Value;
 
 use crate::state::AppState;
 
@@ -59,60 +57,6 @@ fn ipc_file(file: &str) -> PathBuf {
         .join(file)
 }
 
-/// Поля TypeScript-интерфейса: обязательные и с `?`. `extends` учитывается.
-#[derive(Debug, Default)]
-pub struct TsShape {
-    pub required: BTreeSet<String>,
-    pub optional: BTreeSet<String>,
-}
-
-pub fn ts_interface(file: &str, name: &str) -> TsShape {
-    let text = std::fs::read_to_string(ipc_file(file)).unwrap();
-    ts_interface_in(&text, name).unwrap_or_else(|| panic!("в {file} нет интерфейса {name}"))
-}
-
-fn ts_interface_in(text: &str, name: &str) -> Option<TsShape> {
-    let head = format!("export interface {name} ");
-    let start = text.find(&head)?;
-    let after = &text[start + head.len()..];
-    let open = after.find('{')?;
-    let mut shape = TsShape::default();
-    if let Some(base) = after[..open].trim().strip_prefix("extends ") {
-        let parent = ts_interface_in(text, base.trim())?;
-        shape.required.extend(parent.required);
-        shape.optional.extend(parent.optional);
-    }
-    let mut depth = 0usize;
-    for line in after[open..].lines() {
-        let trimmed = line.trim();
-        if depth == 1 && !trimmed.starts_with("//") && !trimmed.starts_with('*') {
-            let key: String = trimmed
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            let rest = &trimmed[key.len()..];
-            if !key.is_empty() {
-                if rest.starts_with("?:") {
-                    shape.optional.insert(key);
-                } else if rest.starts_with(':') {
-                    shape.required.insert(key);
-                }
-            }
-        }
-        for c in line.chars() {
-            match c {
-                '{' => depth += 1,
-                '}' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-        }
-        if depth == 0 {
-            break;
-        }
-    }
-    Some(shape)
-}
-
 /// Значения строкового union-типа: `export type X = "a" | "b";`.
 pub fn ts_union(file: &str, name: &str) -> BTreeSet<String> {
     let text = std::fs::read_to_string(ipc_file(file)).unwrap();
@@ -133,92 +77,6 @@ pub fn ts_union(file: &str, name: &str) -> BTreeSet<String> {
         }
     }
     values
-}
-
-/// Строки, допустимые в поле интерфейса: `kind: "vehicle" | "map" | null;`.
-pub fn ts_field_values(file: &str, interface: &str, field: &str) -> BTreeSet<String> {
-    let text = std::fs::read_to_string(ipc_file(file)).unwrap();
-    let head = format!("export interface {interface} ");
-    let start = text
-        .find(&head)
-        .unwrap_or_else(|| panic!("в {file} нет интерфейса {interface}"));
-    let body = &text[start..];
-    let line = body
-        .lines()
-        .map(str::trim)
-        .find(|line| {
-            line.starts_with(&format!("{field}:")) || line.starts_with(&format!("{field}?:"))
-        })
-        .unwrap_or_else(|| panic!("в {interface} нет поля {field}"));
-    let declared = line.split_once(':').unwrap().1.trim_end_matches(';');
-    let mut values = BTreeSet::new();
-    for part in declared.split('|') {
-        let part = part.trim();
-        if let Some(value) = part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
-            values.insert(value.to_string());
-        } else if part.chars().next().is_some_and(char::is_uppercase) {
-            values.extend(ts_union(file, part));
-        }
-    }
-    values
-}
-
-/// То, что Rust отдаёт, совпадает с интерфейсом: лишних полей нет (их бы никто
-/// не прочитал), обязательные — все на месте.
-pub fn assert_matches_ts(value: &Value, file: &str, name: &str) {
-    let object = value
-        .as_object()
-        .unwrap_or_else(|| panic!("{name}: ожидался объект, пришло {value}"));
-    let shape = ts_interface(file, name);
-    let keys: BTreeSet<String> = object.keys().cloned().collect();
-    let unknown: Vec<_> = keys
-        .iter()
-        .filter(|key| !shape.required.contains(*key) && !shape.optional.contains(*key))
-        .collect();
-    let missing: Vec<_> = shape
-        .required
-        .iter()
-        .filter(|key| !keys.contains(*key))
-        .collect();
-    assert!(
-        unknown.is_empty() && missing.is_empty(),
-        "{name}: Rust отдаёт поля, которых нет в {file}: {unknown:?}; в Rust нет обязательных полей: {missing:?}"
-    );
-}
-
-#[test]
-fn reads_interfaces_with_extends_nested_objects_and_comments() {
-    let text = r#"
-export interface Base {
-  id: string;
-}
-export interface Item extends Base {
-  /** комментарий: не поле */
-  name: string;
-  note?: string | null;
-  nested: {
-    inner: number;
-  };
-}
-"#;
-    let shape = ts_interface_in(text, "Item").unwrap();
-    assert_eq!(
-        shape
-            .required
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["id", "name", "nested"]
-    );
-    assert_eq!(
-        shape
-            .optional
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["note"]
-    );
-    assert!(ts_interface_in(text, "Missing").is_none());
 }
 
 // ── Команды: окно вызывает их по имени и передаёт аргументы по именам ─────────
@@ -453,15 +311,4 @@ fn reads_arguments_from_object_literals() {
     );
     assert_eq!(snake_to_camel("search_again"), "searchAgain");
     assert_eq!(balanced("<A<B>>(x)", '<', '>'), Some("A<B>"));
-}
-
-#[test]
-fn errors_keep_their_shape() {
-    // Ошибку окно показывает по `message`, а решает по `code`.
-    let error = crate::error::AppError::new("move", "Файл занят");
-    assert_matches_ts(
-        &serde_json::to_value(&error).unwrap(),
-        "types.ts",
-        "AppError",
-    );
 }

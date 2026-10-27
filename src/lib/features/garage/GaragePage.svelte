@@ -42,6 +42,7 @@
     type VersionRow,
   } from "#lib/ipc/library.js";
   import { isArchivePath } from "#lib/ipc/incoming.js";
+  import type { AppError } from "#lib/ipc/types.js";
   import { incomingQueue } from "#lib/features/incoming/queue.svelte.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { updatesBadge } from "#lib/shell/updatesBadge.svelte.js";
@@ -312,10 +313,10 @@
     }
   }
 
-  /** «Указать страницу» из панели мода. Возвращает причину отказа для поля ввода. */
-  async function bindSelected(url: string): Promise<string | null> {
+  /** «Указать страницу» из панели мода. Возвращает код и причину отказа. */
+  async function bindSelected(url: string): Promise<AppError | null> {
     const card = selected;
-    if (!card) return "Мод не выбран.";
+    if (!card) return { code: "modMissing", message: "Мод не выбран." };
     try {
       await modBindPage(card.id, url);
       updatesBadge.refresh();
@@ -323,7 +324,7 @@
       showToast(`Следим за страницей «${trimName(card.name)}»`);
       return null;
     } catch (reason) {
-      return errorText(reason);
+      return appError(reason);
     }
   }
 
@@ -819,6 +820,21 @@
       return String((reason as { message: unknown }).message);
     }
     return "Не удалось выполнить действие.";
+  }
+
+  function appError(reason: unknown): AppError {
+    if (
+      reason &&
+      typeof reason === "object" &&
+      "code" in reason &&
+      "message" in reason
+    ) {
+      return {
+        code: String((reason as { code: unknown }).code),
+        message: String((reason as { message: unknown }).message),
+      };
+    }
+    return { code: "unknown", message: errorText(reason) };
   }
 
   function emptyTitle(): string {

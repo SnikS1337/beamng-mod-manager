@@ -1,67 +1,28 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type SearchSourceStatus = "ok" | "needsHumanCheck" | "unavailable";
-export type SearchPrice = "unknown" | "free" | "paid";
-export type SearchPriceSummary = SearchPrice | "mixed";
+import type {
+  SearchCard,
+  SearchEvent,
+  SearchListing,
+  SearchSource,
+} from "./generated.js";
+import type { SearchPriceSummary } from "./unions.js";
 
-export interface SearchOffer {
-  kind: "direct" | "externalHost" | "paidLink";
-  host: string;
-  url: string;
-  fileId: string | null;
-  sizeBytes: number | null;
-}
-
-export interface SearchListing {
-  source: string;
-  sourceId: string;
-  url: string;
-  title: string;
-  /** Название без рубрики сайта и версии. */
-  name: string;
-  modVersion: string | null;
-  gameVersion: string | null;
-  author: string | null;
-  category: string | null;
-  sizeBytes: number | null;
-  previewUrl: string | null;
-  price: SearchPrice;
-  offers: SearchOffer[];
-  publishedAt: string | null;
-  updatedAt: string | null;
-  externalId: string | null;
-  installed: boolean;
-}
-
-export interface SearchCard {
-  id: string;
-  title: string;
-  price: SearchPriceSummary;
-  possibleSameAs: string[];
-  relevance: number;
-  installed: boolean;
-  /** Тип по разделу сайта или рубрике в названии; `null` — сайт не сказал. */
-  kind: "vehicle" | "map" | "addon" | null;
-  listings: SearchListing[];
-}
-
-export interface SearchSource {
-  id: string;
-  displayName: string;
-  status: SearchSourceStatus;
-  count: number;
-  note: string | null;
-  pending: boolean;
-}
-
-export interface SearchEvent {
-  requestId: number;
-  phase: "partial" | "done" | "error" | "regroup";
-  cards: SearchCard[];
-  sources: SearchSource[];
-  error: string | null;
-}
+export type {
+  SearchCard,
+  SearchEvent,
+  SearchListing,
+  SearchOffer,
+  SearchSource,
+} from "./generated.js";
+export type {
+  SearchOfferKind,
+  SearchPhase,
+  SearchPrice,
+  SearchPriceSummary,
+  SearchSourceStatus,
+} from "./unions.js";
 
 type MockListener = (event: SearchEvent) => void;
 const mockListeners = new Set<MockListener>();

@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use bmm_domain::library::LibraryStore;
 use bmm_packs::incoming::{
@@ -17,22 +18,24 @@ use crate::commands::library::resolve_folder;
 use crate::error::AppError;
 use crate::state::{AppState, CachedContent};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingFindingDto {
+    #[ts(type = "FindingSeverity")]
     pub severity: String,
     pub code: String,
     pub message: String,
     pub entry: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingItemDto {
     pub zip_path: String,
     pub file_name: String,
     pub size: u64,
     pub title: String,
+    #[ts(type = "IncomingKind")]
     pub kind: String,
     pub replaces: Option<String>,
     pub replaces_enabled: bool,
@@ -46,14 +49,14 @@ pub struct IncomingItemDto {
     pub similar_to: Option<SimilarModDto>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SimilarModDto {
     pub file_name: String,
     pub title: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingArchiveDto {
     pub source: String,
@@ -62,7 +65,7 @@ pub struct IncomingArchiveDto {
     pub items: Vec<IncomingItemDto>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingInstallRequest {
     pub zip_path: String,
@@ -71,7 +74,7 @@ pub struct IncomingInstallRequest {
     pub allow_warnings: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingInstallResult {
     pub success: bool,
@@ -85,8 +88,9 @@ pub struct IncomingInstallResult {
     pub same_name: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "IncomingTicket")]
 pub struct IncomingTicketDto {
     pub file_name: String,
     pub replaces: Option<String>,
@@ -752,26 +756,21 @@ mod tests {
     }
 
     #[test]
-    fn install_window_and_rust_agree_on_fields_and_values() {
-        use crate::test_support::{assert_matches_ts, ts_union};
+    fn install_window_and_rust_agree_on_values() {
+        use crate::test_support::ts_union;
         let (temp, state) = setup();
         let source = temp.path().join("new.zip");
         make_zip(&source, b"body");
 
         let archives = inspect_paths(&state, &[source.display().to_string()]).unwrap();
         let archive = serde_json::to_value(&archives[0]).unwrap();
-        assert_matches_ts(&archive, "incoming.ts", "IncomingArchiveDto");
         let item = &archive["items"][0];
-        assert_matches_ts(item, "incoming.ts", "IncomingItemDto");
-        assert!(ts_union("incoming.ts", "IncomingKind").contains(item["kind"].as_str().unwrap()));
-        for finding in item["findings"].as_array().unwrap() {
-            assert_matches_ts(finding, "incoming.ts", "IncomingFindingDto");
-        }
-        let severities = ts_union("incoming.ts", "FindingSeverity");
+        assert!(ts_union("unions.ts", "IncomingKind").contains(item["kind"].as_str().unwrap()));
+        let severities = ts_union("unions.ts", "FindingSeverity");
         for severity in ["info", "warning", "block"] {
             assert!(severities.contains(severity));
         }
-        let kinds = ts_union("incoming.ts", "IncomingKind");
+        let kinds = ts_union("unions.ts", "IncomingKind");
         for kind in ["new", "update", "alreadyInstalled"] {
             assert!(kinds.contains(kind));
         }
@@ -784,18 +783,8 @@ mod tests {
             "allowWarnings": true,
         }))
         .unwrap();
-        let shape = crate::test_support::ts_interface("incoming.ts", "IncomingInstallRequest");
-        assert_eq!(
-            shape
-                .required
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            ["allowWarnings", "fileName", "replaces", "zipPath"]
-        );
         let results = install_items(&state, &[request]).unwrap();
         let result = serde_json::to_value(&results[0]).unwrap();
-        assert_matches_ts(&result, "incoming.ts", "IncomingInstallResult");
 
         // Отмена приходит из окна билетом — тем же набором полей.
         let ticket: IncomingTicketDto = serde_json::from_value(serde_json::json!({
@@ -806,11 +795,6 @@ mod tests {
             "sameName": result["sameName"],
         }))
         .unwrap();
-        assert_matches_ts(
-            &serde_json::to_value(&ticket).unwrap(),
-            "incoming.ts",
-            "IncomingTicket",
-        );
         undo_install(&state, &ticket).unwrap();
     }
 

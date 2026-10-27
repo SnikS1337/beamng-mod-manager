@@ -8,6 +8,8 @@ function site(patch: Partial<UpdateSite>): UpdateSite {
         displayName: "STMods",
         status: "ok",
         tracked: 3,
+        lastChecked: null,
+        note: null,
         ...patch,
     };
 }

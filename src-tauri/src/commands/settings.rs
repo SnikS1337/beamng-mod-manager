@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use bmm_checks::UpdateCheckOptions;
 use bmm_domain::settings::{AppSettings, BackgroundStyle, BackgroundTheme, UiMode};
@@ -10,7 +11,7 @@ use bmm_domain::settings::{AppSettings, BackgroundStyle, BackgroundTheme, UiMode
 use crate::error::AppError;
 use crate::state::AppState;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDto {
     pub allow_downloads: bool,
@@ -27,8 +28,11 @@ pub struct SettingsDto {
     pub keep_backups: i32,
     pub max_card_checks_per_source: i32,
     pub liquid_glass: bool,
+    #[ts(type = "UiMode")]
     pub mode: String,
+    #[ts(type = "BackgroundTheme")]
     pub theme: String,
+    #[ts(type = "BackgroundStyle")]
     pub background: String,
     pub ui_animations: bool,
     pub animated_background: bool,
@@ -211,17 +215,6 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&restored).unwrap(),
             serde_json::to_value(&changed).unwrap()
-        );
-    }
-
-    #[test]
-    fn window_and_rust_agree_on_settings_fields() {
-        // Переименованное с одной стороны поле молча не сохранялось бы.
-        let dto = SettingsDto::from_settings(&AppSettings::default());
-        crate::test_support::assert_matches_ts(
-            &serde_json::to_value(&dto).unwrap(),
-            "settings.ts",
-            "SettingsDto",
         );
     }
 

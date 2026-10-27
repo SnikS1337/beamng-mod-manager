@@ -1,33 +1,9 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-export type BackgroundStyle = "accent" | "aurora" | "sunset" | "ocean" | "nebula" | "mono";
+import type { SettingsDto } from "./generated.js";
 
-export interface SettingsDto {
-  allowDownloads: boolean;
-  modsFolder: string | null;
-  userFolder: string | null;
-  downloadsFolder: string | null;
-  deleteDownloadsAfterInstall: boolean;
-  checkTtlHours: number;
-  autoCheckOnStart: boolean;
-  checkAppUpdates: boolean;
-  autoCheckEveryHours: number;
-  checkDisabledMods: boolean;
-  disabledSources: string[];
-  keepBackups: number;
-  maxCardChecksPerSource: number;
-  liquidGlass: boolean;
-  mode: "dark" | "light" | "system";
-  theme: "night" | "deep" | "dusk" | "forest" | "graphite";
-  background: BackgroundStyle;
-  uiAnimations: boolean;
-  animatedBackground: boolean;
-  fireflies: boolean;
-  backgroundTilt: boolean;
-  activeModsWarnAbove: number;
-  firstRunDone: boolean;
-  watchFolders: string[];
-}
+export type { SettingsDto } from "./generated.js";
+export type { BackgroundStyle, BackgroundTheme, UiMode } from "./unions.js";
 
 let mock: SettingsDto | null = null;
 

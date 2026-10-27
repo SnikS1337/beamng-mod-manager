@@ -1,26 +1,17 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ModRole } from "./library.js";
 
-export interface DownloadRequest {
-  modName: string;
-  installedVersion: string | null;
-  latestVersion: string | null;
-  pageUrl: string;
-  previewUrl: string | null;
-  role: ModRole | null;
-}
+import type {
+  DownloadPanelEvent,
+  DownloadReady,
+  DownloadRequest,
+} from "./generated.js";
 
-export interface DownloadPanelEvent {
-  step: number;
-  title: string;
-  detail: string;
-  error?: string | null;
-}
-
-export interface DownloadReady {
-  path: string;
-}
+export type {
+  DownloadPanelEvent,
+  DownloadReady,
+  DownloadRequest,
+} from "./generated.js";
 
 const DEMO: DownloadRequest = {
   modName: "Dacia Sandero Stepway",

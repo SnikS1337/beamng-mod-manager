@@ -14,6 +14,11 @@ function finding(patch: Partial<UpdateFinding>): UpdateFinding {
     latestVersion: null,
     url: "https://stmods.org/x/",
     dismissed: false,
+    previewUrl: null,
+    role: null,
+    installedSize: null,
+    latestSize: null,
+    noticedAt: null,
     ...patch,
   };
 }

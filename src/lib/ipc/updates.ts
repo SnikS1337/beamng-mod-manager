@@ -1,116 +1,28 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ModRole } from "./library.js";
 
-export type UpdateStatusText = "none" | "likely" | "possible";
+import type {
+  PageSuggestion,
+  PageVerification,
+  UpdateFinding,
+  UpdateSource,
+  UpdatesEvent,
+  UpdatesSnapshot,
+} from "./generated.js";
 
-export interface UpdateFinding {
-  modId: string;
-  modName: string;
-  source: string;
-  status: UpdateStatusText;
-  installedVersion: string | null;
-  latestVersion: string | null;
-  url: string;
-  dismissed: boolean;
-  previewUrl?: string | null;
-  role?: ModRole | null;
-  installedSize?: number | null;
-  latestSize?: number | null;
-  /** Когда программа заметила изменение на сайте (ISO). */
-  noticedAt?: string | null;
-}
-
-export interface UpdateSite {
-  id: string;
-  displayName: string;
-  status: "ok" | "human_check" | "unavailable" | "off";
-  tracked: number;
-  lastChecked?: string | null;
-  note?: string | null;
-}
-
-export interface PageSuggestion {
-  modId: string;
-  modName: string;
-  source: string;
-  sourceId: string;
-  url: string;
-}
-
-export interface PageMatch {
-  source: string;
-  title: string;
-  url: string;
-  version: string | null;
-  size: number | null;
-  author: string | null;
-  similarity: number;
-  sameSize: boolean;
-  sameVersion: boolean;
-  sameAuthor: boolean;
-}
-
-export interface PageVerification {
-  pageSource: string;
-  pageTitle: string;
-  pageUrl: string;
-  pageSize: number | null;
-  matches: PageMatch[];
-}
-
-export interface UpdateSource {
-  id: string;
-  displayName: string;
-  status: "ok" | "needsHumanCheck" | "unavailable";
-  cardsFetched: number;
-  feedPagesFetched: number;
-  postponed: number;
-  missing: number;
-  unreadable: number;
-  layoutChanged: boolean;
-  note: string | null;
-}
-
-export interface UpdateProgress {
-  source: string;
-  stage: string;
-  done: number;
-  total: number;
-}
-
-/** Страница, которой несколько проверок подряд нет на сайте. */
-export interface LostPage {
-  modId: string;
-  modName: string;
-  source: string;
-  url: string;
-  previewUrl?: string | null;
-  role?: ModRole | null;
-}
-
-export interface UpdatesSnapshot {
-  findings: UpdateFinding[];
-  hidden: UpdateFinding[];
-  suggestions: PageSuggestion[];
-  sites?: UpdateSite[];
-  lastChecked?: string | null;
-  lost?: LostPage[];
-}
-
-export interface UpdatesEvent extends UpdatesSnapshot {
-  requestId: number;
-  /** `auto` — итог фоновой проверки при запуске или по расписанию (requestId = 0). */
-  phase: "progress" | "done" | "pages" | "error" | "auto";
-  progress: UpdateProgress | null;
-  sources: UpdateSource[];
-  newCount: number;
-  upToDate: number;
-  requests: number;
-  cancelled: boolean;
-  stoppedByTime: boolean;
-  error: string | null;
-}
+export type {
+  LostPage,
+  PageMatch,
+  PageSuggestion,
+  PageVerification,
+  UpdateFinding,
+  UpdateProgress,
+  UpdateSite,
+  UpdateSource,
+  UpdatesEvent,
+  UpdatesSnapshot,
+} from "./generated.js";
+export type { UpdateStatusText } from "./unions.js";
 
 type Listener = (event: UpdatesEvent) => void;
 const listeners = new Set<Listener>();
@@ -127,6 +39,7 @@ function mockInitial(): UpdatesSnapshot {
         modName: "Gavril Roamer Classic",
         source: "stmods",
         url: "https://stmods.org/beamng_drive/mods/roamer_classic/",
+        previewUrl: null,
         role: "vehicle",
       },
     ],
@@ -140,6 +53,7 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "1.5",
         url: "https://stmods.org/beamng_drive/mods/bmw_m2_g87/",
         dismissed: false,
+        previewUrl: null,
         role: "vehicle",
         installedSize: 142 * 1024 * 1024,
         latestSize: 151 * 1024 * 1024,
@@ -154,6 +68,7 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "2.2",
         url: "https://modsgaming.ru/load/beamng_drive/mashiny/38-1-0-160200",
         dismissed: false,
+        previewUrl: null,
         role: "vehicle",
         installedSize: 410 * 1024 * 1024,
         latestSize: 438 * 1024 * 1024,
@@ -168,7 +83,11 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "0.1",
         url: "https://www.modland.net/beamng.drive-mods/maps/karta-priozersk.html",
         dismissed: false,
+        previewUrl: null,
         role: "map",
+        installedSize: null,
+        latestSize: null,
+        noticedAt: null,
       },
     ],
     hidden: [
@@ -181,7 +100,11 @@ function mockInitial(): UpdatesSnapshot {
         latestVersion: "1.0",
         url: "https://stmods.org/beamng_drive/mods/gavril/",
         dismissed: true,
+        previewUrl: null,
         role: "vehicle",
+        installedSize: null,
+        latestSize: null,
+        noticedAt: null,
       },
     ],
     suggestions: [
@@ -194,10 +117,10 @@ function mockInitial(): UpdatesSnapshot {
       },
     ],
     sites: [
-      { id: "modland", displayName: "Modland", status: "human_check", tracked: 2 },
-      { id: "modsgaming", displayName: "ModsGaming", status: "ok", tracked: 5 },
-      { id: "stmods", displayName: "STMods", status: "ok", tracked: 9 },
-      { id: "beamng", displayName: "Репозиторий BeamNG", status: "ok", tracked: 0 },
+      { id: "modland", displayName: "Modland", status: "human_check", tracked: 2, lastChecked: null, note: null },
+      { id: "modsgaming", displayName: "ModsGaming", status: "ok", tracked: 5, lastChecked: null, note: null },
+      { id: "stmods", displayName: "STMods", status: "ok", tracked: 9, lastChecked: null, note: null },
+      { id: "beamng", displayName: "Репозиторий BeamNG", status: "ok", tracked: 0, lastChecked: null, note: null },
     ],
     lastChecked: new Date(Date.now() - 40 * 60000).toISOString(),
   };
