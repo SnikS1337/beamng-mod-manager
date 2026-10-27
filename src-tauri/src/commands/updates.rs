@@ -699,7 +699,7 @@ pub async fn updates_verify_page(
             &AtomicBool::new(false),
             &|id| page_title(&state, id),
         )
-        .ok_or_else(|| AppError::new("pages", "Не удалось открыть страницу мода для проверки."))?;
+        .map_err(|message| AppError::new("pages", message))?;
         Ok(PageVerificationDto {
             page_source: verification.page_source,
             page_title: verification.page_title,

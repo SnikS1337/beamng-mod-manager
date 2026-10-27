@@ -69,24 +69,34 @@ pub fn verify_page(
     mod_id: &str,
     cancel: &AtomicBool,
     title_of: &dyn Fn(&str) -> Option<String>,
-) -> Option<PageVerification> {
+) -> Result<PageVerification, String> {
     let binding = store
         .bindings()
         .into_iter()
-        .find(|binding| binding.mod_id == mod_id)?;
+        .find(|binding| binding.mod_id == mod_id)
+        .ok_or_else(|| "У мода нет страницы для проверки.".to_string())?;
     let page_source = search
         .sources()
         .iter()
-        .find(|source| source.id() == binding.source)?;
-    let page = page_source.listing(&binding.url, cancel).ok()??;
+        .find(|source| source.id() == binding.source)
+        .ok_or_else(|| "Сайт этой страницы выключен в настройках.".to_string())?;
+    let page = match page_source.listing(&binding.url, cancel) {
+        Ok(Some(page)) => page,
+        Ok(None) => {
+            return Err("Страница мода не найдена: возможно, её удалили.".to_string());
+        }
+        Err(error) => return Err(format!("Страница не открылась: {}", error.message)),
+    };
+    let archive_title = title_of(mod_id).filter(|title| !title.trim().is_empty());
+    let identity_title = archive_title.as_deref().unwrap_or(&page.title);
 
     let mut queries = vec![page.title.clone()];
-    if let Some(title) = title_of(mod_id).filter(|title| !title.trim().is_empty())
+    if let Some(title) = archive_title.as_deref()
         && !queries
             .iter()
-            .any(|query| query.eq_ignore_ascii_case(&title))
+            .any(|query| query.eq_ignore_ascii_case(title))
     {
-        queries.push(title);
+        queries.push(title.to_string());
     }
 
     let mut candidates: Vec<Listing> = Vec::new();
@@ -118,7 +128,7 @@ pub fn verify_page(
     let mut matches: Vec<PageMatch> = candidates
         .into_iter()
         .filter_map(|listing| {
-            let similarity = TitleNormalizer::similarity(&page.title, &listing.title);
+            let similarity = TitleNormalizer::similarity(identity_title, &listing.title);
             let same_size = match (page.size_bytes, listing.size_bytes) {
                 (Some(mine), Some(theirs)) if mine > 0 && theirs > 0 => {
                     mine.min(theirs) as f64 / mine.max(theirs) as f64 >= CERTAIN_SIZE_RATIO
@@ -131,7 +141,10 @@ pub fn verify_page(
                 page.author.as_deref(),
                 listing.author.as_deref(),
             );
-            if similarity < MIN_NAME && !same_size && !same_version {
+            // Одна версия — ещё не тот же мод: на сайтах полно «1.1» и «1.0».
+            let title_ok = similarity >= MIN_NAME;
+            let supporting = (same_size || same_author) && similarity >= 0.5;
+            if !title_ok && !supporting {
                 return None;
             }
             Some(PageMatch {
@@ -161,7 +174,7 @@ pub fn verify_page(
     });
     matches.truncate(5);
 
-    Some(PageVerification {
+    Ok(PageVerification {
         page_source: page.source,
         page_title: page.title,
         page_url: page.url,
@@ -872,9 +885,13 @@ mod tests {
         mirror.size_bytes = Some(68_513_955);
         mirror.mod_version = Some("1.1".to_string());
         mirror.author = Some("TurboDiesel".to_string());
+        let mut noise = listing("noise", "Farming Simulator Claas Arion");
+        noise.source = "stmods".to_string();
+        noise.url = Url::parse("https://stmods.test/claas").unwrap();
+        noise.mod_version = Some("1.1".to_string());
 
         let primary = VerifySite::new("modsgaming", Some(page.clone()), Vec::new());
-        let other = VerifySite::new("stmods", None, vec![mirror]);
+        let other = VerifySite::new("stmods", None, vec![mirror, noise]);
         let service = SearchService::new(
             vec![primary, other],
             Arc::new(|_| SourceStatus::Ok),
