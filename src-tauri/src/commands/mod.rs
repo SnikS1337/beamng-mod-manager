@@ -1,5 +1,6 @@
 pub mod app_update;
 pub mod dev;
+pub mod download_window;
 pub mod downloads;
 pub mod incoming;
 pub mod library;

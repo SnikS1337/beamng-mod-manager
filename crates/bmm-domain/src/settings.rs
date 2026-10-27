@@ -68,6 +68,9 @@ pub struct AppSettings {
     pub allow_downloads: bool,
     pub mods_folder: Option<String>,
     pub user_folder: Option<String>,
+    /// `None` — системные «Загрузки».
+    pub downloads_folder: Option<String>,
+    pub delete_downloads_after_install: bool,
     pub check_ttl_hours: i32,
     pub auto_check_on_start: bool,
     pub check_app_updates: bool,
@@ -100,6 +103,8 @@ impl Default for AppSettings {
             allow_downloads: false,
             mods_folder: None,
             user_folder: None,
+            downloads_folder: None,
+            delete_downloads_after_install: false,
             check_ttl_hours: 6,
             auto_check_on_start: true,
             check_app_updates: true,
@@ -133,6 +138,8 @@ impl AppSettings {
             allow_downloads: self.allow_downloads,
             mods_folder: clean(self.mods_folder.as_deref()),
             user_folder: clean(self.user_folder.as_deref()),
+            downloads_folder: clean(self.downloads_folder.as_deref()),
+            delete_downloads_after_install: self.delete_downloads_after_install,
             check_ttl_hours: self.check_ttl_hours.clamp(1, 168),
             auto_check_on_start: self.auto_check_on_start,
             check_app_updates: self.check_app_updates,
@@ -272,6 +279,7 @@ mod tests {
             window_height: 679,
             mods_folder: Some("   ".to_string()),
             user_folder: Some(" C:\\Games\\BeamNG ".to_string()),
+            downloads_folder: Some("   ".to_string()),
             disabled_sources: vec![
                 "STMods".to_string(),
                 "modland".to_string(),
@@ -292,6 +300,7 @@ mod tests {
         assert_eq!(settings.window_height, 0);
         assert_eq!(settings.mods_folder, None);
         assert_eq!(settings.user_folder.as_deref(), Some("C:\\Games\\BeamNG"));
+        assert_eq!(settings.downloads_folder, None);
         assert_eq!(settings.disabled_sources, vec!["modland", "stmods"]);
         assert_eq!(settings.watch_folders, vec!["C:\\Downloads"]);
     }

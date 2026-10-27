@@ -1,12 +1,15 @@
 //! Наблюдение за «Загрузками»: готовый архив предлагается к установке.
 
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+
+use bmm_domain::settings::AppSettings;
 
 use crate::state::AppState;
 
@@ -17,6 +20,24 @@ const EXPECT_FOR: Duration = Duration::from_secs(30 * 60);
 
 /// До какого момента (мс от начала эпохи) ждём скачанное обновление.
 static EXPECT_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Файлы, которые окно загрузки уже забрало само: сторож не должен предлагать их второй раз.
+static CAUGHT: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+pub(crate) fn note_caught(path: &Path) {
+    let mut caught = CAUGHT.lock().unwrap_or_else(|error| error.into_inner());
+    if caught.len() >= 128 {
+        caught.clear();
+    }
+    caught.insert(path.to_path_buf());
+}
+
+fn take_caught(path: &Path) -> bool {
+    CAUGHT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(path)
+}
 
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
@@ -72,6 +93,10 @@ impl Scanner {
             for entry in entries.filter_map(Result::ok) {
                 let path = entry.path();
                 if !is_candidate(&path) || self.seen.contains(&path) {
+                    continue;
+                }
+                if take_caught(&path) {
+                    self.pending.remove(&path);
                     continue;
                 }
                 let Ok(metadata) = entry.metadata() else {
@@ -162,8 +187,51 @@ fn is_candidate(path: &Path) -> bool {
         .any(|extension| lower.ends_with(extension))
 }
 
+/// Папка, куда окно загрузки кладёт архивы: выбранная, иначе системные «Загрузки»,
+/// иначе папка данных программы. Проверяем запись, а не только существование.
+pub(crate) fn download_folder(settings: &AppSettings, app_root: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(folder) = settings
+        .downloads_folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|folder| !folder.is_empty())
+        .map(PathBuf::from)
+        .filter(|folder| folder.is_absolute())
+    {
+        candidates.push(folder);
+    }
+    if let Some(system) = downloads_folder() {
+        candidates.push(system);
+    }
+    candidates.push(app_root.join("downloads"));
+    pick_writable(candidates)
+}
+
+fn pick_writable(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    candidates.into_iter().find(|path| writable_dir(path))
+}
+
+fn writable_dir(path: &Path) -> bool {
+    if std::fs::create_dir_all(path).is_err() {
+        return false;
+    }
+    let probe = path.join(format!(
+        ".bmm-write-{}-{}",
+        std::process::id(),
+        now_millis()
+    ));
+    match OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 #[cfg(windows)]
-fn downloads_folder() -> Option<PathBuf> {
+pub(crate) fn downloads_folder() -> Option<PathBuf> {
     use windows_sys::Win32::System::Com::CoTaskMemFree;
     use windows_sys::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath};
 
@@ -187,7 +255,7 @@ fn downloads_folder() -> Option<PathBuf> {
 }
 
 #[cfg(not(windows))]
-fn downloads_folder() -> Option<PathBuf> {
+pub(crate) fn downloads_folder() -> Option<PathBuf> {
     fallback_downloads()
 }
 
@@ -240,6 +308,77 @@ mod tests {
                 .scan(&[temp.path().to_path_buf()], start + Duration::from_secs(1))
                 .is_empty(),
             "второй раз не предлагаем"
+        );
+    }
+
+    #[test]
+    fn download_folder_prefers_the_configured_writable_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let custom = temp.path().join("BeamNG downloads");
+        std::fs::create_dir_all(&custom).unwrap();
+        let settings = AppSettings {
+            downloads_folder: Some(custom.display().to_string()),
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            download_folder(&settings, temp.path()),
+            Some(custom.clone())
+        );
+    }
+
+    #[test]
+    fn relative_download_folder_is_ignored() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings = AppSettings {
+            downloads_folder: Some("relative/Downloads".to_string()),
+            ..AppSettings::default()
+        };
+        let chosen = download_folder(&settings, temp.path()).expect("запасная папка");
+        assert_ne!(chosen, PathBuf::from("relative/Downloads"));
+        assert!(chosen.is_absolute());
+    }
+
+    #[test]
+    fn broken_download_folder_falls_back_to_a_writable_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("not-a-folder");
+        std::fs::write(&file, b"x").unwrap();
+        let settings = AppSettings {
+            downloads_folder: Some(file.display().to_string()),
+            ..AppSettings::default()
+        };
+        let chosen = download_folder(&settings, temp.path()).expect("запасная папка");
+        assert_ne!(chosen, file);
+        assert!(writable_dir(&chosen));
+    }
+
+    #[test]
+    fn caught_download_is_not_offered_twice() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().to_path_buf();
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), start)
+                .is_empty()
+        );
+        let path = folder.join("caught.zip");
+        std::fs::write(&path, b"archive").unwrap();
+        note_caught(&path);
+        assert!(
+            scanner
+                .scan(
+                    std::slice::from_ref(&folder),
+                    start + Duration::from_millis(20)
+                )
+                .is_empty(),
+            "окно загрузки уже забрало файл"
+        );
+        assert!(
+            scanner
+                .scan(&[folder], start + Duration::from_secs(1))
+                .is_empty()
         );
     }
 

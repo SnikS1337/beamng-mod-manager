@@ -98,6 +98,13 @@ impl SettingsStore {
             ),
             mods_folder: str_field(root, "ModsFolder", &mut warnings),
             user_folder: str_field(root, "UserFolder", &mut warnings),
+            downloads_folder: str_field(root, "DownloadsFolder", &mut warnings),
+            delete_downloads_after_install: bool_field(
+                root,
+                "DeleteDownloadsAfterInstall",
+                defaults.delete_downloads_after_install,
+                &mut warnings,
+            ),
             check_ttl_hours: int_field(
                 root,
                 "CheckTtlHours",
@@ -312,6 +319,19 @@ mod tests {
         assert!(!result.had_problems());
         assert!(!result.settings.allow_downloads);
         assert_eq!(result.settings.check_ttl_hours, 6);
+    }
+
+    #[test]
+    fn old_files_get_default_download_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with(
+            dir.path(),
+            r#"{ "SchemaVersion": 2, "AllowDownloads": true }"#,
+        );
+        let result = store.load();
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(result.settings.downloads_folder, None);
+        assert!(!result.settings.delete_downloads_after_install);
     }
 
     #[test]
@@ -532,6 +552,8 @@ mod tests {
             allow_downloads: true,
             mods_folder: Some("C:\\Моды".to_string()),
             user_folder: Some("C:\\BeamNG".to_string()),
+            downloads_folder: Some("C:\\Скачанные обновления".to_string()),
+            delete_downloads_after_install: true,
             check_ttl_hours: 12,
             auto_check_on_start: false,
             check_app_updates: false,

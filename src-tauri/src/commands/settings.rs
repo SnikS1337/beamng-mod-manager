@@ -16,6 +16,8 @@ pub struct SettingsDto {
     pub allow_downloads: bool,
     pub mods_folder: Option<String>,
     pub user_folder: Option<String>,
+    pub downloads_folder: Option<String>,
+    pub delete_downloads_after_install: bool,
     pub check_ttl_hours: i32,
     pub auto_check_on_start: bool,
     pub check_app_updates: bool,
@@ -42,6 +44,8 @@ impl SettingsDto {
             allow_downloads: settings.allow_downloads,
             mods_folder: settings.mods_folder.clone(),
             user_folder: settings.user_folder.clone(),
+            downloads_folder: settings.downloads_folder.clone(),
+            delete_downloads_after_install: settings.delete_downloads_after_install,
             check_ttl_hours: settings.check_ttl_hours,
             auto_check_on_start: settings.auto_check_on_start,
             check_app_updates: settings.check_app_updates,
@@ -79,6 +83,8 @@ impl SettingsDto {
         settings.allow_downloads = self.allow_downloads;
         settings.mods_folder = self.mods_folder.clone();
         settings.user_folder = self.user_folder.clone();
+        settings.downloads_folder = self.downloads_folder.clone();
+        settings.delete_downloads_after_install = self.delete_downloads_after_install;
         settings.check_ttl_hours = self.check_ttl_hours;
         settings.auto_check_on_start = self.auto_check_on_start;
         settings.check_app_updates = self.check_app_updates;
@@ -160,6 +166,8 @@ mod tests {
         changed.allow_downloads = !changed.allow_downloads;
         changed.mods_folder = Some("D:/Games/BeamNG/mods".to_string());
         changed.user_folder = Some("D:/Games/BeamNG".to_string());
+        changed.downloads_folder = Some("D:/Downloads/BeamNG".to_string());
+        changed.delete_downloads_after_install = true;
         changed.check_ttl_hours = 7;
         changed.auto_check_on_start = !changed.auto_check_on_start;
         changed.check_app_updates = !changed.check_app_updates;
