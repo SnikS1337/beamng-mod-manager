@@ -48,6 +48,7 @@ struct DownloadPanelEvent {
 }
 
 static CONTEXT: Mutex<Option<DownloadRequest>> = Mutex::new(None);
+static READY: Mutex<Option<String>> = Mutex::new(None);
 static INTERCEPTED: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -76,8 +77,22 @@ pub fn download_panel_state() -> Option<DownloadRequest> {
         .clone()
 }
 
+/// Готовый архив для панели: на случай, если событие пришло до её загрузки.
+#[tauri::command]
+pub fn download_ready() -> Option<String> {
+    READY
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+}
+
+fn clear_ready() {
+    *READY.lock().unwrap_or_else(|error| error.into_inner()) = None;
+}
+
 #[tauri::command]
 pub fn download_close(app: AppHandle) {
+    clear_ready();
     if let Some(window) = app.get_window(WINDOW_LABEL) {
         let _ = window.close();
     }
@@ -94,6 +109,7 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         ));
     }
     *CONTEXT.lock().unwrap_or_else(|error| error.into_inner()) = Some(request.clone());
+    clear_ready();
     let settings = app
         .state::<std::sync::Arc<crate::state::AppState>>()
         .settings
@@ -200,6 +216,9 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
                             && intercepted
                             && is_archive_name(&path)
                         {
+                            let path_text = path.display().to_string();
+                            *READY.lock().unwrap_or_else(|error| error.into_inner()) =
+                                Some(path_text.clone());
                             emit_state(
                                 &download_app,
                                 3,
@@ -207,24 +226,14 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
                                 "Смотрим структуру, опасные пути и подозрительные файлы.",
                                 None,
                             );
-                            let app = download_app.clone();
-                            std::thread::spawn(move || {
-                                let payload =
-                                    serde_json::json!({ "path": path.display().to_string() });
-                                let _ = app.emit("incoming://download", payload);
-                                emit_state(
-                                    &app,
-                                    4,
-                                    "Установка",
-                                    "Продолжите в главном окне — прошлая версия останется в копиях.",
-                                    None,
-                                );
-                                if let Some(main) = app.get_window("main") {
-                                    let _ = main.set_focus();
-                                }
-                            });
+                            let _ = download_app.emit_to(
+                                PANEL_LABEL,
+                                "download://ready",
+                                serde_json::json!({ "path": path_text }),
+                            );
                         }
                     } else {
+                        clear_ready();
                         emit_state(
                             &download_app,
                             2,

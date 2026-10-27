@@ -87,30 +87,66 @@ pub fn find_pages_with(
         }
 
         let title = title_of(&installed.id);
-        let query = PageGuesser::query_for(installed, title.as_deref());
-        let response = search.search(&query, cancel, None);
+        let primary = PageGuesser::query_for(installed, title.as_deref());
+        let mut queries = vec![primary];
+        // Имя из info.json может отличаться от имени файла/страницы: пробуем и его.
+        if title
+            .as_deref()
+            .is_some_and(|title| !title.trim().is_empty())
+        {
+            let from_file = PageGuesser::query_for(installed, None);
+            if !queries
+                .iter()
+                .any(|query| query.eq_ignore_ascii_case(&from_file))
+            {
+                queries.push(from_file);
+            }
+        }
+        let mut searched_ok = false;
+        let mut listings: Vec<Listing> = Vec::new();
+        let mut seen_listings: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        let mut stopped = false;
+        for query in &queries {
+            if cancel.load(Ordering::Relaxed) {
+                result.cancelled = true;
+                stopped = true;
+                break;
+            }
+            let response = search.search(query, cancel, None);
+            if response
+                .sources
+                .iter()
+                .any(|source| source.status == bmm_sources::sources::SourceStatus::Ok)
+            {
+                searched_ok = true;
+            }
+            let found = if response.listings.is_empty() {
+                response
+                    .cards
+                    .into_iter()
+                    .flat_map(|card| card.listings)
+                    .collect()
+            } else {
+                response.listings
+            };
+            for listing in found {
+                if seen_listings.insert((listing.source.clone(), listing.source_id.clone())) {
+                    listings.push(listing);
+                }
+            }
+        }
+        if stopped {
+            break;
+        }
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
             break;
         }
         // Ни один сайт не ответил: не считаем, что искали, — попробуем при следующей проверке.
-        if !response
-            .sources
-            .iter()
-            .any(|source| source.status == bmm_sources::sources::SourceStatus::Ok)
-        {
+        if !searched_ok {
             continue;
         }
-
-        let listings: Vec<Listing> = if response.listings.is_empty() {
-            response
-                .cards
-                .into_iter()
-                .flat_map(|card| card.listings)
-                .collect()
-        } else {
-            response.listings
-        };
         result.searched += 1;
 
         let _gate = gate();
@@ -591,6 +627,37 @@ mod tests {
             },
             None,
         )
+    }
+
+    #[test]
+    fn searches_archive_title_and_file_name() {
+        let store = InMemoryLibraryStore::new();
+        let mut car = installed("a", "toyota_sienna_v1.0.zip");
+        car.name = "Sienna Archive".to_string();
+        store.upsert_mod(car);
+        let site = Site::new(|query| {
+            if query.to_lowercase().contains("toyota") {
+                Ok(vec![listing("s", "Sienna Archive v2.0")])
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        let search = search(Arc::clone(&site));
+        let cancel = AtomicBool::new(false);
+        let report = find_pages(
+            &store,
+            &search,
+            now(),
+            &cancel,
+            &|_| Some("Sienna Archive".to_string()),
+            &|_| None,
+            None,
+        );
+        assert_eq!(
+            report.found, 1,
+            "второй запрос по имени файла нашёл страницу"
+        );
+        assert!(site.calls.load(Ordering::SeqCst) >= 2);
     }
 
     #[test]

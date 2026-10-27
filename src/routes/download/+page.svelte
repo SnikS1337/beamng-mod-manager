@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { isTauri } from "@tauri-apps/api/core";
+  import { emit } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Check from "phosphor-svelte/lib/Check";
   import Lock from "phosphor-svelte/lib/Lock";
@@ -8,11 +9,30 @@
   import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
   import X from "phosphor-svelte/lib/X";
   import { expectDownload } from "#lib/ipc/incoming.js";
+  import {
+    archiveBaseName,
+    incomingDiscard,
+    incomingInspect,
+    incomingInstall,
+    incomingRemoveSource,
+    type IncomingArchiveDto,
+    type IncomingItemDto,
+    type IncomingTicket,
+  } from "#lib/ipc/incoming.js";
+  import {
+    installable,
+    preselected,
+    suspiciousFiles,
+    suspiciousText,
+  } from "#lib/features/incoming/selection.js";
+  import { formatSize, plural } from "#lib/features/garage/format.js";
   import { safeExternalUrl } from "#lib/url.js";
   import {
     downloadClose,
     downloadPanelState,
+    downloadReady,
     listenDownloadContext,
+    listenDownloadReady,
     listenDownloadState,
     type DownloadRequest,
   } from "#lib/ipc/download.js";
@@ -22,6 +42,12 @@
   let status = $state("Нажмите Download на странице");
   let detail = $state("Скачайте архив на странице — остальное программа сделает сама.");
   let error = $state<string | null>(null);
+  let archive = $state<IncomingArchiveDto | null>(null);
+  let selected = $state<boolean[]>([]);
+  let inspecting = $state(false);
+  let installing = $state(false);
+  let installError = $state<string | null>(null);
+  let handledPath = "";
 
   const steps = [
     {
@@ -63,7 +89,184 @@
     }
   });
 
+  const items = $derived(archive?.items ?? []);
+  const archiveSize = $derived(items.reduce((sum, item) => sum + item.size, 0));
+  const picked = $derived(
+    items.filter((item, index) => selected[index] && installable(item)),
+  );
+  const showChecks = $derived(
+    items.length > 1 || items.some((item) => suspiciousFiles(item).length > 0),
+  );
+  const archiveTitle = $derived(archive ? archiveBaseName(archive.source) : "");
+  const installLabel = $derived.by(() => {
+    if (picked.length > 1) {
+      return `Установить ${picked.length} ${plural(picked.length, "мод", "мода", "модов")}`;
+    }
+    return picked.length === 1 && picked[0].kind === "update" ? "Обновить" : "Установить";
+  });
+
+  function errorText(reason: unknown): string {
+    if (typeof reason === "string") return reason;
+    if (reason && typeof reason === "object" && "message" in reason) {
+      return String((reason as { message: unknown }).message);
+    }
+    return "Не удалось выполнить действие.";
+  }
+
+  function resetArchive(discard = true): void {
+    const work = archive?.workDir;
+    if (discard && work) void incomingDiscard(work).catch(() => {});
+    archive = null;
+    selected = [];
+    installError = null;
+  }
+
+  async function prepare(path: string): Promise<void> {
+    if (!path || path === handledPath || installing) return;
+    handledPath = path;
+    resetArchive();
+    inspecting = true;
+    installError = null;
+    step = 3;
+    status = "Проверяем архив";
+    detail = "Смотрим структуру, опасные пути и подозрительные файлы.";
+    try {
+      const [found] = await incomingInspect([path]);
+      if (!found) throw new Error("Не удалось проверить архив.");
+      archive = found;
+      selected = found.items.map(preselected);
+      if (found.problem) {
+        status = "Архив не подошёл";
+        detail = found.problem;
+      } else if (!found.items.some(installable)) {
+        status = "Устанавливать нечего";
+        detail = "В архиве нет подходящих модов.";
+      } else {
+        step = 4;
+        status = "Архив проверен";
+        detail = "Можно установить — прошлая версия останется в копиях.";
+      }
+    } catch (reason) {
+      installError = errorText(reason);
+      status = "Не удалось проверить архив";
+      detail = installError;
+    } finally {
+      inspecting = false;
+    }
+  }
+
+  function toggle(index: number, event: Event): void {
+    selected[index] = (event.currentTarget as HTMLInputElement).checked;
+  }
+
+  function kindText(item: IncomingItemDto): string {
+    if (item.kind === "alreadyInstalled") {
+      return `Уже установлен (${item.replaces ?? item.fileName})`;
+    }
+    if (item.kind === "update") {
+      return item.replaces &&
+        item.replaces.toLowerCase() !== item.fileName.toLowerCase()
+        ? `Обновление: заменит ${item.replaces}`
+        : "Обновление";
+    }
+    return "Новый мод";
+  }
+
+  function itemChecks(item: IncomingItemDto): string[] {
+    const checks: string[] = [];
+    if (item.blocked) checks.push("Есть опасные файлы или пути");
+    else if (item.warnings) checks.push("Есть предупреждения");
+    else checks.push("Опасных файлов и путей нет");
+    const files = suspiciousFiles(item);
+    if (files.length > 0) checks.push(`Сомнительные файлы: ${suspiciousText(files)}`);
+    return checks;
+  }
+
+  function successText(count: number): string {
+    const name = context?.modName ?? "мод";
+    if (count === 1) {
+      return picked[0]?.kind === "update" ? `Обновлён «${name}»` : `Установлен «${name}»`;
+    }
+    return `Установлено ${count} ${plural(count, "мод", "мода", "модов")}`;
+  }
+
+  async function install(): Promise<void> {
+    if (!archive || picked.length === 0 || installing || inspecting) return;
+    installing = true;
+    installError = null;
+    step = 4;
+    status = "Устанавливаем";
+    detail = "Заменяем архив и сохраняем прошлую версию.";
+    try {
+      const results = await incomingInstall(
+        picked.map((item) => ({
+          zipPath: item.zipPath,
+          fileName: item.fileName,
+          replaces: item.replaces,
+          allowWarnings: true,
+        })),
+      );
+      const tickets: IncomingTicket[] = [];
+      const failures: { title: string; message: string }[] = [];
+      let warning: string | null = null;
+      results.forEach((result, index) => {
+        if (result.success) {
+          if (result.warning) warning = result.warning;
+          tickets.push({
+            fileName: result.fileName,
+            replaces: result.replaces,
+            backupId: result.backupId,
+            wasDisabled: result.wasDisabled,
+            sameName: result.sameName,
+          });
+        } else {
+          failures.push({
+            title: picked[index]?.title ?? result.fileName,
+            message: result.message ?? "установить не получилось",
+          });
+        }
+      });
+      const leftInArchive = archive.items.some(
+        (item, index) => installable(item) && !selected[index],
+      );
+      if (tickets.length > 0 && failures.length === 0 && !leftInArchive) {
+        void incomingRemoveSource(archive.source).catch(() => {});
+      }
+      if (tickets.length > 0) {
+        await emit("download://installed", {
+          tickets,
+          fileNames: tickets.map((ticket) => ticket.fileName),
+          message: successText(tickets.length),
+          warning,
+        }).catch(() => {});
+      }
+      if (failures.length > 0 || tickets.length === 0) {
+        installError = failures[0]?.message ?? "Не удалось установить архив.";
+        status = "Установка не удалась";
+        detail = installError;
+        installing = false;
+        return;
+      }
+      status = "Установлено";
+      detail = warning ?? "Библиотека обновлена, прошлая версия осталась в копиях.";
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      installing = false;
+      await close();
+    } catch (reason) {
+      installError = errorText(reason);
+      status = "Установка не удалась";
+      detail = installError;
+      installing = false;
+    }
+  }
+
   async function close(): Promise<void> {
+    if (installing) return;
+    const work = archive?.workDir;
+    archive = null;
+    selected = [];
+    handledPath = "";
+    if (work) void incomingDiscard(work).catch(() => {});
     await downloadClose().catch(() => {});
   }
 
@@ -87,6 +290,8 @@
     });
     void listenDownloadContext((value) => {
       context = value;
+      handledPath = "";
+      resetArchive();
       step = 1;
       status = "Нажмите Download на странице";
       detail = "Скачайте архив на странице — остальное программа сделает сама.";
@@ -103,6 +308,15 @@
     }).then((stop) => {
       if (disposed) stop();
       else stops.push(stop);
+    });
+    void listenDownloadReady((ready) => {
+      if (!disposed) void prepare(ready.path);
+    }).then((stop) => {
+      if (disposed) stop();
+      else stops.push(stop);
+    });
+    void downloadReady().then((path) => {
+      if (!disposed && path) void prepare(path);
     });
     return () => {
       disposed = true;
@@ -173,6 +387,68 @@
       <b>{error ?? status}</b>
       {#if !error && detail}<span>{detail}</span>{/if}
     </div>
+
+    {#if inspecting}
+      <div class="ready-state">Проверяем архив…</div>
+    {:else if archive}
+      <section class="ready" aria-label="Установка">
+        <div class="ready-head">
+          <b>{archiveTitle}</b>
+          <span>{items.length} {plural(items.length, "мод", "мода", "модов")} · {formatSize(archiveSize)}</span>
+        </div>
+        {#if archive.problem}
+          <p class="problem">{archive.problem}</p>
+          <button class="primary" type="button" onclick={() => void close()}>Понятно</button>
+        {:else if !items.some(installable)}
+          <p class="problem">В архиве нет модов, которые можно установить.</p>
+          <button class="primary" type="button" onclick={() => void close()}>Понятно</button>
+        {:else}
+          <div class="ready-items">
+            {#each items as item, index (item.zipPath + index)}
+              <article class="ready-item" class:blocked={item.blocked || item.locked}>
+                <div class="ready-item-top">
+                  {#if showChecks}
+                    <label class="ready-check" class:disabled={!installable(item)}>
+                      <input
+                        type="checkbox"
+                        checked={selected[index] ?? false}
+                        disabled={!installable(item)}
+                        onchange={(event) => toggle(index, event)}
+                        aria-label={`Установить ${item.title}`}
+                      />
+                    </label>
+                  {/if}
+                  <div class="ready-text">
+                    <b>{item.title}</b>
+                    <small>{kindText(item)} · {formatSize(item.size)}</small>
+                    <small class="file">{item.fileName}</small>
+                  </div>
+                </div>
+                <ul class="ready-checks">
+                  {#each itemChecks(item) as check}
+                    <li>{check}</li>
+                  {/each}
+                </ul>
+              </article>
+            {/each}
+          </div>
+          {#if installError}<p class="problem">{installError}</p>{/if}
+          <div class="ready-actions">
+            <button
+              class="primary"
+              type="button"
+              disabled={installing || picked.length === 0}
+              onclick={() => void install()}
+            >
+              {installing ? "Устанавливаем…" : installLabel}
+            </button>
+            <button class="ghost" type="button" disabled={installing} onclick={() => void close()}>
+              Отмена
+            </button>
+          </div>
+        {/if}
+      </section>
+    {/if}
   </aside>
 
   <footer class="foot">
@@ -343,6 +619,8 @@
     padding: 8px 24px 8px 20px;
     box-sizing: border-box;
     border-left: 1px solid var(--border);
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
 
   .steps-title {
@@ -454,6 +732,161 @@
 
   .status.error b {
     color: var(--danger);
+  }
+
+  .ready-state {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+
+  .ready {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  .ready-head {
+    display: grid;
+    gap: 2px;
+  }
+
+  .ready-head b {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ready-head span {
+    color: var(--muted-foreground);
+    font-size: 11px;
+  }
+
+  .ready-items {
+    display: grid;
+    gap: 6px;
+    max-height: 230px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .ready-item {
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+
+  .ready-item.blocked {
+    border-color: var(--danger-soft);
+  }
+
+  .ready-item-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .ready-check {
+    display: grid;
+    flex: none;
+    place-items: center;
+    padding-top: 1px;
+  }
+
+  .ready-check input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--accent-brand);
+  }
+
+  .ready-text {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .ready-text b {
+    font-size: 12.5px;
+    line-height: 1.25;
+  }
+
+  .ready-text small {
+    color: var(--muted-foreground);
+    font-size: 11px;
+  }
+
+  .ready-text .file {
+    overflow: hidden;
+    font-family: var(--font-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ready-checks {
+    margin: 6px 0 0;
+    padding-left: 13px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .ready-checks li::marker {
+    color: var(--accent-brand);
+  }
+
+  .problem {
+    margin: 0;
+    color: var(--danger);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .ready-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .ready button {
+    height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .ready .primary {
+    border-color: var(--accent-brand);
+    background: var(--accent-brand);
+    color: var(--accent-brand-contrast);
+  }
+
+  .ready .ghost {
+    background: var(--surface-2);
+    color: var(--foreground);
+  }
+
+  .ready button:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .ready > .primary {
+    justify-self: start;
   }
 
   .foot {

@@ -27,6 +27,12 @@
     level: CheckLevel;
     text: string;
   }
+  interface PanelInstalled {
+    tickets: IncomingTicket[];
+    fileNames: string[];
+    message: string;
+    warning?: string | null;
+  }
 
   let current = $state<IncomingArchiveDto | null>(null);
   let currentDownloaded = $state(false);
@@ -96,6 +102,7 @@
 
     let unlisten: (() => void) | undefined;
     let unlistenDownload: (() => void) | undefined;
+    let unlistenPanel: (() => void) | undefined;
     let disposed = false;
     void listen<{ path: string }>("incoming://download", (event) => {
       const path = event.payload.path;
@@ -103,6 +110,12 @@
     }).then((stop) => {
       if (disposed) stop();
       else unlistenDownload = stop;
+    });
+    void listen<PanelInstalled>("download://installed", (event) => {
+      if (!disposed) panelInstalled(event.payload);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlistenPanel = stop;
     });
     void getCurrentWebview()
       .onDragDropEvent((event) => {
@@ -127,6 +140,7 @@
       disposed = true;
       unlisten?.();
       unlistenDownload?.();
+      unlistenPanel?.();
     };
   });
 
@@ -275,6 +289,34 @@
       installing = false;
       void pump();
     }
+  }
+
+  async function undoTickets(tickets: IncomingTicket[]): Promise<void> {
+    let problem: string | null = null;
+    for (let index = tickets.length - 1; index >= 0; index -= 1) {
+      try {
+        await incomingUndo(tickets[index]);
+      } catch (reason) {
+        problem ??= errorText(reason);
+      }
+    }
+    window.dispatchEvent(new CustomEvent("bmm:library-changed"));
+    if (problem) throw new Error(problem);
+    toasts.show("Установка отменена");
+  }
+
+  function panelInstalled(event: PanelInstalled): void {
+    window.dispatchEvent(
+      new CustomEvent("bmm:library-changed", {
+        detail: { fileNames: event.fileNames },
+      }),
+    );
+    const message = event.warning
+      ? `${event.message} ${event.warning}`
+      : event.message;
+    toasts.show(message, {
+      undo: event.tickets.length > 0 ? () => undoTickets(event.tickets) : undefined,
+    });
   }
 
   function toggle(index: number, event: Event): void {

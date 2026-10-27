@@ -18,6 +18,10 @@ export interface DownloadPanelEvent {
   error?: string | null;
 }
 
+export interface DownloadReady {
+  path: string;
+}
+
 const DEMO: DownloadRequest = {
   modName: "Dacia Sandero Stepway",
   installedVersion: "1.0",
@@ -39,6 +43,19 @@ export async function downloadClose(): Promise<void> {
 export async function downloadPanelState(): Promise<DownloadRequest | null> {
   if (!isTauri()) return DEMO;
   return invoke<DownloadRequest | null>("download_panel_state");
+}
+
+/** Готовый архив, если событие пришло раньше, чем панель успела подписаться. */
+export async function downloadReady(): Promise<string | null> {
+  if (!isTauri()) return null;
+  return invoke<string | null>("download_ready");
+}
+
+export async function listenDownloadReady(
+  handler: (ready: DownloadReady) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DownloadReady>("download://ready", (event) => handler(event.payload));
 }
 
 export async function listenDownloadContext(
