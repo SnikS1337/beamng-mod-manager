@@ -12,6 +12,7 @@
   import { filterAndSort, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
   import { parseSearchInput } from "#lib/features/search/queryInput.js";
   import { libraryLoad } from "#lib/ipc/library.js";
+  import { downloadOpen } from "#lib/ipc/download.js";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
@@ -320,6 +321,40 @@
 
   function paidOffer(listing: SearchListing) {
     return listing.offers.find((offer) => offer.kind === "paidLink");
+  }
+
+  async function downloadListing(card: SearchCard, listing: SearchListing): Promise<void> {
+    try {
+      await downloadOpen({
+        modName: card.title,
+        installedVersion: null,
+        latestVersion: listing.modVersion,
+        pageUrl: listing.url,
+        previewUrl: null,
+        role: card.kind,
+      });
+    } catch {
+      // В браузере окна загрузки нет — открываем страницу как раньше.
+      await openLink(downloadOffer(listing)?.url ?? listing.url);
+    }
+  }
+
+  function matchHint(card: SearchCard, other: SearchCard): string {
+    const sameAuthor = card.listings.some((a) =>
+      other.listings.some((b) => a.author && b.author && a.author.toLowerCase() === b.author.toLowerCase()),
+    );
+    const sameVersion = card.listings.some((a) =>
+      other.listings.some((b) => a.modVersion && b.modVersion && a.modVersion === b.modVersion),
+    );
+    const sameSize = card.listings.some((a) =>
+      other.listings.some((b) => a.sizeBytes && b.sizeBytes && a.sizeBytes === b.sizeBytes),
+    );
+    const hints = [
+      sameAuthor ? "автор" : null,
+      sameVersion ? "версия" : null,
+      sameSize ? "размер" : null,
+    ].filter((value): value is string => value !== null);
+    return hints.length > 0 ? `Совпали: ${hints.join(", ")}` : "Похожее название";
   }
 
   function previewOf(card: SearchCard): string | null {
@@ -641,7 +676,7 @@
                         class="action"
                         type="button"
                         title={`Скачать на ${downloadOffer(listing)?.host}`}
-                        onclick={() => void openLink(downloadOffer(listing)!.url)}
+                        onclick={() => void downloadListing(card, listing)}
                       >
                         Скачать
                       </button>
@@ -682,7 +717,10 @@
                   {@const other = cardById(otherId)}
                   {#if other}
                     <div class="maybe">
-                      <span>Возможно, тот же мод: <b>{other.title}</b></span>
+                      <span>
+                        Возможно, тот же мод: <b>{other.title}</b>
+                        <small>{matchHint(card, other)}</small>
+                      </span>
                       <div>
                         <button
                           type="button"
@@ -900,6 +938,14 @@
     color: var(--faint-foreground);
     font-size: 12px;
     text-align: center;
+  }
+
+  .maybe small {
+    display: block;
+    margin-top: 3px;
+    color: var(--faint-foreground);
+    font-size: 11.5px;
+    font-weight: 400;
   }
 
   .history {
