@@ -46,8 +46,8 @@ fn declarations(cfg: &Config) -> Vec<String> {
         IncomingItemDto, IncomingTicketDto, SimilarModDto,
     };
     use crate::commands::library::{
-        ArchiveDto, BindingDto, CompatDto, DeletedTicketDto, DuplicateDto, FilterCounts,
-        LibrarySnapshot, ModCardDto, ModDetails, ToggleResult, VersionRowDto,
+        ArchiveDto, BindingDto, BulkToggleResult, CompatDto, DeletedTicketDto, DuplicateDto,
+        FilterCounts, LibrarySnapshot, ModCardDto, ModDetails, ToggleResult, VersionRowDto,
     };
     use crate::commands::search::{
         OfferDto, SearchCardDto, SearchEventDto, SearchListingDto, SearchSourceDto,
@@ -91,6 +91,7 @@ fn declarations(cfg: &Config) -> Vec<String> {
         BindingDto::decl(cfg),
         ModDetails::decl(cfg),
         ToggleResult::decl(cfg),
+        BulkToggleResult::decl(cfg),
         UpdateFindingDto::decl(cfg),
         UpdateSiteDto::decl(cfg),
         PageSuggestionDto::decl(cfg),

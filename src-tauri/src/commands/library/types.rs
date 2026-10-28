@@ -156,3 +156,11 @@ pub struct ModDetails {
     /// Пользователь выбрал «Не проверять обновления» для этого мода.
     pub checking_declined: bool,
 }
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkToggleResult {
+    pub changed: Vec<String>,
+    pub queued: Vec<String>,
+    pub failed: Vec<String>,
+}

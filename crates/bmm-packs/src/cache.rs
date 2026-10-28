@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -45,6 +45,8 @@ pub struct PreviewCache {
     contents: MapFile<Vec<String>>,
     mod_infos: MapFile<serde_json::Value>,
     write: Mutex<()>,
+    /// Уже найденные картинки: не делаем 4 `metadata` на каждую карточку.
+    present: Mutex<HashMap<String, CachedPreview>>,
 }
 
 impl PreviewCache {
@@ -56,6 +58,7 @@ impl PreviewCache {
             contents: MapFile::new(None),
             mod_infos: MapFile::new(None),
             write: Mutex::new(()),
+            present: Mutex::new(HashMap::new()),
         }
     }
 
@@ -80,8 +83,22 @@ impl PreviewCache {
     }
 
     pub fn get(&self, key: &str) -> Option<CachedPreview> {
+        if let Some(cached) = self
+            .present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(key)
+            .cloned()
+        {
+            return Some(cached);
+        }
         if self.root.join(format!("{key}.none")).is_file() {
-            return Some(CachedPreview::NoImage);
+            let value = CachedPreview::NoImage;
+            self.present
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(key.to_string(), value.clone());
+            return Some(value);
         }
         for extension in ["jpg", "jpeg", "png"] {
             let path = self.root.join(format!("{key}.{extension}"));
@@ -95,12 +112,22 @@ impl PreviewCache {
                 && let Some(small) = fs::read(&path).ok().and_then(|bytes| shrink(&bytes))
                 && let Ok((path, extension)) = self.store(key, "jpg", &small)
             {
-                return Some(CachedPreview::Image { path, extension });
+                let value = CachedPreview::Image { path, extension };
+                self.present
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .insert(key.to_string(), value.clone());
+                return Some(value);
             }
-            return Some(CachedPreview::Image {
+            let value = CachedPreview::Image {
                 path,
                 extension: extension.to_string(),
-            });
+            };
+            self.present
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(key.to_string(), value.clone());
+            return Some(value);
         }
         None
     }
@@ -135,6 +162,16 @@ impl PreviewCache {
                 let _ = fs::remove_file(self.root.join(format!("{key}.{other}")));
             }
         }
+        self.present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(
+                key.to_string(),
+                CachedPreview::Image {
+                    path: path.clone(),
+                    extension: extension.clone(),
+                },
+            );
         Ok((path, extension))
     }
 
@@ -144,6 +181,10 @@ impl PreviewCache {
         for extension in ["jpg", "jpeg", "png"] {
             let _ = fs::remove_file(self.root.join(format!("{key}.{extension}")));
         }
+        self.present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(key.to_string(), CachedPreview::NoImage);
         Ok(())
     }
 
@@ -178,6 +219,10 @@ impl PreviewCache {
                 let _ = fs::remove_file(path);
             }
         }
+        self.present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|key, _| live_keys.contains(key));
         self.prune_maps(live_keys);
     }
 
