@@ -258,6 +258,91 @@ pub async fn search_start(
     Ok(())
 }
 
+/// Повторить только один сайт после сбоя, не трогая остальную выдачу.
+#[tauri::command]
+pub async fn search_retry_source(
+    state: tauri::State<'_, Arc<AppState>>,
+    query: String,
+    source_id: String,
+    request_id: u64,
+) -> Result<SearchEventDto, AppError> {
+    let state = state.inner().clone();
+    let runtime = state
+        .search
+        .clone()
+        .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
+    let settings = state.settings.load().settings;
+    let source = runtime
+        .service
+        .sources()
+        .iter()
+        .find(|source| {
+            source.id() == source_id
+                && source.supports_search()
+                && !settings
+                    .disabled_sources
+                    .iter()
+                    .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
+        })
+        .cloned()
+        .ok_or_else(|| AppError::new("search", "Сайт выключен или не поддерживает поиск."))?;
+    let previous = state
+        .last_search
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| AppError::new("search", "Сначала выполните поиск."))?;
+    let status_source = runtime.fetcher.clone();
+    let service = SearchService::new(
+        vec![source],
+        Arc::new(move |source| status_source.status_of(source)),
+        runtime.service.options().clone(),
+        Some(runtime.matches.clone()),
+    );
+    let installed = InstalledIndex::build(&state);
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        // Повтор занимает тот же слот, что и обычный поиск: новый поиск отменит
+        // повтор, а не станет с ним наперегонки за `last_search`.
+        let mut slot = state.search_cancel.lock().unwrap();
+        if slot.is_some() {
+            return Err(AppError::new(
+                "search",
+                "Поиск уже идёт. Дождитесь его окончания.",
+            ));
+        }
+        *slot = Some((request_id, Arc::clone(&cancel)));
+    }
+    let state_for_task = state.clone();
+    let source_id_for_task = source_id.clone();
+    let cancel_for_task = Arc::clone(&cancel);
+    let run = tauri::async_runtime::spawn_blocking(move || {
+        service.retry_source(&previous, &source_id_for_task, &query, &cancel_for_task)
+    })
+    .await;
+    let superseded = {
+        let mut slot = state.search_cancel.lock().unwrap();
+        let ours = slot
+            .as_ref()
+            .is_some_and(|(current, _)| *current == request_id);
+        if ours {
+            *slot = None;
+        }
+        !ours
+    };
+    let response = run
+        .map_err(|error| AppError::new("task", error.to_string()))?
+        .ok_or_else(|| AppError::new("search", "Сайт не найден."))?;
+    if superseded || cancel.load(Ordering::Relaxed) {
+        return Err(AppError::new(
+            "search",
+            "Повтор отменён: уже идёт другой поиск.",
+        ));
+    }
+    *state_for_task.last_search.lock().unwrap() = Some(response.clone());
+    Ok(to_event(&response, request_id, "done", &installed, None))
+}
+
 #[tauri::command]
 pub async fn search_cancel(
     state: tauri::State<'_, Arc<AppState>>,

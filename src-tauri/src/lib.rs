@@ -245,6 +245,7 @@ pub fn run() {
             commands::incoming::incoming_remove_source,
             commands::search::search_start,
             commands::search::search_cancel,
+            commands::search::search_retry_source,
             commands::search::search_decide,
             commands::search::search_preview,
             commands::search::search_page_preview,

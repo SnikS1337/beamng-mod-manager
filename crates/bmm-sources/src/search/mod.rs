@@ -309,6 +309,50 @@ impl SearchService {
         self.finish(slots, &query)
     }
 
+    /// Повторить один сайт после сбоя, сохранив остальную выдачу.
+    /// `self.sources` должен содержать только этот сайт (команда собирает такой сервис).
+    pub fn retry_source(
+        &self,
+        previous: &SearchResponse,
+        source_id: &str,
+        query: &str,
+        cancel: &AtomicBool,
+    ) -> Option<SearchResponse> {
+        let source = self
+            .sources
+            .iter()
+            .find(|source| source.id().eq_ignore_ascii_case(source_id))?;
+        let query = self.normalize(query);
+        let variants = query::variants(&query);
+        let runner = Runner {
+            status_of: Arc::clone(&self.status_of),
+            options: self.options.clone(),
+        };
+        let run = match catch_unwind(AssertUnwindSafe(|| {
+            runner.run_one(source.as_ref(), &variants, cancel)
+        })) {
+            Ok(run) => run,
+            Err(payload) => runner.panicked(source.as_ref(), payload.as_ref()),
+        };
+        let mut listings = previous.listings.clone();
+        listings.retain(|listing| !listing.source.eq_ignore_ascii_case(source_id));
+        listings.extend(run.listings);
+        let mut sources = previous.sources.clone();
+        if let Some(report) = sources
+            .iter_mut()
+            .find(|report| report.source_id.eq_ignore_ascii_case(source_id))
+        {
+            *report = run.report;
+        } else {
+            sources.push(run.report);
+        }
+        Some(SearchResponse {
+            cards: self.group(&listings, &query),
+            sources,
+            listings,
+        })
+    }
+
     fn finish(&self, slots: Vec<Option<SourceRun>>, query: &str) -> SearchResponse {
         let reports = slots
             .iter()
@@ -903,6 +947,104 @@ mod tests {
         let response = service.search("lada", &AtomicBool::new(false), None);
         assert_eq!(response.cards.len(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 1, "без лишнего запроса");
+    }
+
+    #[test]
+    fn retry_replaces_only_target_source_and_updates_report() {
+        let retried = ScriptedSource::new("modland", |_query, _cancel| {
+            let mut item = listing("modland", "fresh", "BMW M2 G87", Some("2.0"));
+            item.author = Some("Author".to_string());
+            item.size_bytes = Some(100);
+            Ok(vec![item])
+        });
+        let service = service_with(vec![retried], SearchOptions::default());
+        let mut kept = listing("stmods", "keep", "BMW M2 G87", Some("2.0"));
+        kept.author = Some("Author".to_string());
+        kept.size_bytes = Some(100);
+        let stale = listing("modland", "stale", "BMW M2 G87", Some("1.0"));
+        let previous = SearchResponse {
+            cards: Vec::new(),
+            sources: vec![
+                SourceReport {
+                    source_id: "modland".to_string(),
+                    display_name: "Modland".to_string(),
+                    status: SourceStatus::Unavailable,
+                    count: 0,
+                    note: Some("сайт не ответил вовремя".to_string()),
+                    pending: false,
+                },
+                SourceReport {
+                    source_id: "stmods".to_string(),
+                    display_name: "STMods".to_string(),
+                    status: SourceStatus::Ok,
+                    count: 1,
+                    note: None,
+                    pending: false,
+                },
+            ],
+            listings: vec![stale, kept],
+        };
+
+        let response = service
+            .retry_source(&previous, "modland", "bmw", &AtomicBool::new(false))
+            .expect("сайт есть в сервисе");
+
+        assert_eq!(response.listings.len(), 2, "{:?}", response.listings);
+        assert!(
+            response
+                .listings
+                .iter()
+                .any(|item| item.source_id == "fresh"),
+            "новая выдача упавшего сайта"
+        );
+        assert!(
+            response
+                .listings
+                .iter()
+                .any(|item| item.source_id == "keep"),
+            "чужая выдача сохранена"
+        );
+        assert!(
+            !response
+                .listings
+                .iter()
+                .any(|item| item.source_id == "stale"),
+            "старая выдача упавшего сайта убрана"
+        );
+        let report = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "modland")
+            .unwrap();
+        assert_eq!(report.status, SourceStatus::Ok);
+        assert_eq!(report.count, 1);
+        assert!(report.note.is_none());
+        assert_eq!(response.sources.len(), 2, "отчёт сайта не задвоился");
+        assert_eq!(
+            response
+                .sources
+                .iter()
+                .find(|report| report.source_id == "stmods")
+                .unwrap()
+                .count,
+            1
+        );
+        assert_eq!(response.cards.len(), 1, "карточка склеена заново");
+        assert_eq!(response.cards[0].listings.len(), 2);
+    }
+
+    #[test]
+    fn retry_unknown_source_returns_none() {
+        let previous = SearchResponse {
+            cards: Vec::new(),
+            sources: Vec::new(),
+            listings: Vec::new(),
+        };
+        assert!(
+            service()
+                .retry_source(&previous, "ghost", "bmw", &AtomicBool::new(false))
+                .is_none()
+        );
     }
 
     #[test]
