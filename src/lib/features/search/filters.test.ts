@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SearchCard, SearchListing } from "#lib/ipc/search.js";
-import { filterAndSort } from "./filters";
+import { filterAndSort, gameMatches, versionPair } from "./filters";
 
 function listing(patch: Partial<SearchListing> = {}): SearchListing {
   return {
@@ -86,6 +86,36 @@ describe("фильтры поиска", () => {
     expect(filterAndSort(cards, { ...base, kind: "vehicle" }).map((item) => item.id)).toEqual([
       "b",
     ]);
+  });
+
+  it("фильтрует по автору и совместимости с игрой", () => {
+    const cards = [
+      card({
+        id: "compatible",
+        listings: [listing({ author: "Flanje", gameVersion: "0.39.x" })],
+      }),
+      card({
+        id: "other",
+        listings: [listing({ author: "Someone", gameVersion: "0.40.x" })],
+      }),
+    ];
+    expect(
+      filterAndSort(cards, { ...base, author: "fla" }).map((item) => item.id),
+    ).toEqual(["compatible"]);
+    expect(
+      filterAndSort(cards, {
+        ...base,
+        onlyCompatible: true,
+        gameVersion: "0.39.3.0",
+      }).map((item) => item.id),
+    ).toEqual(["compatible"]);
+  });
+
+  it("сравнивает версии игры по старшей паре чисел", () => {
+    expect(versionPair("0.39.x")).toEqual([0, 39]);
+    expect(gameMatches("0.39.x", "0.39.3.0")).toBe(true);
+    expect(gameMatches("0.40.x", "0.39.3.0")).toBe(false);
+    expect(gameMatches(null, "0.39.3.0")).toBe(true);
   });
 
   it("сортирует новые и крупные", () => {
