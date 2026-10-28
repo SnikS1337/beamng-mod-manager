@@ -45,6 +45,23 @@ export async function searchStart(query: string, requestId: number): Promise<voi
   mockSearch(query, requestId);
 }
 
+export async function searchRetrySource(
+  query: string,
+  sourceId: string,
+  requestId: number,
+): Promise<SearchEvent> {
+  if (isTauri()) {
+    return invoke<SearchEvent>("search_retry_source", { query, sourceId, requestId });
+  }
+  return {
+    requestId,
+    phase: "done",
+    cards: mockCards(query),
+    sources: mockSourceReports(),
+    error: null,
+  };
+}
+
 export async function searchCancel(requestId?: number): Promise<void> {
   if (isTauri()) {
     await invoke("search_cancel", { requestId: requestId ?? null });

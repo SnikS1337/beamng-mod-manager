@@ -22,6 +22,7 @@
     searchOpenModland,
     searchPagePreview,
     searchPreview,
+    searchRetrySource,
     searchStart,
     sourceName,
     type SearchCard,
@@ -52,6 +53,7 @@
   let input = $state<HTMLInputElement | null>(null);
   let unlisten: (() => void) | undefined;
   let disposed = false;
+  let retrying = $state<string | null>(null);
   let listenerReady = Promise.resolve();
   let markListenerReady: (() => void) | undefined;
   let listenFailed = false;
@@ -200,6 +202,25 @@
         error = errorText(reason);
         searching = false;
       }
+    }
+  }
+
+  async function retrySource(source: SearchSource): Promise<void> {
+    if (retrying !== null || searching) return;
+    const at = requestId;
+    retrying = source.id;
+    error = null;
+    try {
+      const event = await searchRetrySource(submitted, source.id, at);
+      if (at === requestId) {
+        cards = event.cards;
+        sources = event.sources;
+      }
+    } catch (reason) {
+      if (at === requestId) error = errorText(reason);
+    } finally {
+      // Новый поиск мог перехватить повтор — кнопку всё равно разблокируем.
+      retrying = null;
     }
   }
 
@@ -868,6 +889,14 @@
                 нашёл {source.count}
               {/if}
             </span>
+            {#if !source.pending && source.status !== "ok"}
+              <button
+                class="site-retry"
+                type="button"
+                disabled={retrying !== null || searching}
+                onclick={() => void retrySource(source)}
+              >{retrying === source.id ? "…" : "Повторить"}</button>
+            {/if}
           </div>
           {#if source.note && !source.pending && source.status !== "ok"}
             <p class="site-note">{source.note}</p>
@@ -884,7 +913,7 @@
     {/if}
     {#if !searching && sources.some((source) => source.status !== "ok" && !source.pending)}
       <button class="btn-glass pass" type="button" onclick={() => void runSearch()}>
-        Повторить поиск
+        Повторить все сайты
       </button>
     {/if}
     <p class="note">
@@ -1059,6 +1088,22 @@
   .history .history-clear {
     border-color: transparent;
     color: var(--faint-foreground);
+  }
+
+  .site-retry {
+    margin-left: auto;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    cursor: default;
+  }
+
+  .site-retry:hover {
+    color: var(--foreground);
+    border-color: var(--border-strong);
   }
 
   .site-note {
