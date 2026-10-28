@@ -1020,7 +1020,8 @@ mod tests {
                 .get_page_search("b")
                 .is_some_and(|search| !search.rejected)
         );
-        assert_eq!(site.calls.load(Ordering::SeqCst), 2);
+        // Для «lada niva 4x4» после пустого латинского запроса пробуем кириллицу.
+        assert_eq!(site.calls.load(Ordering::SeqCst), 3);
 
         // Повторный подбор ничего не ищет.
         let before = site.calls.load(Ordering::SeqCst);
