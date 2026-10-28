@@ -34,6 +34,7 @@
     modRestoreDeleted,
     modRestoreVersion,
     modToggle,
+    modsToggle,
     modVersions,
     modUndelete,
     type LibrarySnapshot,
@@ -537,37 +538,30 @@
     const mods = target ? plan.enable : plan.disable;
     if (bulkBusy || mods.length === 0) return;
     bulkBusy = true;
-    const changed: ModCardDto[] = [];
-    let failed = 0;
-    let queued = 0;
-    for (const mod of mods) {
-      try {
-        const result = await modToggle(mod.id, target);
-        if (result.outcome === "error" || result.outcome === "failed") {
-          failed += 1;
-        } else {
-          if (result.outcome === "queued") queued += 1;
-          changed.push(mod);
-        }
-      } catch {
-        failed += 1;
-      }
+    try {
+      const result = await modsToggle(
+        mods.map((mod) => mod.id),
+        target,
+      );
+      await load(true);
+      const verb = target ? "Включено" : "Выключено";
+      const parts = [`${verb}: ${result.changed.length}`];
+      if (result.queued.length > 0) parts.push(`после игры: ${result.queued.length}`);
+      if (result.failed.length > 0) parts.push(`не получилось: ${result.failed.length}`);
+      showToast(parts.join(" · "), {
+        undo:
+          result.changed.length > 0 && result.queued.length === 0
+            ? async () => {
+                await modsToggle(result.changed, !target).catch(() => {});
+                await load(true);
+              }
+            : undefined,
+      });
+    } catch (reason) {
+      showToast(errorText(reason));
+    } finally {
+      bulkBusy = false;
     }
-    await load(true);
-    bulkBusy = false;
-    const verb = target ? "Включено" : "Выключено";
-    const parts = [`${verb}: ${changed.length}`];
-    if (queued > 0) parts.push(`после игры: ${queued}`);
-    if (failed > 0) parts.push(`не получилось: ${failed}`);
-    showToast(parts.join(" · "), {
-      undo:
-        changed.length > 0 && queued === 0
-          ? async () => {
-              for (const mod of changed) await modToggle(mod.id, !target).catch(() => {});
-              await load(true);
-            }
-          : undefined,
-    });
   }
 
   async function bulkDelete() {

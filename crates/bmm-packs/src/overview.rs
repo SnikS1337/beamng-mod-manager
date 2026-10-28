@@ -165,6 +165,12 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
         Err(ZipError::Io(error)) => return Err(error),
         Err(ZipError::Zip(_)) => return Ok(ArchiveInfo::default()),
     };
+    Ok(archive_info_from_index(path, &index))
+}
+
+/// `archive_info` по уже прочитанному индексу: при обходе библиотеки не открываем
+/// один и тот же zip по четыре раза.
+pub fn archive_info_from_index(path: &Path, index: &zip_index::ZipIndex) -> ArchiveInfo {
     let prefix = wrapper_prefix(&index.entries);
     let mut vehicles = BTreeSet::new();
     let mut levels = BTreeSet::new();
@@ -185,10 +191,10 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
     let (root, folder) = match (vehicles.len(), levels.len()) {
         (1, 0) => ("vehicles", vehicles.first().cloned()),
         (0, 1) => ("levels", levels.first().cloned()),
-        _ => return Ok(ArchiveInfo::default()),
+        _ => return ArchiveInfo::default(),
     };
     let Some(folder) = folder else {
-        return Ok(ArchiveInfo::default());
+        return ArchiveInfo::default();
     };
     let stock = if root == "vehicles" {
         crate::stock::is_stock_vehicle(&folder)
@@ -196,7 +202,7 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
         crate::stock::is_stock_level(&folder)
     };
     if stock {
-        return Ok(ArchiveInfo::default());
+        return ArchiveInfo::default();
     }
     let one = BTreeSet::from([folder.clone()]);
     let title = titles_for(path, &prefix, root, &one).remove(&folder);
@@ -208,7 +214,7 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
         })
         .map(|author| author.trim().to_string())
         .filter(|author| !author.is_empty() && author.chars().count() <= MAX_TITLE);
-    Ok(ArchiveInfo { title, author })
+    ArchiveInfo { title, author }
 }
 
 /// `mod_info/<ID>/info.json` из архива: так помечает мод репозиторий BeamNG (с номером
@@ -222,6 +228,14 @@ pub fn mod_info(path: &Path) -> Option<(String, Value)> {
 /// вызывающий решает, кэшировать ли пустой ответ или повторить позже.
 pub fn try_mod_info(path: &Path) -> Result<Option<(String, Value)>, zip_index::ZipError> {
     let index = zip_index::read_index(path)?;
+    try_mod_info_from_index(path, &index)
+}
+
+/// `try_mod_info` по уже прочитанному индексу (см. [`archive_info_from_index`]).
+pub fn try_mod_info_from_index(
+    path: &Path,
+    index: &zip_index::ZipIndex,
+) -> Result<Option<(String, Value)>, zip_index::ZipError> {
     let Some(entry) = index.entries.iter().find_map(|entry| {
         let parts: Vec<&str> = entry.name.split('/').collect();
         match parts.as_slice() {

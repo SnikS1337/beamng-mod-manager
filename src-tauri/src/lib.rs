@@ -228,6 +228,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::library::library_load,
             commands::library::mod_toggle,
+            commands::library::mods_toggle,
             commands::library::mod_details,
             commands::library::mod_preview,
             commands::library::mod_fix_packaging,

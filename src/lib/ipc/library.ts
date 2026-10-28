@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  BulkToggleResult,
   DeletedTicket,
   LibrarySnapshot,
   ModCardDto,
@@ -13,6 +14,7 @@ import type { ModKind } from "./unions.js";
 export type {
   ArchiveDto,
   BindingDto,
+  BulkToggleResult,
   CompatDto,
   DeletedTicket,
   DuplicateOf,
@@ -178,6 +180,14 @@ export async function modToggle(id: string, enabled: boolean): Promise<ToggleRes
     return invoke<ToggleResult>("mod_toggle", { id, enabled });
   }
   return { outcome: "done", enabled, message: null };
+}
+
+export async function modsToggle(ids: string[], enabled: boolean): Promise<BulkToggleResult> {
+  if (isTauri()) {
+    return invoke<BulkToggleResult>("mods_toggle", { ids, enabled });
+  }
+  for (const id of ids) await modToggle(id, enabled);
+  return { changed: [...ids], queued: [], failed: [] };
 }
 
 export async function modDetails(id: string): Promise<ModDetails> {

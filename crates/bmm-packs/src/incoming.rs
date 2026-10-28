@@ -536,12 +536,17 @@ pub fn archive_problem(path: &Path) -> Result<Option<PackagingProblem>, std::io:
         Err(crate::zip_index::ZipError::Io(error)) => return Err(error),
         Err(crate::zip_index::ZipError::Zip(_)) => return Ok(Some(PackagingProblem::NotMod)),
     };
-    Ok(match shape_of(&index) {
+    Ok(archive_problem_from_index(&index))
+}
+
+/// `archive_problem` по уже прочитанному индексу.
+pub fn archive_problem_from_index(index: &ZipIndex) -> Option<PackagingProblem> {
+    match shape_of(index) {
         Shape::Mod => None,
         Shape::Wrap(_) => Some(PackagingProblem::Wrapped),
         Shape::Loose { .. } => Some(PackagingProblem::Loose),
         Shape::None => Some(PackagingProblem::NotMod),
-    })
+    }
 }
 
 /// Переупаковать архив так, как его ждёт игра (см. [`PackagingProblem::fixable`]).

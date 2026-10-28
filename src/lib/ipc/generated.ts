@@ -130,6 +130,8 @@ checkingDeclined: boolean, };
 
 export type ToggleResult = { outcome: string, enabled: boolean, message: string | null, };
 
+export type BulkToggleResult = { changed: Array<string>, queued: Array<string>, failed: Array<string>, };
+
 export type UpdateFinding = { modId: string, modName: string, source: string, status: UpdateStatusText, installedVersion: string | null, latestVersion: string | null, url: string, dismissed: boolean, 
 /**
  * Картинка мода (как на карточке), если уже есть в кэше.

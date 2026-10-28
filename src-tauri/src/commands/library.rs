@@ -329,35 +329,62 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
         contents.clear();
     };
     for target in targets {
-        // Архив занят или пропал — спросим при следующей загрузке.
-        if !known.contains_key(&target.key)
-            && !found.iter().any(|(key, _)| *key == target.key)
-            && let Ok(title) = overview::archive_title(&target.path)
-        {
-            found.push((target.key.clone(), title));
+        let need_title =
+            !known.contains_key(&target.key) && !found.iter().any(|(key, _)| *key == target.key);
+        let need_problem = !known_problems.contains_key(&target.key)
+            && !problems.iter().any(|(key, _)| *key == target.key);
+        let need_contents = !known_contents.contains_key(&target.key)
+            && !contents.iter().any(|(key, _)| *key == target.key);
+        let need_info = !known_infos.contains_key(&target.key)
+            && !infos.iter().any(|(key, _)| *key == target.key)
+            && target.path.is_file();
+        if !(need_title || need_problem || need_contents || need_info) {
+            continue;
         }
-        if !known_problems.contains_key(&target.key)
-            && !problems.iter().any(|(key, _)| *key == target.key)
-            && let Ok(problem) = incoming::archive_problem(&target.path)
-        {
-            problems.push((target.key.clone(), problem.map(|p| p.code().to_string())));
+        let index = match bmm_packs::zip_index::read_index(&target.path) {
+            Ok(index) => index,
+            Err(bmm_packs::zip_index::ZipError::Zip(_)) => {
+                // Повреждённый архив — это известный ответ, а не занятость файла.
+                if need_title {
+                    found.push((target.key.clone(), None));
+                }
+                if need_problem {
+                    problems.push((
+                        target.key.clone(),
+                        Some(
+                            bmm_packs::incoming::PackagingProblem::NotMod
+                                .code()
+                                .to_string(),
+                        ),
+                    ));
+                }
+                continue;
+            }
+            // Архив занят или пропал — спросим при следующей загрузке.
+            Err(_) => continue,
+        };
+        if need_title {
+            found.push((
+                target.key.clone(),
+                overview::archive_info_from_index(&target.path, &index).title,
+            ));
+        }
+        if need_problem {
+            problems.push((
+                target.key.clone(),
+                incoming::archive_problem_from_index(&index).map(|p| p.code().to_string()),
+            ));
         }
         // Состав архива — для пометки повторов («weather_fx (1).zip» рядом с «weather_fx.zip»).
-        if !known_contents.contains_key(&target.key)
-            && !contents.iter().any(|(key, _)| *key == target.key)
-            && let Ok(index) = bmm_packs::zip_index::read_index(&target.path)
-        {
+        if need_contents {
             contents.push((
                 target.key.clone(),
                 incoming::content_keys(&index).into_iter().collect(),
             ));
         }
         // mod_info из архива — страница в репозитории BeamNG и версия ещё до запуска игры.
-        if !known_infos.contains_key(&target.key)
-            && !infos.iter().any(|(key, _)| *key == target.key)
-            && target.path.is_file()
-        {
-            match overview::try_mod_info(&target.path) {
+        if need_info {
+            match overview::try_mod_info_from_index(&target.path, &index) {
                 Ok(Some((id, data))) => {
                     infos.push((
                         target.key.clone(),
@@ -701,10 +728,177 @@ pub(crate) fn toggle_mod(
     }
 }
 
+#[tauri::command]
+pub async fn mods_toggle(
+    state: tauri::State<'_, Arc<AppState>>,
+    ids: Vec<String>,
+    enabled: bool,
+) -> Result<BulkToggleResult, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || toggle_many(&state, &ids, enabled))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+/// Массовое включение/выключение: один скан, один `db.json` и одна запись библиотеки.
+pub(crate) fn toggle_many(
+    state: &AppState,
+    ids: &[String],
+    enabled: bool,
+) -> Result<BulkToggleResult, AppError> {
+    let _guard = state
+        .load_lock
+        .lock()
+        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let settings = state.settings.load().settings;
+    let (mods_dir, error) = resolve_folder(&settings);
+    let Some(mods_dir) = mods_dir else {
+        return Err(AppError::new(
+            "folder",
+            error.unwrap_or_else(|| "Папка модов не найдена.".to_string()),
+        ));
+    };
+    let mut changed = Vec::new();
+    let mut queued = Vec::new();
+    let mut failed = Vec::new();
+    if process::is_running() {
+        for id in ids {
+            if let Some(installed) = state.library.get_mod(id) {
+                queue_toggle(state, &installed.file_name, enabled);
+                queued.push(id.clone());
+            } else {
+                failed.push(id.clone());
+            }
+        }
+        return Ok(BulkToggleResult {
+            changed,
+            queued,
+            failed,
+        });
+    }
+
+    let layout = ModLayout::in_app_folder(&mods_dir, state.paths.root());
+    let disks = scan::scan_mods(&layout).mods;
+    let by_file: HashMap<String, DiskMod> = disks
+        .into_iter()
+        .map(|disk| (disk.file_name.to_lowercase(), disk))
+        .collect();
+    let keep = settings.keep_backups.max(1) as usize;
+    let installer = ModInstaller::new(layout, system_clock(), Arc::new(move || keep));
+    let _batch = state.library.batch();
+
+    let mut planned = Vec::new();
+    let mut moved_enabled = Vec::new();
+    for id in ids {
+        let Some(installed) = state.library.get_mod(id) else {
+            failed.push(id.clone());
+            continue;
+        };
+        let Some(disk) = by_file.get(&installed.file_name.to_lowercase()).cloned() else {
+            failed.push(id.clone());
+            continue;
+        };
+        if enabled && !disk.enabled && disk.sub_folder.is_none() {
+            let moved = installer.enable(&disk.file_name);
+            if !moved.success {
+                failed.push(id.clone());
+                continue;
+            }
+            moved_enabled.push(disk.file_name.clone());
+        }
+        planned.push((id.clone(), installed, disk));
+    }
+    if planned.is_empty() {
+        return Ok(BulkToggleResult {
+            changed,
+            queued,
+            failed,
+        });
+    }
+
+    let changes: Vec<(&str, bool)> = planned
+        .iter()
+        .map(|(_, _, disk)| (disk.file_name.as_str(), enabled))
+        .collect();
+    let db = GameModDb::new(&mods_dir);
+    let outcome = db.set_active(&changes, process::is_running);
+    let not_in_db: HashSet<String> = outcome
+        .not_in_db
+        .iter()
+        .map(|file| file.to_lowercase())
+        .collect();
+    let db_missing = matches!(
+        outcome.outcome,
+        SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb
+    );
+
+    match outcome.outcome {
+        SetActiveOutcome::GameRunning => {
+            for (id, installed, _) in planned {
+                queue_toggle(state, &installed.file_name, enabled);
+                queued.push(id);
+            }
+        }
+        SetActiveOutcome::Done
+        | SetActiveOutcome::Unchanged
+        | SetActiveOutcome::NotInDb
+        | SetActiveOutcome::NoDb => {
+            let mut changed_files = Vec::new();
+            for (id, installed, disk) in planned {
+                let file_missing_in_db =
+                    db_missing || not_in_db.contains(&disk.file_name.to_lowercase());
+                if !enabled && file_missing_in_db && disk.enabled {
+                    if disk.sub_folder.is_some() {
+                        failed.push(id);
+                        continue;
+                    }
+                    let moved = installer.disable(&disk.file_name);
+                    if !moved.success {
+                        failed.push(id);
+                        continue;
+                    }
+                }
+                let mut updated = installed;
+                updated.enabled = enabled;
+                state.library.upsert_mod(updated);
+                changed_files.push(disk.file_name);
+                changed.push(id);
+            }
+            clear_pending_many(state, &changed_files);
+        }
+        _ => {
+            // db.json не удалось изменить: включённые файлы вернуть обратно.
+            for file in &moved_enabled {
+                let _ = installer.disable(file);
+            }
+            failed.extend(planned.into_iter().map(|(id, _, _)| id));
+        }
+    }
+    Ok(BulkToggleResult {
+        changed,
+        queued,
+        failed,
+    })
+}
+
 fn clear_pending(state: &AppState, file_name: &str) {
     let mut pending = state.pending.lock().unwrap();
     let before = pending.len();
     pending.retain(|key, _| !key.eq_ignore_ascii_case(file_name));
+    let changed = pending.len() != before;
+    drop(pending);
+    if changed {
+        let _ = state.save_pending();
+    }
+}
+
+fn clear_pending_many(state: &AppState, file_names: &[String]) {
+    if file_names.is_empty() {
+        return;
+    }
+    let mut pending = state.pending.lock().unwrap();
+    let before = pending.len();
+    pending.retain(|key, _| !file_names.iter().any(|file| key.eq_ignore_ascii_case(file)));
     let changed = pending.len() != before;
     drop(pending);
     if changed {
@@ -1371,6 +1565,39 @@ mod tests {
         assert_eq!(on.outcome, "done");
         assert!(mods.join("fresh.zip").is_file());
         assert!(state.library.get_mod(&id).unwrap().enabled);
+    }
+
+    #[test]
+    fn toggle_many_moves_all_with_one_result() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("a.zip"), b"zip").unwrap();
+        std::fs::write(mods.join("b.zip"), b"zip").unwrap();
+        let state = test_state(&temp, &mods);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let snapshot = load_snapshot(&state).unwrap();
+        let ids: Vec<String> = snapshot.mods.iter().map(|item| item.id.clone()).collect();
+        assert_eq!(ids.len(), 2);
+
+        let off = toggle_many(&state, &ids, false).unwrap();
+        assert_eq!(off.changed.len(), 2);
+        assert!(off.failed.is_empty());
+        assert!(layout.disabled_dir.join("a.zip").is_file());
+        assert!(layout.disabled_dir.join("b.zip").is_file());
+        assert!(!mods.join("a.zip").exists());
+        assert!(!mods.join("b.zip").exists());
+        for id in &ids {
+            assert!(!state.library.get_mod(id).unwrap().enabled);
+        }
+
+        let on = toggle_many(&state, &ids, true).unwrap();
+        assert_eq!(on.changed.len(), 2);
+        assert!(mods.join("a.zip").is_file());
+        assert!(mods.join("b.zip").is_file());
+        for id in &ids {
+            assert!(state.library.get_mod(id).unwrap().enabled);
+        }
     }
 
     #[test]
