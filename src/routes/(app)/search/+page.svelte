@@ -308,7 +308,7 @@
   function metaText(card: SearchCard, listing: SearchListing): string {
     // Раздел сайта («mashiny», «Cars») уже показан меткой типа на фото.
     const category = card.kind ? null : listing.category;
-    return [listing.author, category, formatSize(listing.sizeBytes ?? 0)]
+    return [category, formatSize(listing.sizeBytes ?? 0)]
       .filter((value) => value && value !== "—")
       .join(" · ");
   }
@@ -717,9 +717,18 @@
                     {#if versionText(listing)}
                       <span class="version mono">{versionText(listing)}</span>
                     {/if}
-                    {#if metaText(card, listing)}
-                      <span class="meta">{metaText(card, listing)}</span>
-                    {/if}
+                    <span class="meta">
+                      {#if listing.author}
+                        <button
+                          class="author"
+                          type="button"
+                          title="Показать моды этого автора"
+                          onclick={() => (authorFilter = listing.author)}
+                        >{listing.author}</button>
+                        {#if metaText(card, listing)} · {/if}
+                      {/if}
+                      {metaText(card, listing)}
+                    </span>
                   </div>
                   <div class="actions">
                     {#if downloadOffer(listing)}
@@ -873,6 +882,11 @@
     {:else}
       <p class="sub">Modland, STMods и ModsGaming — сразу, одним запросом.</p>
     {/if}
+    {#if !searching && sources.some((source) => source.status !== "ok" && !source.pending)}
+      <button class="btn-glass pass" type="button" onclick={() => void runSearch()}>
+        Повторить поиск
+      </button>
+    {/if}
     <p class="note">
       Платные моды не скачиваются: вместо «Скачать» — «Купить у автора».
     </p>
@@ -989,6 +1003,23 @@
     color: var(--faint-foreground);
     font-size: 12px;
     text-align: center;
+  }
+
+  .meta .author {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 2px;
+    cursor: default;
+  }
+
+  .meta .author:hover {
+    color: var(--foreground);
+    text-decoration-color: currentColor;
   }
 
   .maybe small {
