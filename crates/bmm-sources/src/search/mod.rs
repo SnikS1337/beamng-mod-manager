@@ -1,5 +1,6 @@
 //! Общий поиск: параллельный опрос сайтов, слияние дублей и карточки.
 
+mod query;
 pub mod relevance;
 
 use std::any::Any;
@@ -167,6 +168,7 @@ impl SearchService {
             };
         }
 
+        let variants = query::variants(&query);
         let runner = Runner {
             status_of: Arc::clone(&self.status_of),
             options: self.options.clone(),
@@ -193,7 +195,7 @@ impl SearchService {
         for (index, source) in self.sources.iter().enumerate() {
             let sender = sender.clone();
             let worker_source = Arc::clone(source);
-            let query = query.clone();
+            let variants = variants.clone();
             let cancel = Arc::clone(&shared_cancel);
             let worker_runner = runner.clone();
             let thread_name = format!("bmm-search-{}", source.id());
@@ -203,7 +205,7 @@ impl SearchService {
                     // Паника одного сайта (кривая разметка, ошибка в адаптере) не должна
                     // ронять весь поиск: остальные источники и их результаты остаются.
                     let run = match catch_unwind(AssertUnwindSafe(|| {
-                        worker_runner.run_one(worker_source.as_ref(), &query, &cancel)
+                        worker_runner.run_one(worker_source.as_ref(), &variants, &cancel)
                     })) {
                         Ok(run) => run,
                         Err(payload) => {
@@ -526,7 +528,12 @@ struct Runner {
 }
 
 impl Runner {
-    fn run_one(&self, source: &dyn ModSource, query: &str, cancel: &AtomicBool) -> SourceRun {
+    fn run_one(
+        &self,
+        source: &dyn ModSource,
+        queries: &[String],
+        cancel: &AtomicBool,
+    ) -> SourceRun {
         if !source.supports_search() {
             return self.stopped_with_note(
                 source,
@@ -546,31 +553,55 @@ impl Runner {
                 },
             );
         }
-        match source.search(query, cancel) {
-            Ok(found) => {
-                let listings: Vec<Listing> = newest_only(found)
-                    .into_iter()
-                    .take(self.options.max_per_source)
-                    .collect();
-                SourceRun {
-                    report: SourceReport {
-                        source_id: source.id().to_string(),
-                        display_name: source.display_name().to_string(),
-                        status: SourceStatus::Ok,
-                        count: listings.len(),
-                        note: None,
-                        pending: false,
-                    },
-                    listings,
+        let mut last_error = None;
+        for query in queries {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            match source.search(query, cancel) {
+                Ok(found) if !found.is_empty() => {
+                    let listings: Vec<Listing> = newest_only(found)
+                        .into_iter()
+                        .take(self.options.max_per_source)
+                        .collect();
+                    return SourceRun {
+                        report: SourceReport {
+                            source_id: source.id().to_string(),
+                            display_name: source.display_name().to_string(),
+                            status: SourceStatus::Ok,
+                            count: listings.len(),
+                            note: None,
+                            pending: false,
+                        },
+                        listings,
+                    };
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    last_error = Some(error);
+                    break;
                 }
             }
-            Err(error) => SourceRun {
+        }
+        match last_error {
+            Some(error) => SourceRun {
                 report: SourceReport {
                     source_id: source.id().to_string(),
                     display_name: source.display_name().to_string(),
                     status: error.status,
                     count: 0,
                     note: Some(error.message),
+                    pending: false,
+                },
+                listings: Vec::new(),
+            },
+            None => SourceRun {
+                report: SourceReport {
+                    source_id: source.id().to_string(),
+                    display_name: source.display_name().to_string(),
+                    status: SourceStatus::Ok,
+                    count: 0,
+                    note: None,
                     pending: false,
                 },
                 listings: Vec::new(),
@@ -708,7 +739,7 @@ fn card_id(cluster: &[usize], listings: &[Listing]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use url::Url;
 
     use crate::sources::{ModSource, SourceError};
@@ -790,6 +821,88 @@ mod tests {
         ) -> Result<Option<Listing>, SourceError> {
             Ok(None)
         }
+    }
+
+    struct QuerySource {
+        calls: Arc<AtomicUsize>,
+        answer: &'static str,
+    }
+
+    impl ModSource for QuerySource {
+        fn id(&self) -> &'static str {
+            "query"
+        }
+        fn display_name(&self) -> &'static str {
+            "Query"
+        }
+        fn supports_search(&self) -> bool {
+            true
+        }
+        fn home(&self) -> Url {
+            Url::parse("https://query.example.org/").unwrap()
+        }
+        fn owns(&self, _url: &Url) -> bool {
+            true
+        }
+        fn is_mod_page(&self, _url: &Url) -> bool {
+            true
+        }
+        fn feed_covers(&self, _url: &Url) -> bool {
+            true
+        }
+        fn search(&self, query: &str, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if query.to_lowercase().contains(self.answer) {
+                let mut item = listing("query", "1", "LADA Niva", Some("1.0"));
+                item.author = Some("Author".to_string());
+                Ok(vec![item])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        fn feed_page(&self, _page: u32, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+        fn listing(
+            &self,
+            _url: &Url,
+            _cancel: &AtomicBool,
+        ) -> Result<Option<Listing>, SourceError> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn retries_with_transliteration_only_when_query_is_empty() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source = QuerySource {
+            calls: calls.clone(),
+            answer: "lada",
+        };
+        let service = SearchService::new(
+            vec![Arc::new(source)],
+            Arc::new(|_| SourceStatus::Ok),
+            SearchOptions::default(),
+            None,
+        );
+        let response = service.search("лада", &AtomicBool::new(false), None);
+        assert_eq!(response.cards.len(), 1, "нашлось по транслиту");
+        assert!(calls.load(Ordering::SeqCst) >= 2);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source = QuerySource {
+            calls: calls.clone(),
+            answer: "lada",
+        };
+        let service = SearchService::new(
+            vec![Arc::new(source)],
+            Arc::new(|_| SourceStatus::Ok),
+            SearchOptions::default(),
+            None,
+        );
+        let response = service.search("lada", &AtomicBool::new(false), None);
+        assert_eq!(response.cards.len(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "без лишнего запроса");
     }
 
     #[test]

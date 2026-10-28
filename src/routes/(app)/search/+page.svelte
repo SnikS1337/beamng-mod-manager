@@ -9,6 +9,7 @@
   import Car from "phosphor-svelte/lib/Car";
   import { formatSize, plural } from "#lib/features/garage/format.js";
   import { searchKindLabel } from "#lib/features/search/kind.js";
+  import { filterAndSort, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
@@ -208,6 +209,7 @@
     requestedPreviews.clear();
     requestedPages.clear();
     pageRequests = 0;
+    resetFilters();
     error = null;
     input?.focus();
   }
@@ -315,20 +317,50 @@
     );
   }
 
-  type KindFilter = "all" | "vehicle" | "map" | "addon";
-  let kindFilter = $state<KindFilter>("all");
-  const kindFilters: { id: Exclude<KindFilter, "all">; label: string }[] = [
+  let kindFilter = $state<SearchKindFilter>("all");
+  const kindFilters: { id: Exclude<SearchKindFilter, "all">; label: string }[] = [
     { id: "vehicle", label: "Машины" },
     { id: "map", label: "Карты" },
     { id: "addon", label: "Дополнения" },
   ];
-  const kindCount = (id: KindFilter) =>
+  let priceFilter = $state<SearchPriceFilter>("all");
+  let onlyInstalled = $state(false);
+  let sourceFilter = $state("all");
+  let sortOrder = $state<SearchSortOrder>("relevance");
+
+  const kindCount = (id: SearchKindFilter) =>
     id === "all" ? cards.length : cards.filter((card) => card.kind === id).length;
+
   const shownCards = $derived(
-    kindFilter === "all" ? cards : cards.filter((card) => card.kind === kindFilter),
+    filterAndSort(cards, {
+      kind: kindFilter,
+      price: priceFilter,
+      installedOnly: onlyInstalled,
+      source: sourceFilter,
+      sort: sortOrder,
+    }),
   );
 
-  function chooseKind(next: KindFilter) {
+  // Новый поиск мог не включить выбранный сайт — не оставляем пустой фильтр.
+  $effect(() => {
+    if (
+      sourceFilter !== "all" &&
+      sources.length > 0 &&
+      !sources.some((source) => source.id === sourceFilter)
+    ) {
+      sourceFilter = "all";
+    }
+  });
+
+  function resetFilters() {
+    kindFilter = "all";
+    priceFilter = "all";
+    onlyInstalled = false;
+    sourceFilter = "all";
+    sortOrder = "relevance";
+  }
+
+  function chooseKind(next: SearchKindFilter) {
     if (next === kindFilter) return;
     void motion.run(() => {
       kindFilter = next;
@@ -420,6 +452,50 @@
     </div>
   {/if}
 
+  {#if cards.length > 0}
+    <div class="filters secondary" role="group" aria-label="Фильтры">
+      <button
+        class="chip"
+        class:on={priceFilter === "all"}
+        type="button"
+        aria-pressed={priceFilter === "all"}
+        onclick={() => (priceFilter = "all")}
+      >Все цены</button>
+      <button
+        class="chip"
+        class:on={priceFilter === "free"}
+        type="button"
+        aria-pressed={priceFilter === "free"}
+        onclick={() => (priceFilter = priceFilter === "free" ? "all" : "free")}
+      >Бесплатные</button>
+      <button
+        class="chip"
+        class:on={priceFilter === "paid"}
+        type="button"
+        aria-pressed={priceFilter === "paid"}
+        onclick={() => (priceFilter = priceFilter === "paid" ? "all" : "paid")}
+      >Платные</button>
+      <button
+        class="chip"
+        class:on={onlyInstalled}
+        type="button"
+        aria-pressed={onlyInstalled}
+        onclick={() => (onlyInstalled = !onlyInstalled)}
+      >Установленные</button>
+      <select bind:value={sourceFilter} aria-label="Сайт">
+        <option value="all">Все сайты</option>
+        {#each sources as source (source.id)}
+          <option value={source.id}>{source.displayName}</option>
+        {/each}
+      </select>
+      <select bind:value={sortOrder} aria-label="Сортировка">
+        <option value="relevance">По релевантности</option>
+        <option value="newest">Сначала новые</option>
+        <option value="largest">Сначала крупные</option>
+      </select>
+    </div>
+  {/if}
+
   {#if error}
     <div class="banner error">{error}</div>
   {/if}
@@ -441,6 +517,12 @@
       <p class="display">Ничего не нашли</p>
       <span>Попробуйте короче: название машины, карты или автора. Сайты ищут по-разному.</span>
       <a class="btn-glass" href="/settings?section=sites">Какие сайты включены</a>
+    </div>
+  {:else if cards.length > 0 && shownCards.length === 0}
+    <div class="state">
+      <p class="display">Под фильтр ничего не подошло</p>
+      <span>Измените цену, сайт или тип мода — или сбросьте фильтры.</span>
+      <button class="btn-glass" type="button" onclick={resetFilters}>Сбросить фильтры</button>
     </div>
   {:else if cards.length > 0}
     <div class="grid search-grid">
@@ -603,6 +685,9 @@
               {/if}
             </span>
           </div>
+          {#if source.note && !source.pending && source.status !== "ok"}
+            <p class="site-note">{source.note}</p>
+          {/if}
           {#if source.id === "modland" && source.status === "needsHumanCheck"}
             <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
               {passing ? "Проходим проверку…" : "Пройти проверку Modland"}
@@ -723,6 +808,30 @@
     padding: 12px 24px;
     border-bottom: 1px solid var(--border);
     animation: fade-in var(--dur-2) var(--ease-out) both;
+  }
+
+  .site-note {
+    margin: -2px 0 4px 22px;
+    color: var(--faint-foreground);
+    font-size: 11.5px;
+    line-height: 1.35;
+  }
+
+  .filters.secondary {
+    padding-top: 0;
+  }
+
+  .filters.secondary select {
+    height: 30px;
+    max-width: 180px;
+    padding: 0 28px 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--foreground);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
   }
 
   .chip {
