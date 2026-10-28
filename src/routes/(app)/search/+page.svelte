@@ -10,6 +10,8 @@
   import { formatSize, plural } from "#lib/features/garage/format.js";
   import { searchKindLabel } from "#lib/features/search/kind.js";
   import { filterAndSort, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
+  import { parseSearchInput } from "#lib/features/search/queryInput.js";
+  import { libraryLoad } from "#lib/ipc/library.js";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
@@ -87,6 +89,12 @@
 
   onMount(() => {
     input?.focus();
+    loadHistory();
+    void libraryLoad()
+      .then((snapshot) => {
+        if (snapshot.gameVersion) gameVersion = snapshot.gameVersion;
+      })
+      .catch(() => {});
     listenerReady = new Promise<void>((resolve) => {
       markListenerReady = resolve;
     });
@@ -151,14 +159,20 @@
   async function runSearch(event?: Event) {
     event?.preventDefault();
     const text = query.trim();
-    if (text.length < 2) {
-      error = "Введите хотя бы 2 символа.";
+    const parsed = parseSearchInput(text);
+    const searchText = parsed.text || parsed.author || "";
+    if (searchText.length < 2) {
+      error = "Введите хотя бы 2 символа названия, автора или сайта.";
       return;
     }
     if (searching) await searchCancel(requestId).catch(() => {});
+    authorFilter = parsed.author;
+    if (parsed.kind) kindFilter = parsed.kind;
+    if (parsed.source) sourceFilter = parsed.source;
     requestId += 1;
     const current = requestId;
-    submitted = text;
+    submitted = searchText;
+    rememberQuery(text);
     searching = true;
     searched = true;
     error = null;
@@ -177,7 +191,7 @@
         searching = false;
         return;
       }
-      await searchStart(text, current);
+      await searchStart(searchText, current);
     } catch (reason) {
       if (current === requestId) {
         error = errorText(reason);
@@ -327,6 +341,10 @@
   let onlyInstalled = $state(false);
   let sourceFilter = $state("all");
   let sortOrder = $state<SearchSortOrder>("relevance");
+  let authorFilter = $state<string | null>(null);
+  let onlyCompatible = $state(false);
+  let gameVersion = $state<string | null>(null);
+  let history = $state<string[]>([]);
 
   const kindCount = (id: SearchKindFilter) =>
     id === "all" ? cards.length : cards.filter((card) => card.kind === id).length;
@@ -338,6 +356,9 @@
       installedOnly: onlyInstalled,
       source: sourceFilter,
       sort: sortOrder,
+      author: authorFilter,
+      gameVersion,
+      onlyCompatible,
     }),
   );
 
@@ -358,6 +379,8 @@
     onlyInstalled = false;
     sourceFilter = "all";
     sortOrder = "relevance";
+    authorFilter = null;
+    onlyCompatible = false;
   }
 
   function chooseKind(next: SearchKindFilter) {
@@ -373,6 +396,39 @@
       return String((reason as { message: unknown }).message);
     }
     return "Не удалось выполнить поиск.";
+  }
+
+  const HISTORY_KEY = "bmm.search.history";
+
+  function loadHistory(): void {
+    try {
+      const stored = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
+      if (Array.isArray(stored)) {
+        history = stored.filter((item): item is string => typeof item === "string").slice(0, 8);
+      }
+    } catch {
+      history = [];
+    }
+  }
+
+  function rememberQuery(text: string): void {
+    const value = text.trim();
+    if (!value) return;
+    history = [value, ...history.filter((item) => item.toLowerCase() !== value.toLowerCase())].slice(0, 8);
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    } catch {
+      // Приватный режим — просто не запоминаем.
+    }
+  }
+
+  function clearHistory(): void {
+    history = [];
+    try {
+      localStorage.removeItem(HISTORY_KEY);
+    } catch {
+      // ignore
+    }
   }
 
   function onkeydown(event: KeyboardEvent) {
@@ -482,6 +538,24 @@
         aria-pressed={onlyInstalled}
         onclick={() => (onlyInstalled = !onlyInstalled)}
       >Установленные</button>
+      {#if authorFilter}
+        <button
+          class="chip on"
+          type="button"
+          title="Убрать фильтр по автору"
+          onclick={() => (authorFilter = null)}
+        >Автор: {authorFilter} ×</button>
+      {/if}
+      {#if gameVersion}
+        <button
+          class="chip"
+          class:on={onlyCompatible}
+          type="button"
+          aria-pressed={onlyCompatible}
+          title={`Установлена игра ${gameVersion}`}
+          onclick={() => (onlyCompatible = !onlyCompatible)}
+        >Совместимо с игрой</button>
+      {/if}
       <select bind:value={sourceFilter} aria-label="Сайт">
         <option value="all">Все сайты</option>
         {#each sources as source (source.id)}
@@ -652,6 +726,18 @@
           </button>
         {/each}
       </div>
+      <span class="start-hint rise-in" style="animation-delay:160ms">
+        Уточнить: автор:Flanje · тип:карта · сайт:stmods
+      </span>
+      {#if history.length > 0}
+        <div class="history rise-in" style="animation-delay:180ms">
+          <span>Недавние:</span>
+          {#each history as item (item)}
+            <button type="button" onclick={() => searchExample(item)}>{item}</button>
+          {/each}
+          <button class="history-clear" type="button" onclick={clearHistory}>Очистить</button>
+        </div>
+      {/if}
     </div>
   {/if}
   </section>
@@ -808,6 +894,43 @@
     padding: 12px 24px;
     border-bottom: 1px solid var(--border);
     animation: fade-in var(--dur-2) var(--ease-out) both;
+  }
+
+  .start-hint {
+    color: var(--faint-foreground);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .history {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    max-width: 560px;
+    color: var(--faint-foreground);
+    font-size: 12px;
+  }
+
+  .history button {
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted-foreground);
+    font: inherit;
+    cursor: default;
+  }
+
+  .history button:hover {
+    color: var(--foreground);
+    border-color: var(--border-strong);
+  }
+
+  .history .history-clear {
+    border-color: transparent;
+    color: var(--faint-foreground);
   }
 
   .site-note {

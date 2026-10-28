@@ -3,6 +3,7 @@
   import { isShortcut } from "#lib/shell/keys.js";
   import { groupMembers, isShown, visibleCards } from "./duplicates";
   import { onMount, untrack } from "svelte";
+  import { goto } from "$app/navigation";
   import {
     listenUpdates,
     updatesCheckMod,
@@ -1098,6 +1099,10 @@
         onUnfollow={(source) => void unfollowSelected(source)}
         onBindPage={bindSelected}
         onFindPage={() => void findPageSelected()}
+        onSearchSites={() => {
+          const name = details?.name ?? selected?.name;
+          if (name) void goto(`/search?q=${encodeURIComponent(name)}`);
+        }}
         {findingPage}
         onPassCheck={updatesOpenModland}
         onCheckUpdates={checkUpdatesSelected}

@@ -42,6 +42,7 @@
     onUnfollow,
     onBindPage,
     onFindPage,
+    onSearchSites,
     findingPage = false,
     onPassCheck,
     onCheckUpdates,
@@ -80,6 +81,8 @@
     onBindPage?: (url: string) => Promise<AppError | null>;
     /** Найти страницу на сайтах, не дожидаясь 14-дневной паузы. */
     onFindPage?: () => void;
+    /** Открыть обычный поиск по названию этого мода. */
+    onSearchSites?: () => void;
     findingPage?: boolean;
     /** Сайт просит подтвердить, что вы человек: открыть его проверку. `true` — пройдена. */
     onPassCheck?: () => Promise<boolean>;
@@ -404,6 +407,9 @@
         <button class="btn-glass" type="button" disabled={findingPage} onclick={onFindPage}>
           {findingPage ? "Ищем…" : "Найти на сайтах"}
         </button>
+      {/if}
+      {#if onSearchSites}
+        <button class="btn-glass" type="button" onclick={onSearchSites}>Открыть в поиске</button>
       {/if}
       {#if details.binding}
         <button class="btn-glass" type="button" onclick={() => void openPage()}>Открыть страницу</button>
