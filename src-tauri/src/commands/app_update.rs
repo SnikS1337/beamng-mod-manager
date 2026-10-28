@@ -1,6 +1,6 @@
 //! Обновление самой программы: проверка latest.json, загрузка и перезапуск.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -11,7 +11,7 @@ use ts_rs::TS;
 
 use bmm_app_release::{
     AppVersion, ManifestInput, PrepareOptions, UpdateStage, UpdateState, check_with_cancel,
-    prepare_update, read_skipped, write_in_place,
+    prepare_update, read_skipped,
 };
 
 use crate::error::AppError;
@@ -417,7 +417,12 @@ pub fn run_installer(arguments: InstallerArgs) {
         Ok(path) => path,
         Err(_) => return,
     };
-    if let Err(error) = write_in_place(&self_exe, &arguments.target, &arguments.backup) {
+    let backup = if cfg!(windows) {
+        with_suffix(&arguments.target, ".old")
+    } else {
+        arguments.backup.clone()
+    };
+    if let Err(error) = replace_exe(&self_exe, &arguments.target, &backup) {
         let _ = std::process::Command::new(&arguments.target)
             .arg("--update-failed")
             .arg(error.to_string())
@@ -432,7 +437,7 @@ pub fn run_installer(arguments: InstallerArgs) {
     let mut child = match child {
         Ok(child) => child,
         Err(_) => {
-            roll_back(&arguments);
+            roll_back(&arguments.target, &backup);
             return;
         }
     };
@@ -444,7 +449,7 @@ pub fn run_installer(arguments: InstallerArgs) {
         match child.try_wait() {
             Ok(Some(status)) => {
                 if start_failed(status.code()) {
-                    roll_back(&arguments);
+                    roll_back(&arguments.target, &backup);
                 }
                 return;
             }
@@ -454,13 +459,66 @@ pub fn run_installer(arguments: InstallerArgs) {
     }
 }
 
-fn roll_back(arguments: &InstallerArgs) {
-    if bmm_app_release::restore_in_place(&arguments.backup, &arguments.target) {
-        let _ = std::process::Command::new(&arguments.target)
+fn roll_back(target: &Path, backup: &Path) {
+    if bmm_app_release::restore_in_place(backup, target) {
+        let _ = std::process::Command::new(target)
             .arg("--rolled-back")
             .arg(current_version().display())
             .spawn();
     }
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    std::path::PathBuf::from(name)
+}
+
+/// Атомарная замена: новый exe копируется рядом (`*.new`), затем `ReplaceFileW`
+/// одной операцией подменяет цель и уводит прежнюю в `*.old`. Обрыв питания
+/// оставляет либо старую, либо новую программу, а не недописанный файл.
+#[cfg(windows)]
+fn replace_exe(
+    new_exe: &Path,
+    target: &Path,
+    backup: &Path,
+) -> Result<(), bmm_app_release::InstallError> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{REPLACEFILE_WRITE_THROUGH, ReplaceFileW};
+
+    bmm_app_release::stage(target, new_exe)?;
+    let staged = with_suffix(target, ".new");
+    if backup.exists() {
+        let _ = std::fs::remove_file(backup);
+    }
+    let wide =
+        |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain(Some(0)).collect() };
+    let replaced = unsafe {
+        ReplaceFileW(
+            wide(target).as_ptr(),
+            wide(&staged).as_ptr(),
+            wide(backup).as_ptr(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if replaced == 0 {
+        let _ = std::fs::remove_file(&staged);
+        return Err(bmm_app_release::InstallError::OverwriteFailed(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_exe(
+    new_exe: &Path,
+    target: &Path,
+    backup: &Path,
+) -> Result<(), bmm_app_release::InstallError> {
+    bmm_app_release::write_in_place(new_exe, target, backup)
 }
 
 /// Прежняя версия сообщает, почему новая не записалась: `--update-failed <текст>`.
@@ -622,6 +680,26 @@ mod tests {
             notes: None,
             published: None,
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_replace_swaps_target_and_keeps_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("BeamModManager.exe");
+        let new_exe = dir.path().join("update.exe");
+        let backup = with_suffix(&target, ".old");
+        std::fs::write(&target, b"old program").unwrap();
+        std::fs::write(&new_exe, b"new program").unwrap();
+
+        replace_exe(&new_exe, &target, &backup).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new program");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"old program");
+        assert!(
+            !with_suffix(&target, ".new").exists(),
+            "staged-копия убрана"
+        );
     }
 
     struct SlowTransport {
