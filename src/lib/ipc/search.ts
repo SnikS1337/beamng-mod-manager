@@ -53,13 +53,11 @@ export async function searchRetrySource(
   if (isTauri()) {
     return invoke<SearchEvent>("search_retry_source", { query, sourceId, requestId });
   }
-  return {
-    requestId,
-    phase: "done",
-    cards: mockCards(query),
-    sources: mockSourceReports(),
-    error: null,
-  };
+  const cards = mockCards(query);
+  const sources = mockDoneSources(cards);
+  mockCurrentCards = cards;
+  mockCurrentSources = sources;
+  return { requestId, phase: "done", cards, sources, error: null };
 }
 
 export async function searchCancel(requestId?: number): Promise<void> {
@@ -230,6 +228,27 @@ function emitMock(event: SearchEvent): void {
   for (const listener of mockListeners) listener(event);
 }
 
+function mockDoneSources(cards: SearchCard[]): SearchSource[] {
+  return mockSourceReports().map((source, index) => ({
+    ...source,
+    pending: false,
+    count:
+      source.id === "beamng"
+        ? 0
+        : cards.filter((card) =>
+            card.listings.some((listing) => listing.source === source.id),
+          ).length,
+    status:
+      index === 0 && mockModlandNeedsCheck
+        ? ("needsHumanCheck" as const)
+        : source.status,
+    note:
+      index === 0 && mockModlandNeedsCheck
+        ? "Сайт просит подтвердить, что вы человек."
+        : source.note,
+  }));
+}
+
 function mockSearch(query: string, requestId: number): void {
   const sources = mockSourceReports();
   const cards = mockCards(query);
@@ -237,24 +256,7 @@ function mockSearch(query: string, requestId: number): void {
     emitMock({ requestId, phase: "partial", cards, sources, error: null });
   }, 260);
   window.setTimeout(() => {
-    const reports = sources.map((source, index) => ({
-      ...source,
-      pending: false,
-      count:
-        source.id === "beamng"
-          ? 0
-          : cards.filter((card) =>
-              card.listings.some((listing) => listing.source === source.id),
-            ).length,
-      status:
-        index === 0 && mockModlandNeedsCheck
-          ? ("needsHumanCheck" as const)
-          : source.status,
-      note:
-        index === 0 && mockModlandNeedsCheck
-          ? "Сайт просит подтвердить, что вы человек."
-          : source.note,
-    }));
+    const reports = mockDoneSources(cards);
     mockCurrentCards = cards;
     mockCurrentSources = reports;
     emitMock({ requestId, phase: "done", cards, sources: reports, error: null });

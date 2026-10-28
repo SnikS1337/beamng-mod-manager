@@ -11,6 +11,7 @@
   import { searchKindLabel } from "#lib/features/search/kind.js";
   import { filterAndSort, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
   import { parseSearchInput } from "#lib/features/search/queryInput.js";
+  import { suggest } from "#lib/features/search/suggest.js";
   import { libraryLoad } from "#lib/ipc/library.js";
   import { downloadOpen } from "#lib/ipc/download.js";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
@@ -54,6 +55,9 @@
   let unlisten: (() => void) | undefined;
   let disposed = false;
   let retrying = $state<string | null>(null);
+  let libraryNames = $state<string[]>([]);
+  let suggestionsOpen = $state(false);
+  let activeSuggestion = $state(-1);
   let listenerReady = Promise.resolve();
   let markListenerReady: (() => void) | undefined;
   let listenFailed = false;
@@ -98,6 +102,7 @@
     void libraryLoad()
       .then((snapshot) => {
         if (snapshot.gameVersion) gameVersion = snapshot.gameVersion;
+        libraryNames = snapshot.mods.map((mod) => mod.name);
       })
       .catch(() => {});
     listenerReady = new Promise<void>((resolve) => {
@@ -163,6 +168,7 @@
 
   async function runSearch(event?: Event) {
     event?.preventDefault();
+    closeSuggestions();
     const text = query.trim();
     const parsed = parseSearchInput(text);
     const searchText = parsed.text || parsed.author || "";
@@ -224,6 +230,41 @@
     }
   }
 
+  function openSuggestions() {
+    if (searching) return;
+    suggestionsOpen = true;
+    activeSuggestion = -1;
+  }
+
+  function closeSuggestions() {
+    suggestionsOpen = false;
+    activeSuggestion = -1;
+  }
+
+  function chooseSuggestion(value: string) {
+    query = value;
+    closeSuggestions();
+    void runSearch();
+  }
+
+  function onSearchKeydown(event: KeyboardEvent) {
+    const list = suggestions;
+    if (!suggestionsOpen || list.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      activeSuggestion = (activeSuggestion + 1) % list.length;
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      activeSuggestion = activeSuggestion <= 0 ? list.length - 1 : activeSuggestion - 1;
+    } else if (event.key === "Enter" && activeSuggestion >= 0) {
+      const item = list[activeSuggestion];
+      if (item) {
+        event.preventDefault();
+        chooseSuggestion(item.value);
+      }
+    }
+  }
+
   async function cancel() {
     const current = requestId;
     requestId += 1;
@@ -237,6 +278,7 @@
   }
 
   function clear() {
+    closeSuggestions();
     query = "";
     submitted = "";
     searched = false;
@@ -405,6 +447,10 @@
   let gameVersion = $state<string | null>(null);
   let history = $state<string[]>([]);
 
+  const suggestions = $derived(
+    suggestionsOpen ? suggest(query, history, libraryNames) : [],
+  );
+
   const kindCount = (id: SearchKindFilter) =>
     id === "all" ? cards.length : cards.filter((card) => card.kind === id).length;
 
@@ -546,6 +592,10 @@
       return;
     }
     if (event.key === "Escape") {
+      if (suggestionsOpen) {
+        closeSuggestions();
+        return;
+      }
       if (query) clear();
     }
   }
@@ -578,6 +628,15 @@
         placeholder="Название машины, карты или автора"
         aria-label="Поиск модов на сайтах"
         autocomplete="off"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={suggestionsOpen && suggestions.length > 0}
+        aria-controls="search-suggestions"
+        aria-activedescendant={activeSuggestion >= 0 ? `search-suggestion-${activeSuggestion}` : undefined}
+        onfocus={openSuggestions}
+        oninput={openSuggestions}
+        onkeydown={onSearchKeydown}
+        onblur={closeSuggestions}
       />
       {#if query}
         <button class="clear" type="button" aria-label="Очистить" onclick={clear}>
@@ -588,6 +647,24 @@
         <button class="btn-glass go" type="button" onclick={() => void cancel()}>Остановить</button>
       {:else}
         <button class="btn-primary go" type="submit" disabled={query.trim().length < 2}>Найти</button>
+      {/if}
+      {#if suggestionsOpen && suggestions.length > 0}
+        <div class="suggest" id="search-suggestions" role="listbox" aria-label="Подсказки поиска">
+          {#each suggestions as item, index (item.source + item.value)}
+            <button
+              id={`search-suggestion-${index}`}
+              type="button"
+              role="option"
+              aria-selected={index === activeSuggestion}
+              class:active={index === activeSuggestion}
+              onmousedown={(event) => event.preventDefault()}
+              onclick={() => chooseSuggestion(item.value)}
+            >
+              <span>{item.value}</span>
+              <small>{item.source === "history" ? "недавнее" : "в библиотеке"}</small>
+            </button>
+          {/each}
+        </div>
       {/if}
     </form>
   </header>
@@ -961,6 +1038,7 @@
   }
 
   .bar {
+    position: relative;
     display: flex;
     flex: 1 1 420px;
     align-items: center;
@@ -1017,6 +1095,48 @@
 
   .go {
     height: 34px;
+  }
+
+  .suggest {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: 0 12px 30px color-mix(in oklab, var(--background) 60%, transparent);
+  }
+
+  .suggest button {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--foreground);
+    font: inherit;
+    font-size: 13.5px;
+    text-align: left;
+    cursor: default;
+  }
+
+  .suggest button small {
+    flex: none;
+    color: var(--faint-foreground);
+    font-size: 11px;
+    font-weight: 400;
+  }
+
+  .suggest button:hover,
+  .suggest button.active {
+    background: var(--surface-3);
   }
 
   .filters {

@@ -1,5 +1,7 @@
 //! Общий поиск: параллельный опрос сайтов, слияние дублей и карточки.
 
+#[cfg(test)]
+mod quality;
 mod query;
 pub mod relevance;
 
