@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "bmm-app-release"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "bmm-domain",
  "chrono",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "bmm-checks"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "bmm-domain",
  "bmm-sources",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "bmm-desktop"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "base64 0.23.1",
  "bmm-app-release",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "bmm-domain"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "chrono",
  "fancy-regex",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "bmm-game"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "bmm-domain",
  "chrono",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "bmm-packs"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "bmm-domain",
  "chrono",
@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "bmm-sources"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "bmm-domain",
  "chrono",
