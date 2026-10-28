@@ -90,6 +90,8 @@
 
   onMount(() => {
     input?.focus();
+    loadFilters();
+    filtersLoaded = true;
     loadHistory();
     void libraryLoad()
       .then((snapshot) => {
@@ -374,6 +376,7 @@
   ];
   let priceFilter = $state<SearchPriceFilter>("all");
   let onlyInstalled = $state(false);
+  let filtersLoaded = false;
   let sourceFilter = $state("all");
   let sortOrder = $state<SearchSortOrder>("relevance");
   let authorFilter = $state<string | null>(null);
@@ -396,6 +399,25 @@
       onlyCompatible,
     }),
   );
+
+  $effect(() => {
+    if (!filtersLoaded) return;
+    try {
+      localStorage.setItem(
+        FILTERS_KEY,
+        JSON.stringify({
+          kind: kindFilter,
+          price: priceFilter,
+          installedOnly: onlyInstalled,
+          source: sourceFilter,
+          sort: sortOrder,
+          onlyCompatible,
+        }),
+      );
+    } catch {
+      // Приватный режим — просто не запоминаем.
+    }
+  });
 
   // Новый поиск мог не включить выбранный сайт — не оставляем пустой фильтр.
   $effect(() => {
@@ -434,6 +456,35 @@
   }
 
   const HISTORY_KEY = "bmm.search.history";
+  const FILTERS_KEY = "bmm.search.filters";
+
+  function loadFilters(): void {
+    try {
+      const stored = JSON.parse(localStorage.getItem(FILTERS_KEY) ?? "null") as {
+        kind?: SearchKindFilter;
+        price?: SearchPriceFilter;
+        installedOnly?: boolean;
+        source?: string;
+        sort?: SearchSortOrder;
+        onlyCompatible?: boolean;
+      } | null;
+      if (!stored) return;
+      if (["all", "vehicle", "map", "addon"].includes(stored.kind ?? "")) {
+        kindFilter = stored.kind as SearchKindFilter;
+      }
+      if (["all", "free", "paid"].includes(stored.price ?? "")) {
+        priceFilter = stored.price as SearchPriceFilter;
+      }
+      if (["relevance", "newest", "largest"].includes(stored.sort ?? "")) {
+        sortOrder = stored.sort as SearchSortOrder;
+      }
+      if (typeof stored.installedOnly === "boolean") onlyInstalled = stored.installedOnly;
+      if (typeof stored.onlyCompatible === "boolean") onlyCompatible = stored.onlyCompatible;
+      if (typeof stored.source === "string") sourceFilter = stored.source;
+    } catch {
+      // Повреждённые настройки фильтров не мешают поиску.
+    }
+  }
 
   function loadHistory(): void {
     try {
@@ -489,8 +540,8 @@
         {#if searching}
           ищем на сайтах…
         {:else if searched}
-          {cards.length}
-          {plural(cards.length, "мод", "мода", "модов")}
+          {shownCards.length}{#if shownCards.length !== cards.length} из {cards.length}{/if}
+          {plural(shownCards.length, "мод", "мода", "модов")}
         {:else}
           сразу на нескольких сайтах
         {/if}
