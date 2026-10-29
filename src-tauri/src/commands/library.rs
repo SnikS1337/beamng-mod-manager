@@ -1108,10 +1108,14 @@ fn ensure_preview(state: &AppState, id: &str) -> Option<String> {
         return None;
     };
     let bytes = preview::extract(&target.path, &pick.raw_name).ok()?;
-    let (_, extension) = state
+    let Some((_, extension)) = state
         .previews
         .put_image(&target.key, &pick.extension, &bytes)
-        .ok()?;
+        .ok()?
+    else {
+        let _ = state.previews.put_no_image(&target.key, &target.file_name);
+        return None;
+    };
     Some(preview_url(&target.key, &extension))
 }
 

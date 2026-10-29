@@ -238,7 +238,9 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo, std::io::Error> {
     let index = match zip_index::read_index(path) {
         Ok(index) => index,
         Err(ZipError::Io(error)) => return Err(error),
-        Err(ZipError::Zip(_)) => return Ok(ArchiveInfo::default()),
+        Err(ZipError::Zip(_)) | Err(ZipError::TooManyEntries) => {
+            return Ok(ArchiveInfo::default());
+        }
     };
     Ok(archive_info_from_index(path, &index))
 }
