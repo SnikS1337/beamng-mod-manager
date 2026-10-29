@@ -14,7 +14,12 @@ pub enum DataLock {
 /// Защита от второго экземпляра в другой сессии Windows (RDP, переключение
 /// пользователя): `Local\`-мьютекс живёт только в своей сессии, а файл — на диске.
 pub fn acquire_data_lock(path: &Path) -> DataLock {
-    let file = match File::options().create(true).write(true).open(path) {
+    let file = match File::options()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+    {
         Ok(file) => file,
         Err(error) => return DataLock::Unavailable(error),
     };
