@@ -404,21 +404,29 @@ fn tar_args(archive: &Path, destination: &Path) -> Vec<std::ffi::OsString> {
     ]
 }
 
-fn tar_path() -> Option<PathBuf> {
+fn system_tool(name: &str) -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var_os("SystemRoot")?)
         .join("System32")
-        .join("tar.exe");
+        .join(name);
     path.is_file().then_some(path)
+}
+
+fn tar_path() -> Option<PathBuf> {
+    system_tool("tar.exe")
 }
 
 fn kill_tree(child: &mut Child) {
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        // Полный путь: taskkill.exe, подложенный рядом с программой или в PATH,
+        // выполнялся бы с правами пользователя.
+        if let Some(taskkill) = system_tool("taskkill.exe") {
+            let _ = Command::new(taskkill)
+                .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -802,5 +810,20 @@ mod tests {
         assert!(Path::new(&args[1]).ends_with("pack dir/Audi Car Pack 1.7z"));
         assert_eq!(args[2], "-C");
         assert!(Path::new(&args[3]).is_absolute(), "{args:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system_tools_are_taken_from_system32() {
+        let taskkill = system_tool("taskkill.exe").expect("taskkill.exe в System32");
+        assert!(taskkill.is_absolute());
+        assert!(
+            taskkill
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("system32")
+        );
+        let tar = tar_path().expect("tar.exe в System32");
+        assert!(tar.is_absolute());
     }
 }

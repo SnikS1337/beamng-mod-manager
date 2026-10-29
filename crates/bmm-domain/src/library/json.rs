@@ -68,12 +68,16 @@ impl JsonLibraryStore {
     }
 
     pub fn save_error(&self) -> Option<String> {
-        self.state.lock().unwrap().save_error.clone()
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .save_error
+            .clone()
     }
 
     pub fn batch(&self) -> BatchGuard<'_> {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
             if state.batch == 0 {
                 state.last_save = Some(Instant::now());
             }
@@ -83,7 +87,7 @@ impl JsonLibraryStore {
     }
 
     pub fn flush(&self) -> bool {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.dirty {
             self.save_locked(&mut state);
         }
@@ -139,7 +143,11 @@ pub struct BatchGuard<'a> {
 
 impl Drop for BatchGuard<'_> {
     fn drop(&mut self) {
-        let mut state = self.store.state.lock().unwrap();
+        let mut state = self
+            .store
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if state.batch > 0 {
             state.batch -= 1;
         }
@@ -151,21 +159,31 @@ impl Drop for BatchGuard<'_> {
 
 impl LibraryStore for JsonLibraryStore {
     fn mods(&self) -> Vec<InstalledMod> {
-        self.state.lock().unwrap().inner.sorted_mods()
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inner
+            .sorted_mods()
     }
 
     fn get_mod(&self, id: &str) -> Option<InstalledMod> {
-        self.state.lock().unwrap().inner.mods.get(id).cloned()
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inner
+            .mods
+            .get(id)
+            .cloned()
     }
 
     fn upsert_mod(&self, installed: InstalledMod) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let changed = state.inner.upsert_mod(installed);
         self.changed(&mut state, changed);
     }
 
     fn remove_mod(&self, id: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.inner.remove_mod(id);
         self.changed(&mut state, true);
     }
@@ -182,7 +200,7 @@ impl LibraryStore for JsonLibraryStore {
     }
 
     fn upsert_binding(&self, binding: ModBinding) -> Result<(), LibraryError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         match state.inner.upsert_binding(binding) {
             Ok(changed) => {
                 self.changed(&mut state, changed);
@@ -193,7 +211,7 @@ impl LibraryStore for JsonLibraryStore {
     }
 
     fn remove_binding(&self, mod_id: &str, source: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.inner.remove_binding(mod_id, source);
         self.changed(&mut state, true);
     }
@@ -210,7 +228,7 @@ impl LibraryStore for JsonLibraryStore {
 
     fn save_check(&self, check: CheckState) {
         let key = (check.mod_id.clone(), check.source.clone());
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let has_binding = state.inner.bindings.contains_key(&key);
         let changed = state.inner.save_check(check);
         self.changed(&mut state, if has_binding { changed } else { true });
@@ -239,21 +257,30 @@ impl LibraryStore for JsonLibraryStore {
     }
 
     fn set_source_status(&self, source: &str, status: SourceStatus) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let changed = state.inner.set_source_status(source, status);
         self.changed(&mut state, changed);
     }
 
     fn source_statuses(&self) -> BTreeMap<String, SourceStatus> {
-        self.state.lock().unwrap().inner.statuses.clone()
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inner
+            .statuses
+            .clone()
     }
 
     fn last_run(&self) -> Option<DateTime<FixedOffset>> {
-        self.state.lock().unwrap().inner.last_run
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inner
+            .last_run
     }
 
     fn set_last_run(&self, at: DateTime<FixedOffset>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let changed = state.inner.last_run != Some(at);
         state.inner.last_run = Some(at);
         self.changed(&mut state, changed);
@@ -270,7 +297,7 @@ impl LibraryStore for JsonLibraryStore {
     }
 
     fn set_dismissed_update(&self, mod_id: &str, key: Option<&str>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let changed = state.inner.set_dismissed_update(mod_id, key);
         self.changed(&mut state, changed);
     }
@@ -287,17 +314,22 @@ impl LibraryStore for JsonLibraryStore {
     }
 
     fn add_file_history(&self, mod_id: &str, file_name: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.inner.add_file_history(mod_id, file_name);
         self.changed(&mut state, true);
     }
 
     fn is_checking_declined(&self, mod_id: &str) -> bool {
-        self.state.lock().unwrap().inner.declined.contains(mod_id)
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inner
+            .declined
+            .contains(mod_id)
     }
 
     fn set_checking_declined(&self, mod_id: &str, declined: bool) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.inner.set_checking_declined(mod_id, declined);
         self.changed(&mut state, true);
     }
@@ -313,7 +345,7 @@ impl LibraryStore for JsonLibraryStore {
     }
 
     fn set_page_search(&self, mod_id: &str, search: Option<PageSearch>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let changed = state.inner.set_page_search(mod_id, search);
         self.changed(&mut state, changed);
     }

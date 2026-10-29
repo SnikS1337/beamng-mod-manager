@@ -12,6 +12,7 @@ chrono = { version = "0.4", features = ["serde"] }
 url = { version = "2", features = ["serde"] }
 fancy-regex.workspace = true
 json5.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

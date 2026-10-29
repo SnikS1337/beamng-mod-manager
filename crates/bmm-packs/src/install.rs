@@ -392,20 +392,26 @@ impl ModInstaller {
             return OpResult::fail("Недопустимое имя файла.");
         };
         let _guard = self.gate.lock().unwrap();
+        let mut backup = None;
+        let mut removed = 0;
         for dir in [&self.layout.mods_dir, &self.layout.disabled_dir] {
             let path = dir.join(&name);
             if !path.is_file() {
                 continue;
             }
             match self.backup_file(&path, &name) {
-                Ok(backup) => {
-                    self.rotate(&name);
-                    return OpResult::ok("Удалён, копия сохранена.", Some(backup));
+                Ok(saved) => {
+                    removed += 1;
+                    backup.get_or_insert(saved);
                 }
                 Err(error) => return OpResult::fail(io_message(&error)),
             }
         }
-        OpResult::fail("Файл не найден.")
+        if removed == 0 {
+            return OpResult::fail("Файл не найден.");
+        }
+        self.rotate(&name);
+        OpResult::ok("Удалён, копия сохранена.", backup)
     }
 
     pub fn unremove(&self, file_name: &str, backup_id: &str, into_disabled: bool) -> OpResult {
@@ -440,7 +446,7 @@ impl ModInstaller {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return Vec::new();
         };
-        let dir = self.layout.backup_dir.join(&name);
+        let dir = long_path(&self.layout.backup_dir).join(&name);
         let Ok(entries) = fs::read_dir(dir) else {
             return Vec::new();
         };
@@ -458,7 +464,7 @@ impl ModInstaller {
     }
 
     pub fn backed_up_file_names(&self) -> Vec<String> {
-        let Ok(entries) = fs::read_dir(&self.layout.backup_dir) else {
+        let Ok(entries) = fs::read_dir(long_path(&self.layout.backup_dir)) else {
             return Vec::new();
         };
         let mut names: Vec<String> = entries
@@ -568,7 +574,7 @@ impl ModInstaller {
     }
 
     pub fn deleted_mods(&self) -> Vec<DeletedMod> {
-        let Ok(entries) = fs::read_dir(&self.layout.backup_dir) else {
+        let Ok(entries) = fs::read_dir(long_path(&self.layout.backup_dir)) else {
             return Vec::new();
         };
         let mut result = Vec::new();
@@ -661,12 +667,39 @@ impl ModInstaller {
     }
 
     fn backup_file(&self, path: &Path, name: &str) -> io::Result<PathBuf> {
-        let dir = self.layout.backup_dir.join(name);
+        let dir = long_path(&self.layout.backup_dir).join(name);
         fs::create_dir_all(&dir)?;
-        let sequence = next_sequence(&dir);
         let stamp = (self.now)().format("%Y%m%d-%H%M%S-%3f");
-        let destination = dir.join(format!("{sequence:010}_{stamp}_{name}"));
-        move_file(path, &destination)?;
+        let mut sequence = next_sequence(&dir);
+        // Место копии резервируем через create_new: два экземпляра программы
+        // не должны затереть копию друг друга одинаковым номером.
+        let mut destination = None;
+        for _ in 0..1024 {
+            let candidate = dir.join(format!("{sequence:010}_{stamp}_{name}"));
+            match File::options()
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+            {
+                Ok(file) => {
+                    drop(file);
+                    destination = Some(candidate);
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => sequence += 1,
+                Err(error) => return Err(error),
+            }
+        }
+        let Some(destination) = destination else {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "не осталось свободных имён для копии",
+            ));
+        };
+        if let Err(error) = move_file(path, &destination) {
+            let _ = fs::remove_file(&destination);
+            return Err(error);
+        }
         Ok(destination)
     }
 
@@ -834,6 +867,29 @@ fn unique_suffix() -> String {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     )
+}
+
+/// Windows режет пути длиннее 260 символов, если приложение не объявлено
+/// longPathAware. Копия лежит в папке с полным именем мода, поэтому внутри
+/// папки копий переходим на verbatim-путь.
+#[cfg(windows)]
+fn long_path(path: &Path) -> PathBuf {
+    let text = path.as_os_str().to_string_lossy();
+    if text.starts_with(r"\\?\") {
+        return path.to_path_buf();
+    }
+    if let Some(rest) = text.strip_prefix(r"\\") {
+        return PathBuf::from(format!(r"\\?\UNC\{rest}"));
+    }
+    if path.is_absolute() {
+        return PathBuf::from(format!(r"\\?\{}", path.display()));
+    }
+    path.to_path_buf()
+}
+
+#[cfg(not(windows))]
+fn long_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 fn next_sequence(dir: &Path) -> i64 {
@@ -1732,5 +1788,68 @@ mod tests {
         let names: std::collections::HashSet<String> =
             (0..10_000).map(|_| unique_suffix()).collect();
         assert_eq!(names.len(), 10_000);
+    }
+
+    #[test]
+    fn long_mod_name_can_be_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let long_name = format!("{}.zip", "a".repeat(190));
+        let source = source_zip(&temp);
+        let installed = installer.install_from_path(&source, &long_name, InstallOptions::default());
+        assert!(installed.success, "{:?}", installed.message);
+
+        let removed = installer.remove(&long_name);
+
+        assert!(removed.success, "{}", removed.message);
+        assert_eq!(installer.backups(&long_name).len(), 1);
+        assert!(!installer.layout().mods_dir.join(&long_name).exists());
+    }
+
+    #[test]
+    fn backup_does_not_overwrite_a_reserved_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixed = DateTime::parse_from_rfc3339("2026-10-21T12:00:00+00:00").unwrap();
+        let installer = installer_with(&temp, Arc::new(move || fixed), 3);
+        let name = "car.zip";
+        let stamp = fixed.format("%Y%m%d-%H%M%S-%3f");
+        let dir = installer.layout().backup_dir.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        let reserved = dir.join(format!("0000000001_{stamp}_{name}"));
+        fs::write(&reserved, b"old").unwrap();
+        let source = installer.layout().mods_dir.join(name);
+        fs::write(&source, b"new").unwrap();
+
+        let saved = installer.backup_file(&source, name).unwrap();
+
+        assert!(
+            saved
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("0000000002_"),
+            "{saved:?}"
+        );
+        assert_eq!(fs::read(&reserved).unwrap(), b"old", "чужая копия цела");
+        assert_eq!(fs::read(&saved).unwrap(), b"new");
+    }
+
+    #[test]
+    fn remove_deletes_both_copies_and_shows_one_deleted_mod() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        fs::write(installer.layout().mods_dir.join("car.zip"), b"enabled").unwrap();
+        fs::write(installer.layout().disabled_dir.join("car.zip"), b"disabled").unwrap();
+
+        let result = installer.remove("car.zip");
+
+        assert!(result.success, "{}", result.message);
+        assert!(!installer.layout().mods_dir.join("car.zip").exists());
+        assert!(!installer.layout().disabled_dir.join("car.zip").exists());
+        assert_eq!(installer.backups("car.zip").len(), 2);
+        let deleted = installer.deleted_mods();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].file_name, "car.zip");
+        assert_eq!(deleted[0].copies, 2);
     }
 }

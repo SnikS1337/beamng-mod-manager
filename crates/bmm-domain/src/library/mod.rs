@@ -12,9 +12,16 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 use url::Url;
 
 pub const MAX_FILE_HISTORY: usize = 20;
+
+/// Ключ имени файла для сравнений: Windows не различает регистр, а Unicode
+/// присылает одни и те же буквы в разных формах (NFD из архива macOS).
+pub(crate) fn file_key(file_name: &str) -> String {
+    file_name.to_lowercase().nfc().collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -231,11 +238,12 @@ impl Inner {
         let Some(current) = self.mods.get(mod_id) else {
             return;
         };
-        if current.file_name.eq_ignore_ascii_case(file_name) {
+        let key = file_key(file_name);
+        if file_key(&current.file_name) == key {
             return;
         }
         let history = self.history.entry(mod_id.to_string()).or_default();
-        history.retain(|existing| !existing.eq_ignore_ascii_case(file_name));
+        history.retain(|existing| file_key(existing) != key);
         history.push(file_name.to_string());
         if history.len() > MAX_FILE_HISTORY {
             let excess = history.len() - MAX_FILE_HISTORY;
