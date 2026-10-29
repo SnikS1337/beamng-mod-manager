@@ -13,6 +13,12 @@ const TAR_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Чаще, чем раз в две секунды: быстрый диск успевает записать лишние гигабайты
 /// между проверками бюджета.
 const SIZE_CHECK_EVERY: Duration = Duration::from_millis(500);
+/// Как у zip: больше записей всё равно не покажем и не поставим.
+const MAX_TAR_ENTRIES: usize = 50_000;
+/// Потолок на список имён: 50 тысяч обычных имён занимают пару мегабайт.
+const MAX_LIST_BYTES: usize = 32 * 1024 * 1024;
+const UNSAFE_PATH_MESSAGE: &str = "В архиве есть файл с опасным путём.";
+const TOO_MANY_ENTRIES_MESSAGE: &str = "В архиве слишком много файлов.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtractBudget {
@@ -157,6 +163,8 @@ fn extract_with_tar(
         )
     })?;
 
+    check_tar_entries(&tar, archive, cancel)?;
+
     let mut child = Command::new(tar)
         .args(tar_args(archive, destination))
         .current_dir(destination)
@@ -257,6 +265,131 @@ fn extract_with_tar(
         ));
     }
     Ok(())
+}
+
+/// Список имён из 7z/RAR проверяем до распаковки: tar.exe не санирует имена так,
+/// как нам нужно, и «файл:поток» или «CON» может попасть на диск раньше, чем
+/// послераспаковочная проверка увидит ссылку.
+fn check_tar_entries(tar: &Path, archive: &Path, cancel: &AtomicBool) -> Result<(), ExtractError> {
+    // Если список получить не удалось (пароль, старый RAR, повреждение), распаковка
+    // сама выдаст понятную причину — проверять нечего.
+    let Some(listing) = list_tar_entries(tar, archive, cancel)? else {
+        return Ok(());
+    };
+    check_listing(&listing)
+}
+
+fn check_listing(listing: &TarListing) -> Result<(), ExtractError> {
+    if listing.truncated {
+        return Err(ExtractError::Message(TOO_MANY_ENTRIES_MESSAGE.to_string()));
+    }
+    let text = String::from_utf8_lossy(&listing.names);
+    let mut lines = 0usize;
+    for line in text.split('\n') {
+        let name = line.strip_suffix('\r').unwrap_or(line);
+        if name.is_empty() || name == "." || name == "./" {
+            continue;
+        }
+        lines += 1;
+        let Some(name) = normalize_name(name) else {
+            return Err(ExtractError::Message(UNSAFE_PATH_MESSAGE.to_string()));
+        };
+        if is_unsafe_entry_path(&name) {
+            return Err(ExtractError::Message(UNSAFE_PATH_MESSAGE.to_string()));
+        }
+    }
+    if lines > MAX_TAR_ENTRIES {
+        return Err(ExtractError::Message(TOO_MANY_ENTRIES_MESSAGE.to_string()));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default)]
+struct TarListing {
+    names: Vec<u8>,
+    truncated: bool,
+    failed: bool,
+}
+
+/// Возвращает `None`, если распаковщик не смог перечислить записи.
+fn list_tar_entries(
+    tar: &Path,
+    archive: &Path,
+    cancel: &AtomicBool,
+) -> Result<Option<TarListing>, ExtractError> {
+    let full = std::path::absolute(archive).unwrap_or_else(|_| archive.to_path_buf());
+    let mut child = Command::new(tar)
+        .arg("-tf")
+        .arg(full)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            ExtractError::Message(format!("Не удалось запустить распаковщик: {error}"))
+        })?;
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let reader = thread::spawn(move || read_listing(stdout));
+
+    let started = Instant::now();
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            kill_tree(&mut child);
+            return Err(ExtractError::Cancelled);
+        }
+        if started.elapsed() > TAR_TIMEOUT {
+            kill_tree(&mut child);
+            return Err(ExtractError::Message(
+                "Распаковка идёт слишком долго".to_string(),
+            ));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(error) => {
+                kill_tree(&mut child);
+                return Err(io_error(error));
+            }
+        }
+    };
+    let listing = reader.join().unwrap_or(TarListing {
+        truncated: true,
+        ..TarListing::default()
+    });
+    if !status.success() || listing.failed {
+        return Ok(None);
+    }
+    Ok(Some(listing))
+}
+
+fn read_listing(mut stream: impl Read) -> TarListing {
+    let mut listing = TarListing::default();
+    let mut chunk = [0u8; 64 * 1024];
+    let mut lines = 0usize;
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                lines += chunk[..read].iter().filter(|byte| **byte == b'\n').count();
+                if lines > MAX_TAR_ENTRIES || listing.names.len() + read > MAX_LIST_BYTES {
+                    listing.truncated = true;
+                    break;
+                }
+                listing.names.extend_from_slice(&chunk[..read]);
+            }
+            Err(_) => {
+                listing.failed = true;
+                break;
+            }
+        }
+    }
+    if !listing.truncated && !listing.names.is_empty() && !listing.names.ends_with(b"\n") {
+        lines += 1;
+    }
+    if lines > MAX_TAR_ENTRIES {
+        listing.truncated = true;
+    }
+    listing
 }
 
 /// Аргументы распаковщика. Пути — полные: распаковщик запускается из папки назначения,
@@ -507,6 +640,66 @@ mod tests {
             b"first mod"
         );
         assert_eq!(budget.used, 15);
+    }
+
+    fn listing(text: &str) -> TarListing {
+        TarListing {
+            names: text.as_bytes().to_vec(),
+            ..TarListing::default()
+        }
+    }
+
+    #[test]
+    fn tar_listing_accepts_regular_names() {
+        check_listing(&listing(
+            "./\n./Audi pack/audi_rs3.zip\n./Audi pack/info.json\n./Audi pack/\n",
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn tar_listing_rejects_unsafe_names() {
+        for name in ["../evil.txt", "file.txt:stream", "CON", "folder/CONIN$"] {
+            let error = check_listing(&listing(&format!("./good.zip\n{name}\n"))).unwrap_err();
+            assert_eq!(
+                error,
+                ExtractError::Message(UNSAFE_PATH_MESSAGE.to_string()),
+                "{name}"
+            );
+        }
+        // Абсолютный путь нормализация делает относительным, как и в zip-распаковке.
+        check_listing(&listing("/etc/passwd\n")).unwrap();
+    }
+
+    #[test]
+    fn tar_listing_handles_crlf() {
+        check_listing(&listing("./Audi pack/a.zip\r\n./B\r\n")).unwrap();
+    }
+
+    #[test]
+    fn tar_listing_stops_on_entry_limit() {
+        let mut text = String::new();
+        for _ in 0..=MAX_TAR_ENTRIES {
+            text.push_str("./a\n");
+        }
+        let error = check_listing(&listing(&text)).unwrap_err();
+        assert_eq!(
+            error,
+            ExtractError::Message(TOO_MANY_ENTRIES_MESSAGE.to_string())
+        );
+    }
+
+    #[test]
+    fn truncated_tar_listing_is_refused() {
+        let truncated = TarListing {
+            names: b"./a\n".to_vec(),
+            truncated: true,
+            failed: false,
+        };
+        assert_eq!(
+            check_listing(&truncated).unwrap_err(),
+            ExtractError::Message(TOO_MANY_ENTRIES_MESSAGE.to_string())
+        );
     }
 
     #[cfg(windows)]
