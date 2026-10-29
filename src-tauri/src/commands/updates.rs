@@ -458,7 +458,9 @@ pub use pages::*;
 const MODLAND_CHECK_LABEL: &str = "modland-check";
 const MODLAND_CHECK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MODLAND_CHECK_POLL: Duration = Duration::from_millis(400);
-const MODLAND_CHECK_CLOSED_MISSES: u32 = 4;
+/// Сколько подряд не читать DOM, прежде чем считать, что окно закрыли.
+/// Перезагрузка и Cloudflare на секунды делают документ недоступным — это не закрытие.
+const MODLAND_CHECK_CLOSED_MISSES: u32 = 25;
 static MODLAND_CHECK_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// Окно проверки одно на приложение: в нём человек проходит Cloudflare, а программа
@@ -481,12 +483,19 @@ pub(crate) async fn open_modland_check(
             .map(|time| time.as_nanos())
             .unwrap_or_default()
     );
+    let reload = same_page(window.url().ok().as_ref(), &url);
     let _ = window.eval(format!(
         "document.documentElement && document.documentElement.setAttribute('data-bmm-check','{token}')"
     ));
-    window
-        .navigate(url)
-        .map_err(|error| AppError::new("window", error.to_string()))?;
+    // Окно создаётся сразу на нужном адресе. Navigate на тот же адрес не перезагружает
+    // документ, и метка старого документа осталась бы навсегда — проверка не увидит успех.
+    if reload {
+        let _ = window.eval("location.reload()");
+    } else {
+        window
+            .navigate(url)
+            .map_err(|error| AppError::new("window", error.to_string()))?;
+    }
     let _ = window.set_focus();
 
     let worker_app = app.clone();
@@ -584,6 +593,10 @@ fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str) -> bool 
         }
         std::thread::sleep(MODLAND_CHECK_POLL);
     }
+}
+
+fn same_page(current: Option<&url::Url>, target: &url::Url) -> bool {
+    current.is_some_and(|current| current == target)
 }
 
 fn page_passed(html: &str, token: &str, url: &url::Url) -> bool {
@@ -840,6 +853,17 @@ mod tests {
         ));
         let other = url::Url::parse("https://stmods.org/beamng_drive/").unwrap();
         assert!(!page_passed(&page, "bmm-check-1", &other));
+    }
+
+    #[test]
+    fn same_page_is_reloaded_instead_of_navigated() {
+        let target = url::Url::parse("https://www.modland.net/").unwrap();
+        assert!(same_page(Some(&target), &target));
+        assert!(!same_page(None, &target));
+        assert!(!same_page(
+            Some(&url::Url::parse("https://www.modland.net/search").unwrap()),
+            &target
+        ));
     }
 
     #[test]
