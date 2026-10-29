@@ -227,6 +227,9 @@ fn add_mod(
 ) {
     let key = file_name.to_lowercase();
     if !seen.insert(key) {
+        result.warnings.push(format!(
+            "Одинаковое имя файла в разных папках: {file_name} — в гараже показана одна копия."
+        ));
         return;
     }
     let Ok(size_bytes) = i64::try_from(metadata.len()) else {
@@ -317,6 +320,25 @@ mod tests {
             .find(|item| item.file_name == "nested.zip")
             .unwrap();
         assert_eq!(nested.sub_folder.as_deref(), Some("sub"));
+    }
+
+    #[test]
+    fn duplicate_name_in_subfolder_is_reported() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        let layout = ModLayout::beside(&mods);
+        write_file(&mods.join("same.zip"), b"one");
+        write_file(&mods.join("sub").join("same.zip"), b"two");
+        let result = scan_mods(&layout);
+        assert_eq!(result.mods.len(), 1, "в гараже одна карточка");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Одинаковое имя")),
+            "{:?}",
+            result.warnings
+        );
     }
 
     #[test]

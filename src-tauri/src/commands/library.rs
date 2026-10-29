@@ -960,7 +960,8 @@ fn try_live_toggle(
     }
     let id = bridge.send(&[(disk.file_name.as_str(), enabled)])?;
     let key = bmm_game::db::key_of(&disk.file_name);
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // Активация мода на сотни мегабайт занимает секунды; два секунды — мало.
+    let deadline = Instant::now() + Duration::from_secs(12);
     loop {
         if let Some(answer) = bridge.read_answer()
             && answer.ack_id.as_deref() == Some(id.as_str())
@@ -985,6 +986,18 @@ fn try_live_toggle(
             };
         }
         if Instant::now() >= deadline {
+            // Мост жив или занят этой командой — изменение уже у игры, не врём
+            // «применится, когда закроете игру».
+            if bridge.is_busy_for(&id) || bridge.is_alive() {
+                return Some(ToggleResult {
+                    outcome: "queued".to_string(),
+                    enabled,
+                    message: Some(
+                        "Игра занята: изменение отправлено и применится, когда она закончит."
+                            .to_string(),
+                    ),
+                });
+            }
             return None;
         }
         std::thread::sleep(Duration::from_millis(50));
