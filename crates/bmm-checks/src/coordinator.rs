@@ -20,7 +20,7 @@ use bmm_sources::sources::{ModSource, SourceStatus};
 
 use crate::options::UpdateCheckOptions;
 use crate::planner::UpdateCheckPlanner;
-use crate::runner::{UpdateProgress, UpdateRun, UpdateRunReport};
+use crate::runner::{SourceRunReport, UpdateProgress, UpdateRun, UpdateRunReport};
 use crate::service::UpdateCheckService;
 
 /// Настройки координатора.
@@ -282,6 +282,7 @@ impl UpdateCoordinator {
         let mut progress = progress;
         let mut first: Option<UpdateRunReport> = None;
         let mut last: Option<UpdateRunReport> = None;
+        let mut merged_sources: Vec<SourceRunReport> = Vec::new();
         let mut requests = 0u32;
         let mut up_to_date = 0usize;
 
@@ -341,6 +342,9 @@ impl UpdateCoordinator {
             first.get_or_insert_with(|| report.clone());
             requests += report.requests;
             up_to_date += report.up_to_date;
+            for source in &report.sources {
+                merge_source_report(&mut merged_sources, source.clone());
+            }
 
             {
                 let mut state = self.lock();
@@ -390,8 +394,43 @@ impl UpdateCoordinator {
             up_to_date,
             new_findings,
             fresh_skipped: first.map_or(0, |report| report.fresh_skipped),
+            sources: merged_sources,
             ..final_report
         }
+    }
+}
+
+/// Сайт, упавший в первой пачке, следующая пачка уже не опрашивает (статус сбоя
+/// исключает его из плана) — без слияния его сбой и заметка пропали бы из отчёта.
+fn merge_source_report(sources: &mut Vec<SourceRunReport>, source: SourceRunReport) {
+    let Some(known) = sources
+        .iter_mut()
+        .find(|known| known.source == source.source)
+    else {
+        sources.push(source);
+        return;
+    };
+    known.feed_pages_fetched += source.feed_pages_fetched;
+    known.cards_fetched += source.cards_fetched;
+    // Отложенное считается в каждой пачке заново: последняя пачка знает, что
+    // осталось на самом деле, а сумма показала бы давно проверенное.
+    known.postponed = source.postponed;
+    for id in source.missing_mods {
+        if !known.missing_mods.contains(&id) {
+            known.missing_mods.push(id);
+        }
+    }
+    for id in source.unreadable_mods {
+        if !known.unreadable_mods.contains(&id) {
+            known.unreadable_mods.push(id);
+        }
+    }
+    known.layout_changed |= source.layout_changed;
+    if source.status != SourceStatus::Ok {
+        known.status = source.status;
+    }
+    if source.note.is_some() {
+        known.note = source.note;
     }
 }
 
@@ -467,6 +506,7 @@ mod tests {
     }
 
     struct Site {
+        source: &'static str,
         feed: Mutex<Vec<bmm_domain::models::Listing>>,
         feed_fails: Mutex<Option<bmm_sources::sources::SourceError>>,
         gate: Option<Arc<Gate>>,
@@ -479,7 +519,12 @@ mod tests {
 
     impl Site {
         fn new() -> Arc<Self> {
+            Self::named("x")
+        }
+
+        fn named(source: &'static str) -> Arc<Self> {
             Arc::new(Self {
+                source,
                 feed: Mutex::new(Vec::new()),
                 feed_fails: Mutex::new(None),
                 gate: None,
@@ -495,6 +540,7 @@ mod tests {
             let (sender, receiver) = mpsc::channel();
             let gate = Gate::new();
             let site = Arc::new(Self {
+                source: "x",
                 feed: Mutex::new(Vec::new()),
                 feed_fails: Mutex::new(None),
                 gate: Some(Arc::clone(&gate)),
@@ -534,10 +580,10 @@ mod tests {
 
     impl ModSource for Site {
         fn id(&self) -> &'static str {
-            "x"
+            self.source
         }
         fn display_name(&self) -> &'static str {
-            "x"
+            self.source
         }
         fn supports_search(&self) -> bool {
             false
@@ -614,38 +660,46 @@ mod tests {
     }
 
     fn store(count: usize) -> Arc<InMemoryLibraryStore> {
+        store_with(&[("x", count)])
+    }
+
+    fn store_with(sources: &[(&str, usize)]) -> Arc<InMemoryLibraryStore> {
         let store = Arc::new(InMemoryLibraryStore::new());
-        for index in 0..count {
-            let id = format!("m{index}");
-            store.upsert_mod(InstalledMod {
-                id: id.clone(),
-                name: id.clone(),
-                file_name: format!("{id}.zip"),
-                version: Some("1.0".to_string()),
-                size_bytes: None,
-                installed_at_utc: t0() - TimeDelta::days(60),
-                enabled: true,
-            });
-            store
-                .upsert_binding(ModBinding {
+        let mut index = 0;
+        for (source, count) in sources {
+            for _ in 0..*count {
+                let id = format!("m{index}");
+                index += 1;
+                store.upsert_mod(InstalledMod {
+                    id: id.clone(),
+                    name: id.clone(),
+                    file_name: format!("{id}.zip"),
+                    version: Some("1.0".to_string()),
+                    size_bytes: None,
+                    installed_at_utc: t0() - TimeDelta::days(60),
+                    enabled: true,
+                });
+                store
+                    .upsert_binding(ModBinding {
+                        mod_id: id.clone(),
+                        source: source.to_string(),
+                        source_id: id.clone(),
+                        url: Url::parse(&format!("https://x.test/{id}")).unwrap(),
+                        confirmed: true,
+                    })
+                    .unwrap();
+                store.save_check(CheckState {
                     mod_id: id.clone(),
-                    source: "x".to_string(),
-                    source_id: id.clone(),
-                    url: Url::parse(&format!("https://x.test/{id}")).unwrap(),
-                    confirmed: true,
-                })
-                .unwrap();
-            store.save_check(CheckState {
-                mod_id: id.clone(),
-                source: "x".to_string(),
-                last_checked_utc: t0() - TimeDelta::days(2),
-                last_changed_utc: Some(t0() - TimeDelta::days(2)),
-                last_version: Some("1.0".to_string()),
-                last_size: None,
-                miss_count: 0,
-                last_game_version: None,
-                last_title: None,
-            });
+                    source: source.to_string(),
+                    last_checked_utc: t0() - TimeDelta::days(2),
+                    last_changed_utc: Some(t0() - TimeDelta::days(2)),
+                    last_version: Some("1.0".to_string()),
+                    last_size: None,
+                    miss_count: 0,
+                    last_game_version: None,
+                    last_title: None,
+                });
+            }
         }
         store
     }
@@ -666,6 +720,22 @@ mod tests {
         options: UpdateCoordinatorOptions,
     ) -> Arc<UpdateCoordinator> {
         coordinator_with_hooks(store, site, clock, options, None, None)
+    }
+
+    fn coordinator_many(
+        store: Arc<InMemoryLibraryStore>,
+        sites: Vec<Arc<Site>>,
+        clock: Clock,
+        options: UpdateCoordinatorOptions,
+    ) -> Arc<UpdateCoordinator> {
+        let store: Arc<dyn LibraryStore + Send + Sync> = store;
+        let sources: SourcesFactory = Arc::new(move || {
+            sites
+                .iter()
+                .map(|site| Arc::clone(site) as Arc<dyn ModSource>)
+                .collect()
+        });
+        Arc::new(UpdateCoordinator::new(store, sources, clock).with_options(options))
     }
 
     #[allow(clippy::type_complexity)]
@@ -1050,5 +1120,61 @@ mod tests {
         let _ = checked;
         assert_eq!(site.card_calls(), 4);
         assert_eq!(report.requests, 6, "две ленты и четыре карточки");
+    }
+
+    #[test]
+    fn batches_keep_the_site_that_finished_in_the_first_one() {
+        // У сайта a пустая лента: он успевает всё проверить в первой пачке и во вторую
+        // уже не попадает, а его «возможно, изменилась вёрстка» должно остаться в итоге.
+        let quiet = Site::named("a");
+        quiet.set_card(l("m0", "1.0"));
+        let busy = Site::named("b");
+        busy.set_card(l("m1", "1.0"));
+        let tick = clock_at(t0());
+        let tick_for_card = Arc::clone(&tick);
+        busy.on_card(Arc::new(move || {
+            *tick_for_card.lock().unwrap() += TimeDelta::minutes(4);
+        }));
+        let options = UpdateCoordinatorOptions {
+            check: UpdateCheckOptions {
+                max_duration: Duration::from_secs(10 * 60),
+                ..UpdateCheckOptions::default()
+            },
+            ..UpdateCoordinatorOptions::default()
+        };
+        let coordinator = coordinator_many(
+            store_with(&[("a", 1), ("b", 4)]),
+            vec![Arc::clone(&quiet), Arc::clone(&busy)],
+            clock_of(&tick),
+            options,
+        );
+
+        let report = coordinator.check(false, None);
+
+        let a = report
+            .sources
+            .iter()
+            .find(|source| source.source == "a")
+            .expect("отчёт сайта a не должен исчезнуть из итога");
+        assert_eq!(a.status, SourceStatus::Ok);
+        assert!(a.layout_changed);
+        assert!(
+            a.note
+                .as_deref()
+                .is_some_and(|note| note.contains("вёрстка")),
+            "{:?}",
+            a.note
+        );
+        let b = report
+            .sources
+            .iter()
+            .find(|source| source.source == "b")
+            .expect("отчёт сайта b");
+        assert_eq!(b.cards_fetched, 4);
+        assert_eq!(b.postponed, 0, "вторая пачка всё доверила");
+        assert_eq!(b.feed_pages_fetched, 2);
+        assert_eq!(report.requests, 8, "{:?}", report.sources);
+        assert!(!report.stopped_by_time);
+        assert!(!report.complete(), "заметка сайта a видна в итоге");
     }
 }

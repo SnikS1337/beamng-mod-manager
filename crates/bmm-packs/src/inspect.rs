@@ -263,7 +263,8 @@ fn is_unsafe_path(name: &str) -> bool {
     })
 }
 
-/// `CON`, `NUL`, `COM1`… Windows открывает как устройство даже с расширением.
+/// `CON`, `NUL`, `COM1`…, `CONIN$`, `CONOUT$` Windows открывает как устройство даже с
+/// расширением и даже с надстрочной цифрой в имени порта.
 fn is_windows_device(segment: &str) -> bool {
     let stem = segment
         .split('.')
@@ -271,11 +272,23 @@ fn is_windows_device(segment: &str) -> bool {
         .unwrap_or(segment)
         .trim_end_matches(['.', ' '])
         .to_ascii_uppercase();
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.as_bytes()[3].is_ascii_digit()
-            && stem.as_bytes()[3] != b'0')
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let Some(rest) = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+    else {
+        return false;
+    };
+    let mut chars = rest.chars();
+    let (Some(digit), None) = (chars.next(), chars.next()) else {
+        return false;
+    };
+    matches!(digit, '1'..='9' | '¹' | '²' | '³')
 }
 
 #[cfg(test)]
@@ -284,10 +297,20 @@ mod device_name_tests {
 
     #[test]
     fn windows_devices_are_rejected_at_any_depth() {
-        for name in ["CON", "con.txt", "folder/NUL.zip", "a/COM1", "LPT9.log"] {
+        for name in [
+            "CON",
+            "con.txt",
+            "folder/NUL.zip",
+            "a/COM1",
+            "LPT9.log",
+            "CONIN$",
+            "folder/conout$.txt",
+            "COM¹",
+            "LPT²",
+        ] {
             assert!(is_unsafe_path(name), "{name}");
         }
-        for name in ["console.txt", "COM0", "LPT10", "auxiliary/a.txt"] {
+        for name in ["console.txt", "COM0", "LPT10", "auxiliary/a.txt", "COM¹0"] {
             assert!(!is_unsafe_path(name), "{name}");
         }
     }
