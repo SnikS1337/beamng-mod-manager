@@ -6,6 +6,7 @@ use std::sync::{Arc, LazyLock};
 use url::Url;
 
 use bmm_domain::models::Listing;
+use bmm_domain::text::ModKind;
 
 use crate::net::PoliteFetcher;
 use crate::parsers::modland as parser;
@@ -38,6 +39,20 @@ impl ModlandSource {
             ROOT.join("beamng.drive-mods").unwrap()
         } else {
             ROOT.join(&format!("beamng.drive-mods/page/{page}"))
+                .unwrap()
+        }
+    }
+
+    fn browse_url(kind: ModKind, page: u32) -> Url {
+        let section = match kind {
+            ModKind::Vehicle => "cars",
+            ModKind::Map => "maps",
+            ModKind::Addon => "other",
+        };
+        if page <= 1 {
+            ROOT.join(&format!("beamng.drive-mods/{section}")).unwrap()
+        } else {
+            ROOT.join(&format!("beamng.drive-mods/{section}/page/{page}"))
                 .unwrap()
         }
     }
@@ -102,6 +117,34 @@ impl ModSource for ModlandSource {
         let html = common::load(&self.fetcher, self.id(), &url, None, cancel)?;
         Ok(html
             .map(|html| parser::parse_list(&html))
+            .unwrap_or_default())
+    }
+
+    fn supports_browse(&self, _kind: ModKind) -> bool {
+        true
+    }
+
+    fn browse(
+        &self,
+        kind: ModKind,
+        page: u32,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<Listing>, SourceError> {
+        let url = Self::browse_url(kind, page.max(1));
+        let html = common::load(&self.fetcher, self.id(), &url, None, cancel)?;
+        let category = match kind {
+            ModKind::Vehicle => "cars",
+            ModKind::Map => "maps",
+            ModKind::Addon => "addons",
+        };
+        Ok(html
+            .map(|html| {
+                let mut found = parser::parse_list(&html);
+                for item in &mut found {
+                    item.category = Some(category.to_string());
+                }
+                found
+            })
             .unwrap_or_default())
     }
 
