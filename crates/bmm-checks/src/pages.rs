@@ -5,6 +5,7 @@
 //! предложение. Всё это меняет несколько записей хранилища разом.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset};
 
@@ -16,6 +17,9 @@ use bmm_sources::search::SearchService;
 use crate::bindings::gate;
 use crate::page_guesser::{CERTAIN_SIZE_RATIO, MIN_NAME, PageGuesser};
 use crate::runner::UpdateProgress;
+
+/// Подбор страниц не должен затягивать проверку: сеть вежливая, а модов много.
+const PAGE_SEARCH_BUDGET: Duration = Duration::from_secs(3 * 60);
 
 /// Итог подбора страниц.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -220,9 +224,13 @@ pub fn find_pages_with(
         return result;
     }
 
+    let deadline = Instant::now() + PAGE_SEARCH_BUDGET;
     for (index, installed) in due.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
+            break;
+        }
+        if Instant::now() >= deadline {
             break;
         }
         if let Some(callback) = progress.as_mut() {
