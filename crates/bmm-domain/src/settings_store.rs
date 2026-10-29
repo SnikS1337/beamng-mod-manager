@@ -33,8 +33,10 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn new(path: impl Into<PathBuf>, now: Clock) -> Self {
+        let path = path.into();
+        atomic::cleanup_stale_temps(&path);
         Self {
-            path: path.into(),
+            path,
             now,
             gate: Mutex::new(()),
         }

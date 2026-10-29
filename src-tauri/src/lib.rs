@@ -56,6 +56,17 @@ pub fn run() {
     if let Err(error) = paths.ensure_dirs() {
         eprintln!("[bmm] не удалось создать каталоги данных: {error}");
     }
+    let _data_lock = match named_mutex::acquire_data_lock(&paths.root().join("instance.lock")) {
+        named_mutex::DataLock::Acquired(file) => Some(file),
+        named_mutex::DataLock::Busy => {
+            named_mutex::show_already_running();
+            return;
+        }
+        named_mutex::DataLock::Unavailable(error) => {
+            eprintln!("[bmm] не удалось заблокировать каталог данных: {error}");
+            None
+        }
+    };
     commands::app_update::remember_rolled_back(&paths.root().join("update-skip.txt"));
     let update_failure = commands::app_update::update_failed_message();
 

@@ -1,4 +1,29 @@
-//! Общий именованный мьютекс со старой версией `Local\BeamModManager.Single`.
+//! Общий именованный мьютекс со старой версией `Local\BeamModManager.Single`
+//! и файловая блокировка каталога данных для разных сессий Windows.
+
+use std::fs::{File, TryLockError};
+use std::io;
+use std::path::Path;
+
+pub enum DataLock {
+    Acquired(File),
+    Busy,
+    Unavailable(io::Error),
+}
+
+/// Защита от второго экземпляра в другой сессии Windows (RDP, переключение
+/// пользователя): `Local\`-мьютекс живёт только в своей сессии, а файл — на диске.
+pub fn acquire_data_lock(path: &Path) -> DataLock {
+    let file = match File::options().create(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(error) => return DataLock::Unavailable(error),
+    };
+    match file.try_lock() {
+        Ok(()) => DataLock::Acquired(file),
+        Err(TryLockError::WouldBlock) => DataLock::Busy,
+        Err(TryLockError::Error(error)) => DataLock::Unavailable(error),
+    }
+}
 
 #[cfg(windows)]
 pub struct NamedMutex(windows_sys::Win32::Foundation::HANDLE);
@@ -105,5 +130,16 @@ mod tests {
         drop(first);
         let third = acquire_named(&name);
         assert!(third.is_some(), "мьютекс не освободился");
+    }
+
+    #[test]
+    fn data_folder_lock_is_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("instance.lock");
+        let first = acquire_data_lock(&path);
+        assert!(matches!(first, DataLock::Acquired(_)));
+        assert!(matches!(acquire_data_lock(&path), DataLock::Busy));
+        drop(first);
+        assert!(matches!(acquire_data_lock(&path), DataLock::Acquired(_)));
     }
 }
