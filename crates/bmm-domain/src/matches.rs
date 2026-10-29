@@ -44,20 +44,22 @@ pub struct MatchDecisionStore {
     path: Option<PathBuf>,
     now: Clock,
     items: Mutex<BTreeMap<(String, String), MatchDecisionEntry>>,
+    blocked: bool,
     load_warnings: Vec<String>,
 }
 
 impl MatchDecisionStore {
     pub fn new(path: Option<PathBuf>, now: Clock) -> Self {
         let mut warnings = Vec::new();
-        let items = match &path {
+        let (items, blocked) = match &path {
             Some(path) => load(path, &now, &mut warnings),
-            None => BTreeMap::new(),
+            None => (BTreeMap::new(), false),
         };
         Self {
             path,
             now,
             items: Mutex::new(items),
+            blocked,
             load_warnings: warnings,
         }
     }
@@ -154,6 +156,12 @@ impl MatchDecisionStore {
         let Some(path) = &self.path else {
             return Ok(());
         };
+        if self.blocked {
+            return Err(MatchError::Io(
+                "Файл решений по дублям не прочитан; изменения не сохраняются до перезапуска программы."
+                    .to_string(),
+            ));
+        }
 
         #[derive(Serialize)]
         struct FileItem {
@@ -209,42 +217,44 @@ fn load(
     path: &Path,
     now: &Clock,
     warnings: &mut Vec<String>,
-) -> BTreeMap<(String, String), MatchDecisionEntry> {
+) -> (BTreeMap<(String, String), MatchDecisionEntry>, bool) {
     let mut items = BTreeMap::new();
     if !path.exists() {
-        return items;
+        return (items, false);
     }
 
     if let Ok(metadata) = fs::metadata(path)
         && metadata.len() > MAX_BYTES
     {
-        quarantine(path, now, "файл решений слишком большой", warnings);
-        return items;
+        let blocked = quarantine(path, now, "файл решений слишком большой", warnings);
+        return (items, blocked);
     }
 
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) => {
-            warnings.push(format!("не удалось прочитать решения по дублям: {error}"));
-            return items;
+            warnings.push(format!(
+                "не удалось прочитать решения по дублям: {error}; изменения не сохранятся до перезапуска программы"
+            ));
+            return (items, true);
         }
     };
 
     let value: serde_json::Value = match json5::from_str(&text) {
         Ok(value) => value,
         Err(_) => {
-            quarantine(path, now, "файл решений повреждён", warnings);
-            return items;
+            let blocked = quarantine(path, now, "файл решений повреждён", warnings);
+            return (items, blocked);
         }
     };
 
     let Some(root) = value.as_object() else {
-        quarantine(path, now, "файл решений имеет неверный формат", warnings);
-        return items;
+        let blocked = quarantine(path, now, "файл решений имеет неверный формат", warnings);
+        return (items, blocked);
     };
     let Some(array) = root.get("items").and_then(serde_json::Value::as_array) else {
-        quarantine(path, now, "файл решений имеет неверный формат", warnings);
-        return items;
+        let blocked = quarantine(path, now, "файл решений имеет неверный формат", warnings);
+        return (items, blocked);
     };
 
     let mut skipped = 0;
@@ -304,11 +314,13 @@ fn load(
         ));
     }
 
-    items
+    (items, false)
 }
 
-fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
-    let warning = match atomic::quarantine_file(path, (now)()) {
+fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) -> bool {
+    let quarantined = atomic::quarantine_file(path, (now)());
+    let blocked = quarantined.is_none();
+    let warning = match quarantined {
         Some(target) => {
             let name = target
                 .file_name()
@@ -316,9 +328,12 @@ fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
                 .unwrap_or_default();
             format!("{why}: сохранён как {name}, решения начаты заново")
         }
-        None => format!("{why}, решения начаты заново"),
+        None => {
+            format!("{why}, файл убрать не удалось; решения начаты заново, сохранение остановлено")
+        }
     };
     warnings.push(warning);
+    blocked
 }
 
 #[cfg(test)]
@@ -368,6 +383,26 @@ mod tests {
             store.set(&a, &a, ManualMatch::Same),
             Err(MatchError::SameRecord)
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unremovable_bad_file_blocks_new_decisions() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("matches.json");
+        fs::write(&path, "{ это не json").unwrap();
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        let store = MatchDecisionStore::new(Some(path.clone()), system_clock());
+        assert_eq!(store.load_warnings().len(), 1);
+        let result = store.set(&listing("a", "1"), &listing("b", "2"), ManualMatch::Same);
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ это не json");
     }
 
     #[test]

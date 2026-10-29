@@ -5,7 +5,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
 
 use crate::atomic;
 use crate::clock::Clock;
@@ -316,7 +318,7 @@ impl LibraryStore for JsonLibraryStore {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct FileModel {
     schema: i32,
@@ -416,8 +418,8 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
     if let Ok(metadata) = fs::metadata(path)
         && metadata.len() > MAX_BYTES
     {
-        quarantine(path, now, "файл библиотеки слишком большой", &mut warnings);
-        return (inner, warnings, false);
+        let blocked = quarantine(path, now, "файл библиотеки слишком большой", &mut warnings);
+        return (inner, warnings, blocked);
     }
 
     let mut text = None;
@@ -445,45 +447,56 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
     let value: serde_json::Value = match json5::from_str(&text) {
         Ok(value) => value,
         Err(_) => {
-            quarantine(path, now, "файл библиотеки повреждён", &mut warnings);
-            return (inner, warnings, false);
+            let blocked = quarantine(path, now, "файл библиотеки повреждён", &mut warnings);
+            return (inner, warnings, blocked);
         }
     };
 
     let Some(root) = value.as_object() else {
-        quarantine(
+        let blocked = quarantine(
             path,
             now,
             "файл библиотеки имеет неверный формат",
             &mut warnings,
         );
-        return (inner, warnings, false);
+        return (inner, warnings, blocked);
     };
     if !matches!(root.get("Mods"), Some(serde_json::Value::Array(_))) {
-        quarantine(
+        let blocked = quarantine(
             path,
             now,
             "файл библиотеки имеет неверный формат",
             &mut warnings,
         );
-        return (inner, warnings, false);
+        return (inner, warnings, blocked);
     }
 
-    let model: FileModel = match serde_json::from_value(value) {
-        Ok(model) => model,
-        Err(_) => {
-            quarantine(
-                path,
-                now,
-                "файл библиотеки имеет неверный формат",
-                &mut warnings,
+    let schema = match root.get("Schema") {
+        None => SCHEMA,
+        Some(Value::Number(number)) => number.as_i64().unwrap_or(SCHEMA as i64) as i32,
+        Some(_) => {
+            warnings.push(
+                "поле Schema в библиотеке имеет неверный формат; считаем текущую схему".to_string(),
             );
-            return (inner, warnings, false);
+            SCHEMA
         }
     };
+    if schema > SCHEMA {
+        warnings.push(format!(
+            "библиотека создана более новой версией (схема {schema}); изменения не сохранятся"
+        ));
+        return (inner, warnings, true);
+    }
+    if schema < SCHEMA {
+        warnings.push(format!(
+            "библиотека старой схемы ({schema}); читаем как есть"
+        ));
+    }
 
-    let mut skipped = 0;
-    for installed in model.mods.unwrap_or_default() {
+    // Каждую запись разбираем отдельно: одна битая строка не должна обнулять
+    // привязки, проверки и историю остальных модов.
+    let mut skipped = 0usize;
+    for installed in parse_array::<InstalledMod>(root, "Mods", &mut skipped) {
         if installed.id.trim().is_empty() || installed.file_name.trim().is_empty() {
             skipped += 1;
             continue;
@@ -491,39 +504,41 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
         inner.upsert_mod(installed);
     }
 
-    for binding in model.bindings.unwrap_or_default() {
+    for binding in parse_array::<ModBinding>(root, "Bindings", &mut skipped) {
         if inner.upsert_binding(binding).is_err() {
             skipped += 1;
         }
     }
 
-    for check in model.checks.unwrap_or_default() {
+    for check in parse_array::<CheckState>(root, "Checks", &mut skipped) {
         inner.save_check(check);
     }
 
-    for (source, status) in model.sources.unwrap_or_default() {
+    for (source, status) in parse_map::<SourceStatus>(root, "Sources", &mut skipped) {
         inner.statuses.insert(source, status);
     }
 
-    for (mod_id, key) in model.dismissed.unwrap_or_default() {
+    for (mod_id, key) in parse_map::<String>(root, "Dismissed", &mut skipped) {
         inner.set_dismissed_update(&mod_id, Some(&key));
     }
 
-    for (mod_id, names) in model.history.unwrap_or_default() {
+    for (mod_id, names) in parse_map::<Vec<String>>(root, "History", &mut skipped) {
         for name in names {
             inner.add_file_history(&mod_id, &name);
         }
     }
 
-    for mod_id in model.declined.unwrap_or_default() {
+    for mod_id in parse_array::<String>(root, "Declined", &mut skipped) {
         inner.set_checking_declined(&mod_id, true);
     }
 
-    for (mod_id, search) in model.page_searches.unwrap_or_default() {
+    for (mod_id, search) in parse_map::<PageSearch>(root, "PageSearches", &mut skipped) {
         inner.set_page_search(&mod_id, Some(search));
     }
 
-    inner.last_run = model.last_run_utc;
+    inner.last_run = root
+        .get("LastRunUtc")
+        .and_then(|value| serde_json::from_value(value.clone()).ok());
 
     if skipped > 0 {
         warnings.push(format!(
@@ -534,8 +549,60 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
     (inner, warnings, false)
 }
 
-fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
-    let warning = match atomic::quarantine_file(path, (now)()) {
+fn parse_array<T: DeserializeOwned>(
+    root: &Map<String, Value>,
+    key: &str,
+    skipped: &mut usize,
+) -> Vec<T> {
+    let Some(value) = root.get(key) else {
+        return Vec::new();
+    };
+    if value.is_null() {
+        return Vec::new();
+    }
+    let Some(items) = value.as_array() else {
+        *skipped += 1;
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    for item in items {
+        match serde_json::from_value(item.clone()) {
+            Ok(item) => result.push(item),
+            Err(_) => *skipped += 1,
+        }
+    }
+    result
+}
+
+fn parse_map<T: DeserializeOwned>(
+    root: &Map<String, Value>,
+    key: &str,
+    skipped: &mut usize,
+) -> Vec<(String, T)> {
+    let Some(value) = root.get(key) else {
+        return Vec::new();
+    };
+    if value.is_null() {
+        return Vec::new();
+    }
+    let Some(entries) = value.as_object() else {
+        *skipped += 1;
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    for (name, item) in entries {
+        match serde_json::from_value(item.clone()) {
+            Ok(item) => result.push((name.clone(), item)),
+            Err(_) => *skipped += 1,
+        }
+    }
+    result
+}
+
+fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) -> bool {
+    let quarantined = atomic::quarantine_file(path, (now)());
+    let blocked = quarantined.is_none();
+    let warning = match quarantined {
         Some(target) => {
             let name = target
                 .file_name()
@@ -543,9 +610,12 @@ fn quarantine(path: &Path, now: &Clock, why: &str, warnings: &mut Vec<String>) {
                 .unwrap_or_default();
             format!("{why}: сохранён как {name}, библиотека начата заново")
         }
-        None => format!("{why}, библиотека начата заново"),
+        None => format!(
+            "{why}, файл убрать не удалось; библиотека начата заново, сохранение остановлено"
+        ),
     };
     warnings.push(warning);
+    blocked
 }
 
 #[cfg(test)]
@@ -745,6 +815,34 @@ mod tests {
         assert!(path.exists());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn unremovable_bad_library_blocks_saving() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(&path, "{ это не json").unwrap();
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
+        assert!(store.mods().is_empty());
+        assert!(
+            store
+                .load_warnings()
+                .iter()
+                .any(|warning| warning.contains("остановлено")),
+            "{:?}",
+            store.load_warnings()
+        );
+        store.upsert_mod(installed("a", "A", "1.0"));
+        assert!(store.save_error().is_some());
+        assert!(!store.flush());
+    }
+
     #[test]
     fn second_quarantine_keeps_first_backup() {
         let dir = tempfile::tempdir().unwrap();
@@ -826,6 +924,86 @@ mod tests {
         assert!(store.save_error().is_some());
         assert!(!store.flush());
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn one_bad_mod_does_not_wipe_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(
+            &path,
+            r#"{
+                "Schema": 1,
+                "Mods": [
+                    {"Id":"a","Name":"A","FileName":"a.zip","InstalledAtUtc":"2026-10-15T12:00:00+00:00","Enabled":true},
+                    {"Id":"b","Name":"B","FileName":"b.zip","InstalledAtUtc":"2026-10-15T12:00:00","Enabled":true}
+                ],
+                "Bindings": [
+                    {"ModId":"a","Source":"stmods","SourceId":"x","Url":"https://stmods.org/x/","Confirmed":true}
+                ],
+                "Checks": [],
+                "Sources": {},
+                "Dismissed": {"a":"1.0"},
+                "History": {"a":["a_old.zip"]},
+                "Declined": []
+            }"#,
+        )
+        .unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(store.mods().len(), 1, "живая запись осталась");
+        assert_eq!(store.mods()[0].id, "a");
+        assert_eq!(store.bindings().len(), 1);
+        assert_eq!(store.get_dismissed_update("a").as_deref(), Some("1.0"));
+        assert_eq!(store.file_history("a"), vec!["a_old.zip"]);
+        assert!(
+            store
+                .load_warnings()
+                .iter()
+                .any(|warning| warning.contains("пропущено")),
+            "{:?}",
+            store.load_warnings()
+        );
+        assert!(path.exists(), "файл не уводится в карантин");
+    }
+
+    #[test]
+    fn missing_schema_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(
+            &path,
+            r#"{"Mods":[{"Id":"a","Name":"A","FileName":"a.zip","InstalledAtUtc":"2026-10-15T12:00:00+00:00","Enabled":true}]}"#,
+        )
+        .unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(store.mods().len(), 1);
+        assert!(
+            store.load_warnings().is_empty(),
+            "{:?}",
+            store.load_warnings()
+        );
+    }
+
+    #[test]
+    fn newer_schema_is_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let text = r#"{"Schema":2,"Mods":[{"Id":"a","Name":"A","FileName":"a.zip","InstalledAtUtc":"2026-10-15T12:00:00+00:00","Enabled":true}]}"#;
+        fs::write(&path, text).unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
+        assert!(store.mods().is_empty());
+        assert!(
+            store
+                .load_warnings()
+                .iter()
+                .any(|warning| warning.contains("более новой")),
+            "{:?}",
+            store.load_warnings()
+        );
+        store.upsert_mod(installed("b", "B", "1.0"));
+        assert!(store.save_error().is_some());
+        assert!(!store.flush());
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
     }
 
     #[test]
