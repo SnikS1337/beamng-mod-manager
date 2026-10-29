@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 pub fn is_game_process_name(name: &str) -> bool {
-    let name = name.strip_suffix(".exe").unwrap_or(name);
+    let name = strip_exe(name);
     [
         "BeamNG.drive.x64",
         "BeamNG.tech.x64",
@@ -14,21 +14,27 @@ pub fn is_game_process_name(name: &str) -> bool {
     .any(|known| name.eq_ignore_ascii_case(known))
 }
 
+/// Расширение `.exe` в любом регистре: Windows не различает `EXE` и `exe`.
+fn strip_exe(name: &str) -> &str {
+    if name.len() >= 4
+        && let Some(tail) = name.get(name.len() - 4..)
+        && tail.eq_ignore_ascii_case(".exe")
+    {
+        return &name[..name.len() - 4];
+    }
+    name
+}
+
 /// Только список процессов: `System::new_all` заодно опрашивал диски, память и
 /// процессор — заметная задержка на каждом обновлении списка модов.
-fn processes(with_exe: bool) -> System {
+fn processes() -> System {
     let mut system = System::new();
-    let kind = if with_exe {
-        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet)
-    } else {
-        ProcessRefreshKind::nothing()
-    };
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     system
 }
 
 pub fn is_running() -> bool {
-    processes(false)
+    processes()
         .processes()
         .values()
         .any(|process| is_game_process_name(&process.name().to_string_lossy()))
@@ -37,7 +43,24 @@ pub fn is_running() -> bool {
 /// Папка запущенной игры (`…\BeamNG.drive`), если игра сейчас запущена:
 /// по её `startup.ini` находим папку пользователя, даже если она перенесена.
 pub fn running_game_dir() -> Option<PathBuf> {
-    let system = processes(true);
+    // Сначала дешёвый список имён, и только найденным процессам запрашиваем exe:
+    // путь к файлу у всех процессов — дорогой запрос на первом обновлении.
+    let names = processes();
+    let pids: Vec<sysinfo::Pid> = names
+        .processes()
+        .iter()
+        .filter(|(_, process)| is_game_process_name(&process.name().to_string_lossy()))
+        .map(|(pid, _)| *pid)
+        .collect();
+    if pids.is_empty() {
+        return None;
+    }
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&pids),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+    );
     system
         .processes()
         .values()
@@ -67,10 +90,13 @@ mod tests {
     fn game_process_names() {
         assert!(is_game_process_name("BeamNG.drive.x64"));
         assert!(is_game_process_name("BeamNG.drive.x64.exe"));
+        assert!(is_game_process_name("BeamNG.drive.x64.EXE"));
+        assert!(is_game_process_name("BeamNG.drive.x64.Exe"));
         assert!(is_game_process_name("beamng.tech.x64"));
         assert!(is_game_process_name("BeamNG.drive.arm64.exe"));
         assert!(!is_game_process_name("BeamNG.drive.exe"));
         assert!(!is_game_process_name("BeamNG.drive.x86"));
         assert!(!is_game_process_name("notepad.exe"));
+        assert!(!is_game_process_name("BeamNG.drive.x64.exe.malware"));
     }
 }

@@ -88,11 +88,7 @@ pub fn find_mods_folders(user_root: &Path) -> Vec<PathBuf> {
 /// `startup.ini` находится перенесённая папка пользователя.
 pub fn game_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = crate::process::running_game_dir().into_iter().collect();
-    let steam_roots = ["ProgramFiles(x86)", "ProgramFiles"]
-        .iter()
-        .filter_map(std::env::var_os)
-        .map(|base| PathBuf::from(base).join("Steam"));
-    for steam in steam_roots {
+    for steam in steam_roots() {
         let vdf = steam.join("steamapps").join("libraryfolders.vdf");
         let mut libraries = vec![steam.clone()];
         if let Ok(text) = fs::read_to_string(&vdf) {
@@ -111,17 +107,97 @@ pub fn game_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Пути библиотек из `libraryfolders.vdf`: строки `"path"  "D:\\SteamLibrary"`.
+/// Steam из реестра идёт первым: он мог быть установлен не в Program Files.
+#[cfg(windows)]
+fn steam_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = steam_path_from_registry().into_iter().collect();
+    for base in ["ProgramFiles(x86)", "ProgramFiles"] {
+        let Some(base) = std::env::var_os(base) else {
+            continue;
+        };
+        let steam = PathBuf::from(base).join("Steam");
+        if !roots.iter().any(|known| same_path(known, &steam)) {
+            roots.push(steam);
+        }
+    }
+    roots
+}
+
+#[cfg(not(windows))]
+fn steam_roots() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn steam_path_from_registry() -> Option<PathBuf> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+
+    let path: Vec<u16> = OsStr::new(r"Software\Valve\Steam")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let name: Vec<u16> = OsStr::new("SteamPath")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut buffer = [0u16; 1024];
+    let mut size = (buffer.len() * 2) as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            path.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let length = (size as usize / 2).min(buffer.len());
+    let text = String::from_utf16_lossy(&buffer[..length]);
+    let text = text.trim_end_matches('\0').trim();
+    (!text.is_empty()).then(|| PathBuf::from(text))
+}
+
+#[cfg(not(windows))]
+fn steam_path_from_registry() -> Option<PathBuf> {
+    None
+}
+
+/// Пути библиотек из `libraryfolders.vdf`: строки `"path"  "D:\\SteamLibrary"`
+/// внутри секций, а не любое упоминание `path` в файле.
 pub fn steam_libraries(vdf: &str) -> Vec<PathBuf> {
-    vdf.lines()
-        .filter_map(|line| {
-            let mut parts = line.split('"').filter(|part| !part.trim().is_empty());
-            if !parts.next()?.eq_ignore_ascii_case("path") {
-                return None;
-            }
-            Some(PathBuf::from(parts.next()?.replace("\\\\", "\\")))
-        })
-        .collect()
+    let mut depth = 0i32;
+    let mut result = Vec::new();
+    for line in vdf.lines() {
+        let opens = line.matches('{').count() as i32;
+        let closes = line.matches('}').count() as i32;
+        if opens > 0 || closes > 0 {
+            depth = (depth + opens - closes).max(0);
+            continue;
+        }
+        if depth == 0 {
+            continue;
+        }
+        if let Some(path) = path_value(line) {
+            result.push(path);
+        }
+    }
+    result
+}
+
+fn path_value(line: &str) -> Option<PathBuf> {
+    let mut parts = line.split('"').filter(|part| !part.trim().is_empty());
+    if !parts.next()?.eq_ignore_ascii_case("path") {
+        return None;
+    }
+    Some(PathBuf::from(parts.next()?.replace("\\\\", "\\")))
 }
 
 pub fn auto_detect(game_dirs: &[PathBuf], user_roots: &[PathBuf]) -> Option<PathBuf> {
@@ -409,6 +485,11 @@ mod tests {
                 PathBuf::from(r"C:\Program Files (x86)\Steam"),
                 PathBuf::from(r"D:\SteamLibrary")
             ]
+        );
+        assert_eq!(
+            steam_libraries("\"path\" \"C:\\\\Stray\""),
+            Vec::<PathBuf>::new(),
+            "path вне секций не считается библиотекой"
         );
         assert!(steam_libraries("").is_empty());
     }
