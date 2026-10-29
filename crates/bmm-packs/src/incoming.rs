@@ -126,7 +126,12 @@ pub fn analyze(
                     &mut budget,
                     cancel,
                 ),
-                Err(error) => Err(error.to_string()),
+                Err(error) => {
+                    // 7z-бомба не должна оставлять частично распакованные гигабайты
+                    // до суточной уборки временных папок.
+                    let _ = fs::remove_dir_all(&unpacked);
+                    Err(error.to_string())
+                }
             }
         }
         None => Err("RAR и 7z здесь не открываются.".to_string()),

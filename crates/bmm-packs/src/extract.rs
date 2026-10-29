@@ -10,7 +10,9 @@ use crate::inspect::is_unsafe_entry_path;
 use crate::zip_index::normalize_name;
 
 const TAR_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const SIZE_CHECK_EVERY: Duration = Duration::from_secs(2);
+/// Чаще, чем раз в две секунды: быстрый диск успевает записать лишние гигабайты
+/// между проверками бюджета.
+const SIZE_CHECK_EVERY: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtractBudget {
