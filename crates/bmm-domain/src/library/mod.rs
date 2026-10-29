@@ -6,7 +6,7 @@ pub mod sync;
 pub use disk::DiskMod;
 pub use json::JsonLibraryStore;
 pub use memory::InMemoryLibraryStore;
-pub use sync::{SyncReport, reconcile, rename_file};
+pub use sync::{SyncReport, reconcile, reconcile_with_complete, rename_file};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

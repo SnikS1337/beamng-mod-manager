@@ -26,6 +26,18 @@ pub fn reconcile(
     folder_available: bool,
     now: DateTime<FixedOffset>,
 ) -> SyncReport {
+    reconcile_with_complete(store, disk, folder_available, true, now)
+}
+
+/// `complete = false` — сканер не прочитал часть папок. Найденные моды добавляем,
+/// но пропавшие не удаляем: иначе сбой ФС навсегда выбросит их из библиотеки.
+pub fn reconcile_with_complete(
+    store: &dyn LibraryStore,
+    disk: &[DiskMod],
+    folder_available: bool,
+    complete: bool,
+    now: DateTime<FixedOffset>,
+) -> SyncReport {
     let _gate = GATE.lock().unwrap_or_else(|error| error.into_inner());
     let known = store.mods();
     if !folder_available {
@@ -58,6 +70,12 @@ pub fn reconcile(
     }
 
     let mut report = SyncReport::default();
+    if !complete {
+        report.warning = Some(
+            "Папка модов прочитана не полностью: удаления и переименования не применены."
+                .to_string(),
+        );
+    }
 
     for (key, disk_item) in &on_disk {
         let Some(existing) = by_file.get(key) else {
@@ -117,6 +135,9 @@ pub fn reconcile(
     let mut handled_fresh: HashSet<String> = HashSet::new();
 
     for (name, old_items) in &vanished_by_name {
+        if !complete {
+            break;
+        }
         if name.is_empty() || old_items.len() != 1 {
             continue;
         }
@@ -137,7 +158,7 @@ pub fn reconcile(
     }
 
     for item in &vanished {
-        if handled_vanished.contains(&item.id) {
+        if !complete || handled_vanished.contains(&item.id) {
             continue;
         }
         store.remove_mod(&item.id);
@@ -171,7 +192,10 @@ fn version_after_external_change(
             continue;
         };
         if let (Some(version), Some(size)) = (check.last_version, check.last_size)
-            && !SizeComparer::differs(Some(disk.size_bytes), Some(size))
+            && matches!(
+                SizeComparer::same(Some(disk.size_bytes), Some(size)),
+                Some(true)
+            )
         {
             return Some(version);
         }
@@ -181,7 +205,7 @@ fn version_after_external_change(
 
 fn migrate_mod(store: &dyn LibraryStore, old: &InstalledMod, new: &DiskMod) {
     // Файл просто переименовали (размер тот же) — версия прежняя, если в новом имени нет своей.
-    let version = if old.size_bytes == Some(new.size_bytes) {
+    let version = if old.size_bytes == Some(new.size_bytes) && new.size_bytes > 0 {
         filename::from_file_name(&new.file_name)
             .version
             .or_else(|| old.version.clone())
@@ -330,6 +354,26 @@ mod tests {
         let report = reconcile(&store, &disk, true, now());
         assert!(report.added.is_empty());
         assert!(report.changed.is_empty());
+    }
+
+    #[test]
+    fn incomplete_scan_keeps_vanished_mods() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("b.zip", "b.zip", "B", 10));
+        let disk = vec![disk("other.zip", true, 20)];
+        let report = reconcile_with_complete(&store, &disk, true, false, now());
+        assert!(report.removed.is_empty());
+        assert!(
+            report
+                .warning
+                .as_deref()
+                .unwrap_or("")
+                .contains("не полностью"),
+            "{report:?}"
+        );
+        assert!(store.get_mod("b.zip").is_some(), "мод не должен исчезнуть");
+        // Найденный новый мод всё равно добавляется.
+        assert_eq!(report.added, vec!["other.zip"]);
     }
 
     #[test]

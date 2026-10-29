@@ -94,10 +94,11 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
 
     // Первый скан 5000 модов не должен переписывать library.json 5000 раз.
     let _batch = state.library.batch();
-    let sync_report = bmm_domain::library::reconcile(
+    let sync_report = bmm_domain::library::reconcile_with_complete(
         state.library.as_ref(),
         &scan_result.mods,
         scan_result.folder_available,
+        scan_result.complete,
         Utc::now().fixed_offset(),
     );
 

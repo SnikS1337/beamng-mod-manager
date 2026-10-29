@@ -186,6 +186,17 @@ impl SizeComparer {
         let tolerance = minimum.max((larger as f64 * fraction) as i64);
         x.abs_diff(y) > tolerance as u64
     }
+
+    /// `None` — размер неизвестен (нет данных или файл пуст): это не «совпало».
+    pub fn same(a: Option<i64>, b: Option<i64>) -> Option<bool> {
+        let (Some(x), Some(y)) = (a, b) else {
+            return None;
+        };
+        if x <= 0 || y <= 0 {
+            return None;
+        }
+        Some(!Self::differs(Some(x), Some(y)))
+    }
 }
 
 pub struct UpdateDecider;
@@ -218,7 +229,8 @@ impl UpdateDecider {
             return UpdateStatus::None;
         }
 
-        let changed = SizeComparer::differs(installed.size_bytes, current.size_bytes)
+        let changed = installed.size_bytes == Some(0)
+            || SizeComparer::differs(installed.size_bytes, current.size_bytes)
             || (installed.content_hash.is_some()
                 && current.content_hash.is_some()
                 && installed.content_hash != current.content_hash);
@@ -301,6 +313,23 @@ mod tests {
         let gib = 1024 * 1024 * 1024;
         assert!(!SizeComparer::differs(Some(gib), Some(gib + gib / 20)));
         assert!(SizeComparer::differs(Some(gib), Some(gib + gib / 10)));
+    }
+
+    #[test]
+    fn zero_size_is_unknown_not_same() {
+        assert_eq!(SizeComparer::same(Some(0), Some(100)), None);
+        assert_eq!(SizeComparer::same(Some(0), Some(0)), None);
+        assert_eq!(SizeComparer::same(None, Some(1)), None);
+        assert_eq!(SizeComparer::same(Some(100), Some(100)), Some(true));
+        assert_eq!(SizeComparer::same(Some(100), Some(1_000_000)), Some(false));
+
+        let empty = VersionSnapshot::new(Some("1.0"), Some(0), None);
+        let site = VersionSnapshot::new(Some("1.0"), Some(368 * 1024 * 1024), None);
+        assert_eq!(
+            UpdateDecider::decide(&empty, &site),
+            UpdateStatus::Possible,
+            "пустой файл не считается актуальным"
+        );
     }
 
     #[test]
