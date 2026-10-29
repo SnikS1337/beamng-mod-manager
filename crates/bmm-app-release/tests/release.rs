@@ -984,6 +984,17 @@ fn skipped_version_roundtrip_and_garbage() {
     );
     fs::write(&path, "сломано").unwrap();
     assert!(read_skipped(&path).is_none(), "мусор");
+
+    // Пересобранная версия когда-то должна снова предлагаться, а не никогда.
+    write_skipped(&path, AppVersion::parse("0.1.58").unwrap()).unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 24 * 60 * 60);
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    assert!(read_skipped(&path).is_none(), "старая отметка не вечная");
 }
 
 #[test]
@@ -1103,6 +1114,40 @@ fn prepare_stages_without_touching_current_and_applies_later() {
     );
     assert!(prepared.restore(), "прежняя вернулась");
     assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
+}
+
+#[test]
+fn failed_prepare_removes_unpacked_exe_and_keeps_archive() {
+    let rig = Rig::new();
+    let zip = release_zip(true, true, EXE_NAME);
+    let archive = rig.update_dir.join("0.1.30").join("update.zip");
+    fs::create_dir_all(archive.parent().unwrap()).unwrap();
+    fs::write(&archive, &zip).unwrap();
+    let manifest = UpdateManifest::parse(&manifest_json("0.1.30", &zip, ZIP_URL, None)).unwrap();
+    let local = AppVersion::parse("0.1.29").unwrap();
+    let wrong = AppVersion::parse("0.1.28").unwrap();
+    let options = PrepareOptions {
+        allow_temporary_location: true,
+        ..PrepareOptions::default()
+    };
+
+    let error = prepare_update(
+        &archive,
+        &rig.update_dir,
+        &manifest,
+        &local,
+        &rig.exe,
+        &|_| Some(wrong),
+        &options,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("версия"), "{error}");
+    assert!(
+        !rig.update_dir.join("0.1.30").join("exe").exists(),
+        "распакованный exe убран"
+    );
+    assert!(archive.is_file(), "сам архив остался");
 }
 
 #[test]

@@ -230,7 +230,12 @@ impl Runner<'_, '_, '_> {
             by_id.entry(source.id()).or_insert(source);
         }
 
-        let tracked = UpdateCheckService::tracked(store);
+        // Сайт, выключенный в настройках, не приходит фабрикой адаптеров:
+        // его привязки молча пропускаем, а не жалуемся «нет адаптера».
+        let tracked: Vec<TrackedBinding> = UpdateCheckService::tracked(store)
+            .into_iter()
+            .filter(|binding| by_id.contains_key(binding.source.as_str()))
+            .collect();
         let statuses = UpdateCheckService::source_statuses(store);
         let plan = UpdateCheckPlanner::plan_feeds(&tracked, &statuses, now, options);
         let due_set: HashSet<(String, String)> = plan
@@ -513,7 +518,7 @@ impl Worker<'_, '_> {
             .filter_map(|binding| binding.last_checked_utc)
             .min();
 
-        let mut limit = pages;
+        let limit = pages;
         let mut page = 1u32;
         while page <= limit {
             if self.is_cancelled() {
@@ -570,15 +575,10 @@ impl Worker<'_, '_> {
 
             if !self.request.options.force
                 && let Some(covered) = FeedCoverage::compute(&ordered)
+                && let Some(checked) = oldest_checked
+                && covered <= checked - FeedCoverage::MARGIN
             {
-                if let Some(checked) = oldest_checked
-                    && covered <= checked - FeedCoverage::MARGIN
-                {
-                    break; // дошли до самой давней проверки
-                }
-                if page == limit && limit < self.request.options.max_feed_pages_per_source {
-                    limit += 1; // датированная лента: идём глубже
-                }
+                break; // дошли до самой давней проверки
             }
             page += 1;
         }
@@ -608,6 +608,7 @@ impl Worker<'_, '_> {
                     entry,
                     self.request.now,
                 );
+                outcome.up_to_date += 1;
                 continue;
             }
             card_candidates.push((*binding).clone());
@@ -1255,6 +1256,26 @@ mod tests {
     }
 
     #[test]
+    fn disabled_site_without_adapter_is_skipped_silently() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        add(&store, "b", "y", "b", Some("1.0"), Some("1.0"), Some(old));
+        let site = Site::new("x").with_feed(vec![l("x", "a", Some("1.0"), None)]);
+
+        let report = run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+
+        assert_eq!(report.sources.len(), 1, "{:?}", report.sources);
+        assert_eq!(report.sources[0].source, "x");
+        assert!(report.requests <= 2, "к выключенному сайту не ходим");
+    }
+
+    #[test]
     fn immediate_second_run_requests_nothing() {
         let store = InMemoryLibraryStore::new();
         add(
@@ -1307,7 +1328,7 @@ mod tests {
     }
 
     #[test]
-    fn binding_to_unknown_site_is_reported() {
+    fn binding_to_unknown_site_is_silently_skipped() {
         let store = InMemoryLibraryStore::new();
         add(
             &store,
@@ -1319,13 +1340,8 @@ mod tests {
             Some(now() - TimeDelta::days(2)),
         );
         let report = run_simple(&store, &[], now(), UpdateCheckOptions::default());
-        assert!(
-            report.sources[0]
-                .note
-                .as_deref()
-                .unwrap()
-                .contains("адаптер")
-        );
+        assert!(report.sources.is_empty(), "{:?}", report.sources);
+        assert_eq!(report.requests, 0);
     }
 
     #[test]

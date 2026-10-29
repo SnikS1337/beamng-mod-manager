@@ -265,14 +265,44 @@ impl UpdateDownloader {
         cancel: &CancelToken,
     ) -> Result<DownloadedUpdate, DownloadError> {
         let directory = update_dir.join(manifest.version.display());
+        // Прошлые неудачные попытки другой версии — мусор на сотни мегабайт.
+        Self::remove_older_attempts(update_dir, &manifest.version);
         fs::create_dir_all(&directory)
             .map_err(|error| DownloadError::io("не удалось создать папку обновления", error))?;
         let path = directory.join(file_name);
-        self.download(manifest, &path, progress, cancel)?;
+        if let Err(error) = self.download(manifest, &path, progress, cancel) {
+            // Недокачанный архив и распакованный exe не оставляем.
+            let _ = fs::remove_dir_all(&directory);
+            return Err(error);
+        }
         Ok(DownloadedUpdate {
             path,
             version: manifest.version,
         })
+    }
+
+    /// Убирает каталоги прошлых версий, оставшиеся от неудачных попыток.
+    fn remove_older_attempts(update_dir: &Path, current: &AppVersion) {
+        let Ok(entries) = fs::read_dir(update_dir) else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(version) = AppVersion::parse(&name) else {
+                continue;
+            };
+            if *current == version || !current.is_newer_than(&version) {
+                continue;
+            }
+            // Удаляем только явно нашу попытку, а не случайный каталог.
+            if path.join("update.zip").is_file() || path.join("exe").is_dir() {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
     }
 
     fn download_inner(
