@@ -731,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn real_modsgaming_search_finds_sienna_and_rejects_ambiguous() {
+    fn real_modsgaming_search_finds_sienna_and_collapses_reposts() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/modsgaming/search-real.html");
         let html = std::fs::read_to_string(path).unwrap();
@@ -746,15 +746,15 @@ mod tests {
         .expect("страница v2.0 находится");
         assert!(guess.listing.title.contains("Sienna 2017 v2.0"));
 
-        assert!(
-            PageGuesser::pick(
-                &installed("b", "2023_toyota_sienna.zip", None, None),
-                None,
-                &found
-            )
-            .is_none(),
-            "две похожие страницы на одном сайте — какая, непонятно"
-        );
+        // Две карточки «2023 Toyota Sienna» — перепост одного мода: в выдаче
+        // остаётся свежая, и страница для установленного файла находится.
+        let guess = PageGuesser::pick(
+            &installed("b", "2023_toyota_sienna.zip", None, None),
+            None,
+            &found,
+        )
+        .expect("перепост склеен, страница находится");
+        assert!(guess.listing.title.to_lowercase().contains("2023"));
     }
 
     #[test]

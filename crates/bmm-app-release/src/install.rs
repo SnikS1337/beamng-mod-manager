@@ -11,7 +11,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 
@@ -376,21 +376,30 @@ pub fn cleanup(current_exe: &Path, update_dir: &Path) {
     }
 }
 
-/// Версия, которая не запустилась на этом компьютере (её больше не предлагаем).
+/// Сколько помним неудачный запуск. Издатель мог пересобрать ту же версию —
+/// через неделю её снова предложим, вместо «никогда».
+const SKIPPED_TTL: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Версия, которая не запустилась на этом компьютере (её пока не предлагаем).
 pub fn read_skipped(path: &Path) -> Option<AppVersion> {
+    let metadata = fs::metadata(path).ok()?;
+    let age = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .unwrap_or_default();
+    if age > SKIPPED_TTL {
+        return None;
+    }
     let text = fs::read_to_string(path).ok()?;
-    AppVersion::parse(&text)
+    AppVersion::parse(text.trim())
 }
 
 /// Запомнить версию, которая не запустилась. Ошибки записи не критичны для
-/// обновления, но возвращаются вызывающему.
+/// обновления, но возвращаются вызывающему. Запись атомарная: обрыв питания
+/// не оставит обрезанный файл, из-за которого защита пропадёт.
 pub fn write_skipped(path: &Path, version: AppVersion) -> io::Result<()> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, version.display())
+    bmm_domain::atomic::write_atomic(path, version.display().as_bytes())
 }
 
 /// Можно ли будет записать новую версию в файл программы. Работающий exe
@@ -639,10 +648,22 @@ pub fn prepare_update(
         return Err(InstallError::ArchiveMissing);
     }
 
-    let staging = update_dir.join(manifest.version.display()).join("exe");
-    let new_exe = extract_exe(archive, &staging, manifest.version, version_of)?;
-    if options.require_writable {
-        check_writable(current_exe)?;
+    let attempt = update_dir.join(manifest.version.display());
+    let staging = attempt.join("exe");
+    let new_exe = match extract_exe(archive, &staging, manifest.version, version_of) {
+        Ok(path) => path,
+        Err(error) => {
+            // Неудачная распаковка не должна оставлять распакованный exe;
+            // сам архив оставляем — его ещё можно использовать.
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    };
+    if options.require_writable
+        && let Err(error) = check_writable(current_exe)
+    {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
     }
 
     Ok(PreparedUpdate {
