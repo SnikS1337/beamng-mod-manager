@@ -652,7 +652,34 @@ pub(crate) fn toggle_mod(
             return Err(AppError::new("move", moved.message));
         }
         let db = GameModDb::new(&mods_dir);
-        let _ = db.set_active(&[(&disk.file_name, true)], process::is_running);
+        let result = db.set_active(&[(&disk.file_name, true)], process::is_running);
+        match result.outcome {
+            SetActiveOutcome::Done
+            | SetActiveOutcome::Unchanged
+            | SetActiveOutcome::NotInDb
+            | SetActiveOutcome::NoDb => {}
+            SetActiveOutcome::GameRunning
+            | SetActiveOutcome::ChangedMeanwhile
+            | SetActiveOutcome::IoError
+            | SetActiveOutcome::Unreadable => {
+                // Файл уже в mods, но игра/диск не дали отметить его активным.
+                // Возвращаем в disabled, иначе карточка врёт: «включён», а игра не видит.
+                let rolled = installer.disable(&disk.file_name);
+                let detail = result
+                    .message
+                    .unwrap_or_else(|| "игра не подтвердила включение".to_string());
+                if rolled.success {
+                    return Err(AppError::new(
+                        "game",
+                        format!("{detail}; файл возвращён в выключенные."),
+                    ));
+                }
+                return Err(AppError::new(
+                    "game",
+                    format!("{detail}; файл остался в mods — проверьте вручную."),
+                ));
+            }
+        }
         let mut updated = installed;
         updated.enabled = true;
         state.library.upsert_mod(updated);
@@ -1566,6 +1593,46 @@ mod tests {
         assert_eq!(on.outcome, "done");
         assert!(mods.join("fresh.zip").is_file());
         assert!(state.library.get_mod(&id).unwrap().enabled);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn enable_rolls_back_when_db_cannot_be_updated() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(
+            mods.join("db.json"),
+            r#"{"header":{"version":1.1},"mods":{}}"#,
+        )
+        .unwrap();
+        let state = test_state(&temp, &mods);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        std::fs::create_dir_all(&layout.disabled_dir).unwrap();
+        std::fs::write(layout.disabled_dir.join("mod.zip"), b"zip").unwrap();
+
+        let snapshot = load_snapshot(&state).unwrap();
+        let id = snapshot
+            .mods
+            .iter()
+            .find(|card| card.file_name == "mod.zip")
+            .unwrap()
+            .id
+            .clone();
+        assert!(!state.library.get_mod(&id).unwrap().enabled);
+
+        let _lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(mods.join("db.json"))
+            .unwrap();
+        let result = toggle_mod(&state, &id, true);
+        assert!(result.is_err(), "{result:?}");
+        assert!(layout.disabled_dir.join("mod.zip").is_file());
+        assert!(!mods.join("mod.zip").exists());
+        assert!(!state.library.get_mod(&id).unwrap().enabled);
     }
 
     #[test]
