@@ -10,9 +10,9 @@ fn log_version_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"Log started\s*-\s*v\s*(\d+(?:\.\d+){1,3})").unwrap())
 }
 
-fn any_version_re() -> &'static Regex {
+fn ini_version_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?<!\d)(0\.\d+(?:\.\d+){0,2})(?!\d)").unwrap())
+    RE.get_or_init(|| Regex::new(r"(?im)^[ \t]*version[ \t]*=[ \t]*(\d+(?:\.\d+){1,3})").unwrap())
 }
 
 fn compat_version_re() -> &'static Regex {
@@ -29,29 +29,34 @@ pub fn version_from_log(log_text: &str) -> Option<String> {
 }
 
 pub fn version_from_ini(ini_text: &str) -> Option<String> {
-    let captures = any_version_re().captures(ini_text).ok().flatten()?;
+    let captures = ini_version_re().captures(ini_text).ok().flatten()?;
     Some(captures.get(1)?.as_str().to_string())
 }
 
 pub fn detect_version(user_folder: &Path) -> Option<String> {
-    if let Some(root) = user_folder.parent().and_then(Path::parent) {
-        let ini = root.join("BeamNG.drive.ini");
-        if ini.is_file()
-            && fs::metadata(&ini)
-                .map(|meta| meta.len() < 64 * 1024)
-                .unwrap_or(false)
-            && let Ok(text) = fs::read_to_string(&ini)
-            && let Some(version) = version_from_ini(&text)
+    // Лог пишется при каждом запуске и прямо называет версию; ini может
+    // относиться к другой установке и содержит служебные числа.
+    let log = user_folder.join("beamng.log");
+    if let Ok(mut file) = fs::File::open(log) {
+        let mut buffer = [0u8; 4096];
+        if let Ok(read) = file.read(&mut buffer)
+            && let Some(version) = version_from_log(&String::from_utf8_lossy(&buffer[..read]))
         {
             return Some(version);
         }
     }
 
-    let log = user_folder.join("beamng.log");
-    let mut file = fs::File::open(log).ok()?;
-    let mut buffer = [0u8; 4096];
-    let read = file.read(&mut buffer).ok()?;
-    version_from_log(&String::from_utf8_lossy(&buffer[..read]))
+    let root = user_folder.parent().and_then(Path::parent)?;
+    let ini = root.join("BeamNG.drive.ini");
+    if ini.is_file()
+        && fs::metadata(&ini)
+            .map(|meta| meta.len() < 64 * 1024)
+            .unwrap_or(false)
+        && let Ok(text) = fs::read_to_string(&ini)
+    {
+        return version_from_ini(&text);
+    }
+    None
 }
 
 pub fn user_root_from_startup_ini(game_dir: &Path) -> Option<PathBuf> {
@@ -191,8 +196,18 @@ mod tests {
             Some("0.39.4.0")
         );
         assert_eq!(
-            version_from_ini("version=0.39.4.0").as_deref(),
+            version_from_ini(
+                "[game]
+version = 0.39.4.0
+notes: 0.1"
+            )
+            .as_deref(),
             Some("0.39.4.0")
+        );
+        assert_eq!(
+            version_from_ini("notes=0.39.4.0"),
+            None,
+            "постороннее 0.x — не версия игры"
         );
         assert_eq!(version_from_ini("мусор"), None);
     }
@@ -237,14 +252,14 @@ mod tests {
     }
 
     #[test]
-    fn detects_version_ini_before_log() {
+    fn log_version_wins_over_ini() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("BeamNG");
         let user = root.join("BeamNG.drive").join("current");
         fs::create_dir_all(&user).unwrap();
         fs::write(root.join("BeamNG.drive.ini"), "version=0.39.4.0").unwrap();
         fs::write(user.join("beamng.log"), "Log started - v 0.38.0.0").unwrap();
-        assert_eq!(detect_version(&user).as_deref(), Some("0.39.4.0"));
+        assert_eq!(detect_version(&user).as_deref(), Some("0.38.0.0"));
     }
 
     #[test]
