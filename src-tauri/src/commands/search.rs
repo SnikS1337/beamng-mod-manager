@@ -184,6 +184,16 @@ fn searchable_sources(runtime: &SearchRuntime, disabled: &[String]) -> Vec<Arc<d
         .collect()
 }
 
+/// Пользователь начал новый поиск — даём сайтам с челленджем ещё один шанс,
+/// не дожидаясь десятиминутной паузы.
+fn reset_challenged(fetcher: &bmm_sources::net::PoliteFetcher, sources: &[Arc<dyn ModSource>]) {
+    for source in sources {
+        if fetcher.status_of(source.id()) == SourceStatus::NeedsHumanCheck {
+            fetcher.reset_source(source.id(), &source.home());
+        }
+    }
+}
+
 /// Собрать общую выдачу раздела из накопленных страниц.
 fn assemble_browse(service: &SearchService, session: &BrowseSession) -> SearchResponse {
     let mut listings = Vec::new();
@@ -220,6 +230,7 @@ pub async fn search_start(
     let settings = state.settings.load().settings;
     let sources = searchable_sources(&runtime, &settings.disabled_sources);
     let fetcher = runtime.fetcher.clone();
+    reset_challenged(&fetcher, &sources);
     let options = runtime.service.options().clone();
     let decisions: Arc<dyn MatchDecisions + Send + Sync> = runtime.matches.clone();
     let service = SearchService::new(
@@ -310,6 +321,9 @@ pub async fn search_browse(
     let sources = searchable_sources(&runtime, &settings.disabled_sources);
     if sources.is_empty() {
         return Err(AppError::new("search", "Все сайты выключены."));
+    }
+    if from_page <= 1 {
+        reset_challenged(&runtime.fetcher, &sources);
     }
     let status_source = runtime.fetcher.clone();
     let service = SearchService::new(
@@ -435,6 +449,7 @@ pub async fn search_retry_source(
         })
         .cloned()
         .ok_or_else(|| AppError::new("search", "Сайт выключен или не поддерживает поиск."))?;
+    runtime.fetcher.reset_source(source.id(), &source.home());
     let browse = state
         .browse
         .lock()
