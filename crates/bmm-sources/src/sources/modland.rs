@@ -132,14 +132,21 @@ impl ModSource for ModlandSource {
     ) -> Result<Vec<Listing>, SourceError> {
         let url = Self::browse_url(kind, page.max(1));
         let html = common::load(&self.fetcher, self.id(), &url, None, cancel)?;
-        let category = match kind {
-            ModKind::Vehicle => "cars",
-            ModKind::Map => "maps",
-            ModKind::Addon => "addons",
+        let (wanted, category) = match kind {
+            ModKind::Vehicle => ("cars", "cars"),
+            ModKind::Map => ("maps", "maps"),
+            ModKind::Addon => ("other", "addons"),
         };
         Ok(html
             .map(|html| {
-                let mut found = parser::parse_list(&html);
+                let mut found: Vec<Listing> = parser::parse_list(&html)
+                    .into_iter()
+                    // На странице раздела бывают карточки из других разделов:
+                    // у каждой ссылка ведёт в свой раздел, ей и верим.
+                    .filter(|item| {
+                        parser::category_slug(&item.url).is_none_or(|section| section == wanted)
+                    })
+                    .collect();
                 for item in &mut found {
                     item.category = Some(category.to_string());
                 }

@@ -300,7 +300,8 @@ mod tests {
         let routes = RouteFetcher::new(|url| {
             url.host_str()
                 .is_some_and(|host| host.ends_with("modland.net"))
-                .then(|| fixture(&["modland", "list-real.html"]))
+                // В списке есть и машина, и карта — как на настоящей странице раздела.
+                .then(|| fixture(&["modland", "list-page.html"]))
         });
         let source =
             modland::ModlandSource::new(polite(Arc::clone(&routes) as Arc<dyn PageFetcher>));
@@ -308,7 +309,12 @@ mod tests {
         assert!(!maps.is_empty());
         assert!(
             maps.iter()
-                .all(|item| item.category.as_deref() == Some("maps"))
+                .all(|item| item.category.as_deref() == Some("maps")),
+            "{maps:?}"
+        );
+        assert!(
+            maps.iter().all(|item| item.url.path().contains("/maps/")),
+            "карточка из другого раздела не должна попасть в карты: {maps:?}"
         );
         let _ = source.browse(ModKind::Map, 2, &cancel()).unwrap();
         let calls = routes.calls();

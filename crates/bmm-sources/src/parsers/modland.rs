@@ -236,6 +236,27 @@ pub fn slug_of(url: &url::Url) -> String {
         .to_string()
 }
 
+/// Раздел из адреса мода: `/beamng.drive-mods/cars/x.html` → `cars`.
+/// Нужен, чтобы карточка из другого раздела на странице категории не считалась
+/// модом этого раздела.
+pub fn category_slug(url: &url::Url) -> Option<String> {
+    let segments: Vec<&str> = url
+        .path_segments()
+        .map(|segments| segments.filter(|part| !part.is_empty()).collect())
+        .unwrap_or_default();
+    if segments.len() < 3 || !segments[0].eq_ignore_ascii_case("beamng.drive-mods") {
+        return None;
+    }
+    let section = segments[1].to_ascii_lowercase();
+    if matches!(
+        section.as_str(),
+        "page" | "search" | "version" | "user" | "tag"
+    ) {
+        return None;
+    }
+    Some(section)
+}
+
 fn preview_of(body: &str) -> Option<url::Url> {
     let captures = POST_IMAGE.captures(body)?;
     let raw = decode(captures.name("s")?.as_str());
@@ -260,6 +281,29 @@ mod tests {
             .join("../../fixtures/modland")
             .join(name);
         std::fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn category_slug_comes_from_the_mod_url() {
+        let car = url::Url::parse(
+            "https://www.modland.net/beamng.drive-mods/cars/raevo-olympia-2027.html",
+        )
+        .unwrap();
+        assert_eq!(category_slug(&car).as_deref(), Some("cars"));
+        let map =
+            url::Url::parse("https://www.modland.net/beamng.drive-mods/maps/moscow-region.html")
+                .unwrap();
+        assert_eq!(category_slug(&map).as_deref(), Some("maps"));
+        assert!(
+            category_slug(&url::Url::parse("https://www.modland.net/beamng.drive-mods").unwrap())
+                .is_none()
+        );
+        assert!(
+            category_slug(
+                &url::Url::parse("https://www.modland.net/beamng.drive-mods/search/bmw").unwrap()
+            )
+            .is_none()
+        );
     }
 
     #[test]
