@@ -109,16 +109,20 @@
     void listen<{ path: string }>("incoming://download", (event) => {
       const path = event.payload.path;
       if (isArchivePath(path)) incomingQueue.add([path], true);
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlistenDownload = stop;
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlistenDownload = stop;
+      })
+      .catch(() => {});
     void listen<PanelInstalled>("download://installed", (event) => {
       if (!disposed) panelInstalled(event.payload);
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlistenPanel = stop;
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlistenPanel = stop;
+      })
+      .catch(() => {});
     void getCurrentWebview()
       .onDragDropEvent((event) => {
         const payload = event.payload;

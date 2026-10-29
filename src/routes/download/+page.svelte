@@ -295,9 +295,11 @@
   onMount(() => {
     let disposed = false;
     const stops: (() => void)[] = [];
-    void downloadPanelState().then((value) => {
-      if (!disposed && value) context = value;
-    });
+    void downloadPanelState()
+      .then((value) => {
+        if (!disposed && value) context = value;
+      })
+      .catch(() => {});
     void listenDownloadContext((value) => {
       context = value;
       handledPath = "";
@@ -306,28 +308,36 @@
       status = "Нажмите Download на странице";
       detail = "Скачайте архив на странице — остальное программа сделает сама.";
       error = null;
-    }).then((stop) => {
-      if (disposed) stop();
-      else stops.push(stop);
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
+      })
+      .catch(() => {});
     void listenDownloadState((value) => {
       step = value.step;
       status = value.title;
       detail = value.detail;
       error = value.error ?? null;
-    }).then((stop) => {
-      if (disposed) stop();
-      else stops.push(stop);
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
+      })
+      .catch(() => {});
     void listenDownloadReady((ready) => {
       if (!disposed) void prepare(ready.path);
-    }).then((stop) => {
-      if (disposed) stop();
-      else stops.push(stop);
-    });
-    void downloadReady().then((path) => {
-      if (!disposed && path) void prepare(path);
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
+      })
+      .catch(() => {});
+    void downloadReady()
+      .then((path) => {
+        if (!disposed && path) void prepare(path);
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
       for (const stop of stops) stop();

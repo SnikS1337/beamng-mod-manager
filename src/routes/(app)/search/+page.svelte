@@ -80,9 +80,11 @@
       const url = card.listings.find((listing) => listing.previewUrl)?.previewUrl;
       if (url) {
         requestedPreviews.add(card.id);
-        void searchPreview(url).then((value) => {
-          if (value && generation === previewGeneration) previews[card.id] = value;
-        });
+        void searchPreview(url)
+          .then((value) => {
+            if (value && generation === previewGeneration) previews[card.id] = value;
+          })
+          .catch(() => {});
         continue;
       }
       // В выдаче ModsGaming картинок нет — берём её со страницы мода, как legacy.

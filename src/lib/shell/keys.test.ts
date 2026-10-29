@@ -10,6 +10,12 @@ describe("isShortcut", () => {
     expect(isShortcut(press({ ctrlKey: true, code: "KeyF", key: "а" }), "f")).toBe(true);
   });
 
+  it("Ctrl+Shift+буква — не наша команда", () => {
+    expect(
+      isShortcut(press({ ctrlKey: true, shiftKey: true, code: "KeyZ", key: "Z" }), "z"),
+    ).toBe(false);
+  });
+
   it("и в английской, и без Ctrl не срабатывает", () => {
     expect(isShortcut(press({ ctrlKey: true, code: "KeyK", key: "k" }), "k")).toBe(true);
     expect(isShortcut(press({ code: "KeyK", key: "k" }), "k")).toBe(false);
