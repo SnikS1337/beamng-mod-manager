@@ -235,6 +235,23 @@ mod tests {
     }
 
     #[test]
+    fn history_ignores_case_and_unicode_form() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "A"));
+        store.add_file_history("a", "A.ZIP");
+        assert!(
+            store.file_history("a").is_empty(),
+            "имя в другом регистре — не прошлый файл"
+        );
+
+        let decomposed = "cafe\u{301}.zip";
+        let composed = "café.zip";
+        store.add_file_history("a", decomposed);
+        store.add_file_history("a", composed);
+        assert_eq!(store.file_history("a"), vec![composed.to_string()]);
+    }
+
+    #[test]
     fn save_check_requires_binding() {
         let store = InMemoryLibraryStore::new();
         store.upsert_mod(installed("a", "A"));

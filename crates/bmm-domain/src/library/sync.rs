@@ -7,7 +7,7 @@ use crate::filename;
 use crate::text::TitleNormalizer;
 use crate::versioning::SizeComparer;
 
-use super::{DiskMod, InstalledMod, LibraryStore};
+use super::{DiskMod, InstalledMod, LibraryStore, file_key};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncReport {
@@ -232,7 +232,7 @@ pub fn rename_file(store: &dyn LibraryStore, old_file: &str, new_file: &str, siz
     let Some(old) = store
         .mods()
         .into_iter()
-        .find(|item| item.file_name.eq_ignore_ascii_case(old_file))
+        .find(|item| file_key(&item.file_name) == file_key(old_file))
     else {
         return false;
     };
@@ -277,7 +277,7 @@ fn new_mod(store: &dyn LibraryStore, disk: &DiskMod, now: DateTime<FixedOffset>)
 }
 
 fn key_of(file_name: &str) -> String {
-    file_name.to_lowercase()
+    file_key(file_name)
 }
 
 fn name_key(file_name: &str) -> String {
@@ -594,6 +594,21 @@ mod tests {
         assert_eq!(store.bindings().len(), 1);
         assert_eq!(store.file_history("acadia"), vec!["acadia.zip"]);
         assert!(!rename_file(&store, "missing.zip", "x.zip", 1));
+    }
+
+    #[test]
+    fn rename_file_matches_cyrillic_case_and_unicode_form() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("lada", "МОД.zip", "мод", 100));
+        assert!(rename_file(&store, "мод.zip", "мод_новая.zip", 100));
+        assert_eq!(store.get_mod("lada").unwrap().file_name, "мод_новая.zip");
+
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("cafe", "cafe\u{301}.zip", "cafe", 100));
+        assert!(
+            rename_file(&store, "café.zip", "cafe_new.zip", 100),
+            "NFD и NFC — одно имя файла"
+        );
     }
 
     #[test]

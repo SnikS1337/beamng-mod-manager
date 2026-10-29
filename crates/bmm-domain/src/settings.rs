@@ -273,7 +273,7 @@ fn normalized_folders(values: &[String]) -> Vec<String> {
         };
         if result
             .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&folder))
+            .any(|existing| existing.to_lowercase() == folder.to_lowercase())
         {
             continue;
         }

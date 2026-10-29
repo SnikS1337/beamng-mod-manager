@@ -289,6 +289,8 @@ fn replace_round(text: &str) -> String {
     result
 }
 
+use unicode_normalization::UnicodeNormalization;
+
 pub struct TitleNormalizer;
 
 impl TitleNormalizer {
@@ -296,9 +298,12 @@ impl TitleNormalizer {
         if title.trim().is_empty() {
             return Vec::new();
         }
+        // Имена из zip, собранных на macOS, приходят в NFD; с сайта — в NFC.
+        // Без приведения «é» из двух символов и один символ — разные токены.
+        let normalized: String = title.nfc().collect();
 
         let p = patterns();
-        let mut text = replace_all(&p.square, title, " ");
+        let mut text = replace_all(&p.square, &normalized, " ");
         text = replace_round(&text);
         text = replace_all(&p.leading_mod, &text, " ");
         text = replace_all(&p.leading_kind, &text, " ");
@@ -373,6 +378,21 @@ fn usable(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unicode_forms_are_the_same_title() {
+        let composed = "Café Racer";
+        let decomposed = "Cafe\u{301} Racer";
+        assert_eq!(
+            TitleNormalizer::tokens(composed),
+            TitleNormalizer::tokens(decomposed)
+        );
+        assert_eq!(
+            TitleNormalizer::similarity(composed, decomposed),
+            1.0,
+            "NFD и NFC не должны давать разные токены"
+        );
+    }
 
     #[test]
     fn normalize_removes_service_wrappers() {

@@ -95,7 +95,7 @@ impl MatchDecisionStore {
     }
 
     pub fn all(&self) -> Vec<MatchDecisionEntry> {
-        let items = self.items.lock().unwrap();
+        let items = self.items.lock().unwrap_or_else(|error| error.into_inner());
         items.values().cloned().collect()
     }
 
@@ -117,7 +117,7 @@ impl MatchDecisionStore {
             decided_at_utc: (self.now)(),
         };
 
-        let mut items = self.items.lock().unwrap();
+        let mut items = self.items.lock().unwrap_or_else(|error| error.into_inner());
         let previous = items.insert(key.clone(), entry);
         if let Err(error) = self.save_locked(&items) {
             match previous {
@@ -141,7 +141,7 @@ impl MatchDecisionStore {
         }
         let key = Self::pair(key_a, key_b);
 
-        let mut items = self.items.lock().unwrap();
+        let mut items = self.items.lock().unwrap_or_else(|error| error.into_inner());
         let Some(previous) = items.remove(&key) else {
             return Ok(());
         };
@@ -211,7 +211,7 @@ impl MatchDecisions for MatchDecisionStore {
             return None;
         }
         let key = Self::pair(key_a, key_b);
-        let items = self.items.lock().unwrap();
+        let items = self.items.lock().unwrap_or_else(|error| error.into_inner());
         items.get(&key).map(|entry| entry.decision)
     }
 }
