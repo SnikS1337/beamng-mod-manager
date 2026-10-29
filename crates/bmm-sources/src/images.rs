@@ -10,7 +10,7 @@ use url::Url;
 
 use bmm_domain::atomic;
 
-use crate::net::{PageFetcher, USER_AGENT, safe_redirect_policy};
+use crate::net::{PageFetcher, PoliteFetcher, USER_AGENT, safe_redirect_policy};
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 /// Картинки поиска копятся с каждым запросом; больше этого — старые уходят.
@@ -38,6 +38,7 @@ pub struct RemoteImageCache {
     root: PathBuf,
     client: Option<reqwest::blocking::Client>,
     fallback: Option<Arc<dyn PageFetcher>>,
+    polite: Option<Arc<PoliteFetcher>>,
 }
 
 impl RemoteImageCache {
@@ -62,7 +63,15 @@ impl RemoteImageCache {
             root,
             client,
             fallback,
+            polite: None,
         }
+    }
+
+    /// Общая с сайтом очередь запросов: картинки не обгоняют страницы и не бьют
+    /// хост пачкой десятков параллельных запросов.
+    pub fn with_polite(mut self, polite: Arc<PoliteFetcher>) -> Self {
+        self.polite = Some(polite);
+        self
     }
 
     pub fn root(&self) -> &Path {
@@ -107,6 +116,7 @@ impl RemoteImageCache {
     }
 
     pub fn cached(&self, url: &Url) -> Option<RemoteImage> {
+        let url = &secure_request_url(url);
         let key = key_of(url);
         let mut found: Vec<(std::time::SystemTime, &'static str, PathBuf)> = Vec::new();
         for extension in ["jpg", "jpeg", "png", "webp"] {
@@ -140,9 +150,20 @@ impl RemoteImageCache {
     }
 
     pub fn fetch(&self, url: &Url) -> Result<Option<RemoteImage>, ImageError> {
+        let url = &secure_request_url(url);
         if let Some(cached) = self.cached(url) {
             return Ok(Some(cached));
         }
+        let Some(result) = self.polite.as_ref().map_or_else(
+            || Some(self.fetch_network(url)),
+            |polite| polite.image_slot(url, || self.fetch_network(url)),
+        ) else {
+            return Ok(None);
+        };
+        result
+    }
+
+    fn fetch_network(&self, url: &Url) -> Result<Option<RemoteImage>, ImageError> {
         match self.download(url) {
             Ok(Some((content_type, bytes))) => self.store(url, &content_type, bytes),
             Ok(None) | Err(ImageError::Network) | Err(ImageError::NotImage) => {
@@ -240,6 +261,17 @@ fn safe_redirect_policy_allows(url: &Url) -> bool {
 #[cfg(test)]
 fn safe_redirect_policy_allows(_: &Url) -> bool {
     true
+}
+
+#[cfg(not(test))]
+fn secure_request_url(url: &Url) -> Url {
+    crate::net::secure_url(url)
+}
+
+// В тестах поднят локальный HTTP-сервер: его адрес не поднимаем.
+#[cfg(test)]
+fn secure_request_url(url: &Url) -> Url {
+    url.clone()
 }
 
 fn key_of(url: &Url) -> String {

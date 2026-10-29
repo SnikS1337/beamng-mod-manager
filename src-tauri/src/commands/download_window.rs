@@ -92,9 +92,21 @@ fn clear_ready() {
     *READY.lock().unwrap_or_else(|error| error.into_inner()) = None;
 }
 
+/// Сессия окна закончилась: панель, контекст и метки перехвата больше не нужны.
+/// Незаконченная загрузка после этого снова видна сторожу «Загрузок».
+fn clear_session() {
+    clear_ready();
+    *CONTEXT.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    INTERCEPTED
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clear();
+    crate::commands::downloads::forget_caught();
+}
+
 #[tauri::command]
 pub fn download_close(app: AppHandle) {
-    clear_ready();
+    clear_session();
     if let Some(window) = app.get_window(WINDOW_LABEL) {
         let _ = window.close();
     }
@@ -148,6 +160,13 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         .center()
         .build()
         .map_err(|error| AppError::new("window", error.to_string()))?;
+    // Окно могли закрыть не кнопкой панели (Alt+F4, выход из программы):
+    // метки перехвата не должны пережить сессию окна.
+    window.on_window_event(|event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            clear_session();
+        }
+    });
 
     let panel = match window.add_child(
         WebviewBuilder::new(PANEL_LABEL, panel_url(&app)),
