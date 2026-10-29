@@ -211,7 +211,9 @@ impl SettingsStore {
     }
 
     fn quarantine(&self, why: &str) -> SettingsLoadResult {
-        let warning = match atomic::quarantine_file(&self.path, (self.now)()) {
+        let quarantined = atomic::quarantine_file(&self.path, (self.now)());
+        let blocked = quarantined.is_none();
+        let warning = match quarantined {
             Some(target) => {
                 let name = target
                     .file_name()
@@ -219,13 +221,15 @@ impl SettingsStore {
                     .unwrap_or_default();
                 format!("{why}: сохранён как {name}, использованы настройки по умолчанию")
             }
-            None => format!("{why}, использованы настройки по умолчанию"),
+            None => format!(
+                "{why}, файл убрать не удалось; использованы настройки по умолчанию, сохранение остановлено"
+            ),
         };
 
         SettingsLoadResult {
             settings: AppSettings::default(),
             warnings: vec![warning],
-            save_blocked: false,
+            save_blocked: blocked,
         }
     }
 }
@@ -325,6 +329,29 @@ mod tests {
         let path = dir.join("settings.json");
         fs::write(&path, text).unwrap();
         SettingsStore::new(path, fixed_clock())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unremovable_corrupt_file_blocks_saving() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, "{ это не json").unwrap();
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        let store = SettingsStore::new(path, fixed_clock());
+        let result = store.load();
+        assert!(result.save_blocked, "{:?}", result.warnings);
+        assert!(
+            result.warnings[0].contains("остановлено"),
+            "{:?}",
+            result.warnings
+        );
     }
 
     #[test]
