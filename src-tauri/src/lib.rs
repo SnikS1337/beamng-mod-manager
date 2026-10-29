@@ -351,14 +351,19 @@ fn windows_to_close(closed: &str, open: &[String]) -> Vec<String> {
 
 const MAIN_WINDOW: &str = "main";
 
-/// Имя файла кеша приходит из адреса `bmm.localhost`. Пропускаем только ключи,
-/// которые выдаёт программа: без разделителей, двоеточий и переходов вверх.
+/// Имя файла кеша приходит из адреса `bmm.localhost`. Ключи выдаёт программа:
+/// это 24 hex-символа и расширение картинки. Всё остальное — не наш файл;
+/// заодно отсекаются имена устройств Windows вроде `CON`.
 fn safe_cache_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
-        && !name.contains("..")
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    (8..=64).contains(&stem.len())
+        && stem.chars().all(|ch| ch.is_ascii_hexdigit())
+        && matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "webp"
+        )
 }
 
 fn preview_protocol(
@@ -460,8 +465,14 @@ mod tests {
             "a\\b.jpg",
             "a%2fb.jpg",
             "a\0.jpg",
+            "CON",
+            "NUL.png",
+            "live.jpg",
+            "0123456789ab.gif",
+            "0123456789ab",
         ] {
             assert!(!safe_cache_name(name), "пропущено: {name:?}");
         }
+        assert!(safe_cache_name("01234567.png"), "короткий ключ допустим");
     }
 }
