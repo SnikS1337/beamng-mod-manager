@@ -52,7 +52,10 @@ impl MatchDecisionStore {
     pub fn new(path: Option<PathBuf>, now: Clock) -> Self {
         let mut warnings = Vec::new();
         let (items, blocked) = match &path {
-            Some(path) => load(path, &now, &mut warnings),
+            Some(path) => {
+                atomic::cleanup_stale_temps(path);
+                load(path, &now, &mut warnings)
+            }
             None => (BTreeMap::new(), false),
         };
         Self {

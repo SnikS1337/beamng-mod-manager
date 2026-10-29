@@ -43,6 +43,7 @@ pub struct JsonLibraryStore {
 impl JsonLibraryStore {
     pub fn new(path: impl Into<PathBuf>, now: Clock) -> Self {
         let path = path.into();
+        atomic::cleanup_stale_temps(&path);
         let (inner, warnings, save_blocked) = load(&path, &now);
         Self {
             path,
