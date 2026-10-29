@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -92,10 +92,29 @@ pub(crate) struct DownloadReady {
 }
 
 struct Scanner {
-    seen: HashSet<PathBuf>,
+    seen: HashSet<SeenFile>,
     pending: HashMap<PathBuf, (u64, Instant)>,
     watched: HashSet<PathBuf>,
     stable_after: Duration,
+}
+
+/// Уже показанный файл. Размер и время нужны, чтобы архив, перезаписанный
+/// на месте, снова считался новым.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SeenFile {
+    path: PathBuf,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl SeenFile {
+    fn of(path: PathBuf, metadata: &std::fs::Metadata) -> Self {
+        Self {
+            path,
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }
+    }
 }
 
 impl Scanner {
@@ -119,14 +138,7 @@ impl Scanner {
             };
             for entry in entries.filter_map(Result::ok) {
                 let path = entry.path();
-                if !is_candidate(&path) || self.seen.contains(&path) {
-                    continue;
-                }
-                if take_caught(&path) {
-                    // Файл уже ведёт окно загрузки: его панель сама предложит установку.
-                    // Второй раз через `incoming://download` — это двойной диалог.
-                    self.pending.remove(&path);
-                    self.seen.insert(path);
+                if !is_candidate(&path) {
                     continue;
                 }
                 let Ok(metadata) = entry.metadata() else {
@@ -135,12 +147,23 @@ impl Scanner {
                 if !metadata.is_file() {
                     continue;
                 }
+                let signature = SeenFile::of(path.clone(), &metadata);
+                if self.seen.contains(&signature) {
+                    continue;
+                }
+                if take_caught(&path) {
+                    // Файл уже ведёт окно загрузки: его панель сама предложит установку.
+                    // Второй раз через `incoming://download` — это двойной диалог.
+                    self.pending.remove(&path);
+                    self.seen.insert(signature);
+                    continue;
+                }
                 let size = metadata.len();
                 match self.pending.get(&path) {
                     Some((previous, since)) if *previous == size => {
                         if now.duration_since(*since) >= self.stable_after {
                             self.pending.remove(&path);
-                            self.seen.insert(path.clone());
+                            self.seen.insert(signature);
                             ready.push(path);
                         }
                     }
@@ -152,7 +175,7 @@ impl Scanner {
         }
         self.watched.retain(|folder| folders.contains(folder));
         self.pending.retain(|path, _| path.is_file());
-        self.seen.retain(|path| path.is_file());
+        self.seen.retain(|file| file.path.is_file());
         ready
     }
 
@@ -162,8 +185,14 @@ impl Scanner {
         };
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            if is_candidate(&path) {
-                self.seen.insert(path);
+            if !is_candidate(&path) {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_file() {
+                self.seen.insert(SeenFile::of(path, &metadata));
             }
         }
     }
@@ -172,9 +201,10 @@ impl Scanner {
 pub fn spawn(app: AppHandle, state: Arc<AppState>) {
     std::thread::spawn(move || {
         let mut scanner = Scanner::new(STABLE_AFTER);
+        let mut cached = None;
         loop {
             std::thread::sleep(Duration::from_millis(600));
-            let settings = state.settings.load().settings;
+            let settings = settings_cached(&state, &mut cached);
             let folders = watch_folders(&settings, expecting());
             for path in scanner.scan(&folders, Instant::now()) {
                 let _ = app.emit(
@@ -186,6 +216,25 @@ pub fn spawn(app: AppHandle, state: Arc<AppState>) {
             }
         }
     });
+}
+
+/// Настройки читаем только когда файл изменился: сторож просыпается каждые 600 мс,
+/// а полный разбор JSON десять раз в минуту конкурирует с сохранением.
+fn settings_cached(
+    state: &AppState,
+    cached: &mut Option<((SystemTime, u64), bmm_domain::settings::AppSettings)>,
+) -> bmm_domain::settings::AppSettings {
+    let stamp = std::fs::metadata(state.paths.settings())
+        .ok()
+        .and_then(|meta| meta.modified().ok().map(|modified| (modified, meta.len())));
+    if let (Some((known, settings)), Some(stamp)) = (cached.as_ref(), stamp)
+        && *known == stamp
+    {
+        return settings.clone();
+    }
+    let settings = state.settings.load().settings;
+    *cached = stamp.map(|stamp| (stamp, settings.clone()));
+    settings
 }
 
 fn watch_folders(settings: &bmm_domain::settings::AppSettings, expecting: bool) -> Vec<PathBuf> {
@@ -425,6 +474,56 @@ mod tests {
             ),
             vec![path],
             "после закрытия окна архив снова предлагается"
+        );
+    }
+
+    #[test]
+    fn rewritten_archive_is_offered_again() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().to_path_buf();
+        let path = folder.join("car.zip");
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), start)
+                .is_empty()
+        );
+
+        std::fs::write(&path, b"one").unwrap();
+        assert!(
+            scanner
+                .scan(
+                    std::slice::from_ref(&folder),
+                    start + Duration::from_millis(10)
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            scanner.scan(
+                std::slice::from_ref(&folder),
+                start + Duration::from_millis(20)
+            ),
+            vec![path.clone()]
+        );
+
+        // Тот же путь, другой файл: новый размер — новый архив.
+        std::fs::write(&path, b"two is longer").unwrap();
+        assert!(
+            scanner
+                .scan(
+                    std::slice::from_ref(&folder),
+                    start + Duration::from_millis(30)
+                )
+                .is_empty(),
+            "снова ждём стабильности"
+        );
+        assert_eq!(
+            scanner.scan(
+                std::slice::from_ref(&folder),
+                start + Duration::from_millis(40)
+            ),
+            vec![path]
         );
     }
 

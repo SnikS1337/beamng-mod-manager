@@ -1,5 +1,7 @@
 //! Чтение и сохранение настроек приложения.
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -179,6 +181,7 @@ pub(crate) fn save_settings(
     }
     let mut current = loaded.settings;
     settings.apply_to(&mut current);
+    sanitize_folders(&mut current);
     state
         .settings
         .save(&current)
@@ -192,10 +195,82 @@ pub(crate) fn save_settings(
     Ok(SettingsDto::from_settings(&saved))
 }
 
+/// Папка, которую можно держать в настройках: полный путь, не корень диска и не
+/// системный каталог. Иначе удаление скачанных архивов и `create_dir_all`
+/// получают слишком широкие права.
+pub(crate) fn acceptable_folder(path: &Path) -> bool {
+    if !path.is_absolute()
+        || path.parent().is_none()
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let lower = path.to_string_lossy().to_lowercase();
+    let roots: Vec<String> = [
+        "SystemRoot",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramData",
+    ]
+    .iter()
+    .filter_map(std::env::var_os)
+    .map(|value| value.to_string_lossy().to_lowercase())
+    .filter(|root| !root.is_empty())
+    .collect();
+    !roots.iter().any(|root| {
+        lower == *root
+            || lower.starts_with(&format!("{root}\\"))
+            || lower.starts_with(&format!("{root}/"))
+    })
+}
+
+fn sanitize_folder(raw: &str) -> Option<String> {
+    let path = PathBuf::from(raw.trim());
+    acceptable_folder(&path).then(|| path.display().to_string())
+}
+
+fn sanitize_folders(settings: &mut AppSettings) {
+    settings.downloads_folder = settings
+        .downloads_folder
+        .as_deref()
+        .and_then(sanitize_folder);
+    let mut seen = HashSet::new();
+    settings.watch_folders = settings
+        .watch_folders
+        .iter()
+        .filter_map(|folder| sanitize_folder(folder))
+        .filter(|folder| seen.insert(folder.to_lowercase()))
+        .take(10)
+        .collect();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bmm_domain::settings_store::SettingsStore;
+
+    #[test]
+    fn unsafe_folders_are_dropped_from_settings() {
+        let mut settings = AppSettings {
+            downloads_folder: Some("C:\\".to_string()),
+            watch_folders: vec![
+                "relative".to_string(),
+                "D:\\Downloads".to_string(),
+                "d:\\downloads".to_string(),
+            ],
+            ..AppSettings::default()
+        };
+        sanitize_folders(&mut settings);
+        assert_eq!(
+            settings.downloads_folder, None,
+            "корень диска не папка загрузок"
+        );
+        assert_eq!(settings.watch_folders, vec!["D:\\Downloads".to_string()]);
+        assert!(!acceptable_folder(Path::new("relative")));
+        assert!(!acceptable_folder(Path::new("D:\\Downloads\\..")));
+    }
 
     #[test]
     fn every_setting_survives_the_window_round_trip() {

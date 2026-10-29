@@ -192,6 +192,7 @@ fn is_download_source(
     dirs.push(app_root.join("downloads"));
     dirs.extend(settings.watch_folders.iter().map(PathBuf::from));
     dirs.iter()
+        .filter(|folder| crate::commands::settings::acceptable_folder(folder))
         .filter_map(|folder| fs::canonicalize(folder).ok())
         .any(|folder| path.starts_with(folder))
 }
@@ -237,7 +238,7 @@ fn inspect_paths(state: &AppState, paths: &[String]) -> Result<Vec<IncomingArchi
     cleanup_incoming(&root);
     let cancel = AtomicBool::new(false);
     let mut result = Vec::new();
-    for raw in paths.iter().take(8) {
+    for raw in paths {
         let source = PathBuf::from(raw);
         let work = root.join(format!("{}-{}", std::process::id(), unique_suffix()));
         let analysis = incoming::analyze(
@@ -696,6 +697,24 @@ mod tests {
         assert!(result[1].problem.is_some(), "пропавший файл назван");
         assert!(result[2].problem.is_none(), "{:?}", result[2].problem);
         assert_eq!(result[2].items.len(), 1);
+        for archive in &result {
+            let _ = fs::remove_dir_all(&archive.work_dir);
+        }
+    }
+
+    #[test]
+    fn every_dropped_archive_gets_an_answer() {
+        let (temp, state) = setup();
+        let mut paths = Vec::new();
+        for index in 0..12 {
+            let path = temp.path().join(format!("mod{index}.zip"));
+            make_zip(&path, b"{}");
+            paths.push(path.display().to_string());
+        }
+
+        let result = inspect_paths(&state, &paths).unwrap();
+
+        assert_eq!(result.len(), 12, "ни один архив не потерялся");
         for archive in &result {
             let _ = fs::remove_dir_all(&archive.work_dir);
         }
