@@ -51,6 +51,8 @@ pub enum FetchError {
     Network,
     #[error("ответ сайта слишком большой")]
     TooLarge,
+    #[error("запрос отменён")]
+    Cancelled,
     #[error("{0}")]
     Message(String),
     #[error("этот сайт не принимает POST")]
@@ -65,6 +67,10 @@ impl FetchError {
 
 pub trait PageFetcher: Send + Sync {
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError>;
+    /// GET с отменой: скрытый браузер проверяет её во время ожидания страницы.
+    fn get_cancellable(&self, url: &Url, _cancel: &AtomicBool) -> Result<RawResponse, FetchError> {
+        self.get(url)
+    }
     /// GET с валидаторами кэша; по умолчанию обычный GET (браузерные страницы
     /// и тестовые загрузчики не умеют 304).
     fn get_conditional(
@@ -75,14 +81,38 @@ pub trait PageFetcher: Send + Sync {
     ) -> Result<RawResponse, FetchError> {
         self.get(url)
     }
+    fn get_conditional_cancellable(
+        &self,
+        url: &Url,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+        _cancel: &AtomicBool,
+    ) -> Result<RawResponse, FetchError> {
+        self.get_conditional(url, etag, last_modified)
+    }
     fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
         let _ = (url, form);
         Err(FetchError::Unsupported)
+    }
+    fn post_form_cancellable(
+        &self,
+        url: &Url,
+        form: &[(&str, &str)],
+        _cancel: &AtomicBool,
+    ) -> Result<RawResponse, FetchError> {
+        self.post_form(url, form)
     }
     /// Картинка вместе с её типом; нужен сайтам, которые не отдают файлы обычным запросом.
     fn get_bytes(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
         let _ = url;
         Ok(None)
+    }
+    fn get_bytes_cancellable(
+        &self,
+        url: &Url,
+        _cancel: &AtomicBool,
+    ) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+        self.get_bytes(url)
     }
 }
 
@@ -224,6 +254,14 @@ impl PageFetcher for RoutingPageFetcher {
         }
     }
 
+    fn get_cancellable(&self, url: &Url, cancel: &AtomicBool) -> Result<RawResponse, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.get_cancellable(url, cancel)
+        } else {
+            self.plain.get_cancellable(url, cancel)
+        }
+    }
+
     fn get_conditional(
         &self,
         url: &Url,
@@ -237,6 +275,21 @@ impl PageFetcher for RoutingPageFetcher {
         }
     }
 
+    fn get_conditional_cancellable(
+        &self,
+        url: &Url,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+        cancel: &AtomicBool,
+    ) -> Result<RawResponse, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.get_cancellable(url, cancel)
+        } else {
+            self.plain
+                .get_conditional_cancellable(url, etag, last_modified, cancel)
+        }
+    }
+
     fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
         if self.uses_browser(url) {
             self.browser.post_form(url, form)
@@ -245,11 +298,36 @@ impl PageFetcher for RoutingPageFetcher {
         }
     }
 
+    fn post_form_cancellable(
+        &self,
+        url: &Url,
+        form: &[(&str, &str)],
+        cancel: &AtomicBool,
+    ) -> Result<RawResponse, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.post_form_cancellable(url, form, cancel)
+        } else {
+            self.plain.post_form_cancellable(url, form, cancel)
+        }
+    }
+
     fn get_bytes(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
         if self.uses_browser(url) {
             self.browser.get_bytes(url)
         } else {
             self.plain.get_bytes(url)
+        }
+    }
+
+    fn get_bytes_cancellable(
+        &self,
+        url: &Url,
+        cancel: &AtomicBool,
+    ) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+        if self.uses_browser(url) {
+            self.browser.get_bytes_cancellable(url, cancel)
+        } else {
+            self.plain.get_bytes_cancellable(url, cancel)
         }
     }
 }
@@ -682,6 +760,9 @@ impl PoliteFetcher {
         cancel: &AtomicBool,
     ) -> FetchResult {
         let key = cache_key(url, form.as_deref());
+        if cancel.load(Ordering::Relaxed) {
+            return cancelled();
+        }
         if let Some(response) = self.cached(&key) {
             return FetchResult::ok(response);
         }
@@ -771,19 +852,30 @@ impl PoliteFetcher {
                         .iter()
                         .map(|(key, value)| (key.as_str(), value.as_str()))
                         .collect();
-                    self.fetcher.post_form(url, &pairs)
+                    self.fetcher.post_form_cancellable(url, &pairs, cancel)
                 }
                 None => match &conditional {
-                    Some((etag, last_modified)) => {
-                        self.fetcher
-                            .get_conditional(url, etag.as_deref(), last_modified.as_deref())
-                    }
-                    None => self.fetcher.get(url),
+                    Some((etag, last_modified)) => self.fetcher.get_conditional_cancellable(
+                        url,
+                        etag.as_deref(),
+                        last_modified.as_deref(),
+                        cancel,
+                    ),
+                    None => self.fetcher.get_cancellable(url, cancel),
                 },
             };
             lock(&entry.inner).last_request = Some(Instant::now());
+            // Отменённый прогон не должен менять общий статус сайта и кэш:
+            // новый поиск может идти уже с другим состоянием.
+            if cancel.load(Ordering::Relaxed) {
+                return cancelled();
+            }
             match result {
+                Err(FetchError::Cancelled) => return cancelled(),
                 Ok(response) => {
+                    if cancel.load(Ordering::Relaxed) {
+                        return cancelled();
+                    }
                     if response.status == 304 {
                         if let Some(cached) = self.use_cached_not_modified(&key, &response) {
                             let mut inner = lock(&entry.inner);
@@ -884,6 +976,9 @@ impl PoliteFetcher {
                     }
                 }
                 Err(error) => {
+                    if cancel.load(Ordering::Relaxed) {
+                        return cancelled();
+                    }
                     last_message = error.user_message();
                     // Legacy повторяет и таймаут, и обрыв соединения (IOException /
                     // HttpRequestException). Прочие ошибки (слишком большой ответ,
@@ -1931,6 +2026,21 @@ mod tests {
         assert!(is_challenge_page(
             "<html><body><div id=\"challenge-stage\"></div></body></html>"
         ));
+    }
+
+    #[test]
+    fn cancelled_request_does_not_poison_source_status() {
+        let fake = FakeFetcher::new(vec![Ok(response(
+            200,
+            "<html><head><title>BMW E34</title></head></html>",
+        ))]);
+        let polite = PoliteFetcher::new(fake.clone(), options());
+        let page = url("https://example.org/mod");
+        let cancel = AtomicBool::new(true);
+        let result = polite.get_cancellable("site", &page, &cancel);
+        assert_eq!(result.status, SourceStatus::Unavailable);
+        assert_eq!(polite.status_of("site"), SourceStatus::Ok);
+        assert!(fake.calls.lock().unwrap().is_empty());
     }
 
     #[test]

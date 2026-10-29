@@ -694,8 +694,14 @@ impl Runner {
             );
         }
         let mut last_error = None;
-        for query in queries {
+        let started = Instant::now();
+        for (index, query) in queries.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            // Варианты (транслит/синонимы) не должны съедать дедлайн целиком:
+            // если основной запрос уже долгий, остальные сайты важнее.
+            if index > 0 && started.elapsed() >= self.options.per_source_timeout / 2 {
                 break;
             }
             match source.search(query, cancel) {
@@ -1348,6 +1354,33 @@ mod tests {
         let more = service.browse(ModKind::Map, 3, 2, &AtomicBool::new(false), None);
         assert_eq!(*first.pages.lock().unwrap(), vec![1, 2, 3, 4]);
         assert_eq!(more.listings.len(), 4);
+    }
+
+    #[test]
+    fn slow_base_query_skips_variants() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let source = ScriptedSource::new("slow", move |query, _cancel| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            if query.contains("лада") {
+                std::thread::sleep(Duration::from_millis(150));
+                Ok(Vec::new())
+            } else {
+                Ok(vec![listing("slow", "1", "LADA Niva", Some("1.0"))])
+            }
+        });
+        let options = SearchOptions {
+            per_source_timeout: Duration::from_millis(200),
+            ..SearchOptions::default()
+        };
+        let response =
+            service_with(vec![source], options).search("лада", &AtomicBool::new(false), None);
+        assert!(response.cards.is_empty());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "вариант пропущен по времени"
+        );
     }
 
     #[test]

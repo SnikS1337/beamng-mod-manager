@@ -2,8 +2,9 @@
 //! не пускает. Окно живёт за краем экрана, страницы грузит по одной; куки общие
 //! с окном проверки «вы человек?». Капчу программа не решает и не обходит.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -82,8 +83,17 @@ impl BrowserPages {
         Ok(created)
     }
 
-    fn guard(&self) -> Result<MutexGuard<'_, ()>, FetchError> {
-        self.one.lock().map_err(|_| FetchError::Network)
+    fn guard_cancelled(&self, cancel: &AtomicBool) -> Result<MutexGuard<'_, ()>, FetchError> {
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(FetchError::Cancelled);
+            }
+            match self.one.try_lock() {
+                Ok(guard) => return Ok(guard),
+                Err(TryLockError::WouldBlock) => std::thread::sleep(POLL),
+                Err(TryLockError::Poisoned(_)) => return Err(FetchError::Network),
+            }
+        }
     }
 
     fn begin(&self, window: &WebviewWindow, url: &Url) -> Result<String, FetchError> {
@@ -117,13 +127,20 @@ impl BrowserPages {
 
 impl PageFetcher for BrowserPages {
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
-        let _one = self.guard()?;
+        self.get_cancellable(url, &AtomicBool::new(false))
+    }
+
+    fn get_cancellable(&self, url: &Url, cancel: &AtomicBool) -> Result<RawResponse, FetchError> {
+        let _one = self.guard_cancelled(cancel)?;
         let window = self.window()?;
         let token = self.begin(&window, url)?;
-        wait_loaded(&window, url, &token)?;
+        wait_loaded(&window, url, &token, cancel)?;
         let mut html = document_html(&window)?;
         let until = Instant::now() + SELF_CLEAR_WAIT;
         while is_challenge_page(&html) && Instant::now() < until {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(FetchError::Cancelled);
+            }
             std::thread::sleep(Duration::from_millis(600));
             if let Ok(next) = document_html(&window) {
                 html = next;
@@ -147,17 +164,31 @@ impl PageFetcher for BrowserPages {
     }
 
     fn get_bytes(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
-        let _one = self.guard()?;
+        self.get_bytes_cancellable(url, &AtomicBool::new(false))
+    }
+
+    fn get_bytes_cancellable(
+        &self,
+        url: &Url,
+        cancel: &AtomicBool,
+    ) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+        let _one = self.guard_cancelled(cancel)?;
         let window = self.window()?;
         let token = self.begin(&window, url)?;
-        wait_loaded(&window, url, &token)?;
+        wait_loaded(&window, url, &token, cancel)?;
         let mut page = document_html(&window).unwrap_or_default();
         let until = Instant::now() + SELF_CLEAR_WAIT;
         while is_challenge_page(&page) && Instant::now() < until {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(FetchError::Cancelled);
+            }
             std::thread::sleep(Duration::from_millis(600));
             if let Ok(next) = document_html(&window) {
                 page = next;
             }
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(FetchError::Cancelled);
         }
         if is_challenge_page(&page) {
             return Ok(None);
@@ -221,13 +252,21 @@ fn image_script() -> String {
     IMAGE_SCRIPT.replace("__MAX_IMAGE_BYTES__", &MAX_IMAGE_BYTES.to_string())
 }
 
-fn wait_loaded(window: &WebviewWindow, target: &Url, token: &str) -> Result<(), FetchError> {
+fn wait_loaded(
+    window: &WebviewWindow,
+    target: &Url,
+    token: &str,
+    cancel: &AtomicBool,
+) -> Result<(), FetchError> {
     let Some(target_host) = target.host_str() else {
         return Err(FetchError::Network);
     };
     let base = base_host(target_host);
     let deadline = Instant::now() + LOAD_TIMEOUT;
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(FetchError::Cancelled);
+        }
         if Instant::now() >= deadline {
             return Err(FetchError::Timeout);
         }
