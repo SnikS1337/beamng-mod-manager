@@ -1,6 +1,7 @@
 <script lang="ts">
   import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { open } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import Check from "phosphor-svelte/lib/Check";
@@ -140,11 +141,24 @@
   let updateProgress = $state(0);
   let unlistenUpdate: (() => void) | undefined;
   let unlistenUpdateState: (() => void) | undefined;
+  let unlistenClose: (() => void) | undefined;
   let disposed = false;
 
   onMount(() => {
     void boot();
     void loadAppUpdate();
+    if (isTauri()) {
+      // Окно закрывается без onDestroy: несохранённую правку дописываем до выхода.
+      void getCurrentWindow()
+        .onCloseRequested(async () => {
+          if (saveTimer) clearTimeout(saveTimer);
+          if (dirty) await save(true);
+        })
+        .then((stop) => {
+          if (disposed) stop();
+          else unlistenClose = stop;
+        });
+    }
     void listenAppUpdateProgress((value) => {
       updateProgress = value;
     }).then((stop) => {
@@ -162,6 +176,7 @@
       disposed = true;
       unlistenUpdate?.();
       unlistenUpdateState?.();
+      unlistenClose?.();
     };
   });
 
@@ -169,6 +184,7 @@
     disposed = true;
     unlistenUpdate?.();
     unlistenUpdateState?.();
+    unlistenClose?.();
     if (saveTimer) clearTimeout(saveTimer);
     if (dirty) void save(true);
   });
@@ -354,9 +370,13 @@
   }
 
   function mark(event?: Event) {
+    const control = event?.currentTarget as HTMLInputElement | HTMLSelectElement | null;
     // Пустое числовое поле — незаконченный ввод, а не «ноль»: ждём цифру.
-    const input = event?.currentTarget as HTMLInputElement | null;
-    if (input?.type === "number" && input.value.trim() === "") {
+    if (
+      control?.tagName === "INPUT" &&
+      (control as HTMLInputElement).type === "number" &&
+      control.value.trim() === ""
+    ) {
       revision += 1;
       return;
     }
@@ -364,7 +384,18 @@
     message = null;
     revision += 1;
     if (draft) appearance.preview(draft);
-    scheduleSave();
+    // Тумблер, тема или режим — дискретное действие: сохраняем сразу, чтобы
+    // закрытое окно не потеряло его. Набор текста ждёт паузы.
+    const discrete =
+      !control ||
+      control.tagName === "SELECT" ||
+      ["checkbox", "radio"].includes((control as HTMLInputElement).type);
+    if (discrete) {
+      if (saveTimer) clearTimeout(saveTimer);
+      void save(!numbersValid);
+    } else {
+      scheduleSave();
+    }
   }
 
   function scheduleSave() {

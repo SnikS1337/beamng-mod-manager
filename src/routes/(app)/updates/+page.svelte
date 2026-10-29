@@ -296,45 +296,40 @@
     }
   }
 
-  async function dismiss(finding: UpdateFinding) {
-    readToken += 1;
+  /** Мутация возвращает новый снимок: применяем его, только если ответ не устарел. */
+  async function applySnapshot(load: () => Promise<UpdatesSnapshot>) {
+    const token = ++readToken;
     try {
-      snapshot = await updatesDismiss(finding.modId);
+      const next = await load();
+      if (token === readToken) snapshot = next;
     } catch (reason) {
-      error = errorText(reason);
+      if (token === readToken) error = errorText(reason);
     }
+  }
+
+  async function dismiss(finding: UpdateFinding) {
+    await applySnapshot(() => updatesDismiss(finding.modId));
   }
 
   async function restore(finding: UpdateFinding) {
-    readToken += 1;
-    try {
-      snapshot = await updatesRestore(finding.modId);
-    } catch (reason) {
-      error = errorText(reason);
-    }
+    await applySnapshot(() => updatesRestore(finding.modId));
   }
 
   async function confirmPage(suggestion: PageSuggestion) {
-    readToken += 1;
-    try {
-      snapshot = await updatesConfirmPage(suggestion.modId);
-      toasts.show(`Следим за страницей «${suggestion.modName}»`, {
-        undo: async () => {
-          readToken += 1;
-          snapshot = await updatesUndoPage(suggestion);
-        },
-      });
-      // Подтверждённую страницу проверяем сразу: иначе обновление появится
-      // только после следующего запуска проверки.
-      const token = readToken;
-      void updatesCheckMod(suggestion.modId)
-        .then((next) => {
-          if (token === readToken) snapshot = next;
-        })
-        .catch(() => {});
-    } catch (reason) {
-      error = errorText(reason);
-    }
+    await applySnapshot(() => updatesConfirmPage(suggestion.modId));
+    toasts.show(`Следим за страницей «${suggestion.modName}»`, {
+      undo: async () => {
+        await applySnapshot(() => updatesUndoPage(suggestion));
+      },
+    });
+    // Подтверждённую страницу проверяем сразу: иначе обновление появится
+    // только после следующего запуска проверки.
+    const token = readToken;
+    void updatesCheckMod(suggestion.modId)
+      .then((next) => {
+        if (token === readToken) snapshot = next;
+      })
+      .catch(() => {});
   }
 
   async function verifyPage(suggestion: PageSuggestion) {
@@ -357,52 +352,40 @@
   }
 
   async function rejectPage(suggestion: PageSuggestion) {
-    readToken += 1;
-    try {
-      snapshot = await updatesRejectPage(suggestion.modId);
-      toasts.show(`Страница «${suggestion.modName}» отклонена`, {
-        undo: async () => {
-          readToken += 1;
-          snapshot = await updatesUndoPage(suggestion);
-        },
-      });
-    } catch (reason) {
-      error = errorText(reason);
-    }
+    await applySnapshot(() => updatesRejectPage(suggestion.modId));
+    toasts.show(`Страница «${suggestion.modName}» отклонена`, {
+      undo: async () => {
+        await applySnapshot(() => updatesUndoPage(suggestion));
+      },
+    });
   }
 
   async function unfollow(finding: UpdateFinding) {
-    readToken += 1;
-    try {
-      snapshot = await updatesUnfollow(finding.modId, finding.source);
-      toasts.show(`Больше не следим за страницей «${finding.modName}»`, {
-        undo: async () => {
-          readToken += 1;
-          snapshot = await updatesRefollow(finding.modId, finding.source);
-        },
-      });
-    } catch (reason) {
-      error = errorText(reason);
-    }
+    await applySnapshot(() => updatesUnfollow(finding.modId, finding.source));
+    toasts.show(`Больше не следим за страницей «${finding.modName}»`, {
+      undo: async () => {
+        await applySnapshot(() =>
+          updatesRefollow(finding.modId, finding.source),
+        );
+      },
+    });
   }
 
   /** «Страница пропала»: искать новую (сразу запускаем поиск) или просто перестать следить. */
   async function forgetLost(page: LostPage, searchAgain: boolean) {
-    readToken += 1;
-    try {
-      snapshot = await updatesForgetLost(page.modId, page.source, searchAgain);
-      if (searchAgain) {
-        await findPages();
-      } else {
-        toasts.show(`Больше не следим за «${page.modName}»`, {
-          undo: async () => {
-            readToken += 1;
-            snapshot = await updatesRefollow(page.modId, page.source);
-          },
-        });
-      }
-    } catch (reason) {
-      error = errorText(reason);
+    await applySnapshot(() =>
+      updatesForgetLost(page.modId, page.source, searchAgain),
+    );
+    if (searchAgain) {
+      await findPages();
+    } else {
+      toasts.show(`Больше не следим за «${page.modName}»`, {
+        undo: async () => {
+          await applySnapshot(() =>
+            updatesRefollow(page.modId, page.source),
+          );
+        },
+      });
     }
   }
 
