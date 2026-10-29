@@ -151,6 +151,36 @@ pub fn redirect_allowed(url: &Url) -> bool {
     }
 }
 
+/// Редирект HTTP-клиента: дополнительно запрещено понижение схемы до http.
+/// По http страницу карточки можно подменить вместе со ссылкой на архив.
+pub fn secure_redirect_allowed(url: &Url) -> bool {
+    url.scheme() == "https" && redirect_allowed(url)
+}
+
+/// Старые http-адреса из базы поднимаем до https до запроса: ходить по ним
+/// незашифрованными нельзя, а ломать старые ссылки незачем.
+pub fn secure_url(url: &Url) -> Url {
+    if url.scheme() != "http" {
+        return url.clone();
+    }
+    let mut secure = url.clone();
+    if secure.set_scheme("https").is_err() {
+        return url.clone();
+    }
+    secure
+}
+
+/// В тестах подняты локальные HTTP-серверы: их адреса не поднимаем.
+#[cfg(not(test))]
+fn secure_request_url(url: &Url) -> Url {
+    secure_url(url)
+}
+
+#[cfg(test)]
+fn secure_request_url(url: &Url) -> Url {
+    url.clone()
+}
+
 fn public_v4(ip: Ipv4Addr) -> bool {
     let [a, b, c, _] = ip.octets();
     // Диапазоны, которые не должны получать запросы от имени сайта:
@@ -190,10 +220,10 @@ fn public_v6(ip: Ipv6Addr) -> bool {
 }
 
 /// Политика редиректов для обычных страниц и картинок: не больше 10 переходов
-/// и только на обычные внешние http/https-адреса.
+/// и только на обычные внешние https-адреса.
 pub fn safe_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= 10 || !redirect_allowed(attempt.url()) {
+        if attempt.previous().len() >= 10 || !secure_redirect_allowed(attempt.url()) {
             attempt.stop()
         } else {
             attempt.follow()
@@ -408,8 +438,9 @@ impl HttpPageFetcher {
 
 impl PageFetcher for HttpPageFetcher {
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
-        ensure_public(url)?;
-        self.send(self.client.get(url.clone()))
+        let url = secure_request_url(url);
+        ensure_public(&url)?;
+        self.send(self.client.get(url))
     }
 
     fn get_conditional(
@@ -418,8 +449,9 @@ impl PageFetcher for HttpPageFetcher {
         etag: Option<&str>,
         last_modified: Option<&str>,
     ) -> Result<RawResponse, FetchError> {
-        ensure_public(url)?;
-        let mut request = self.client.get(url.clone());
+        let url = secure_request_url(url);
+        ensure_public(&url)?;
+        let mut request = self.client.get(url);
         if let Some(etag) = etag {
             request = request.header(IF_NONE_MATCH, etag);
         }
@@ -430,13 +462,14 @@ impl PageFetcher for HttpPageFetcher {
     }
 
     fn post_form(&self, url: &Url, form: &[(&str, &str)]) -> Result<RawResponse, FetchError> {
-        ensure_public(url)?;
+        let url = secure_request_url(url);
+        ensure_public(&url)?;
         let body = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(form)
             .finish();
         self.send(
             self.client
-                .post(url.clone())
+                .post(url)
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(body),
         )
@@ -723,6 +756,55 @@ impl PoliteFetcher {
         state.message.clone()
     }
 
+    /// Общая очередь сайта для картинок: у них свой HTTP-клиент, но они не должны
+    /// обгонять страницы и бомбить хост десятком параллельных запросов.
+    /// `None` — сайт сейчас на паузе (сбой или проверка «вы человек»).
+    pub fn image_slot<T>(&self, url: &Url, body: impl FnOnce() -> T) -> Option<T> {
+        let url = secure_request_url(url);
+        let entry = self.host_entry(&url);
+        {
+            let inner = lock(&entry.inner);
+            if inner
+                .blocked_until
+                .is_some_and(|until| until > Instant::now())
+            {
+                return None;
+            }
+            if inner.status == SourceStatus::NeedsHumanCheck
+                && inner.human_until.is_none_or(|until| until > Instant::now())
+            {
+                return None;
+            }
+        }
+        let _guard = loop {
+            match entry.gate.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(CANCEL_POLL),
+            }
+        };
+        if !self.wait_for_slot(&entry, &url, &NEVER) {
+            return None;
+        }
+        let result = body();
+        lock(&entry.inner).last_request = Some(Instant::now());
+        Some(result)
+    }
+
+    fn host_entry(&self, url: &Url) -> Arc<HostEntry> {
+        let host = url.host_str().unwrap_or_default().to_lowercase();
+        let mut hosts = lock(&self.hosts);
+        hosts
+            .entry(host)
+            .or_insert_with(|| {
+                Arc::new(HostEntry {
+                    gate: Mutex::new(()),
+                    inner: Mutex::new(HostInner::default()),
+                })
+            })
+            .clone()
+    }
+
     pub fn get(&self, source: &str, url: &Url) -> FetchResult {
         self.fetch(source, url, None, &NEVER)
     }
@@ -759,6 +841,8 @@ impl PoliteFetcher {
         form: Option<Vec<(String, String)>>,
         cancel: &AtomicBool,
     ) -> FetchResult {
+        let secure = secure_request_url(url);
+        let url = &secure;
         let key = cache_key(url, form.as_deref());
         if cancel.load(Ordering::Relaxed) {
             return cancelled();
@@ -766,19 +850,7 @@ impl PoliteFetcher {
         if let Some(response) = self.cached(&key) {
             return FetchResult::ok(response);
         }
-        let host = url.host_str().unwrap_or_default().to_lowercase();
-        let entry = {
-            let mut hosts = lock(&self.hosts);
-            hosts
-                .entry(host)
-                .or_insert_with(|| {
-                    Arc::new(HostEntry {
-                        gate: Mutex::new(()),
-                        inner: Mutex::new(HostInner::default()),
-                    })
-                })
-                .clone()
-        };
+        let entry = self.host_entry(url);
         {
             let mut inner = lock(&entry.inner);
             if let Some(until) = inner.blocked_until
@@ -1349,6 +1421,27 @@ mod tests {
     }
 
     #[test]
+    fn http_downgrade_is_not_followed_and_old_links_are_upgraded() {
+        let plain = url("http://8.8.8.8/x");
+        assert!(redirect_allowed(&plain), "сам публичный адрес допустим");
+        assert!(
+            !secure_redirect_allowed(&plain),
+            "редирект HTTP-клиента на http не идём"
+        );
+        assert!(secure_redirect_allowed(&url("https://8.8.8.8/x")));
+        assert!(!secure_redirect_allowed(&url("http://127.0.0.1/x")));
+
+        assert_eq!(
+            secure_url(&url("http://modland.net/beamng.drive-mods/x.html")).as_str(),
+            "https://modland.net/beamng.drive-mods/x.html"
+        );
+        assert_eq!(
+            secure_url(&url("https://stmods.org/beamng_drive/x/")).as_str(),
+            "https://stmods.org/beamng_drive/x/"
+        );
+    }
+
+    #[test]
     fn user_agent_uses_the_crate_version() {
         assert!(
             USER_AGENT.contains(env!("CARGO_PKG_VERSION")),
@@ -1590,6 +1683,37 @@ mod tests {
             failure_limit: 3,
             cooldown: Duration::from_secs(60),
         }
+    }
+
+    #[test]
+    fn image_slot_waits_for_pages_and_holds_the_next_page() {
+        let fake = FakeFetcher::new(vec![
+            Ok(response(200, "<html>mod</html>")),
+            Ok(response(200, "<html>mod2</html>")),
+        ]);
+        let mut polite_options = options();
+        polite_options.pause = Duration::from_millis(120);
+        let polite = PoliteFetcher::new(fake.clone(), polite_options);
+        let page = url("https://example.org/mod");
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+
+        let started = Instant::now();
+        let value = polite
+            .image_slot(&url("https://example.org/preview.jpg"), || 7)
+            .unwrap();
+        assert_eq!(value, 7);
+        assert!(
+            started.elapsed() >= Duration::from_millis(100),
+            "картинка ждёт страницу"
+        );
+
+        let started = Instant::now();
+        let _ = polite.get("site", &url("https://example.org/mod2"));
+        assert!(
+            started.elapsed() >= Duration::from_millis(100),
+            "следующая страница ждёт картинку"
+        );
+        assert_eq!(fake.calls.lock().unwrap().len(), 2);
     }
 
     #[test]

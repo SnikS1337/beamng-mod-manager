@@ -48,13 +48,21 @@ pub fn run() {
     let paths = match AppPaths::resolve() {
         Ok(paths) => paths,
         Err(error) => {
-            eprintln!("[bmm] не удалось определить каталог данных: {error}");
+            webview2::show_error(&format!(
+                "Не удалось определить папку данных программы: {error}.\n\n\
+                 Проверьте переменную LOCALAPPDATA и запустите снова."
+            ));
             return;
         }
     };
 
     if let Err(error) = paths.ensure_dirs() {
-        eprintln!("[bmm] не удалось создать каталоги данных: {error}");
+        webview2::show_error(&format!(
+            "Не удалось создать папки данных в «{}»: {error}.\n\n\
+             Проверьте права на папку и запустите снова.",
+            paths.root().display()
+        ));
+        return;
     }
     let _data_lock = match named_mutex::acquire_data_lock(&paths.root().join("instance.lock")) {
         named_mutex::DataLock::Acquired(file) => Some(file),
@@ -124,26 +132,27 @@ pub fn run() {
             reset_fetcher.reset_source(source, url);
         }
     }));
+    let previews = {
+        let cache = Arc::new(
+            bmm_sources::images::RemoteImageCache::with_fallback(paths.search_previews(), pages)
+                .with_polite(fetcher.clone()),
+        );
+        let trimmer = cache.clone();
+        // Первая чистка — сразу при старте: приложение часто закрыто, и таймер
+        // сам по себе ничего не чистит. Дальше — только для долгой сессии.
+        std::thread::spawn(move || {
+            loop {
+                trimmer.trim(bmm_sources::images::DEFAULT_LIMIT_BYTES);
+                std::thread::sleep(std::time::Duration::from_secs(30 * 60));
+            }
+        });
+        cache
+    };
     let search = Some(Arc::new(SearchRuntime {
         fetcher,
         service: search_service,
         matches,
-        previews: {
-            let cache = Arc::new(bmm_sources::images::RemoteImageCache::with_fallback(
-                paths.search_previews(),
-                pages,
-            ));
-            let trimmer = cache.clone();
-            // Первая чистка — сразу при старте: приложение часто закрыто, и таймер
-            // сам по себе ничего не чистит. Дальше — только для долгой сессии.
-            std::thread::spawn(move || {
-                loop {
-                    trimmer.trim(bmm_sources::images::DEFAULT_LIMIT_BYTES);
-                    std::thread::sleep(std::time::Duration::from_secs(30 * 60));
-                }
-            });
-            cache
-        },
+        previews,
         sources: source_list.clone(),
     }));
     let update = Some(Arc::new(UpdateRuntime {

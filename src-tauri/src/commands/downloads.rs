@@ -42,6 +42,15 @@ fn take_caught(path: &Path) -> bool {
         .remove(path)
 }
 
+/// Окно загрузки закрыли до конца: файл должен снова стать виден сторожу,
+/// иначе он навсегда пропустит его как «уже забранный».
+pub(crate) fn forget_caught() {
+    CAUGHT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clear();
+}
+
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -342,6 +351,9 @@ fn fallback_downloads() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// Метки перехвата — общие на процесс; тесты, которые их трогают, идут по очереди.
+    static CAUGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn reports_only_stable_new_archives() {
         let temp = tempfile::tempdir().unwrap();
@@ -381,6 +393,38 @@ mod tests {
                 .scan(&[temp.path().to_path_buf()], start + Duration::from_secs(1))
                 .is_empty(),
             "второй раз не предлагаем"
+        );
+    }
+
+    #[test]
+    fn closed_window_returns_unfinished_download_to_the_watcher() {
+        let _guard = CAUGHT_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("car.zip");
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        assert!(scanner.scan(&[temp.path().to_path_buf()], start).is_empty());
+
+        std::fs::write(&path, b"one").unwrap();
+        note_caught(&path);
+        forget_caught();
+
+        assert!(
+            scanner
+                .scan(
+                    &[temp.path().to_path_buf()],
+                    start + Duration::from_millis(10)
+                )
+                .is_empty(),
+            "новый файл: ждём стабильности"
+        );
+        assert_eq!(
+            scanner.scan(
+                &[temp.path().to_path_buf()],
+                start + Duration::from_millis(20)
+            ),
+            vec![path],
+            "после закрытия окна архив снова предлагается"
         );
     }
 
@@ -442,6 +486,7 @@ mod tests {
 
     #[test]
     fn caught_download_is_not_offered_twice() {
+        let _guard = CAUGHT_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let folder = temp.path().to_path_buf();
         let mut scanner = Scanner::new(Duration::from_millis(5));

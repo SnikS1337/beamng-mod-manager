@@ -903,7 +903,13 @@ pub fn newest_only(found: Vec<Listing>) -> Vec<Listing> {
             match order(&result[index], &listing) {
                 VersionOrder::Newer => result[index] = listing,
                 VersionOrder::Older => {}
-                _ => result.push(listing),
+                _ => {
+                    // Версии равны или неизвестны: это перепост или вторая карточка
+                    // того же мода. Оставляем одну запись — самую свежую.
+                    if newer_duplicate(&result[index], &listing) {
+                        result[index] = listing;
+                    }
+                }
             }
         } else {
             at.insert(key, result.len());
@@ -911,6 +917,20 @@ pub fn newest_only(found: Vec<Listing>) -> Vec<Listing> {
         }
     }
     result
+}
+
+/// Равные версии: свежее обновление, а без дат — файл побольше (недокачанный
+/// и пустой размер не считаем признаком).
+fn newer_duplicate(kept: &Listing, other: &Listing) -> bool {
+    match (kept.updated_at, other.updated_at) {
+        (Some(kept_at), Some(other_at)) if other_at != kept_at => other_at > kept_at,
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        _ => {
+            let size = |listing: &Listing| listing.size_bytes.filter(|size| *size > 0).unwrap_or(0);
+            size(other) > size(kept)
+        }
+    }
 }
 
 fn order(kept: &Listing, other: &Listing) -> VersionOrder {
@@ -1461,6 +1481,52 @@ mod tests {
         let result = newest_only(vec![old, new]);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].mod_version.as_deref(), Some("1.7"));
+    }
+
+    fn moment(text: &str) -> chrono::DateTime<chrono::FixedOffset> {
+        chrono::DateTime::parse_from_rfc3339(text).unwrap()
+    }
+
+    #[test]
+    fn newest_only_collapses_reposts_with_equal_versions() {
+        let mut old = listing("modland", "1", "BMW M3 E30", Some("1.0"));
+        old.updated_at = Some(moment("2026-01-01T00:00:00+00:00"));
+        old.size_bytes = Some(10);
+        let mut fresh = listing("modland", "2", "BMW M3 E30", Some("1.0"));
+        fresh.updated_at = Some(moment("2026-02-01T00:00:00+00:00"));
+        fresh.size_bytes = Some(5);
+
+        let result = newest_only(vec![old, fresh]);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].source_id, "2", "свежая дата важнее размера");
+    }
+
+    #[test]
+    fn newest_only_collapses_unknown_versions_by_size() {
+        let mut small = listing("modland", "1", "BMW M3 E30", None);
+        small.size_bytes = Some(10);
+        let mut large = listing("modland", "2", "BMW M3 E30", None);
+        large.size_bytes = Some(20);
+
+        let result = newest_only(vec![small, large]);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].source_id, "2", "без дат остаётся файл побольше");
+    }
+
+    #[test]
+    fn newest_only_keeps_one_card_without_any_evidence() {
+        let first = listing("modland", "1", "BMW M3 E30", None);
+        let second = listing("modland", "2", "BMW M3 E30", None);
+
+        let result = newest_only(vec![first, second]);
+
+        assert_eq!(result.len(), 1, "перепост не показываем дважды");
+        assert_eq!(
+            result[0].source_id, "1",
+            "без доказательств остаётся первая"
+        );
     }
 
     #[test]

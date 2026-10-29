@@ -78,6 +78,33 @@ fn registry_value(root: windows_sys::Win32::System::Registry::HKEY, path: &str) 
     (!text.is_empty()).then_some(text)
 }
 
+/// Фатальная ошибка до создания окна: в GUI-сборке stderr никто не увидит.
+#[cfg(windows)]
+pub fn show_error(message: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+
+    let text: Vec<u16> = OsStr::new(message).encode_wide().chain(Some(0)).collect();
+    let caption: Vec<u16> = OsStr::new("ModManager BeamNG")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn show_error(message: &str) {
+    eprintln!("[bmm] {message}");
+}
+
 #[cfg(windows)]
 fn show_missing() {
     use std::ffi::OsStr;
