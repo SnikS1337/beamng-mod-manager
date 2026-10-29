@@ -262,7 +262,9 @@ impl UpdateCheckPlanner {
                     // Без прошлых данных уверенности нет — открываем карточку.
                     let same = binding.last_version.is_some()
                         && entry.version == binding.last_version
-                        && !SizeComparer::differs(entry.size_bytes, binding.last_size);
+                        && !matches!(entry.size_bytes, Some(0))
+                        && !matches!(binding.last_size, Some(0))
+                        && SizeComparer::same(entry.size_bytes, binding.last_size) != Some(false);
                     if same {
                         unchanged.push(binding.clone());
                     } else {

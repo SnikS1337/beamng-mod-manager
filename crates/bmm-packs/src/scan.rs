@@ -51,11 +51,24 @@ impl ModLayout {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ScanResult {
     pub mods: Vec<DiskMod>,
     pub folder_available: bool,
+    /// Все каталоги удалось прочитать. Иначе пропавшие моды нельзя считать удалёнными.
+    pub complete: bool,
     pub warnings: Vec<String>,
+}
+
+impl Default for ScanResult {
+    fn default() -> Self {
+        Self {
+            mods: Vec::new(),
+            folder_available: false,
+            complete: true,
+            warnings: Vec::new(),
+        }
+    }
 }
 
 pub fn scan_mods(layout: &ModLayout) -> ScanResult {
@@ -104,11 +117,13 @@ fn is_reparse(metadata: &fs::Metadata) -> bool {
 
 fn scan_flat(dir: &Path, enabled: bool, seen: &mut HashSet<String>, result: &mut ScanResult) {
     let Ok(entries) = fs::read_dir(dir) else {
+        result.complete = false;
         return;
     };
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         let Ok(metadata) = fs::symlink_metadata(&path) else {
+            result.complete = false;
             continue;
         };
         if is_reparse(&metadata) || !metadata.is_file() {
@@ -141,14 +156,17 @@ fn scan_subfolders(
     result: &mut ScanResult,
 ) {
     if depth > MAX_DEPTH {
+        result.complete = false;
         return;
     }
     let Ok(entries) = fs::read_dir(dir) else {
+        result.complete = false;
         return;
     };
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         let Ok(metadata) = fs::symlink_metadata(&path) else {
+            result.complete = false;
             continue;
         };
         if is_reparse(&metadata) {
@@ -212,6 +230,7 @@ fn add_mod(
         return;
     }
     let Ok(size_bytes) = i64::try_from(metadata.len()) else {
+        result.complete = false;
         return;
     };
     let modified_utc = metadata.modified().ok().map(DateTime::<Utc>::from);

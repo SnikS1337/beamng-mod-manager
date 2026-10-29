@@ -157,6 +157,8 @@ impl UpdateCheckService {
                     .as_ref()
                     .and_then(|state| state.last_version.as_ref())
                     != current.mod_version.as_ref())
+            || current.size_bytes == Some(0)
+            || previous.as_ref().and_then(|state| state.last_size) == Some(0)
             || SizeComparer::differs(
                 previous.as_ref().and_then(|state| state.last_size),
                 current.size_bytes,
