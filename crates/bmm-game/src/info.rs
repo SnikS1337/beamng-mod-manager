@@ -21,7 +21,9 @@ fn compat_version_re() -> &'static Regex {
 }
 
 pub fn version_from_log(log_text: &str) -> Option<String> {
-    let head = &log_text[..log_text.len().min(4096)];
+    // 4096 может попасть в середину кириллического символа: берём весь лог,
+    // если граница не по char boundary (шапка лога обычно короткая).
+    let head = log_text.get(..log_text.len().min(4096)).unwrap_or(log_text);
     let captures = log_version_re().captures(head).ok().flatten()?;
     Some(captures.get(1)?.as_str().to_string())
 }
@@ -193,6 +195,14 @@ mod tests {
             Some("0.39.4.0")
         );
         assert_eq!(version_from_ini("мусор"), None);
+    }
+
+    #[test]
+    fn log_version_survives_multibyte_boundary() {
+        let mut log = "a".repeat(4095);
+        log.push('д');
+        log.push_str(" Log started - v 0.39.4.0 - x64");
+        assert_eq!(version_from_log(&log).as_deref(), Some("0.39.4.0"));
     }
 
     #[test]

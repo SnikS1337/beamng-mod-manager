@@ -8,6 +8,81 @@ use crate::zip_index::{self, ZipError};
 
 const MAX_INFO_BYTES: u64 = 256 * 1024;
 const MAX_TITLE: usize = 80;
+/// json5 не ограничивает вложенность, а глубокий `[[[[…` роняет поток переполнением
+/// стека (в release — abort всего приложения). Реальный info.json заметно мельче.
+const MAX_INFO_DEPTH: usize = 64;
+
+fn info_depth(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut max = 0usize;
+    let mut quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if line_comment {
+            if byte == b'\n' {
+                line_comment = false;
+            }
+            index += 1;
+            continue;
+        }
+        if block_comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                block_comment = false;
+                index += 2;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' | b'\'' => quote = Some(byte),
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                line_comment = true;
+                index += 2;
+                continue;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                block_comment = true;
+                index += 2;
+                continue;
+            }
+            b'[' | b'{' => {
+                depth += 1;
+                max = max.max(depth);
+                if depth > MAX_INFO_DEPTH {
+                    return depth;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    max
+}
+
+fn parse_info(text: &str) -> Option<Value> {
+    if info_depth(text) > MAX_INFO_DEPTH {
+        return None;
+    }
+    json5::from_str(text).ok()
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArchiveOverview {
@@ -262,7 +337,7 @@ pub fn try_mod_info_from_index(
     }
     let mut text = String::new();
     info.read_to_string(&mut text)?;
-    let Ok(value) = json5::from_str::<Value>(&text) else {
+    let Some(value) = parse_info(&text) else {
         return Ok(None);
     };
     Ok(value.is_object().then_some((entry.0, value)))
@@ -276,7 +351,7 @@ fn info_value(path: &Path, entry: &str) -> Option<Value> {
     }
     let mut text = String::new();
     info.read_to_string(&mut text).ok()?;
-    json5::from_str::<Value>(&text).ok()
+    parse_info(&text)
 }
 
 fn wrapper_prefix(entries: &[zip_index::Entry]) -> String {
@@ -325,7 +400,7 @@ fn titles_for(
         if info.read_to_string(&mut text).is_err() {
             continue;
         }
-        let Ok(value) = json5::from_str::<Value>(&text) else {
+        let Some(value) = parse_info(&text) else {
             continue;
         };
         let title = if root == "vehicles" {
@@ -367,6 +442,23 @@ mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
+
+    #[test]
+    fn deep_info_json_is_rejected_before_json5() {
+        let bomb = "[".repeat(10_000);
+        assert!(info_depth(&bomb) > MAX_INFO_DEPTH);
+        assert!(parse_info(&bomb).is_none());
+
+        let deep = format!(
+            "{}{}",
+            "[".repeat(MAX_INFO_DEPTH),
+            "]".repeat(MAX_INFO_DEPTH)
+        );
+        assert_eq!(info_depth(&deep), MAX_INFO_DEPTH);
+        assert_eq!(info_depth(r#"{"text":"[[[[[[[["}"#), 1);
+        assert_eq!(info_depth("// [[[[\n{ /* ]]] */ }"), 1);
+        assert!(parse_info(r#"{"Brand":"BMW","Name":"M3"}"#).is_some());
+    }
 
     /// info.json модов пишут руками: комментарии, запятые в конце, ключи без
     /// кавычек, BOM, NaN, огромные числа. Тест фиксирует, что разбор это
