@@ -39,6 +39,7 @@
     onToggle,
     onDelete,
     onRestoreVersion,
+    versionsKey = 0,
     onUnfollow,
     onBindPage,
     onFindPage,
@@ -75,6 +76,8 @@
     onToggle: () => void;
     onDelete: () => void;
     onRestoreVersion: (version: VersionRow) => void;
+    /** Меняется после восстановления копии — список прошлых версий перечитывается. */
+    versionsKey?: number;
     /** «Это другой мод»: программа следит не за той страницей. */
     onUnfollow?: (source: string) => void;
     /** «Указать страницу»: `null` — получилось, иначе код и причина, почему нет. */
@@ -364,7 +367,7 @@
     {/if}
 
     {#if canDelete}
-      <VersionsBlock modId={details.id} onRestore={onRestoreVersion} />
+      <VersionsBlock modId={details.id} {versionsKey} onRestore={onRestoreVersion} />
     {/if}
 
     {#if binding}

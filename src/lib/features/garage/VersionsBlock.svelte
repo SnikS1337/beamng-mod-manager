@@ -5,9 +5,12 @@
 
   let {
     modId,
+    versionsKey = 0,
     onRestore,
   }: {
     modId: string;
+    /** Меняется после восстановления копии: список нужно перечитать. */
+    versionsKey?: number;
     onRestore: (version: VersionRow) => void;
   } = $props();
 
@@ -17,6 +20,8 @@
 
   $effect(() => {
     const id = modId;
+    // Чтение ключа делает эффект зависимым от него.
+    void versionsKey;
     const current = ++token;
     versions = [];
     loading = true;

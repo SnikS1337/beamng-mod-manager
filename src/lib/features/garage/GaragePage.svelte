@@ -2,6 +2,7 @@
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
   import { groupMembers, isShown, visibleCards } from "./duplicates";
+  import { libraryView, staleError } from "./libraryView";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import {
@@ -84,6 +85,12 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state<string | null>(null);
+  const loadView = $derived(
+    libraryView({ loading, error, hasSnapshot: snapshot !== null }),
+  );
+  const staleLoadError = $derived(
+    staleError({ loading, error, hasSnapshot: snapshot !== null }),
+  );
   let filter = $state<Filter>("all");
   let typeFilter = $state<TypeGroup | "all">("all");
   let view = $state<ViewMode>(loadViewMode());
@@ -95,6 +102,8 @@
   let selectedId = $derived(single(picked));
   let details = $state<ModDetails | null>(null);
   let detailsLoading = $state(false);
+  /** Увеличивается после восстановления копии: Inspector перечитывает прошлые версии. */
+  let versionsKey = $state(0);
   let bannerDismissed = $state(false);
   let searchEl = $state<HTMLInputElement | null>(null);
   let archiveInput = $state<HTMLInputElement | null>(null);
@@ -260,7 +269,7 @@
 
   async function load(force = false) {
     const token = ++loadToken;
-    loading = !force;
+    loading = !force || snapshot === null;
     refreshing = force;
     error = null;
     try {
@@ -275,6 +284,8 @@
         picked = EMPTY;
       }
     } catch (reason) {
+      // Фоновая перезагрузка не должна стирать уже показанную библиотеку:
+      // ошибку видно баннером, а полный экран — только пока показывать нечего.
       if (token === loadToken) error = errorText(reason);
     } finally {
       if (token === loadToken) {
@@ -619,6 +630,7 @@
     try {
       await modRestoreVersion(card.id, version.backupId);
       await load(true);
+      versionsKey += 1;
       showToast(
         version.version
           ? `Возвращена версия ${version.version}`
@@ -630,6 +642,7 @@
             if (previous) {
               await modRestoreVersion(card.id, previous.backupId);
               await load(true);
+              versionsKey += 1;
             }
           },
         },
@@ -987,6 +1000,12 @@
   {#if snapshot?.warning}
     <div class="banner">{snapshot.warning}</div>
   {/if}
+  {#if staleLoadError}
+    <div class="banner stale" role="status">
+      <span>Не удалось обновить список: {error}</span>
+      <button type="button" class="btn-glass" onclick={() => void load(true)}>Повторить</button>
+    </div>
+  {/if}
   {#if snapshot?.manyEnabled && !bannerDismissed}
     <div class="banner many">
       <span>{snapshot.manyEnabled}</span>
@@ -998,13 +1017,13 @@
 
   <div class="body flow-body" class:with-inspector={selectedId !== null || picked.ids.length > 1}>
     <section class="work">
-      {#if loading}
+      {#if loadView === "skeleton"}
         <div class="loading" aria-label="Загружаем моды">
           {#each Array.from({ length: 8 }, (_, index) => index) as index (index)}
             <div class="skeleton ghost-card"></div>
           {/each}
         </div>
-      {:else if error}
+      {:else if loadView === "error"}
         <div class="state error">
           <p>Не удалось загрузить моды</p>
           <span>{error}</span>
@@ -1119,6 +1138,7 @@
         }}
         onDelete={() => void deleteSelected()}
         onRestoreVersion={(version) => void restoreVersion(version)}
+        {versionsKey}
         onClose={() => pick(EMPTY)}
       />
     {/if}
@@ -1345,6 +1365,13 @@
   }
 
   .banner.many {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .banner.stale {
     display: flex;
     align-items: center;
     justify-content: space-between;
