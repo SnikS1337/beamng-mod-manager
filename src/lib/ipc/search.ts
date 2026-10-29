@@ -45,6 +45,21 @@ export async function searchStart(query: string, requestId: number): Promise<voi
   mockSearch(query, requestId);
 }
 
+export async function searchBrowse(
+  kind: "vehicle" | "map" | "addon",
+  fromPage: number,
+  requestId: number,
+): Promise<SearchEvent> {
+  if (isTauri()) {
+    return invoke<SearchEvent>("search_browse", { kind, fromPage, requestId });
+  }
+  const cards = mockCards("карта").map((card) => ({ ...card, kind }));
+  const sources = mockDoneSources(cards);
+  mockCurrentCards = cards;
+  mockCurrentSources = sources;
+  return { requestId, phase: "done", cards, sources, error: null };
+}
+
 export async function searchRetrySource(
   query: string,
   sourceId: string,

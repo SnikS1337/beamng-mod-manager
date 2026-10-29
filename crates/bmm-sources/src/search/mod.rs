@@ -85,6 +85,31 @@ pub struct SearchService {
     decisions: Option<Arc<dyn MatchDecisions + Send + Sync>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GroupOrder {
+    Relevance,
+    Site,
+}
+
+#[derive(Clone)]
+enum RunKind {
+    Search(Vec<String>),
+    Browse {
+        kind: ModKind,
+        first_page: u32,
+        pages: u32,
+    },
+}
+
+impl RunKind {
+    fn order(&self) -> GroupOrder {
+        match self {
+            RunKind::Search(_) => GroupOrder::Relevance,
+            RunKind::Browse { .. } => GroupOrder::Site,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct SourceRun {
     report: SourceReport,
@@ -155,11 +180,29 @@ impl SearchService {
         }
     }
 
+    /// Пересобрать карточки в порядке сайтов (раздел карт, машин, дополнений).
+    pub fn regroup_site_order(&self, previous: &SearchResponse) -> SearchResponse {
+        let listings = if !previous.listings.is_empty() {
+            previous.listings.clone()
+        } else {
+            previous
+                .cards
+                .iter()
+                .flat_map(|card| card.listings.clone())
+                .collect()
+        };
+        SearchResponse {
+            cards: self.group_site_order(&listings),
+            sources: previous.sources.clone(),
+            listings,
+        }
+    }
+
     pub fn search(
         &self,
         raw_query: &str,
         cancel: &AtomicBool,
-        mut progress: Option<&mut dyn FnMut(&SearchResponse)>,
+        progress: Option<&mut dyn FnMut(&SearchResponse)>,
     ) -> SearchResponse {
         let query = self.normalize(raw_query);
         if query.chars().count() < self.options.min_query_length {
@@ -169,8 +212,39 @@ impl SearchService {
                 listings: Vec::new(),
             };
         }
-
         let variants = query::variants(&query);
+        self.run_sources(&RunKind::Search(variants), &query, cancel, progress)
+    }
+
+    /// Открыть раздел сайта без текста: `first_page` и `pages` — диапазон страниц.
+    pub fn browse(
+        &self,
+        kind: ModKind,
+        first_page: u32,
+        pages: u32,
+        cancel: &AtomicBool,
+        progress: Option<&mut dyn FnMut(&SearchResponse)>,
+    ) -> SearchResponse {
+        self.run_sources(
+            &RunKind::Browse {
+                kind,
+                first_page: first_page.max(1),
+                pages: pages.max(1),
+            },
+            "",
+            cancel,
+            progress,
+        )
+    }
+
+    fn run_sources(
+        &self,
+        run: &RunKind,
+        query: &str,
+        cancel: &AtomicBool,
+        mut progress: Option<&mut dyn FnMut(&SearchResponse)>,
+    ) -> SearchResponse {
+        let order = run.order();
         let runner = Runner {
             status_of: Arc::clone(&self.status_of),
             options: self.options.clone(),
@@ -188,7 +262,7 @@ impl SearchService {
                     "поиск отменён",
                 ));
             }
-            return self.finish(slots, &query);
+            return self.finish(slots, query, order);
         }
 
         let (sender, receiver) = mpsc::channel::<(usize, SourceRun)>();
@@ -197,7 +271,7 @@ impl SearchService {
         for (index, source) in self.sources.iter().enumerate() {
             let sender = sender.clone();
             let worker_source = Arc::clone(source);
-            let variants = variants.clone();
+            let worker_run = run.clone();
             let cancel = Arc::clone(&shared_cancel);
             let worker_runner = runner.clone();
             let thread_name = format!("bmm-search-{}", source.id());
@@ -207,7 +281,7 @@ impl SearchService {
                     // Паника одного сайта (кривая разметка, ошибка в адаптере) не должна
                     // ронять весь поиск: остальные источники и их результаты остаются.
                     let run = match catch_unwind(AssertUnwindSafe(|| {
-                        worker_runner.run_one(worker_source.as_ref(), &variants, &cancel)
+                        worker_runner.run(worker_source.as_ref(), &worker_run, &cancel)
                     })) {
                         Ok(run) => run,
                         Err(payload) => {
@@ -271,7 +345,7 @@ impl SearchService {
                         if done < total
                             && let Some(callback) = progress.as_mut()
                         {
-                            (**callback)(&self.partial(&slots, &query));
+                            (**callback)(&self.partial(&slots, query, order));
                         }
                     }
                 }
@@ -308,7 +382,7 @@ impl SearchService {
                 }
             }
         }
-        self.finish(slots, &query)
+        self.finish(slots, query, order)
     }
 
     /// Повторить один сайт после сбоя, сохранив остальную выдачу.
@@ -326,12 +400,13 @@ impl SearchService {
             .find(|source| source.id().eq_ignore_ascii_case(source_id))?;
         let query = self.normalize(query);
         let variants = query::variants(&query);
+        let run_kind = RunKind::Search(variants);
         let runner = Runner {
             status_of: Arc::clone(&self.status_of),
             options: self.options.clone(),
         };
         let run = match catch_unwind(AssertUnwindSafe(|| {
-            runner.run_one(source.as_ref(), &variants, cancel)
+            runner.run(source.as_ref(), &run_kind, cancel)
         })) {
             Ok(run) => run,
             Err(payload) => runner.panicked(source.as_ref(), payload.as_ref()),
@@ -355,7 +430,12 @@ impl SearchService {
         })
     }
 
-    fn finish(&self, slots: Vec<Option<SourceRun>>, query: &str) -> SearchResponse {
+    fn finish(
+        &self,
+        slots: Vec<Option<SourceRun>>,
+        query: &str,
+        order: GroupOrder,
+    ) -> SearchResponse {
         let reports = slots
             .iter()
             .flatten()
@@ -367,13 +447,18 @@ impl SearchService {
             .flat_map(|run| run.listings.clone())
             .collect();
         SearchResponse {
-            cards: self.group(&listings, query),
+            cards: self.group_with(&listings, query, order),
             sources: reports,
             listings,
         }
     }
 
-    fn partial(&self, slots: &[Option<SourceRun>], query: &str) -> SearchResponse {
+    fn partial(
+        &self,
+        slots: &[Option<SourceRun>],
+        query: &str,
+        order: GroupOrder,
+    ) -> SearchResponse {
         let mut reports = Vec::new();
         let mut listings = Vec::new();
         for (index, slot) in slots.iter().enumerate() {
@@ -396,13 +481,22 @@ impl SearchService {
             }
         }
         SearchResponse {
-            cards: self.group(&listings, query),
+            cards: self.group_with(&listings, query, order),
             sources: reports,
             listings,
         }
     }
 
     pub fn group(&self, listings: &[Listing], query: &str) -> Vec<ModCard> {
+        self.group_with(listings, query, GroupOrder::Relevance)
+    }
+
+    /// Карточки в порядке сайтов: для разделов, где сайт уже отсортировал по новизне.
+    pub fn group_site_order(&self, listings: &[Listing]) -> Vec<ModCard> {
+        self.group_with(listings, "", GroupOrder::Site)
+    }
+
+    fn group_with(&self, listings: &[Listing], query: &str, order: GroupOrder) -> Vec<ModCard> {
         let mut unique = Vec::new();
         let mut seen = HashSet::new();
         for listing in listings {
@@ -482,16 +576,14 @@ impl SearchService {
                 + 0.05 * cluster.len().min(3) as f64;
             let kind = cluster
                 .iter()
-                .find_map(|&index| {
-                    unique[index]
-                        .category
-                        .as_deref()
-                        .and_then(ModKind::from_category)
-                })
+                .find_map(|&index| TitleParser::parse(&unique[index].title).kind)
                 .or_else(|| {
-                    cluster
-                        .iter()
-                        .find_map(|&index| TitleParser::parse(&unique[index].title).kind)
+                    cluster.iter().find_map(|&index| {
+                        unique[index]
+                            .category
+                            .as_deref()
+                            .and_then(ModKind::from_category)
+                    })
                 });
             cards.push(ModCard {
                 kind,
@@ -503,13 +595,15 @@ impl SearchService {
                 relevance,
             });
         }
-        cards.sort_by(|left, right| {
-            right
-                .relevance
-                .partial_cmp(&left.relevance)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
-        });
+        if order == GroupOrder::Relevance {
+            cards.sort_by(|left, right| {
+                right
+                    .relevance
+                    .partial_cmp(&left.relevance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+            });
+        }
         self.ask_about_doubtful(&mut cards);
         cards
     }
@@ -652,6 +746,88 @@ impl Runner {
                 },
                 listings: Vec::new(),
             },
+        }
+    }
+
+    fn run(&self, source: &dyn ModSource, run: &RunKind, cancel: &AtomicBool) -> SourceRun {
+        match run {
+            RunKind::Search(queries) => self.run_one(source, queries, cancel),
+            RunKind::Browse {
+                kind,
+                first_page,
+                pages,
+            } => self.run_browse(source, *kind, *first_page, *pages, cancel),
+        }
+    }
+
+    fn run_browse(
+        &self,
+        source: &dyn ModSource,
+        kind: ModKind,
+        first_page: u32,
+        pages: u32,
+        cancel: &AtomicBool,
+    ) -> SourceRun {
+        if !source.supports_browse(kind) {
+            return self.stopped_with_note(source, SourceStatus::Ok, "на сайте нет такого раздела");
+        }
+        let status = (self.status_of)(source.id());
+        if status != SourceStatus::Ok {
+            return self.stopped_with_note(
+                source,
+                status,
+                if status == SourceStatus::NeedsHumanCheck {
+                    "нужно пройти проверку на сайте"
+                } else {
+                    "сайт недоступен"
+                },
+            );
+        }
+        let mut found = Vec::new();
+        let mut last_error = None;
+        for page in first_page..first_page.saturating_add(pages) {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            match source.browse(kind, page, cancel) {
+                Ok(mut items) => found.append(&mut items),
+                Err(error) => {
+                    last_error = Some(error);
+                    break;
+                }
+            }
+        }
+        if found.is_empty() {
+            return match last_error {
+                Some(error) => SourceRun {
+                    report: SourceReport {
+                        source_id: source.id().to_string(),
+                        display_name: source.display_name().to_string(),
+                        status: error.status,
+                        count: 0,
+                        note: Some(error.message),
+                        pending: false,
+                    },
+                    listings: Vec::new(),
+                },
+                None => self.stopped_with_note(source, SourceStatus::Ok, "пока ничего нет"),
+            };
+        }
+        let listings: Vec<Listing> = newest_only(found)
+            .into_iter()
+            .take(self.options.max_per_source)
+            .collect();
+        SourceRun {
+            report: SourceReport {
+                source_id: source.id().to_string(),
+                display_name: source.display_name().to_string(),
+                status: SourceStatus::Ok,
+                count: listings.len(),
+                note: last_error
+                    .map(|error| format!("часть страниц не загрузилась: {}", error.message)),
+                pending: false,
+            },
+            listings,
         }
     }
 
@@ -1049,6 +1225,151 @@ mod tests {
         );
     }
 
+    type BrowseAction = Box<dyn Fn(ModKind, u32) -> Vec<Listing> + Send + Sync>;
+
+    struct BrowseSource {
+        id: &'static str,
+        kinds: Vec<ModKind>,
+        pages: std::sync::Mutex<Vec<u32>>,
+        action: BrowseAction,
+    }
+
+    impl BrowseSource {
+        fn new<F>(id: &'static str, kinds: Vec<ModKind>, action: F) -> Arc<Self>
+        where
+            F: Fn(ModKind, u32) -> Vec<Listing> + Send + Sync + 'static,
+        {
+            Arc::new(Self {
+                id,
+                kinds,
+                pages: std::sync::Mutex::new(Vec::new()),
+                action: Box::new(action),
+            })
+        }
+    }
+
+    impl ModSource for BrowseSource {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn display_name(&self) -> &'static str {
+            self.id
+        }
+
+        fn supports_search(&self) -> bool {
+            true
+        }
+
+        fn home(&self) -> Url {
+            Url::parse(&format!("https://{}.example.org/", self.id)).unwrap()
+        }
+
+        fn owns(&self, _url: &Url) -> bool {
+            true
+        }
+
+        fn is_mod_page(&self, _url: &Url) -> bool {
+            true
+        }
+
+        fn feed_covers(&self, _url: &Url) -> bool {
+            true
+        }
+
+        fn search(&self, _query: &str, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+
+        fn feed_page(&self, _page: u32, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+
+        fn listing(
+            &self,
+            _url: &Url,
+            _cancel: &AtomicBool,
+        ) -> Result<Option<Listing>, SourceError> {
+            Ok(None)
+        }
+
+        fn supports_browse(&self, kind: ModKind) -> bool {
+            self.kinds.contains(&kind)
+        }
+
+        fn browse(
+            &self,
+            kind: ModKind,
+            page: u32,
+            _cancel: &AtomicBool,
+        ) -> Result<Vec<Listing>, SourceError> {
+            self.pages.lock().unwrap().push(page);
+            Ok((self.action)(kind, page))
+        }
+    }
+
+    #[test]
+    fn browse_fetches_pages_and_keeps_site_order() {
+        let first = BrowseSource::new("one", vec![ModKind::Map], |_kind, page| {
+            vec![listing(
+                "one",
+                &format!("z{page}"),
+                &format!("Zulu Map {page}"),
+                None,
+            )]
+        });
+        let second = BrowseSource::new("two", vec![ModKind::Map], |_kind, page| {
+            vec![listing(
+                "two",
+                &format!("a{page}"),
+                &format!("Alpha Map {page}"),
+                None,
+            )]
+        });
+        let service = service_with(
+            vec![first.clone(), second.clone()],
+            SearchOptions::default(),
+        );
+        let response = service.browse(ModKind::Map, 1, 2, &AtomicBool::new(false), None);
+        assert_eq!(response.listings.len(), 4);
+        assert!(
+            response.cards[0].title.starts_with("Zulu"),
+            "порядок сайтов: {:?}",
+            response
+                .cards
+                .iter()
+                .map(|card| &card.title)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(*first.pages.lock().unwrap(), vec![1, 2]);
+        assert_eq!(*second.pages.lock().unwrap(), vec![1, 2]);
+        assert_eq!(response.sources[0].count, 2);
+
+        let more = service.browse(ModKind::Map, 3, 2, &AtomicBool::new(false), None);
+        assert_eq!(*first.pages.lock().unwrap(), vec![1, 2, 3, 4]);
+        assert_eq!(more.listings.len(), 4);
+    }
+
+    #[test]
+    fn browse_tells_which_site_has_no_section() {
+        let maps = BrowseSource::new("maps", vec![ModKind::Map], |_kind, _page| {
+            vec![listing("maps", "1", "Map", None)]
+        });
+        let cars = BrowseSource::new("cars", vec![ModKind::Vehicle], |_kind, _page| Vec::new());
+        let service = service_with(vec![maps, cars], SearchOptions::default());
+        let response = service.browse(ModKind::Map, 1, 2, &AtomicBool::new(false), None);
+        let report = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "cars")
+            .unwrap();
+        assert_eq!(report.status, SourceStatus::Ok);
+        assert!(
+            report.note.as_deref().unwrap_or("").contains("раздела"),
+            "{report:?}"
+        );
+    }
+
     #[test]
     fn groups_same_mod_across_sites() {
         let mut first = listing("modland", "a", "BMW M2 G87", Some("1.0"));
@@ -1076,6 +1397,21 @@ mod tests {
         assert_eq!(lada.kind, Some(ModKind::Vehicle));
         assert_eq!(find("modland:2").kind, Some(ModKind::Map));
         assert_eq!(find("stmods:3").kind, None);
+    }
+
+    #[test]
+    fn title_kind_wins_over_weak_description_hint() {
+        // Карта STMods: описание сказало «cars» из-за слова «конфигурации»,
+        // а название начинается с «Карта».
+        let mut map = listing(
+            "stmods",
+            "karta_gambler_hills",
+            "Карта «Gambler Hills» версия 1.3",
+            None,
+        );
+        map.category = Some("cars".to_string());
+        let cards = service().group(&[map], "gambler");
+        assert_eq!(cards[0].kind, Some(ModKind::Map));
     }
 
     #[test]

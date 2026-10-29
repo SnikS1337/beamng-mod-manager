@@ -84,11 +84,15 @@ pub fn parse_list(html: &str) -> Vec<Listing> {
         listing.game_version = parsed.game_version;
         listing.author = author;
         listing.preview_url = preview;
-        listing.category = CARD_TEXT
-            .captures(card)
-            .and_then(|captures| captures.name("t"))
-            .and_then(|text| category_hint(&strip_tags(text.as_str())))
-            .map(str::to_string);
+        listing.category = slug_category(&listing.source_id)
+            .map(str::to_string)
+            .or_else(|| {
+                CARD_TEXT
+                    .captures(card)
+                    .and_then(|captures| captures.name("t"))
+                    .and_then(|text| category_hint(&strip_tags(text.as_str())))
+                    .map(str::to_string)
+            });
         listing.price = if parsed.has_paid_marker {
             PriceStatus::Paid
         } else {
@@ -100,17 +104,45 @@ pub fn parse_list(html: &str) -> Vec<Listing> {
 }
 
 /// Раздела в карточке поиска STMods нет: все моды лежат в `/beamng_drive/mods/`.
-/// Подсказка по описанию: «20 конфигураций» бывает только у машин, «карта» — у карт.
-/// Не уверены — `None`, тип возьмут из названия или со страницы мода.
-pub fn category_hint(text: &str) -> Option<&'static str> {
-    let text = text.to_lowercase();
-    if text.contains("конфигурац") {
-        Some("cars")
-    } else if ["карта ", "карту ", "карты ", "новая карта", "map "]
+/// Зато адрес карты всегда начинается с `karta_` — это точнее описания.
+pub fn slug_category(slug: &str) -> Option<&'static str> {
+    let slug = slug.to_lowercase();
+    if ["karta_", "karty_", "map_", "maps_"]
         .iter()
-        .any(|word| text.contains(word))
+        .any(|prefix| slug.starts_with(prefix))
     {
         Some("maps")
+    } else {
+        None
+    }
+}
+
+/// Подсказка по описанию, если адрес ничего не сказал: «20 конфигураций»
+/// бывает у машин, «карта» — у карт. «Карта» проверяем первой: в описании
+/// карты тоже бывают «кастомные конфигурации». Не уверены — `None`.
+pub fn category_hint(text: &str) -> Option<&'static str> {
+    let text = text.to_lowercase();
+    let words: Vec<&str> = text
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let map_word = |word: &&str| {
+        matches!(
+            *word,
+            "карта"
+                | "карты"
+                | "карту"
+                | "карте"
+                | "картой"
+                | "карт"
+                | "map"
+                | "maps"
+        )
+    };
+    if words.iter().any(map_word) {
+        Some("maps")
+    } else if text.contains("конфигурац") {
+        Some("cars")
     } else {
         None
     }
@@ -267,9 +299,31 @@ mod tests {
             Some("maps")
         );
         assert_eq!(category_hint("Добавлены 5 конфигураций"), Some("cars"));
+        // У карты в описании тоже бывают «конфигурации» — слово «карта» важнее.
+        assert_eq!(
+            category_hint("Кастомные конфигурации для карты"),
+            Some("maps")
+        );
         // «карточка», «картон» — не карта; неизвестно — без типа, а не догадка.
         assert_eq!(category_hint("Исправлена карточка мода"), None);
         assert_eq!(category_hint("Звуки двигателя"), None);
+    }
+
+    #[test]
+    fn map_slug_wins_over_configurations_in_description() {
+        // Настоящая карточка карты Gambler Hills: в описании есть «конфигурации»,
+        // а адрес начинается с karta_.
+        let list = parse_list(&fixture("search-karta-gambler-2026-10-28.html"));
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert_eq!(list[0].category.as_deref(), Some("maps"));
+        assert_eq!(
+            bmm_domain::text::ModKind::from_category("maps"),
+            Some(bmm_domain::text::ModKind::Map)
+        );
+        assert!(list[0].title.contains("Gambler Hills"));
+        assert_eq!(slug_category("karta_gambler_hills_by_bifdro"), Some("maps"));
+        assert_eq!(slug_category("map_desert_race"), Some("maps"));
+        assert_eq!(slug_category("bmw_m5_f90_by_bubon2012"), None);
     }
 
     #[test]

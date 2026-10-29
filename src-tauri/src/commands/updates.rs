@@ -674,6 +674,7 @@ mod tests {
             app_update: None,
             search_cancel: Mutex::new(None),
             last_search: Mutex::new(None),
+            browse: Mutex::new(None),
         };
         (temp, state)
     }

@@ -141,6 +141,7 @@ impl ModKind {
         } else if has(&[
             "mods-of-mods",
             "mods of mods",
+            "addon",
             "skin",
             "sound",
             "звук",

@@ -11,6 +11,7 @@ use std::sync::atomic::AtomicBool;
 use url::Url;
 
 use bmm_domain::models::{Listing, Offer};
+use bmm_domain::text::ModKind;
 
 pub use crate::net::{FetchResult, PageFetcher, PoliteFetcher, SourceStatus};
 
@@ -48,6 +49,21 @@ pub trait ModSource: Send + Sync {
     fn search(&self, query: &str, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError>;
     fn feed_page(&self, page: u32, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError>;
     fn listing(&self, url: &Url, cancel: &AtomicBool) -> Result<Option<Listing>, SourceError>;
+
+    /// Есть ли на сайте раздел нужного типа для просмотра без текста.
+    fn supports_browse(&self, _kind: ModKind) -> bool {
+        false
+    }
+
+    /// Одна страница раздела: карты, машины или дополнения.
+    fn browse(
+        &self,
+        _kind: ModKind,
+        _page: u32,
+        _cancel: &AtomicBool,
+    ) -> Result<Vec<Listing>, SourceError> {
+        Ok(Vec::new())
+    }
 
     fn offers(&self, listing: &Listing, cancel: &AtomicBool) -> Result<Vec<Offer>, SourceError> {
         if !listing.offers.is_empty() {
@@ -289,6 +305,60 @@ mod tests {
         assert!(calls[0].starts_with("POST /search.php"));
         assert!(calls[0].contains("per_page_search"));
         assert!(calls[0].contains("date_public"));
+    }
+
+    #[test]
+    fn stmods_browse_maps_and_pages() {
+        let routes = RouteFetcher::new(|url| {
+            (url.host_str() == Some("stmods.org")).then(|| fixture(&["stmods", "list-real.html"]))
+        });
+        let source = stmods::StModsSource::new(polite(Arc::clone(&routes) as Arc<dyn PageFetcher>));
+        let first = source.browse(ModKind::Map, 1, &cancel()).unwrap();
+        assert!(!first.is_empty());
+        assert!(
+            first
+                .iter()
+                .all(|item| item.category.as_deref() == Some("maps"))
+        );
+        let _ = source.browse(ModKind::Map, 2, &cancel()).unwrap();
+        let calls = routes.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.contains("/beamng_drive/maps/")),
+            "{calls:?}"
+        );
+        assert!(
+            calls.iter().any(|call| call.contains("page=2")),
+            "{calls:?}"
+        );
+        assert!(source.supports_browse(ModKind::Vehicle));
+        assert!(!source.supports_browse(ModKind::Addon));
+    }
+
+    #[test]
+    fn modsgaming_browse_uses_section_pages() {
+        let routes = RouteFetcher::new(|url| {
+            url.host_str()
+                .is_some_and(|host| host.ends_with("modsgaming.us"))
+                .then(|| fixture(&["modsgaming", "list-page.html"]))
+        });
+        let source =
+            modsgaming::ModsGamingSource::new(polite(Arc::clone(&routes) as Arc<dyn PageFetcher>));
+        let maps = source.browse(ModKind::Map, 2, &cancel()).unwrap();
+        assert!(!maps.is_empty());
+        assert!(
+            maps.iter()
+                .all(|item| item.category.as_deref() == Some("maps"))
+        );
+        let calls = routes.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.contains("/load/beamng/maps/75-2")),
+            "{calls:?}"
+        );
+        assert!(source.supports_browse(ModKind::Addon));
     }
 
     #[test]

@@ -7,6 +7,11 @@ export type { BackgroundStyle, BackgroundTheme, UiMode } from "./unions.js";
 
 let mock: SettingsDto | null = null;
 
+export async function appDataFolder(): Promise<string> {
+  if (isTauri()) return invoke<string>("app_data_folder");
+  return "C:\\Users\\Player\\AppData\\Local\\BeamModManager";
+}
+
 export async function settingsLoad(): Promise<SettingsDto> {
   if (isTauri()) return invoke<SettingsDto>("settings_load");
   mock ??= {

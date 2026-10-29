@@ -20,8 +20,9 @@
   import { isTauri } from "@tauri-apps/api/core";
   import { Switch } from "#lib/components/ui/switch/index.js";
   import { appearance } from "#lib/shell/appearance.svelte.js";
+  import { openExternal } from "#lib/shell/openExternal.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
-  import { type SettingsDto } from "#lib/ipc/settings.js";
+  import { appDataFolder, type SettingsDto } from "#lib/ipc/settings.js";
   import {
     appUpdateCancel,
     appUpdateCheck,
@@ -100,8 +101,10 @@
     { id: "mods", label: "Моды и загрузки", icon: Package },
     { id: "updates", label: "Обновления", icon: RefreshCw },
     { id: "sites", label: "Сайты", icon: Globe },
-    { id: "program", label: "Программа", icon: Cpu },
+    { id: "program", label: "О программе", icon: Cpu },
   ] as const;
+  const REPO_URL = "https://github.com/SnikS1337/beamng-mod-manager";
+  const RELEASES_URL = `${REPO_URL}/releases/latest`;
   type SectionId = (typeof SECTIONS)[number]["id"];
   const SOURCES = [
     { id: "modland", label: "Modland", note: "Иногда просит подтвердить, что вы человек" },
@@ -258,6 +261,15 @@
         return "Проверяем обновление…";
       default:
         return "Новые версии программы берём с GitHub";
+    }
+  }
+
+  async function revealDataFolder(): Promise<void> {
+    try {
+      const folder = await appDataFolder();
+      await revealItemInDir(folder);
+    } catch {
+      toasts.show("Не удалось открыть папку данных");
     }
   }
 
@@ -425,6 +437,20 @@
     if (!draft || draft.background === id) return;
     draft.background = id;
     mark();
+  }
+
+  function selectMode(id: Mode, event: MouseEvent) {
+    if (!draft || draft.mode === id) return;
+    const root = document.documentElement;
+    const x = event.clientX > 0 ? event.clientX : window.innerWidth / 2;
+    const y = event.clientY > 0 ? event.clientY : window.innerHeight / 2;
+    root.style.setProperty("--theme-x", `${x}px`);
+    root.style.setProperty("--theme-y", `${y}px`);
+    void motion.run(() => {
+      if (!draft) return;
+      draft.mode = id;
+      mark();
+    }, "flow-theme");
   }
 
   function selectTheme(id: Theme, event: MouseEvent) {
@@ -658,12 +684,7 @@
               <button
                 type="button"
                 class:active={draft.mode === mode.id}
-                onclick={() => {
-                  if (draft) {
-                    draft.mode = mode.id;
-                    mark();
-                  }
-                }}
+                onclick={(event) => selectMode(mode.id, event)}
               >
                 <ModeIcon size={14} />
                 {mode.label}
@@ -1043,50 +1064,62 @@
         {#if activeSection === "program"}
         <section id="settings-program" class="block">
           <div class="block-head">
-            <h2 class="display">Программа</h2>
-        <span>версия {appUpdate?.currentVersion ?? "…"}</span>
-      </div>
-      <div class="update-row">
-        <div class="update-main">
-          <p>{updateStageText()}</p>
-          {#if releaseNotes.length > 0}
-            <ul class="update-notes">
-              {#each releaseNotes as note}
-                <li>{note}</li>
-              {/each}
-            </ul>
-          {/if}
-          {#if updateError}
-            <span class="update-error">{updateError}</span>
-          {/if}
-          {#if appUpdate?.state.stage === "downloading"}
-            <div class="update-track">
-              <span style={`width:${Math.max(2, Math.round(updateProgress * 100))}%`}></span>
+            <h2 class="display">О программе</h2>
+            <span>версия {appUpdate?.currentVersion ?? "…"}</span>
+          </div>
+          <p class="about-lead">
+            BeamNG Mod Manager держит моды BeamNG.drive в порядке: гараж, установка,
+            проверка обновлений и поиск сразу по нескольким сайтам.
+          </p>
+          <div class="about-row">
+            <div class="about-update">
+              <p class="about-stage">{updateStageText()}</p>
+              {#if updateError}
+                <span class="update-error">{updateError}</span>
+              {/if}
+              {#if appUpdate?.state.stage === "downloading"}
+                <div class="update-track">
+                  <span style={`width:${Math.max(2, Math.round(updateProgress * 100))}%`}></span>
+                </div>
+              {/if}
             </div>
+            <div class="update-actions">
+              {#if appUpdate?.state.stage === "available"}
+                <button class="primary-small" type="button" disabled={updateBusy} onclick={() => void downloadAppUpdate()}>
+                  <Download size={13} />
+                  Скачать
+                </button>
+              {:else if appUpdate?.state.stage === "downloading"}
+                <button type="button" onclick={() => void cancelAppUpdate()}>Отменить</button>
+              {:else if appUpdate?.state.stage === "readyToRestart"}
+                <button class="primary-small" type="button" onclick={() => restartAppUpdate()}>
+                  <RotateCcw size={13} />
+                  Перезапустить
+                </button>
+              {:else if appUpdate?.state.stage === "checking"}
+                <button type="button" disabled>Проверяем…</button>
+              {:else}
+                <button type="button" disabled={updateBusy} onclick={() => void checkAppUpdate()}>
+                  {updateBusy ? "Проверяем…" : "Проверить обновление"}
+                </button>
+              {/if}
+            </div>
+          </div>
+          <div class="about-links">
+            <button type="button" onclick={() => void openExternal(REPO_URL)}>GitHub</button>
+            <button type="button" onclick={() => void openExternal(RELEASES_URL)}>Релизы и загрузки</button>
+            <button type="button" onclick={() => void revealDataFolder()}>Папка данных</button>
+          </div>
+          {#if releaseNotes.length > 0}
+            <details class="about-notes">
+              <summary>Что нового в версии {appUpdate?.currentVersion ?? ""}</summary>
+              <ul>
+                {#each releaseNotes as note}
+                  <li>{note}</li>
+                {/each}
+              </ul>
+            </details>
           {/if}
-        </div>
-        <div class="update-actions">
-          {#if appUpdate?.state.stage === "available"}
-            <button class="primary-small" type="button" disabled={updateBusy} onclick={() => void downloadAppUpdate()}>
-              <Download size={13} />
-              Скачать
-            </button>
-          {:else if appUpdate?.state.stage === "downloading"}
-            <button type="button" onclick={() => void cancelAppUpdate()}>Отменить</button>
-          {:else if appUpdate?.state.stage === "readyToRestart"}
-            <button class="primary-small" type="button" onclick={() => void restartAppUpdate()}>
-              <RotateCcw size={13} />
-              Перезапустить
-            </button>
-          {:else if appUpdate?.state.stage === "checking"}
-            <button type="button" disabled>Проверяем…</button>
-          {:else}
-            <button type="button" disabled={updateBusy} onclick={() => void checkAppUpdate()}>
-              {updateBusy ? "Проверяем…" : "Проверить обновление"}
-            </button>
-          {/if}
-        </div>
-      </div>
         </section>
         {/if}
       </div>
@@ -1690,7 +1723,15 @@
     font-size: 12.5px;
   }
 
-  .update-row {
+  .about-lead {
+    margin: 0 0 14px;
+    max-width: 680px;
+    color: var(--muted-foreground);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+
+  .about-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1702,40 +1743,73 @@
     background: var(--surface);
   }
 
-  .update-main {
+  .about-update {
     display: flex;
     flex: 1 1 320px;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     min-width: 0;
   }
 
-  .update-main p {
+  .about-stage {
     margin: 0;
     font-size: 14px;
     font-weight: 700;
   }
 
-  .update-main span {
-    color: var(--muted-foreground);
+  .update-error {
+    color: var(--danger);
     font-size: 12.5px;
-    line-height: 1.45;
   }
 
-  .update-notes {
+  .about-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .about-links button {
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--foreground);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: default;
+  }
+
+  .about-links button:hover {
+    background: var(--surface-3);
+  }
+
+  .about-notes {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+
+  .about-notes summary {
+    font-size: 13px;
+    font-weight: 600;
+    cursor: default;
+  }
+
+  .about-notes ul {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    margin: 2px 0 0;
+    gap: 4px;
+    margin: 8px 0 0;
     padding-left: 18px;
     list-style: disc;
     color: var(--muted-foreground);
     font-size: 12.5px;
     line-height: 1.45;
-  }
-
-  .update-main .update-error {
-    color: var(--danger);
   }
 
   .update-track {

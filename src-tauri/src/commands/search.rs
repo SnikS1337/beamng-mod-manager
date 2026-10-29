@@ -1,6 +1,6 @@
 //! Поиск по сайтам: поток событий, отмена и ручные решения о дублях.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,13 +13,15 @@ use url::Url;
 use bmm_domain::filename;
 use bmm_domain::matches::{ManualMatch, MatchDecisions};
 use bmm_domain::models::{Listing, Offer, PriceStatus};
-use bmm_domain::text::{TitleNormalizer, TitleParser};
+use bmm_domain::text::{ModKind, TitleNormalizer, TitleParser};
 
 use bmm_sources::search::{ModCard, PriceSummary, SearchResponse, SearchService, SourceReport};
-use bmm_sources::sources::SourceStatus;
+use bmm_sources::sources::{ModSource, SourceStatus};
 
 use crate::error::AppError;
-use crate::state::AppState;
+use crate::state::{AppState, BrowseSession, SearchRuntime};
+
+const BROWSE_PAGES: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -167,6 +169,42 @@ impl InstalledIndex {
     }
 }
 
+fn searchable_sources(runtime: &SearchRuntime, disabled: &[String]) -> Vec<Arc<dyn ModSource>> {
+    runtime
+        .service
+        .sources()
+        .iter()
+        .filter(|source| {
+            source.supports_search()
+                && !disabled
+                    .iter()
+                    .any(|item| item.eq_ignore_ascii_case(source.id()))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Собрать общую выдачу раздела из накопленных страниц.
+fn assemble_browse(service: &SearchService, session: &BrowseSession) -> SearchResponse {
+    let mut listings = Vec::new();
+    let mut reports = Vec::new();
+    for id in &session.order {
+        let items = session.per_source.get(id).cloned().unwrap_or_default();
+        if let Some(base) = session.reports.get(id) {
+            reports.push(SourceReport {
+                count: items.len(),
+                ..base.clone()
+            });
+        }
+        listings.extend(items);
+    }
+    SearchResponse {
+        cards: service.group_site_order(&listings),
+        sources: reports,
+        listings,
+    }
+}
+
 #[tauri::command]
 pub async fn search_start(
     app: AppHandle,
@@ -180,19 +218,7 @@ pub async fn search_start(
         .clone()
         .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
     let settings = state.settings.load().settings;
-    let sources: Vec<Arc<dyn bmm_sources::sources::ModSource>> = runtime
-        .service
-        .sources()
-        .iter()
-        .filter(|source| {
-            source.supports_search()
-                && !settings
-                    .disabled_sources
-                    .iter()
-                    .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
-        })
-        .cloned()
-        .collect();
+    let sources = searchable_sources(&runtime, &settings.disabled_sources);
     let fetcher = runtime.fetcher.clone();
     let options = runtime.service.options().clone();
     let decisions: Arc<dyn MatchDecisions + Send + Sync> = runtime.matches.clone();
@@ -203,6 +229,8 @@ pub async fn search_start(
         Some(decisions),
     );
     let installed = Arc::new(InstalledIndex::build(&state));
+    // Новый текстовый поиск закрывает раздел: старые страницы больше не нужны.
+    *state.browse.lock().unwrap() = None;
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut slot = state.search_cancel.lock().unwrap();
@@ -258,6 +286,127 @@ pub async fn search_start(
     Ok(())
 }
 
+/// Открыть раздел сайтов: карты, машины или дополнения. `from_page` — с какой
+/// страницы продолжать; первые две страницы каждой порции.
+#[tauri::command]
+pub async fn search_browse(
+    state: tauri::State<'_, Arc<AppState>>,
+    kind: String,
+    from_page: u32,
+    request_id: u64,
+) -> Result<SearchEventDto, AppError> {
+    let state = state.inner().clone();
+    let kind = match kind.as_str() {
+        "vehicle" => ModKind::Vehicle,
+        "map" => ModKind::Map,
+        "addon" => ModKind::Addon,
+        _ => return Err(AppError::new("search", "Неизвестный раздел.")),
+    };
+    let runtime = state
+        .search
+        .clone()
+        .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
+    let settings = state.settings.load().settings;
+    let sources = searchable_sources(&runtime, &settings.disabled_sources);
+    if sources.is_empty() {
+        return Err(AppError::new("search", "Все сайты выключены."));
+    }
+    let status_source = runtime.fetcher.clone();
+    let service = SearchService::new(
+        sources,
+        Arc::new(move |source| status_source.status_of(source)),
+        runtime.service.options().clone(),
+        Some(runtime.matches.clone()),
+    );
+    let installed = InstalledIndex::build(&state);
+    let from_page = from_page.max(1);
+    if from_page > 1 {
+        let session = state.browse.lock().unwrap();
+        if !session.as_ref().is_some_and(|session| session.kind == kind) {
+            return Err(AppError::new(
+                "search",
+                "Раздел уже закрыт. Откройте его заново.",
+            ));
+        }
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = state.search_cancel.lock().unwrap();
+        if slot.is_some() {
+            return Err(AppError::new(
+                "search",
+                "Поиск уже идёт. Дождитесь его окончания.",
+            ));
+        }
+        *slot = Some((request_id, Arc::clone(&cancel)));
+    }
+    let state_for_task = state.clone();
+    let run = tauri::async_runtime::spawn_blocking(move || {
+        service.browse(kind, from_page, BROWSE_PAGES, &cancel, None)
+    })
+    .await;
+    let superseded = {
+        let mut slot = state.search_cancel.lock().unwrap();
+        let ours = slot
+            .as_ref()
+            .is_some_and(|(current, _)| *current == request_id);
+        if ours {
+            *slot = None;
+        }
+        !ours
+    };
+    let response = run.map_err(|error| AppError::new("task", error.to_string()))?;
+    if superseded {
+        return Err(AppError::new(
+            "search",
+            "Раздел отменён: уже идёт другой поиск.",
+        ));
+    }
+
+    let mut session_lock = state_for_task.browse.lock().unwrap();
+    let mut session = if from_page <= 1 {
+        BrowseSession {
+            kind,
+            pages: 0,
+            order: Vec::new(),
+            per_source: BTreeMap::new(),
+            reports: BTreeMap::new(),
+            response: SearchResponse {
+                cards: Vec::new(),
+                sources: Vec::new(),
+                listings: Vec::new(),
+            },
+        }
+    } else {
+        session_lock
+            .take()
+            .ok_or_else(|| AppError::new("search", "Раздел уже закрыт. Откройте его заново."))?
+    };
+    session.order = response
+        .sources
+        .iter()
+        .map(|report| report.source_id.clone())
+        .collect();
+    for report in response.sources {
+        session.reports.insert(report.source_id.clone(), report);
+    }
+    for item in response.listings {
+        let target = session.per_source.entry(item.source.clone()).or_default();
+        if !target
+            .iter()
+            .any(|existing| existing.source_id == item.source_id)
+        {
+            target.push(item);
+        }
+    }
+    let built = assemble_browse(&runtime.service, &session);
+    session.pages = from_page.saturating_add(BROWSE_PAGES - 1);
+    session.response = built.clone();
+    *state_for_task.last_search.lock().unwrap() = Some(built.clone());
+    *session_lock = Some(session);
+    Ok(to_event(&built, request_id, "done", &installed, None))
+}
+
 /// Повторить только один сайт после сбоя, не трогая остальную выдачу.
 #[tauri::command]
 pub async fn search_retry_source(
@@ -286,12 +435,24 @@ pub async fn search_retry_source(
         })
         .cloned()
         .ok_or_else(|| AppError::new("search", "Сайт выключен или не поддерживает поиск."))?;
-    let previous = state
-        .last_search
+    let browse = state
+        .browse
         .lock()
         .unwrap()
-        .clone()
-        .ok_or_else(|| AppError::new("search", "Сначала выполните поиск."))?;
+        .as_ref()
+        .map(|session| (session.kind, session.pages));
+    let previous = if browse.is_none() {
+        Some(
+            state
+                .last_search
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| AppError::new("search", "Сначала выполните поиск."))?,
+        )
+    } else {
+        None
+    };
     let status_source = runtime.fetcher.clone();
     let service = SearchService::new(
         vec![source],
@@ -316,8 +477,12 @@ pub async fn search_retry_source(
     let state_for_task = state.clone();
     let source_id_for_task = source_id.clone();
     let cancel_for_task = Arc::clone(&cancel);
-    let run = tauri::async_runtime::spawn_blocking(move || {
-        service.retry_source(&previous, &source_id_for_task, &query, &cancel_for_task)
+    let run = tauri::async_runtime::spawn_blocking(move || match browse {
+        Some((kind, pages)) => Some(service.browse(kind, 1, pages.max(1), &cancel_for_task, None)),
+        None => {
+            let previous = previous?;
+            service.retry_source(&previous, &source_id_for_task, &query, &cancel_for_task)
+        }
     })
     .await;
     let superseded = {
@@ -338,6 +503,31 @@ pub async fn search_retry_source(
             "search",
             "Повтор отменён: уже идёт другой поиск.",
         ));
+    }
+    if let Some((kind, _)) = browse {
+        let mut session_lock = state_for_task.browse.lock().unwrap();
+        let Some(session) = session_lock.as_mut() else {
+            return Err(AppError::new(
+                "search",
+                "Раздел уже закрыт. Откройте его заново.",
+            ));
+        };
+        if session.kind != kind {
+            return Err(AppError::new(
+                "search",
+                "Раздел уже закрыт. Откройте его заново.",
+            ));
+        }
+        session
+            .per_source
+            .insert(source_id.clone(), response.listings);
+        if let Some(report) = response.sources.into_iter().next() {
+            session.reports.insert(report.source_id.clone(), report);
+        }
+        let built = assemble_browse(&runtime.service, session);
+        session.response = built.clone();
+        *state_for_task.last_search.lock().unwrap() = Some(built.clone());
+        return Ok(to_event(&built, request_id, "done", &installed, None));
     }
     *state_for_task.last_search.lock().unwrap() = Some(response.clone());
     Ok(to_event(&response, request_id, "done", &installed, None))
@@ -495,7 +685,12 @@ pub async fn search_decide(
             },
         )
         .map_err(|error| AppError::new("matches", error.to_string()))?;
-    let response = runtime.service.regroup(&previous, &query);
+    let browsing = state.browse.lock().unwrap().is_some();
+    let response = if browsing {
+        runtime.service.regroup_site_order(&previous)
+    } else {
+        runtime.service.regroup(&previous, &query)
+    };
     *state.last_search.lock().unwrap() = Some(response.clone());
     let installed = InstalledIndex::build(&state);
     Ok(to_event(&response, 0, "regroup", &installed, None))
@@ -783,6 +978,59 @@ mod tests {
         assert_eq!(event.cards[1].price, "paid");
         assert_eq!(event.cards[1].listings[0].price, "paid");
         assert_eq!(event.sources[0].status, "needsHumanCheck");
+    }
+
+    #[test]
+    fn browse_assembly_keeps_pages_and_counts() {
+        use crate::state::BrowseSession;
+        use bmm_sources::search::SearchOptions;
+
+        let service = SearchService::new(
+            Vec::new(),
+            Arc::new(|_| SourceStatus::Ok),
+            SearchOptions::default(),
+            None,
+        );
+        let mut session = BrowseSession {
+            kind: ModKind::Map,
+            pages: 2,
+            order: vec!["one".to_string(), "two".to_string()],
+            per_source: BTreeMap::new(),
+            reports: BTreeMap::new(),
+            response: SearchResponse {
+                cards: Vec::new(),
+                sources: Vec::new(),
+                listings: Vec::new(),
+            },
+        };
+        session.per_source.insert(
+            "one".to_string(),
+            vec![
+                listing("one", "1", "Zulu Map"),
+                listing("one", "2", "Yankee Map"),
+            ],
+        );
+        session
+            .per_source
+            .insert("two".to_string(), vec![listing("two", "3", "Alpha Map")]);
+        for (id, count) in [("one", 0), ("two", 0)] {
+            session.reports.insert(
+                id.to_string(),
+                SourceReport {
+                    source_id: id.to_string(),
+                    display_name: id.to_string(),
+                    status: SourceStatus::Ok,
+                    count,
+                    note: None,
+                    pending: false,
+                },
+            );
+        }
+        let built = assemble_browse(&service, &session);
+        assert_eq!(built.listings.len(), 3);
+        assert_eq!(built.sources[0].count, 2);
+        assert_eq!(built.sources[1].count, 1);
+        assert_eq!(built.cards[0].title, "Zulu Map", "порядок сайтов сохранён");
     }
 
     #[test]
