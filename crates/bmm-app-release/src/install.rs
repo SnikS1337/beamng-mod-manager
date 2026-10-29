@@ -684,3 +684,48 @@ fn is_no_rights(error: &io::Error) -> bool {
     }
     error.kind() == io::ErrorKind::PermissionDenied
 }
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn archive(dir: &Path) -> PathBuf {
+        let path = dir.join("update.zip");
+        let file = File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(EXE_NAME, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        let mut bytes = vec![0u8; crate::manifest::MIN_SIZE as usize];
+        bytes[0] = b'M';
+        bytes[1] = b'Z';
+        zip.write_all(&bytes).unwrap();
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn readable_wrong_version_rejects_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip = archive(dir.path());
+        let staging = dir.path().join("staging");
+        let expected = AppVersion::parse("1.0.6").unwrap();
+        let actual = AppVersion::parse("1.0.5").unwrap();
+        let error = extract_exe(&zip, &staging, expected, &|_| Some(actual)).unwrap_err();
+        assert!(
+            matches!(error, InstallError::VersionMismatch { .. }),
+            "{error:?}"
+        );
+        assert!(!staging.join(EXE_NAME).exists());
+    }
+
+    #[test]
+    fn unreadable_version_does_not_block_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip = archive(dir.path());
+        let staging = dir.path().join("staging");
+        let expected = AppVersion::parse("1.0.6").unwrap();
+        let extracted = extract_exe(&zip, &staging, expected, &|_| None).unwrap();
+        assert!(extracted.is_file());
+    }
+}

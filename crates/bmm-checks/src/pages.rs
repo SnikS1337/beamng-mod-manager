@@ -309,26 +309,43 @@ pub fn find_pages_with(
         // Следить без вопроса можно, только если ничто не спорит. В выдаче поиска размера
         // обычно нет, а совпадение одного названия обманчиво («Mercedes-Benz ML» — десятки
         // разных модов): открываем страницу мода и решаем ещё раз уже с размером и автором.
-        if let Some(found) = guess.as_ref().filter(|guess| {
+        let needs_detail = guess.as_ref().is_some_and(|guess| {
             guess.certain && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
-        }) && let Some(detail) = page_details(search, &found.listing, cancel)
-        {
-            let enriched: Vec<Listing> = listings
-                .iter()
-                .map(|listing| {
-                    if listing.source == detail.source && listing.source_id == detail.source_id {
-                        detail.clone()
-                    } else {
-                        listing.clone()
+        });
+        if needs_detail {
+            let found = guess
+                .as_ref()
+                .map(|guess| guess.listing.clone())
+                .expect("guess есть");
+            match page_details(search, &found, cancel) {
+                Some(detail) => {
+                    let enriched: Vec<Listing> = listings
+                        .iter()
+                        .map(|listing| {
+                            if listing.source == detail.source
+                                && listing.source_id == detail.source_id
+                            {
+                                detail.clone()
+                            } else {
+                                listing.clone()
+                            }
+                        })
+                        .collect();
+                    guess = PageGuesser::pick_with_author(
+                        installed,
+                        title.as_deref(),
+                        author.as_deref(),
+                        &enriched,
+                    );
+                }
+                None => {
+                    // Страницу открыть не удалось — подтверждения размера и автора нет.
+                    // Оставляем только предложение, а не молча следим за чужим модом.
+                    if let Some(guess) = guess.as_mut() {
+                        guess.certain = false;
                     }
-                })
-                .collect();
-            guess = PageGuesser::pick_with_author(
-                installed,
-                title.as_deref(),
-                author.as_deref(),
-                &enriched,
-            );
+                }
+            }
         }
 
         let _gate = gate();
@@ -926,6 +943,34 @@ mod tests {
             "второй запрос по имени файла нашёл страницу"
         );
         assert!(site.calls.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[test]
+    fn failed_page_details_downgrades_certain_binding() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "toyota_sienna_v1.0.zip"));
+        let mut page = listing("page", "Toyota Sienna");
+        page.mod_version = Some("1.0".to_string());
+        let site = Site::new(move |_| Ok(vec![page.clone()]));
+        let service = search(site);
+        let cancel = AtomicBool::new(false);
+        let report = find_pages(
+            &store,
+            &service,
+            now(),
+            &cancel,
+            &|_| Some("Toyota Sienna".to_string()),
+            &|_| None,
+            None,
+        );
+        assert_eq!(report.found, 1);
+        assert_eq!(report.followed, 0, "без размера и автора следить нельзя");
+        let binding = store
+            .bindings()
+            .into_iter()
+            .find(|binding| binding.mod_id == "a")
+            .expect("предложение сохранено");
+        assert!(!binding.confirmed);
     }
 
     #[test]

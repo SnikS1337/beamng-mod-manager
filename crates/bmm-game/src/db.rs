@@ -346,19 +346,17 @@ pub fn key_of(file_name: &str) -> String {
 }
 
 fn find_object_key(mods: &Map<String, Value>, file_name: &str, wanted_key: &str) -> Option<String> {
-    if let Some((key, _)) = mods
-        .iter()
-        .find(|(key, _)| key.to_lowercase() == wanted_key)
-    {
+    let wanted = wanted_key.to_lowercase();
+    if let Some((key, _)) = mods.iter().find(|(key, _)| key.to_lowercase() == wanted) {
         return Some(key.clone());
     }
+    let wanted_name = file_name.to_lowercase();
     mods.iter()
         .find(|(_, value)| {
             value
                 .get("filename")
                 .and_then(Value::as_str)
-                .map(|name| name.eq_ignore_ascii_case(file_name))
-                .unwrap_or(false)
+                .is_some_and(|name| name.to_lowercase() == wanted_name)
         })
         .map(|(key, _)| key.clone())
 }
@@ -557,6 +555,15 @@ mod tests {
         fs::write(dir.path().join("db.json"), text).unwrap();
         let db = GameModDb::new(dir.path());
         (dir, db)
+    }
+
+    #[test]
+    fn cyrillic_case_difference_still_finds_mod() {
+        let (dir, db) = temp_db(r#"{"mods":{"МОД":{"filename":"мод.zip","active":true}}}"#);
+        let outcome = db.set_active(&[("МОД.zip", false)], || false);
+        assert_eq!(outcome.outcome, SetActiveOutcome::Done, "{outcome:?}");
+        let text = fs::read_to_string(dir.path().join("db.json")).unwrap();
+        assert!(text.contains("\"active\": false"), "{text}");
     }
 
     #[test]

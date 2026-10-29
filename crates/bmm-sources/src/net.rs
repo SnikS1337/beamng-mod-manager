@@ -463,16 +463,24 @@ pub fn is_challenge_page(text: &str) -> bool {
     if TITLES.iter().any(|marker| title.contains(marker)) {
         return true;
     }
-    const BODY: &[&str] = &[
-        "проверяем, человек ли вы",
-        "verify you are human",
-        "checking if the site connection is secure",
-        "needs to review the security of your connection",
+    // Структура челленджа однозначна даже без заголовка.
+    const STRUCTURE: &[&str] = &[
         "id=\"challenge-form\"",
         "id=\"challenge-running\"",
         "id=\"challenge-stage\"",
     ];
-    BODY.iter().any(|marker| lower.contains(marker))
+    if STRUCTURE.iter().any(|marker| lower.contains(marker)) {
+        return true;
+    }
+    // Фразы проверки ищем только на короткой странице: в длинном описании мода
+    // они ничего не доказывают.
+    const PHRASES: &[&str] = &[
+        "проверяем, человек ли вы",
+        "verify you are human",
+        "checking if the site connection is secure",
+        "needs to review the security of your connection",
+    ];
+    lower.len() < 4096 && PHRASES.iter().any(|marker| lower.contains(marker))
 }
 
 #[derive(Debug, Clone)]
@@ -534,6 +542,8 @@ struct HostInner {
     last_request: Option<Instant>,
     failures: u32,
     blocked_until: Option<Instant>,
+    /// До какого момента сайт требует проверку. После срока пробуем снова.
+    human_until: Option<Instant>,
     status: SourceStatus,
     message: Option<String>,
 }
@@ -544,6 +554,7 @@ impl Default for HostInner {
             last_request: None,
             failures: 0,
             blocked_until: None,
+            human_until: None,
             status: SourceStatus::Ok,
             message: None,
         }
@@ -583,12 +594,19 @@ impl Default for SourceState {
 /// Пауза после серии сбоев истекла — источник снова доступен. Одиночный сбой
 /// (`cooldown_until = None`) тоже не закрывает сайт навсегда.
 fn refresh_source(state: &mut SourceState) {
-    if state.status == SourceStatus::Unavailable
-        && state
-            .cooldown_until
-            .is_none_or(|until| until <= Instant::now())
-    {
-        *state = SourceState::default();
+    let expired = state
+        .cooldown_until
+        .is_some_and(|until| until <= Instant::now());
+    match state.status {
+        // Одиночный сбой не закрывает сайт до перезапуска программы.
+        SourceStatus::Unavailable if state.cooldown_until.is_none() || expired => {
+            *state = SourceState::default();
+        }
+        // Проверка «вы человек» тоже не вечная: после срока пробуем снова.
+        SourceStatus::NeedsHumanCheck if expired => {
+            *state = SourceState::default();
+        }
+        _ => {}
     }
 }
 
@@ -681,7 +699,7 @@ impl PoliteFetcher {
                 .clone()
         };
         {
-            let inner = lock(&entry.inner);
+            let mut inner = lock(&entry.inner);
             if let Some(until) = inner.blocked_until
                 && until > Instant::now()
             {
@@ -699,17 +717,24 @@ impl PoliteFetcher {
                 return FetchResult::failed(SourceStatus::Unavailable, message);
             }
             if inner.status == SourceStatus::NeedsHumanCheck {
-                let message = inner
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| "Сайт просит подтвердить, что вы человек.".to_string());
-                self.remember(
-                    source,
-                    SourceStatus::NeedsHumanCheck,
-                    Some(message.clone()),
-                    None,
-                );
-                return FetchResult::failed(SourceStatus::NeedsHumanCheck, message);
+                if inner
+                    .human_until
+                    .is_none_or(|until| until <= Instant::now())
+                {
+                    *inner = HostInner::default();
+                } else {
+                    let message = inner
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "Сайт просит подтвердить, что вы человек.".to_string());
+                    self.remember(
+                        source,
+                        SourceStatus::NeedsHumanCheck,
+                        Some(message.clone()),
+                        inner.human_until,
+                    );
+                    return FetchResult::failed(SourceStatus::NeedsHumanCheck, message);
+                }
             }
         }
         // Очередь сайта ждём так, чтобы отмена её прерывала: иначе остановленный поиск
@@ -774,14 +799,16 @@ impl PoliteFetcher {
                     }
                     if is_challenge_page(&response.text) {
                         let message = "Сайт просит подтвердить, что вы человек.".to_string();
+                        let until = Instant::now() + self.options.cooldown;
                         let mut inner = lock(&entry.inner);
                         inner.status = SourceStatus::NeedsHumanCheck;
                         inner.message = Some(message.clone());
+                        inner.human_until = Some(until);
                         self.remember(
                             source,
                             SourceStatus::NeedsHumanCheck,
                             Some(message.clone()),
-                            None,
+                            Some(until),
                         );
                         return FetchResult {
                             status: SourceStatus::NeedsHumanCheck,
@@ -1862,6 +1889,48 @@ mod tests {
         let second = polite.get("site", &url("https://example.org/other"));
         assert_eq!(second.status, SourceStatus::NeedsHumanCheck);
         assert_eq!(fake.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn challenge_latch_expires() {
+        let fake = FakeFetcher::new(vec![
+            Ok(response(
+                200,
+                "<html><head><title>Just a moment...</title></head></html>",
+            )),
+            Ok(response(
+                200,
+                "<html><head><title>BMW E34</title></head><body>mod</body></html>",
+            )),
+        ]);
+        let mut opts = options();
+        opts.cooldown = Duration::from_millis(60);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/mod");
+        assert_eq!(
+            polite.get("site", &page).status,
+            SourceStatus::NeedsHumanCheck
+        );
+        assert_eq!(polite.status_of("site"), SourceStatus::NeedsHumanCheck);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(polite.status_of("site"), SourceStatus::Ok);
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        assert_eq!(fake.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn challenge_phrase_in_long_description_is_not_a_challenge() {
+        let long = format!(
+            "<html><head><title>BMW E34</title></head><body>{}</body></html>",
+            "Описание мода. verify you are human. ".repeat(200)
+        );
+        assert!(!is_challenge_page(&long));
+        assert!(is_challenge_page(
+            "<html><body><p>Проверяем, человек ли вы</p></body></html>"
+        ));
+        assert!(is_challenge_page(
+            "<html><body><div id=\"challenge-stage\"></div></body></html>"
+        ));
     }
 
     #[test]

@@ -101,6 +101,60 @@ fn current_version() -> AppVersion {
     AppVersion::parse(env!("CARGO_PKG_VERSION")).unwrap_or_else(|| AppVersion::new(0, 4, 0, 0))
 }
 
+/// Версия exe из ресурсов Windows. `None` — ресурса нет: тогда, как и раньше,
+/// доверяем размеру и SHA-256 архива; читаемую версию обязательно сверяем.
+#[cfg(windows)]
+fn exe_version(path: &Path) -> Option<AppVersion> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FFI_SIGNATURE, VS_FIXEDFILEINFO,
+        VerQueryValueW,
+    };
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let size = GetFileVersionInfoSizeW(wide.as_ptr(), std::ptr::null_mut());
+        if size == 0 {
+            return None;
+        }
+        let mut buffer = vec![0u8; size as usize];
+        if GetFileVersionInfoW(wide.as_ptr(), 0, size, buffer.as_mut_ptr().cast()) == 0 {
+            return None;
+        }
+        let mut value: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut length = 0u32;
+        let root = [u16::from(b'\\'), 0];
+        if VerQueryValueW(
+            buffer.as_ptr().cast(),
+            root.as_ptr(),
+            &mut value,
+            &mut length,
+        ) == 0
+            || value.is_null()
+            || length < std::mem::size_of::<VS_FIXEDFILEINFO>() as u32
+        {
+            return None;
+        }
+        let fixed = std::ptr::read_unaligned(value.cast::<VS_FIXEDFILEINFO>());
+        if fixed.dwSignature as i32 != VS_FFI_SIGNATURE {
+            return None;
+        }
+        let high = fixed.dwFileVersionMS;
+        let low = fixed.dwFileVersionLS;
+        Some(AppVersion::new(
+            high >> 16,
+            high & 0xffff,
+            low >> 16,
+            low & 0xffff,
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn exe_version(_path: &Path) -> Option<AppVersion> {
+    None
+}
+
 pub(crate) fn auto_check(app: &AppHandle, state: &Arc<AppState>) {
     let Some(runtime) = state.app_update.clone() else {
         return;
@@ -267,7 +321,7 @@ fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)
                 &manifest,
                 &current_version(),
                 &current,
-                &|_| None,
+                &exe_version,
                 &PrepareOptions::default(),
             )
             .map_err(|error| error.to_string()),
@@ -667,6 +721,15 @@ mod tests {
 
     fn strings(args: &[&str]) -> Vec<String> {
         args.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn plain_exe_without_version_resource_has_no_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fake.exe");
+        std::fs::write(&path, b"MZ fake").unwrap();
+        assert!(exe_version(&path).is_none());
     }
 
     fn manifest(size: u64) -> UpdateManifest {
