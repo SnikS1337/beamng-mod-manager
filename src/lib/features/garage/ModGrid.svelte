@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ModCardDto } from "#lib/ipc/library.js";
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { motion } from "#lib/shell/motion.svelte.js";
   import ModCard from "./ModCard.svelte";
 
@@ -11,6 +11,7 @@
     ontoggle,
     resetKey = "",
     appearKey = resetKey,
+    revealId = null,
   }: {
     items: ModCardDto[];
     /** Выбранные: одна карточка или несколько. */
@@ -21,6 +22,8 @@
     resetKey?: string;
     /** Когда карточки появляются заново. Поиск сюда не входит: иначе каждая буква перезапускает анимацию. */
     appearKey?: string;
+    /** Карточка, к которой нужно прокрутить и передать фокус после стрелок. */
+    revealId?: string | null;
   } = $props();
 
   // Рисуются только видимые ряды (+ по ряду сверху и снизу): сотни модов не тормозят.
@@ -70,6 +73,30 @@
     return motion.measure(() => {
       width = el.clientWidth;
       height = el.clientHeight;
+    });
+  });
+
+  $effect(() => {
+    const id = revealId;
+    if (!id || !viewport) return;
+    const el = viewport;
+    const index = items.findIndex((mod) => mod.id === id);
+    if (index < 0) return;
+    // Карточка вне окна виртуализации: сначала прокручиваем к её ряду,
+    // иначе фокусировать нечего.
+    if (index < startRow * columns || index >= endRow * columns) {
+      const target = Math.max(0, Math.floor(index / columns) * ROW_HEIGHT);
+      el.scrollTop = target;
+      scrollTop = target;
+    }
+    void tick().then(() => {
+      const card = [...el.querySelectorAll<HTMLElement>("[data-mod-id]")].find(
+        (element) => element.dataset.modId === id,
+      );
+      const control = card?.querySelector<HTMLElement>(
+        ".toggle [role='switch'], .toggle button, .toggle input",
+      );
+      control?.focus({ preventScroll: true });
     });
   });
 

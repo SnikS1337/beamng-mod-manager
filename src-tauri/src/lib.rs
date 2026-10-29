@@ -309,9 +309,13 @@ pub fn run() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
-                let open: Vec<String> = app.webview_windows().into_keys().collect();
+                // В app.windows() входит и окно загрузки: оно создано обычным
+                // Window с дочерними webview и в webview_windows() не попадает.
+                let open: Vec<String> = app.windows().into_keys().collect();
                 for other in windows_to_close(&label, &open) {
                     if let Some(window) = app.get_webview_window(&other) {
+                        let _ = window.destroy();
+                    } else if let Some(window) = app.get_window(&other) {
                         let _ = window.destroy();
                     }
                 }
@@ -415,10 +419,14 @@ mod tests {
     fn closing_main_window_closes_hidden_ones() {
         let open = vec!["modland-pages".to_string(), "modland-check".to_string()];
         assert_eq!(windows_to_close("main", &open), open);
-        let with_main = vec!["main".to_string(), "modland-pages".to_string()];
+        let with_main = vec![
+            "main".to_string(),
+            "modland-pages".to_string(),
+            "download".to_string(),
+        ];
         assert_eq!(
             windows_to_close("main", &with_main),
-            vec!["modland-pages".to_string()]
+            vec!["modland-pages".to_string(), "download".to_string()]
         );
     }
 

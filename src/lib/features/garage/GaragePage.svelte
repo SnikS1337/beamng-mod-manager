@@ -90,6 +90,8 @@
   let query = $state("");
   /** Выбранные моды; ровно один — его панель справа, несколько — панель действий. */
   let picked = $state<Selection>(EMPTY);
+  /** Какую карточку показать и сфокусировать после перехода стрелками. */
+  let revealId = $state<string | null>(null);
   let selectedId = $derived(single(picked));
   let details = $state<ModDetails | null>(null);
   let detailsLoading = $state(false);
@@ -775,7 +777,10 @@
               ? -rowStep()
               : rowStep();
       const next = list[Math.max(0, Math.min(list.length - 1, index + step))];
-      if (next) picked = selectOnly(next.id);
+      if (next) {
+        picked = selectOnly(next.id);
+        revealId = next.id;
+      }
     }
   }
 
@@ -1058,6 +1063,7 @@
               }}
               resetKey={`${filter}|${typeFilter}|${query}`}
               appearKey={`${filter}|${typeFilter}`}
+              {revealId}
             />
           {/if}
         </ModMenu>
