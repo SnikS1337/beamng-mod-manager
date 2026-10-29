@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use encoding_rs::{Encoding, UTF_8, WINDOWS_1251};
+use regex::Regex;
 use reqwest::blocking::Client;
 use reqwest::header::{
     CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
@@ -24,6 +25,8 @@ pub const USER_AGENT: &str = concat!(
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// Предел памяти под страницы в кеше: 64 страницы могут быть и по 16 МБ каждая.
 const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
+/// «Страницы нет» помним не дольше этого: автор мог вернуть мод или сменить адрес.
+const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceStatus {
@@ -521,14 +524,15 @@ pub fn parse_retry_after(value: Option<&str>, now: SystemTime) -> Option<Duratio
 
 pub fn decode_body(bytes: &[u8], content_type: Option<&str>) -> String {
     let declared = content_type.and_then(charset_of);
-    let encoding = if let Some(label) = declared {
-        Encoding::for_label(label.as_bytes()).unwrap_or(UTF_8)
-    } else if let Some((encoding, _)) = Encoding::for_bom(bytes) {
+    let encoding = if let Some((encoding, _)) = Encoding::for_bom(bytes) {
         encoding
-    } else if let Some(label) = sniff_meta_charset(bytes) {
+    } else if let Some(label) = declared {
         Encoding::for_label(label.as_bytes()).unwrap_or(UTF_8)
     } else if std::str::from_utf8(bytes).is_ok() {
+        // Валидный UTF-8 важнее упоминания «charset=» где-то в скрипте.
         UTF_8
+    } else if let Some(label) = sniff_meta_charset(bytes) {
+        Encoding::for_label(label.as_bytes()).unwrap_or(UTF_8)
     } else {
         WINDOWS_1251
     };
@@ -546,13 +550,11 @@ fn charset_of(content_type: &str) -> Option<&str> {
 }
 
 fn sniff_meta_charset(bytes: &[u8]) -> Option<String> {
-    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_lowercase();
-    let start = head.find("charset=")? + "charset=".len();
-    let rest = &head[start..];
-    let value: String = rest
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
-        .collect();
+    static META: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)<meta[^>]*charset\s*=\s*["']?\s*([a-z0-9_-]+)"#).unwrap()
+    });
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    let value = META.captures(&head)?.get(1)?.as_str().to_string();
     (!value.is_empty()).then_some(value)
 }
 
@@ -680,6 +682,8 @@ struct HostEntry {
 #[derive(Debug, Clone)]
 struct CacheEntry {
     stored: Instant,
+    /// У «страницы нет» срок короче, чем у обычной: страница может вернуться.
+    ttl: Duration,
     response: RawResponse,
 }
 
@@ -1024,9 +1028,11 @@ impl PoliteFetcher {
                     } else {
                         let success = (200..300).contains(&response.status);
                         if success {
-                            // Пустой успешный ответ — тоже ответ: legacy кэширует и его, чтобы
-                            // не дёргать сайт повторно на каждую страницу без результатов.
-                            self.store_cache(key, response.clone());
+                            // Пустая страница — заглушка или «ничего не найдено»: кэшировать
+                            // её на полчаса значит столько же времени отдавать пустоту.
+                            if !response.text.trim().is_empty() {
+                                self.store_cache(key, response.clone(), self.options.cache_ttl);
+                            }
                             let mut inner = lock(&entry.inner);
                             inner.failures = 0;
                             inner.status = SourceStatus::Ok;
@@ -1035,6 +1041,9 @@ impl PoliteFetcher {
                             return FetchResult::ok(response);
                         }
                         if matches!(response.status, 404 | 410) {
+                            // Мёртвую страницу запоминаем ненадолго: иначе проверка
+                            // обновлений дёргает каждый такой мод заново каждые 1,5–2,5 с.
+                            self.store_cache(key, response.clone(), NEGATIVE_CACHE_TTL);
                             let mut inner = lock(&entry.inner);
                             inner.failures = 0;
                             inner.status = SourceStatus::Ok;
@@ -1176,7 +1185,7 @@ impl PoliteFetcher {
     fn cached(&self, key: &str) -> Option<RawResponse> {
         let cache = lock(&self.cache);
         let entry = cache.get(key)?;
-        if entry.stored.elapsed() > self.options.cache_ttl {
+        if entry.stored.elapsed() > entry.ttl {
             return None;
         }
         Some(entry.response.clone())
@@ -1204,7 +1213,7 @@ impl PoliteFetcher {
         Some(entry.response.clone())
     }
 
-    fn store_cache(&self, key: String, response: RawResponse) {
+    fn store_cache(&self, key: String, response: RawResponse, ttl: Duration) {
         let mut cache = lock(&self.cache);
         if !make_room(
             &mut cache,
@@ -1218,6 +1227,7 @@ impl PoliteFetcher {
             key,
             CacheEntry {
                 stored: Instant::now(),
+                ttl,
                 response,
             },
         );
@@ -1464,6 +1474,20 @@ mod tests {
             decode_body(bytes, Some("text/html; charset=windows-1251")),
             "Привет"
         );
+    }
+
+    #[test]
+    fn valid_utf8_wins_over_a_script_mention_of_charset() {
+        let page = "<html><head><script>const hint = 'charset=windows-1251';</script></head><body>Привет</body></html>";
+        let text = decode_body(page.as_bytes(), Some("text/html"));
+        assert!(text.contains("Привет"), "{text}");
+    }
+
+    #[test]
+    fn meta_charset_without_quotes_is_read() {
+        let bytes = b"<html><head><meta charset=windows-1251></head><body>\xcf\xf0\xe8\xe2\xe5\xf2</body></html>";
+        let text = decode_body(bytes, Some("text/html"));
+        assert!(text.contains("Привет"), "{text}");
     }
 
     #[test]
@@ -1729,7 +1753,11 @@ mod tests {
         let polite = PoliteFetcher::new(missing.clone(), options());
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
-        assert_eq!(missing.calls.lock().unwrap().len(), 2);
+        assert_eq!(
+            missing.calls.lock().unwrap().len(),
+            1,
+            "404 запоминается ненадолго, а не запрашивается каждый раз"
+        );
     }
 
     struct ConditionalFetcher {
@@ -2037,6 +2065,7 @@ mod tests {
                 key.to_string(),
                 CacheEntry {
                     stored: now + Duration::from_millis(offset),
+                    ttl: Duration::from_secs(60),
                     response: response(200, "1234"),
                 },
             );
@@ -2051,6 +2080,7 @@ mod tests {
             "old".to_string(),
             CacheEntry {
                 stored: now,
+                ttl: Duration::from_secs(60),
                 response: response(200, "1234"),
             },
         );
@@ -2065,6 +2095,7 @@ mod tests {
             "old".to_string(),
             CacheEntry {
                 stored: Instant::now(),
+                ttl: Duration::from_secs(60),
                 response: response(200, "1234"),
             },
         );
@@ -2074,25 +2105,46 @@ mod tests {
     }
 
     #[test]
-    fn caches_empty_success_and_expires_by_ttl() {
+    fn empty_success_is_not_cached() {
         let fake = FakeFetcher::new(vec![
             Ok(response(200, "")),
-            Ok(response(200, "")),
-            Ok(response(200, "")),
+            Ok(response(200, "  ")),
+            Ok(response(200, "<html>mod</html>")),
         ]);
-        let mut opts = options();
-        opts.cache_ttl = Duration::from_millis(200);
-        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let polite = PoliteFetcher::new(fake.clone(), options());
         let page = url("https://example.org/empty");
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
-        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
-        assert_eq!(fake.calls.lock().unwrap().len(), 1, "пустой 200 кэширован");
-        std::thread::sleep(Duration::from_millis(300));
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
         assert_eq!(
             fake.calls.lock().unwrap().len(),
             2,
-            "после TTL — снова в сеть"
+            "пустой 200 — не ответ, кэшировать нечего"
+        );
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        assert_eq!(
+            fake.calls.lock().unwrap().len(),
+            3,
+            "непустая страница кэшируется"
+        );
+    }
+
+    #[test]
+    fn missing_page_is_cached_briefly() {
+        let fake = FakeFetcher::new(vec![Ok(response(404, "not found"))]);
+        let polite = PoliteFetcher::new(fake.clone(), options());
+        let page = url("https://example.org/deleted");
+        assert_eq!(
+            polite.get("site", &page).response.map(|r| r.status),
+            Some(404)
+        );
+        assert_eq!(
+            polite.get("site", &page).response.map(|r| r.status),
+            Some(404)
+        );
+        assert_eq!(
+            fake.calls.lock().unwrap().len(),
+            1,
+            "мёртвая страница не запрашивается снова сразу"
         );
     }
 

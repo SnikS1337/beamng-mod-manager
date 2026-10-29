@@ -52,7 +52,14 @@ pub fn parse_size(text: &str) -> Option<i64> {
         "MB" | "МБ" => 1024.0 * 1024.0,
         _ => 1024.0 * 1024.0 * 1024.0,
     };
-    Some((value * factor) as i64)
+    let bytes = value * factor;
+    // «1 000 000 GB» из рекламного блока насыщал i64 и делал файл «другим».
+    const MIN_BYTES: f64 = 1024.0;
+    const MAX_BYTES: f64 = 100.0 * 1024.0 * 1024.0 * 1024.0;
+    if !bytes.is_finite() || !(MIN_BYTES..=MAX_BYTES).contains(&bytes) {
+        return None;
+    }
+    Some(bytes as i64)
 }
 
 pub fn parse_epoch(value: &str) -> Option<DateTime<FixedOffset>> {
@@ -98,6 +105,19 @@ mod tests {
         assert_eq!(parse_size("1 234,5 МБ"), Some(1_294_467_072));
         assert_eq!(parse_size("517.85 MB"), Some(543_005_081));
         assert_eq!(parse_size("1,5 GB"), Some(1_610_612_736));
+    }
+
+    #[test]
+    fn parse_size_ignores_absurd_values() {
+        assert_eq!(
+            parse_size("1 000 000 GB"),
+            None,
+            "насыщение i64 — не размер"
+        );
+        assert_eq!(parse_size("101 GB"), None);
+        assert_eq!(parse_size("0 KB"), None);
+        assert_eq!(parse_size("0.5 KB"), None);
+        assert_eq!(parse_size("100 GB"), Some(100 * 1024 * 1024 * 1024));
     }
 
     #[test]
