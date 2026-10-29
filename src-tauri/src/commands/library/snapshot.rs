@@ -85,7 +85,16 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         });
     }
 
-    let scan_warnings = std::mem::take(&mut scan_result.warnings);
+    let mut scan_warnings = std::mem::take(&mut scan_result.warnings);
+    if let Some(newer) =
+        bmm_game::folders::newer_mods_folder(&mods_dir).filter(|newer| newer != &mods_dir)
+    {
+        scan_warnings.push(format!(
+            "Похоже, игра обновилась: моды теперь в {}. Сейчас используется {}",
+            newer.display(),
+            mods_dir.display()
+        ));
+    }
     let disks_by_file: HashMap<String, &DiskMod> = scan_result
         .mods
         .iter()

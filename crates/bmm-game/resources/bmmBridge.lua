@@ -11,7 +11,7 @@ local cmdFile = dir .. 'commands.json'
 local stateFile = dir .. 'state.json'
 local selfName = 'bmm_bridge'
 local version = 1
-local maxAge = 15 -- секунд: команда старше не выполняется (например, оставшаяся с прошлого запуска)
+local maxAge = 60 -- секунд: команда старше не выполняется (например, оставшаяся с прошлого запуска)
 
 local lastId = nil
 local off = false -- помощник выключили в меню модов игры: код уже в памяти, но он молчит и ничего не делает
@@ -65,6 +65,10 @@ local function poll()
     answer({ ackId = cmd.id, error = 'stale' })
     return
   end
+  -- Активация большого мода блокирует onUpdate дольше признака жизни:
+  -- менеджер должен видеть, что команда выполняется, а не что мост умер.
+  lastAnswer = { busy = true, busyId = cmd.id }
+  writeState()
   local ok, res = pcall(apply, cmd.set)
   if ok then
     answer({ ackId = cmd.id, results = res })

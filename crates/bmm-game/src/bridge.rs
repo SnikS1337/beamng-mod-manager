@@ -84,6 +84,16 @@ impl GameBridge {
         (self.now)().timestamp().saturating_sub(alive).abs() < ALIVE_WINDOW_SECS
     }
 
+    /// Игра уже выполняет эту команду: активация большого мода блокирует onUpdate,
+    /// и признак жизни успевает устареть. Это не «мост мёртв».
+    pub fn is_busy_for(&self, id: &str) -> bool {
+        let Some(state) = self.read_state() else {
+            return false;
+        };
+        state.get("busy").and_then(Value::as_bool) == Some(true)
+            && state.get("busyId").and_then(Value::as_str) == Some(id)
+    }
+
     pub fn send(&self, wanted: &[(&str, bool)]) -> Option<String> {
         let moment = (self.now)();
         let serial = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
@@ -280,6 +290,21 @@ mod tests {
         assert_eq!(answer.result("BMW_M2_G87_INF"), Some("ok"));
         assert_eq!(answer.result("ghost"), Some("missing"));
         assert!(bridge.is_alive());
+    }
+
+    #[test]
+    fn busy_command_is_not_a_dead_bridge() {
+        let (_temp, _mods, bridge) = setup();
+        fs::create_dir_all(bridge.state_path().parent().unwrap()).unwrap();
+        fs::write(
+            bridge.state_path(),
+            r#"{"alive":1760000000,"busy":true,"busyId":"42-1"}"#,
+        )
+        .unwrap();
+        assert!(bridge.is_busy_for("42-1"));
+        assert!(!bridge.is_busy_for("42-2"));
+        // Признак жизни мог устареть во время долгой активации — busy важнее.
+        assert!(bridge.is_busy_for("42-1"));
     }
 
     #[test]
