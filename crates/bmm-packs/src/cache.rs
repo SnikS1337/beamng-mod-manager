@@ -109,15 +109,26 @@ impl PreviewCache {
                 continue;
             }
             if meta.len() > PREVIEW_STALE_BYTES
-                && let Some(small) = fs::read(&path).ok().and_then(|bytes| shrink(&bytes))
-                && let Ok((path, extension)) = self.store(key, "jpg", &small)
+                && let Ok(bytes) = fs::read(&path)
             {
-                let value = CachedPreview::Image { path, extension };
-                self.present
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .insert(key.to_string(), value.clone());
-                return Some(value);
+                match shrink(&bytes) {
+                    Shrunk::Resized(small) => {
+                        if let Ok((path, extension)) = self.store(key, "jpg", &small) {
+                            let value = CachedPreview::Image { path, extension };
+                            self.present
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .insert(key.to_string(), value.clone());
+                            return Some(value);
+                        }
+                    }
+                    Shrunk::Rejected => {
+                        // Старый кэш мог сохранить сырые гигантские байты.
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
+                    Shrunk::Small => {}
+                }
             }
             let value = CachedPreview::Image {
                 path,
@@ -139,10 +150,13 @@ impl PreviewCache {
         key: &str,
         extension: &str,
         bytes: &[u8],
-    ) -> std::io::Result<(PathBuf, String)> {
+    ) -> std::io::Result<Option<(PathBuf, String)>> {
         match shrink(bytes) {
-            Some(small) => self.store(key, "jpg", &small),
-            None => self.store(key, extension, bytes),
+            Shrunk::Resized(small) => self.store(key, "jpg", &small).map(Some),
+            Shrunk::Small => self.store(key, extension, bytes).map(Some),
+            // Картинку отвергли по размерам: сырые байты в кэш не кладём,
+            // иначе WebView2 получит гигантский кадр и упадёт.
+            Shrunk::Rejected => Ok(None),
         }
     }
 
@@ -489,13 +503,29 @@ fn decode_limited(bytes: &[u8]) -> Option<image::DynamicImage> {
     reader.decode().ok()
 }
 
-/// Уменьшает картинку до [`PREVIEW_MAX_SIDE`] и пережимает в jpg. `None` — картинка и так
-/// маленькая или не читается (тогда кладём как есть).
-fn shrink(bytes: &[u8]) -> Option<Vec<u8>> {
-    let image = decode_limited(bytes)?;
+/// Уменьшает картинку до [`PREVIEW_MAX_SIDE`] и пережимает в jpg.
+enum Shrunk {
+    /// Картинка уже маленькая: можно хранить исходные байты.
+    Small,
+    /// Картинку отвергли по размерам: сырые байты хранить нельзя.
+    Rejected,
+    Resized(Vec<u8>),
+}
+
+fn shrink(bytes: &[u8]) -> Shrunk {
+    let Some((width, height)) = image_size(bytes) else {
+        // Не картинка (или заголовок не читается): ведём себя как раньше.
+        return Shrunk::Small;
+    };
+    if width > PREVIEW_MAX_SIDE * 4 || height > PREVIEW_MAX_SIDE * 4 {
+        return Shrunk::Rejected;
+    }
+    let Some(image) = decode_limited(bytes) else {
+        return Shrunk::Small;
+    };
     let big = image.width() > PREVIEW_MAX_SIDE || image.height() > PREVIEW_MAX_SIDE;
     if !big && bytes.len() as u64 <= PREVIEW_STALE_BYTES {
-        return None;
+        return Shrunk::Small;
     }
     let image = if big {
         image.resize(
@@ -508,10 +538,18 @@ fn shrink(bytes: &[u8]) -> Option<Vec<u8>> {
     };
     let rgb = image.to_rgb8();
     let mut out = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 84)
-        .encode_image(&rgb)
-        .ok()?;
-    Some(out)
+    match image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 84).encode_image(&rgb) {
+        Ok(()) => Shrunk::Resized(out),
+        Err(_) => Shrunk::Rejected,
+    }
+}
+
+fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
 }
 
 #[cfg(test)]
@@ -663,7 +701,7 @@ mod tests {
         image::RgbImage::from_pixel(1920, 1080, image::Rgb([200, 40, 40]))
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let (path, extension) = cache.put_image("big", "png", &png).unwrap();
+        let (path, extension) = cache.put_image("big", "png", &png).unwrap().unwrap();
         assert_eq!(extension, "jpg");
         let small = image::open(&path).unwrap();
         assert_eq!((small.width(), small.height()), (720, 405));
@@ -680,6 +718,19 @@ mod tests {
     }
 
     #[test]
+    fn huge_preview_is_not_stored_raw() {
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(20_000, 1, image::Rgb([1, 2, 3]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert!(matches!(shrink(&png), Shrunk::Rejected));
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path());
+        assert!(cache.put_image("huge", "png", &png).unwrap().is_none());
+        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+
+    #[test]
     fn small_pictures_stay_as_they_are() {
         let dir = tempfile::tempdir().unwrap();
         let cache = PreviewCache::new(dir.path());
@@ -687,7 +738,7 @@ mod tests {
         image::RgbImage::from_pixel(300, 200, image::Rgb([1, 2, 3]))
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let (_, extension) = cache.put_image("small", "png", &png).unwrap();
+        let (_, extension) = cache.put_image("small", "png", &png).unwrap().unwrap();
         assert_eq!(extension, "png");
         assert_eq!(fs::read(dir.path().join("small.png")).unwrap(), png);
     }

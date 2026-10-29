@@ -539,7 +539,10 @@ pub fn archive_problem(path: &Path) -> Result<Option<PackagingProblem>, std::io:
     let index = match read_index(path) {
         Ok(index) => index,
         Err(crate::zip_index::ZipError::Io(error)) => return Err(error),
-        Err(crate::zip_index::ZipError::Zip(_)) => return Ok(Some(PackagingProblem::NotMod)),
+        Err(crate::zip_index::ZipError::Zip(_))
+        | Err(crate::zip_index::ZipError::TooManyEntries) => {
+            return Ok(Some(PackagingProblem::NotMod));
+        }
     };
     Ok(archive_problem_from_index(&index))
 }

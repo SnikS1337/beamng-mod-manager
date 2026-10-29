@@ -1,7 +1,13 @@
 use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use zip::ZipArchive;
+
+/// Больше этого числа записей архив считаем подозрительным: разбор central
+/// directory съедает память ещё до проверки лимитов в `inspect`.
+const MAX_ENTRIES: u32 = 50_000;
+const EOCD_TAIL: u64 = 66 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -22,6 +28,8 @@ pub enum ZipError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Zip(#[from] zip::result::ZipError),
+    #[error("в архиве слишком много файлов")]
+    TooManyEntries,
 }
 
 /// Открывает zip-архив с диска.
@@ -31,7 +39,36 @@ pub enum ZipError {
 /// каждое открытие. Моды почти всегда начинаются с начала файла: пробуем так, а если
 /// не вышло — ищем по-старому.
 pub fn open_archive(path: &Path) -> Result<ZipArchive<File>, ZipError> {
+    ensure_entry_limit(path)?;
     open_with(|| File::open(path))
+}
+
+/// Число записей из EOCD читается без разбора central directory. Если счётчик
+/// не влез в u16 (ZIP64), архив тоже отвергаем: лимит всё равно превышен.
+fn ensure_entry_limit(path: &Path) -> Result<(), ZipError> {
+    let mut file = File::open(path)?;
+    let length = file.metadata()?.len();
+    let take = length.min(EOCD_TAIL) as usize;
+    if take < 22 {
+        return Ok(());
+    }
+    file.seek(SeekFrom::End(-(take as i64)))?;
+    let mut tail = vec![0u8; take];
+    file.read_exact(&mut tail)?;
+    if let Some(entries) = eocd_entries(&tail)
+        && (entries >= u16::MAX as u32 || entries > MAX_ENTRIES)
+    {
+        return Err(ZipError::TooManyEntries);
+    }
+    Ok(())
+}
+
+fn eocd_entries(tail: &[u8]) -> Option<u32> {
+    const SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    let at = tail.windows(4).rposition(|window| window == SIGNATURE)?;
+    let low = *tail.get(at + 10)? as u32;
+    let high = *tail.get(at + 11)? as u32;
+    Some(low | (high << 8))
 }
 
 fn open_with<R: std::io::Read + std::io::Seek>(
@@ -99,6 +136,17 @@ mod tests {
         );
         assert_eq!(normalize_name("../evil.jpg"), None);
         assert_eq!(normalize_name(""), None);
+    }
+
+    #[test]
+    fn entry_limit_comes_from_eocd() {
+        let mut tail = vec![0u8; 22];
+        tail[..4].copy_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        tail[10..12].copy_from_slice(&123u16.to_le_bytes());
+        assert_eq!(eocd_entries(&tail), Some(123));
+        assert!(eocd_entries(&[0u8; 22]).is_none());
+        tail[10..12].copy_from_slice(&u16::MAX.to_le_bytes());
+        assert_eq!(eocd_entries(&tail), Some(u16::MAX as u32));
     }
 
     #[test]
