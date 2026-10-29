@@ -377,6 +377,12 @@
   }
 
   function clear() {
+    const old = requestId;
+    const wasBusy = searching || retrying !== null;
+    requestId += 1;
+    searching = false;
+    retrying = null;
+    if (wasBusy) void searchCancel(old).catch(() => {});
     closeSuggestions();
     browseKind = null;
     browseFrom = 0;
