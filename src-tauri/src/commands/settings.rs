@@ -139,6 +139,11 @@ impl SettingsDto {
 }
 
 #[tauri::command]
+pub fn app_data_folder(state: tauri::State<'_, Arc<AppState>>) -> String {
+    state.paths.root().display().to_string()
+}
+
+#[tauri::command]
 pub async fn settings_load(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<SettingsDto, AppError> {

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -10,12 +10,14 @@ use bmm_app_release::{CancelToken, PreparedUpdate, UpdateDownloader, UpdateState
 use bmm_checks::coordinator::UpdateCoordinator;
 use bmm_domain::library::JsonLibraryStore;
 use bmm_domain::matches::MatchDecisionStore;
+use bmm_domain::models::Listing;
 use bmm_domain::paths::AppPaths;
 use bmm_domain::settings_store::SettingsStore;
+use bmm_domain::text::ModKind;
 use bmm_packs::cache::PreviewCache;
 use bmm_sources::images::RemoteImageCache;
 use bmm_sources::net::PoliteFetcher;
-use bmm_sources::search::{SearchResponse, SearchService};
+use bmm_sources::search::{SearchResponse, SearchService, SourceReport};
 use bmm_sources::sources::ModSource;
 
 #[derive(Debug, Clone)]
@@ -70,6 +72,18 @@ pub struct AppUpdateRuntime {
     pub manifest_url: url::Url,
 }
 
+/// Накопленная выдача раздела: страницы сайтов и последние отчёты.
+pub struct BrowseSession {
+    pub kind: ModKind,
+    /// Сколько страниц раздела уже загружено с каждого сайта.
+    pub pages: u32,
+    /// Порядок сайтов в панели и в выдаче.
+    pub order: Vec<String>,
+    pub per_source: BTreeMap<String, Vec<Listing>>,
+    pub reports: BTreeMap<String, SourceReport>,
+    pub response: SearchResponse,
+}
+
 pub struct AppState {
     pub paths: AppPaths,
     pub settings: SettingsStore,
@@ -86,6 +100,7 @@ pub struct AppState {
     pub app_update: Option<Arc<Mutex<AppUpdateRuntime>>>,
     pub search_cancel: Mutex<Option<(u64, Arc<AtomicBool>)>>,
     pub last_search: Mutex<Option<SearchResponse>>,
+    pub browse: Mutex<Option<BrowseSession>>,
 }
 
 impl AppState {

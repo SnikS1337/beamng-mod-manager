@@ -2,7 +2,7 @@ import type { SearchCard } from "#lib/ipc/search.js";
 
 export type SearchKindFilter = "all" | "vehicle" | "map" | "addon";
 export type SearchPriceFilter = "all" | "free" | "paid";
-export type SearchSortOrder = "relevance" | "newest" | "largest";
+export type SearchSortOrder = "relevance" | "newest" | "largest" | "site";
 
 export interface SearchFilter {
   kind: SearchKindFilter;

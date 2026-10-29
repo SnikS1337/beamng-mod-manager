@@ -4,10 +4,12 @@
   import { onDestroy, onMount } from "svelte";
   import { page } from "$app/state";
   import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
+  import Funnel from "phosphor-svelte/lib/Funnel";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import X from "phosphor-svelte/lib/X";
   import Car from "phosphor-svelte/lib/Car";
   import { formatSize, plural } from "#lib/features/garage/format.js";
+  import { categoryIntent, type BrowseKind } from "#lib/features/search/category.js";
   import { searchKindLabel } from "#lib/features/search/kind.js";
   import { filterAndSort, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
   import { parseSearchInput } from "#lib/features/search/queryInput.js";
@@ -18,6 +20,7 @@
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
     listenSearch,
+    searchBrowse,
     searchCancel,
     searchDecide,
     searchOpenModland,
@@ -58,6 +61,10 @@
   let libraryNames = $state<string[]>([]);
   let suggestionsOpen = $state(false);
   let activeSuggestion = $state(-1);
+  let browseKind = $state<BrowseKind | null>(null);
+  let browseFrom = 0;
+  let browseHasMore = $state(false);
+  let filtersOpen = $state(false);
   let listenerReady = Promise.resolve();
   let markListenerReady: (() => void) | undefined;
   let listenFailed = false;
@@ -166,11 +173,31 @@
     }
   }
 
+  function resetPreviews() {
+    previewGeneration += 1;
+    previews = {};
+    requestedPreviews.clear();
+    requestedPages.clear();
+    pageRequests = 0;
+  }
+
   async function runSearch(event?: Event) {
     event?.preventDefault();
     closeSuggestions();
     const text = query.trim();
     const parsed = parseSearchInput(text);
+    // «карта» и «машины» — не текст, а раздел сайтов.
+    const intent = parsed.author === null ? categoryIntent(parsed.text) : null;
+    if (intent) {
+      if (parsed.source) sourceFilter = parsed.source;
+      await openBrowse(intent, text);
+      return;
+    }
+    if (!parsed.text && !parsed.author && parsed.kind && parsed.kind !== "all") {
+      if (parsed.source) sourceFilter = parsed.source;
+      await openBrowse(parsed.kind);
+      return;
+    }
     const searchText = parsed.text || parsed.author || "";
     if (searchText.length < 2) {
       error = "Введите хотя бы 2 символа названия, автора или сайта.";
@@ -180,6 +207,10 @@
     authorFilter = parsed.author;
     if (parsed.kind) kindFilter = parsed.kind;
     if (parsed.source) sourceFilter = parsed.source;
+    browseKind = null;
+    browseFrom = 0;
+    browseHasMore = false;
+    if (sortOrder === "site") sortOrder = "relevance";
     requestId += 1;
     const current = requestId;
     submitted = searchText;
@@ -189,11 +220,7 @@
     error = null;
     cards = [];
     sources = [];
-    previewGeneration += 1;
-    previews = {};
-    requestedPreviews.clear();
-    requestedPages.clear();
-    pageRequests = 0;
+    resetPreviews();
     try {
       await listenerReady;
       if (disposed || current !== requestId) return;
@@ -209,6 +236,78 @@
         searching = false;
       }
     }
+  }
+
+  async function openBrowse(kind: BrowseKind, entryText?: string): Promise<void> {
+    if (searching) await searchCancel(requestId).catch(() => {});
+    closeSuggestions();
+    if (entryText) rememberQuery(entryText);
+    requestId += 1;
+    const current = requestId;
+    browseKind = kind;
+    browseFrom = 1;
+    browseHasMore = false;
+    kindFilter = "all";
+    submitted = "";
+    if (sortOrder !== "site" && sortOrder !== "largest") sortOrder = "site";
+    searching = true;
+    searched = true;
+    error = null;
+    cards = [];
+    sources = [];
+    resetPreviews();
+    try {
+      const event = await searchBrowse(kind, 1, current);
+      if (current !== requestId) return;
+      cards = event.cards;
+      sources = event.sources;
+      browseFrom = 3;
+      browseHasMore = event.cards.length > 0;
+    } catch (reason) {
+      if (current === requestId) error = errorText(reason);
+    } finally {
+      if (current === requestId) searching = false;
+    }
+  }
+
+  async function loadMore(): Promise<void> {
+    if (!browseKind || !browseHasMore || searching) return;
+    requestId += 1;
+    const current = requestId;
+    const before = cards.length;
+    searching = true;
+    error = null;
+    try {
+      const event = await searchBrowse(browseKind, browseFrom, current);
+      if (current !== requestId) return;
+      cards = event.cards;
+      sources = event.sources;
+      browseFrom += 2;
+      browseHasMore = cards.length > before;
+    } catch (reason) {
+      if (current === requestId) error = errorText(reason);
+    } finally {
+      if (current === requestId) searching = false;
+    }
+  }
+
+  function leaveBrowse() {
+    browseKind = null;
+    browseFrom = 0;
+    browseHasMore = false;
+    cards = [];
+    sources = [];
+    searched = false;
+    submitted = "";
+    query = "";
+    error = null;
+    resetPreviews();
+    input?.focus();
+  }
+
+  function retryAll() {
+    if (browseKind) void openBrowse(browseKind);
+    else void runSearch();
   }
 
   async function retrySource(source: SearchSource): Promise<void> {
@@ -279,16 +378,15 @@
 
   function clear() {
     closeSuggestions();
+    browseKind = null;
+    browseFrom = 0;
+    browseHasMore = false;
     query = "";
     submitted = "";
     searched = false;
     cards = [];
     sources = [];
-    previewGeneration += 1;
-    previews = {};
-    requestedPreviews.clear();
-    requestedPages.clear();
-    pageRequests = 0;
+    resetPreviews();
     resetFilters();
     error = null;
     input?.focus();
@@ -451,6 +549,33 @@
     suggestionsOpen ? suggest(query, history, libraryNames) : [],
   );
 
+  const browsing = $derived(browseKind !== null);
+
+  const activeFilterCount = $derived(
+    (priceFilter !== "all" ? 1 : 0) +
+      (onlyInstalled ? 1 : 0) +
+      (sourceFilter !== "all" ? 1 : 0) +
+      (onlyCompatible ? 1 : 0) +
+      (authorFilter ? 1 : 0),
+  );
+
+  const sortOptions = $derived(
+    browseKind
+      ? [
+          { id: "site" as const, label: "Как на сайтах" },
+          { id: "largest" as const, label: "Сначала крупные" },
+        ]
+      : [
+          { id: "relevance" as const, label: "По релевантности" },
+          { id: "newest" as const, label: "Сначала новые" },
+          { id: "largest" as const, label: "Сначала крупные" },
+        ],
+  );
+
+  function browseLabel(kind: BrowseKind): string {
+    return kindFilters.find((item) => item.id === kind)?.label ?? "Раздел";
+  }
+
   const kindCount = (id: SearchKindFilter) =>
     id === "all" ? cards.length : cards.filter((card) => card.kind === id).length;
 
@@ -502,13 +627,36 @@
     priceFilter = "all";
     onlyInstalled = false;
     sourceFilter = "all";
-    sortOrder = "relevance";
+    sortOrder = browseKind ? "site" : "relevance";
     authorFilter = null;
     onlyCompatible = false;
   }
 
   function chooseKind(next: SearchKindFilter) {
-    if (next === kindFilter) return;
+    if (next === "all") {
+      if (browseKind) {
+        leaveBrowse();
+        return;
+      }
+      if (kindFilter === "all") return;
+      void motion.run(() => {
+        kindFilter = "all";
+      }, "flow-search");
+      return;
+    }
+    if (browseKind === next) return;
+    // В разделе или на стартовом экране чип открывает раздел сайтов,
+    // а в текстовой выдаче — просто фильтрует её.
+    if (!browseKind && kindFilter === next) {
+      void motion.run(() => {
+        kindFilter = "all";
+      }, "flow-search");
+      return;
+    }
+    if (browseKind || !submitted) {
+      void openBrowse(next);
+      return;
+    }
     void motion.run(() => {
       kindFilter = next;
     }, "flow-search");
@@ -542,7 +690,7 @@
       if (["all", "free", "paid"].includes(stored.price ?? "")) {
         priceFilter = stored.price as SearchPriceFilter;
       }
-      if (["relevance", "newest", "largest"].includes(stored.sort ?? "")) {
+      if (["relevance", "newest", "largest", "site"].includes(stored.sort ?? "")) {
         sortOrder = stored.sort as SearchSortOrder;
       }
       if (typeof stored.installedOnly === "boolean") onlyInstalled = stored.installedOnly;
@@ -605,10 +753,13 @@
 
 <div class="search-page">
   <header class="top" data-tauri-drag-region>
+    <div class="headline" data-tauri-drag-region>
     <div class="title" data-tauri-drag-region>
       <h1 class="display" data-tauri-drag-region>Поиск</h1>
       <p data-tauri-drag-region>
-        {#if searching}
+        {#if browsing && browseKind && searched}
+          раздел «{browseLabel(browseKind)}» · {cards.length} {plural(cards.length, "мод", "мода", "модов")}
+        {:else if searching}
           ищем на сайтах…
         {:else if searched}
           {shownCards.length}{#if shownCards.length !== cards.length} из {cards.length}{/if}
@@ -667,92 +818,149 @@
         </div>
       {/if}
     </form>
-  </header>
-
-  {#if cards.length > 0}
-    <div class="filters" role="group" aria-label="Тип">
-      <button
-        class="chip"
-        class:on={kindFilter === "all"}
-        type="button"
-        aria-pressed={kindFilter === "all"}
-        onclick={() => chooseKind("all")}
-      >
-        Все <b>{kindCount("all")}</b>
-      </button>
-      {#each kindFilters as item (item.id)}
-        <button
-          class="chip"
-          class:on={kindFilter === item.id}
-          type="button"
-          aria-pressed={kindFilter === item.id}
-          onclick={() => chooseKind(kindFilter === item.id ? "all" : item.id)}
-        >{item.label} <b>{kindCount(item.id)}</b></button>
-      {/each}
     </div>
-  {/if}
 
-  {#if cards.length > 0}
-    <div class="filters secondary" role="group" aria-label="Фильтры">
-      <button
-        class="chip"
-        class:on={priceFilter === "all"}
-        type="button"
-        aria-pressed={priceFilter === "all"}
-        onclick={() => (priceFilter = "all")}
-      >Все цены</button>
-      <button
-        class="chip"
-        class:on={priceFilter === "free"}
-        type="button"
-        aria-pressed={priceFilter === "free"}
-        onclick={() => (priceFilter = priceFilter === "free" ? "all" : "free")}
-      >Бесплатные</button>
-      <button
-        class="chip"
-        class:on={priceFilter === "paid"}
-        type="button"
-        aria-pressed={priceFilter === "paid"}
-        onclick={() => (priceFilter = priceFilter === "paid" ? "all" : "paid")}
-      >Платные</button>
-      <button
-        class="chip"
-        class:on={onlyInstalled}
-        type="button"
-        aria-pressed={onlyInstalled}
-        onclick={() => (onlyInstalled = !onlyInstalled)}
-      >Установленные</button>
-      {#if authorFilter}
-        <button
-          class="chip on"
-          type="button"
-          title="Убрать фильтр по автору"
-          onclick={() => (authorFilter = null)}
-        >Автор: {authorFilter} ×</button>
-      {/if}
-      {#if gameVersion}
+    <div class="toolbar">
+      <div class="kinds" role="group" aria-label="Тип">
         <button
           class="chip"
-          class:on={onlyCompatible}
+          class:on={browseKind === null && kindFilter === "all"}
           type="button"
-          aria-pressed={onlyCompatible}
-          title={`Установлена игра ${gameVersion}`}
-          onclick={() => (onlyCompatible = !onlyCompatible)}
-        >Совместимо с игрой</button>
-      {/if}
-      <select bind:value={sourceFilter} aria-label="Сайт">
-        <option value="all">Все сайты</option>
-        {#each sources as source (source.id)}
-          <option value={source.id}>{source.displayName}</option>
+          aria-pressed={browseKind === null && kindFilter === "all"}
+          onclick={() => chooseKind("all")}
+        >
+          Все{#if searched}<b>{kindCount("all")}</b>{/if}
+        </button>
+        {#each kindFilters as item (item.id)}
+          <button
+            class="chip"
+            class:on={browseKind ? browseKind === item.id : kindFilter === item.id}
+            type="button"
+            aria-pressed={browseKind ? browseKind === item.id : kindFilter === item.id}
+            onclick={() => chooseKind(item.id)}
+          >{item.label}{#if searched}<b>{kindCount(item.id)}</b>{/if}</button>
         {/each}
-      </select>
-      <select bind:value={sortOrder} aria-label="Сортировка">
-        <option value="relevance">По релевантности</option>
-        <option value="newest">Сначала новые</option>
-        <option value="largest">Сначала крупные</option>
-      </select>
+      </div>
+      <div class="tools">
+        {#if browsing}
+          <button class="chip leave" type="button" onclick={leaveBrowse}>К поиску</button>
+        {/if}
+        <button
+          class="chip filter-toggle"
+          class:on={filtersOpen || activeFilterCount > 0}
+          type="button"
+          aria-expanded={filtersOpen}
+          onclick={() => (filtersOpen = !filtersOpen)}
+        >
+          <Funnel size={14} />
+          Фильтры
+          {#if activeFilterCount > 0}<b>{activeFilterCount}</b>{/if}
+        </button>
+        <select bind:value={sortOrder} aria-label="Сортировка">
+          {#each sortOptions as item (item.id)}
+            <option value={item.id}>{item.label}</option>
+          {/each}
+        </select>
+      </div>
     </div>
-  {/if}
+
+    {#if filtersOpen}
+      <div class="filters-panel" role="group" aria-label="Фильтры">
+        <div class="filter-row">
+          <span class="filter-label">Цена</span>
+          <button
+            class="chip"
+            class:on={priceFilter === "all"}
+            type="button"
+            aria-pressed={priceFilter === "all"}
+            onclick={() => (priceFilter = "all")}
+          >Любая</button>
+          <button
+            class="chip"
+            class:on={priceFilter === "free"}
+            type="button"
+            aria-pressed={priceFilter === "free"}
+            onclick={() => (priceFilter = priceFilter === "free" ? "all" : "free")}
+          >Бесплатные</button>
+          <button
+            class="chip"
+            class:on={priceFilter === "paid"}
+            type="button"
+            aria-pressed={priceFilter === "paid"}
+            onclick={() => (priceFilter = priceFilter === "paid" ? "all" : "paid")}
+          >Платные</button>
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">Показывать</span>
+          <button
+            class="chip"
+            class:on={onlyInstalled}
+            type="button"
+            aria-pressed={onlyInstalled}
+            onclick={() => (onlyInstalled = !onlyInstalled)}
+          >Установленные</button>
+          {#if gameVersion}
+            <button
+              class="chip"
+              class:on={onlyCompatible}
+              type="button"
+              aria-pressed={onlyCompatible}
+              title={`Установлена игра ${gameVersion}`}
+              onclick={() => (onlyCompatible = !onlyCompatible)}
+            >Совместимо с игрой</button>
+          {/if}
+          {#if authorFilter}
+            <button
+              class="chip on"
+              type="button"
+              title="Убрать фильтр по автору"
+              onclick={() => (authorFilter = null)}
+            >Автор: {authorFilter} ×</button>
+          {/if}
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">Сайт</span>
+          <select bind:value={sourceFilter} aria-label="Сайт">
+            <option value="all">Все сайты</option>
+            {#each sources as source (source.id)}
+              <option value={source.id}>{source.displayName}</option>
+            {/each}
+          </select>
+          <button class="chip reset" type="button" onclick={resetFilters}>Сбросить всё</button>
+        </div>
+      </div>
+    {:else if activeFilterCount > 0}
+      <div class="active-filters" aria-label="Активные фильтры">
+        <span>Фильтры:</span>
+        {#if priceFilter !== "all"}
+          <button class="chip" type="button" onclick={() => (priceFilter = "all")}>
+            {priceFilter === "free" ? "Бесплатные" : "Платные"} <b>×</b>
+          </button>
+        {/if}
+        {#if onlyInstalled}
+          <button class="chip" type="button" onclick={() => (onlyInstalled = false)}>
+            Установленные <b>×</b>
+          </button>
+        {/if}
+        {#if onlyCompatible}
+          <button class="chip" type="button" onclick={() => (onlyCompatible = false)}>
+            Совместимо с игрой <b>×</b>
+          </button>
+        {/if}
+        {#if sourceFilter !== "all"}
+          <button class="chip" type="button" onclick={() => (sourceFilter = "all")}>
+            {sources.find((source) => source.id === sourceFilter)?.displayName ?? sourceName(sourceFilter)} <b>×</b>
+          </button>
+        {/if}
+        {#if authorFilter}
+          <button class="chip" type="button" onclick={() => (authorFilter = null)}>
+            Автор: {authorFilter} <b>×</b>
+          </button>
+        {/if}
+        <button class="clear-filters" type="button" onclick={resetFilters}>Сбросить</button>
+      </div>
+    {/if}
+  </header>
 
   {#if error}
     <div class="banner error">{error}</div>
@@ -772,9 +980,15 @@
     </div>
   {:else if searched && cards.length === 0 && !searching && !error}
     <div class="state">
-      <p class="display">Ничего не нашли</p>
-      <span>Попробуйте короче: название машины, карты или автора. Сайты ищут по-разному.</span>
-      <a class="btn-glass" href="/settings?section=sites">Какие сайты включены</a>
+      {#if browseKind}
+        <p class="display">В разделе пока ничего нет</p>
+        <span>Попробуйте другой раздел или найдите мод по названию.</span>
+        <button class="btn-glass" type="button" onclick={leaveBrowse}>К поиску</button>
+      {:else}
+        <p class="display">Ничего не нашли</p>
+        <span>Попробуйте короче: название машины, карты или автора. Сайты ищут по-разному.</span>
+        <a class="btn-glass" href="/settings?section=sites">Какие сайты включены</a>
+      {/if}
     </div>
   {:else if cards.length > 0 && shownCards.length === 0}
     <div class="state">
@@ -904,6 +1118,17 @@
         </article>
       {/each}
     </div>
+    {#if browseKind}
+      <div class="more">
+        {#if browseHasMore}
+          <button class="btn-glass" type="button" disabled={searching} onclick={() => void loadMore()}>
+            {searching ? "Загружаем…" : "Показать ещё"}
+          </button>
+        {:else}
+          <span>Больше в разделе нет</span>
+        {/if}
+      </div>
+    {/if}
   {:else}
     <div class="start">
       <span class="start-icon rise-in" aria-hidden="true">
@@ -966,7 +1191,7 @@
                 нашёл {source.count}
               {/if}
             </span>
-            {#if !source.pending && source.status !== "ok"}
+            {#if !source.pending && (source.status !== "ok" || (source.note ?? "").includes("не загрузилась"))}
               <button
                 class="site-retry"
                 type="button"
@@ -975,7 +1200,7 @@
               >{retrying === source.id ? "…" : "Повторить"}</button>
             {/if}
           </div>
-          {#if source.note && !source.pending && source.status !== "ok"}
+          {#if source.note && !source.pending}
             <p class="site-note">{source.note}</p>
           {/if}
           {#if source.id === "modland" && source.status === "needsHumanCheck"}
@@ -988,8 +1213,8 @@
     {:else}
       <p class="sub">Modland, STMods и ModsGaming — сразу, одним запросом.</p>
     {/if}
-    {#if !searching && sources.some((source) => source.status !== "ok" && !source.pending)}
-      <button class="btn-glass pass" type="button" onclick={() => void runSearch()}>
+    {#if !searching && sources.some((source) => !source.pending && (source.status !== "ok" || (source.note ?? "").includes("не загрузилась")))}
+      <button class="btn-glass pass" type="button" onclick={retryAll}>
         Повторить все сайты
       </button>
     {/if}
@@ -1014,11 +1239,17 @@
 
   .top {
     display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 14px 150px 12px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .headline {
+    display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 16px 24px;
-    padding: 18px 150px 14px 24px;
-    border-bottom: 1px solid var(--border);
+    gap: 10px 20px;
   }
 
   .title {
@@ -1027,14 +1258,14 @@
 
   h1 {
     margin: 0;
-    font-size: 30px;
+    font-size: 26px;
     line-height: 1.05;
   }
 
   .title p {
-    margin: 3px 0 0;
+    margin: 2px 0 0;
     color: var(--muted-foreground);
-    font-size: 13px;
+    font-size: 12.5px;
   }
 
   .bar {
@@ -1043,8 +1274,8 @@
     flex: 1 1 420px;
     align-items: center;
     gap: 10px;
-    max-width: 680px;
-    height: 46px;
+    max-width: 880px;
+    height: 44px;
     padding: 0 5px 0 14px;
     box-sizing: border-box;
     border: 1px solid var(--border-strong);
@@ -1094,7 +1325,50 @@
   }
 
   .go {
-    height: 34px;
+    height: 32px;
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  .chip.reset {
+    margin-left: auto;
+  }
+
+  .chip.leave {
+    color: var(--muted-foreground);
+  }
+
+  .tools select,
+  .filter-row select {
+    height: 30px;
+    max-width: 190px;
+    padding: 0 28px 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--foreground);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
   }
 
   .suggest {
@@ -1139,13 +1413,66 @@
     background: var(--surface-3);
   }
 
-  .filters {
+  .filters-panel {
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    animation: fade-in var(--dur-2) var(--ease-out) both;
+  }
+
+  .filter-row {
+    display: flex;
+    align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    padding: 12px 24px;
-    border-bottom: 1px solid var(--border);
-    animation: fade-in var(--dur-2) var(--ease-out) both;
+  }
+
+  .filter-label {
+    min-width: 78px;
+    color: var(--faint-foreground);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .active-filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    color: var(--faint-foreground);
+    font-size: 12px;
+  }
+
+  .active-filters .chip {
+    height: 26px;
+    padding: 0 9px;
+    font-size: 12px;
+  }
+
+  .clear-filters {
+    border: 0;
+    background: transparent;
+    color: var(--accent-brand-text);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: default;
+  }
+
+  .clear-filters:hover {
+    text-decoration: underline;
+  }
+
+  .more {
+    display: flex;
+    justify-content: center;
+    padding: 18px 0 4px;
+    color: var(--faint-foreground);
+    font-size: 12.5px;
   }
 
   .start-hint {
@@ -1231,23 +1558,6 @@
     color: var(--faint-foreground);
     font-size: 11.5px;
     line-height: 1.35;
-  }
-
-  .filters.secondary {
-    padding-top: 0;
-  }
-
-  .filters.secondary select {
-    height: 30px;
-    max-width: 180px;
-    padding: 0 28px 0 10px;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    background: var(--surface-2);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 13px;
-    font-weight: 600;
   }
 
   .chip {

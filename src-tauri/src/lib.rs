@@ -180,6 +180,7 @@ pub fn run() {
         app_update,
         search_cancel: Mutex::new(None),
         last_search: Mutex::new(None),
+        browse: Mutex::new(None),
     });
     state.load_pending();
 
@@ -245,6 +246,7 @@ pub fn run() {
             commands::incoming::incoming_remove_source,
             commands::search::search_start,
             commands::search::search_cancel,
+            commands::search::search_browse,
             commands::search::search_retry_source,
             commands::search::search_decide,
             commands::search::search_preview,
@@ -278,6 +280,7 @@ pub fn run() {
             commands::updates::updates_open_modland,
             commands::settings::settings_load,
             commands::settings::settings_save,
+            commands::settings::app_data_folder,
             commands::app_update::app_update_state,
             commands::app_update::app_update_check,
             commands::app_update::app_update_download,

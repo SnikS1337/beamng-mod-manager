@@ -137,5 +137,10 @@ describe("фильтры поиска", () => {
       "new",
       "old",
     ]);
+    // «Как на сайтах» — порядок из Rust, без пересортировки.
+    expect(filterAndSort(cards, { ...base, sort: "site" }).map((item) => item.id)).toEqual([
+      "old",
+      "new",
+    ]);
   });
 });
