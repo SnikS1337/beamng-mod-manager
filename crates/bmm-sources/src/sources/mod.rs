@@ -296,6 +296,39 @@ mod tests {
     }
 
     #[test]
+    fn modland_browse_uses_category_pages() {
+        let routes = RouteFetcher::new(|url| {
+            url.host_str()
+                .is_some_and(|host| host.ends_with("modland.net"))
+                .then(|| fixture(&["modland", "list-real.html"]))
+        });
+        let source =
+            modland::ModlandSource::new(polite(Arc::clone(&routes) as Arc<dyn PageFetcher>));
+        let maps = source.browse(ModKind::Map, 1, &cancel()).unwrap();
+        assert!(!maps.is_empty());
+        assert!(
+            maps.iter()
+                .all(|item| item.category.as_deref() == Some("maps"))
+        );
+        let _ = source.browse(ModKind::Map, 2, &cancel()).unwrap();
+        let calls = routes.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.contains("/beamng.drive-mods/maps")),
+            "{calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.contains("/beamng.drive-mods/maps/page/2")),
+            "{calls:?}"
+        );
+        assert!(source.supports_browse(ModKind::Vehicle));
+        assert!(source.supports_browse(ModKind::Addon));
+    }
+
+    #[test]
     fn stmods_search_posts_form() {
         let fake = FakeFetcher::new();
         let source = stmods::StModsSource::new(polite(fake.clone()));
