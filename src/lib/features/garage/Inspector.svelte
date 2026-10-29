@@ -105,6 +105,15 @@
   let bindBusy = $state(false);
   let updateBusy = $state(false);
 
+  /** Esc в поле ссылки закрывает форму, не трогая поиск и выбранный мод. */
+  function cancelBinding(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    if (bindBusy) return;
+    binding = false;
+    bindError = null;
+  }
+
   async function checkUpdates() {
     if (!onCheckUpdates || updateBusy) return;
     updateBusy = true;
@@ -382,6 +391,7 @@
           placeholder="https://stmods.org/beamng_drive/mods/…"
           autofocus
           disabled={bindBusy}
+          onkeydown={cancelBinding}
         />
         {#if bindError}
           <p class="bind-error">{bindError.message}</p>

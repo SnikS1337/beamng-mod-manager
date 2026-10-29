@@ -157,7 +157,8 @@
         .then((stop) => {
           if (disposed) stop();
           else unlistenClose = stop;
-        });
+        })
+        .catch(() => {});
     }
     void listenAppUpdateProgress((value) => {
       updateProgress = value;

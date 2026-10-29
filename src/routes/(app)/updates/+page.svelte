@@ -104,13 +104,15 @@
 
   onMount(() => {
     void load();
-    void listenUpdates(onEvent).then((stop) => {
-      if (disposed) {
-        stop();
-        return;
-      }
-      unlisten = stop;
-    });
+    void listenUpdates(onEvent)
+      .then((stop) => {
+        if (disposed) {
+          stop();
+          return;
+        }
+        unlisten = stop;
+      })
+      .catch(() => {});
     // Обновление поставили (из «Загрузок» или вручную) — пункт должен исчезнуть сразу.
     const onLibraryChanged = () => void refresh();
     window.addEventListener("bmm:library-changed", onLibraryChanged);

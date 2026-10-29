@@ -179,15 +179,19 @@
       if (event.phase === "auto" || event.phase === "done" || event.phase === "pages") {
         void load(true);
       }
-    }).then((stop) => {
-      if (disposed) stop();
-      else stopUpdates = stop;
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stopUpdates = stop;
+      })
+      .catch(() => {});
     let stopTitles: (() => void) | undefined;
-    void listenLibraryTitles(() => void load(true)).then((stop) => {
-      if (disposed) stop();
-      else stopTitles = stop;
-    });
+    void listenLibraryTitles(() => void load(true))
+      .then((stop) => {
+        if (disposed) stop();
+        else stopTitles = stop;
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
       stopUpdates?.();
@@ -740,6 +744,8 @@
       searchEl?.select();
       return;
     }
+    // В поле Esc отменяет ввод, а не закрывает панель и не чистит поиск.
+    if (isTyping(event)) return;
     if (event.key === "Escape") {
       if (picked.ids.length > 0) {
         pick(EMPTY);
@@ -748,8 +754,7 @@
       }
       return;
     }
-    if (isTyping(event)) return;
-    if (isShortcut(event, "z")) {
+    if (isShortcut(event, "z") && toasts.canUndo) {
       event.preventDefault();
       void undoToast();
       return;

@@ -15,12 +15,44 @@ describe("тосты", () => {
     expect(toasts.current).toBeNull();
   });
 
-  it("новый тост закрепляет прежнее действие, чтобы мод не пропал из «Удалённых»", () => {
+  it("новый тост ждёт в очереди и не отнимает «Отменить»", () => {
     const commit = vi.fn();
     toasts.show("Мод удалён", { undo: vi.fn(), commit });
-    toasts.show("Другое");
+    toasts.show("Нашли обновления");
+    expect(toasts.current?.message).toBe("Мод удалён");
+    expect(commit).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(6000);
     expect(commit).toHaveBeenCalledTimes(1);
-    expect(toasts.current?.message).toBe("Другое");
+    expect(toasts.current?.message).toBe("Нашли обновления");
+  });
+
+  it("фоновый тост не закрепляет удаление раньше срока", () => {
+    const commit = vi.fn();
+    toasts.show("Мод удалён", { undo: vi.fn(), commit });
+    toasts.show("Нашли обновления");
+    vi.advanceTimersByTime(3000);
+    expect(commit).not.toHaveBeenCalled();
+    expect(toasts.current?.message).toBe("Мод удалён");
+  });
+
+  it("«Отменить» показывает следующее сообщение из очереди", async () => {
+    const commit = vi.fn();
+    const undo = vi.fn();
+    toasts.show("Мод удалён", { undo, commit });
+    toasts.show("Нашли обновления");
+    await toasts.undo();
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
+    expect(toasts.current?.message).toBe("Нашли обновления");
+  });
+
+  it("без действия Ctrl+Z нечего отменять", () => {
+    toasts.show("Готово");
+    expect(toasts.canUndo).toBe(false);
+    vi.advanceTimersByTime(10000);
+    toasts.show("Мод удалён", { undo: vi.fn() });
+    expect(toasts.canUndo).toBe(true);
   });
 
   it("«Отменить» отменяет и не закрепляет", async () => {
