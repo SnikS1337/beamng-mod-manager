@@ -1110,6 +1110,10 @@ mod tests {
     fn current_version_is_parsed() {
         // Версия берётся из Cargo.toml, а не запасная 0.4.0: тест не привязан к номеру
         // выпуска (с жёстким «1.0» он ломался при переходе на 1.1.0).
-        assert_eq!(current_version().display(), env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            current_version(),
+            AppVersion::parse(env!("CARGO_PKG_VERSION")).unwrap()
+        );
+        assert_ne!(current_version(), AppVersion::new(0, 4, 0, 0));
     }
 }
