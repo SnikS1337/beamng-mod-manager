@@ -5,6 +5,22 @@ export function installable(item: IncomingItemDto): boolean {
   return !item.blocked && !item.locked && item.kind !== "alreadyInstalled";
 }
 
+/**
+ * Можно ли удалить исходный архив после установки: всё, что в нём есть, уже стоит.
+ * Заблокированная строка (битый вложенный архив, «ещё N модов не разобраны») — не
+ * поставлена, и вместе с исходником пропала бы навсегда.
+ */
+export function wholeArchiveInstalled(
+  items: IncomingItemDto[],
+  installedFiles: Set<string>,
+): boolean {
+  return items.every(
+    (item) =>
+      item.kind === "alreadyInstalled" ||
+      (installable(item) && installedFiles.has(item.fileName.toLowerCase())),
+  );
+}
+
 /** Программы и скрипты Windows в архиве: ставить или нет — решает пользователь. */
 export function suspiciousFiles(item: IncomingItemDto): string[] {
   return item.findings

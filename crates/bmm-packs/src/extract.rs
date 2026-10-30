@@ -175,6 +175,10 @@ fn extract_with_tar(
         .map_err(|error| {
             ExtractError::Message(format!("Не удалось запустить распаковщик: {error}"))
         })?;
+    // Вывод ошибок читаем сразу, в своём потоке: тысячи предупреждений распаковщика
+    // заполняли трубу, и он висел до таймаута, пока его никто не читал.
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let errors = thread::spawn(move || drain_capped(stderr, MAX_STDERR_BYTES));
 
     let started = Instant::now();
     let mut last_size_check = Instant::now();
@@ -212,15 +216,16 @@ fn extract_with_tar(
         }
     }
 
-    let output = child.wait_with_output().map_err(io_error)?;
+    let status = child.wait().map_err(io_error)?;
+    let stderr_bytes = errors.join().unwrap_or_default();
     let size = dir_size(destination);
     if size > budget.remaining() {
         return Err(ExtractError::Message(
             "Распакованный архив слишком большой".to_string(),
         ));
     }
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr_bytes).to_lowercase();
         let extension = archive
             .extension()
             .map(|value| value.to_string_lossy().to_lowercase())
@@ -362,6 +367,25 @@ fn list_tar_entries(
     Ok(Some(listing))
 }
 
+/// Сколько вывода ошибок распаковщика держать: для причины хватает начала.
+const MAX_STDERR_BYTES: usize = 64 * 1024;
+
+/// Читает поток до конца, оставляя не больше `cap` байт.
+fn drain_capped(mut stream: impl Read, cap: usize) -> Vec<u8> {
+    let mut kept = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => {
+                let room = cap.saturating_sub(kept.len());
+                kept.extend_from_slice(&chunk[..read.min(room)]);
+            }
+        }
+    }
+    kept
+}
+
 fn read_listing(mut stream: impl Read) -> TarListing {
     let mut listing = TarListing::default();
     let mut chunk = [0u8; 64 * 1024];
@@ -370,10 +394,15 @@ fn read_listing(mut stream: impl Read) -> TarListing {
         match stream.read(&mut chunk) {
             Ok(0) => break,
             Ok(read) => {
+                // Перебор уже ясен, но поток дочитываем: иначе распаковщик упирается
+                // в полную трубу и висит до общего таймаута (10 минут).
+                if listing.truncated {
+                    continue;
+                }
                 lines += chunk[..read].iter().filter(|byte| **byte == b'\n').count();
                 if lines > MAX_TAR_ENTRIES || listing.names.len() + read > MAX_LIST_BYTES {
                     listing.truncated = true;
-                    break;
+                    continue;
                 }
                 listing.names.extend_from_slice(&chunk[..read]);
             }
@@ -501,6 +530,53 @@ fn io_error(error: std::io::Error) -> ExtractError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Поток, который считает, сколько из него прочитали.
+    struct Counting {
+        left: usize,
+        read: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    impl std::io::Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let take = buf.len().min(self.left);
+            buf[..take].fill(b'\n');
+            self.left -= take;
+            self.read.set(self.read.get() + take);
+            Ok(take)
+        }
+    }
+
+    #[test]
+    fn stderr_is_read_to_the_end_but_kept_short() {
+        // Распаковщик с тысячами предупреждений висел, пока трубу никто не читал.
+        let read = std::rc::Rc::new(std::cell::Cell::new(0));
+        let kept = drain_capped(
+            Counting {
+                left: 5 * 1024 * 1024,
+                read: read.clone(),
+            },
+            MAX_STDERR_BYTES,
+        );
+        assert_eq!(read.get(), 5 * 1024 * 1024, "прочитано всё");
+        assert_eq!(kept.len(), MAX_STDERR_BYTES);
+    }
+
+    #[test]
+    fn long_listing_is_drained_after_it_is_known_to_be_too_long() {
+        let read = std::rc::Rc::new(std::cell::Cell::new(0));
+        let total = MAX_LIST_BYTES + 3 * 1024 * 1024;
+        let listing = read_listing(Counting {
+            left: total,
+            read: read.clone(),
+        });
+        assert!(listing.truncated);
+        assert_eq!(
+            read.get(),
+            total,
+            "иначе распаковщик ждал бы трубу до таймаута"
+        );
+    }
     use std::io::Write;
 
     fn build_zip(path: &Path, entries: &[(&str, &[u8])]) {

@@ -21,6 +21,7 @@
   } from "#lib/ipc/incoming.js";
   import {
     installable,
+    wholeArchiveInstalled,
     preselected,
     suspiciousFiles,
     suspiciousText,
@@ -301,10 +302,7 @@
       });
       const installedFiles = new Set(tickets.map((ticket) => ticket.fileName.toLowerCase()));
       for (const entry of collected) {
-        const whole = entry.archive.items
-          .filter(installable)
-          .every((item) => installedFiles.has(item.fileName.toLowerCase()));
-        if (whole && !entry.archive.problem) {
+        if (wholeArchiveInstalled(entry.archive.items, installedFiles) && !entry.archive.problem) {
           void incomingRemoveSource(entry.archive.source).catch(() => {});
         }
       }

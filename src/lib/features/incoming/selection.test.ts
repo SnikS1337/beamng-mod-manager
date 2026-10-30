@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { IncomingItemDto } from "#lib/ipc/incoming.js";
-import { installable, preselected, suspiciousFiles, suspiciousText } from "./selection";
+import {
+  installable,
+  preselected,
+  suspiciousFiles,
+  suspiciousText,
+  wholeArchiveInstalled,
+} from "./selection";
 
 function item(patch: Partial<IncomingItemDto> = {}): IncomingItemDto {
   return {
@@ -54,3 +60,22 @@ describe("выбор модов к установке", () => {
     expect(suspiciousText(["a.bat"])).toBe("a.bat");
   });
 });
+
+describe("удаление исходного архива", () => {
+  it("только если поставлено всё, что в нём есть", () => {
+    const a = item({ fileName: "a.zip" });
+    const b = item({ fileName: "B.zip" });
+    const done = new Set(["a.zip", "b.zip"]);
+    expect(wholeArchiveInstalled([a, b], done)).toBe(true);
+    expect(wholeArchiveInstalled([a, b], new Set(["a.zip"]))).toBe(false);
+    expect(wholeArchiveInstalled([a, item({ kind: "alreadyInstalled" })], done)).toBe(true);
+  });
+
+  it("не удаляет архив, где что-то не разобрано или заблокировано", () => {
+    // «Ещё 30 модов не разобраны» и битые вложенные архивы пропали бы вместе с исходником.
+    const a = item({ fileName: "a.zip" });
+    const overflow = item({ fileName: "pack.zip", blocked: true });
+    expect(wholeArchiveInstalled([a, overflow], new Set(["a.zip", "pack.zip"]))).toBe(false);
+  });
+});
+

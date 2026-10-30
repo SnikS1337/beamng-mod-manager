@@ -109,9 +109,11 @@ pub fn read_index(path: &Path) -> Result<ZipIndex, ZipError> {
 
 pub fn normalize_name(raw: &str) -> Option<String> {
     let normalized = raw.replace('\\', "/");
+    // «./Wrapper/vehicles/…»: сегмент «.» ничего не значит, а оставленный в имени он
+    // ломал распознавание формы архива — перепаковка давала пустой мод.
     let parts: Vec<&str> = normalized
         .split('/')
-        .filter(|part| !part.is_empty())
+        .filter(|part| !part.is_empty() && *part != ".")
         .collect();
     if parts.is_empty() || parts.contains(&"..") {
         return None;
@@ -135,6 +137,11 @@ mod tests {
             Some("vehicles/car/a.jpg")
         );
         assert_eq!(normalize_name("../evil.jpg"), None);
+        assert_eq!(
+            normalize_name("./Wrapper/./vehicles/car/a.jbeam").as_deref(),
+            Some("Wrapper/vehicles/car/a.jbeam")
+        );
+        assert_eq!(normalize_name("./"), None);
         assert_eq!(normalize_name(""), None);
     }
 

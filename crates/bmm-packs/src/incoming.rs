@@ -256,14 +256,16 @@ fn analyze_zip(
     let inner_dir = work_dir.join(format!("inner-{depth}"));
     let mut items = Vec::new();
     let mut nested_count = 0;
+    let mut skipped = 0usize;
     for entry in &index.entries {
-        if nested_count >= options.max_mods {
-            break;
-        }
         if !entry.name.to_lowercase().ends_with(".zip") {
             continue;
         }
         if crate::inspect::is_unsafe_entry_path(&entry.name) {
+            continue;
+        }
+        if nested_count >= options.max_mods {
+            skipped += 1;
             continue;
         }
         // Имя уникально на весь разбор: вложенные модпаки одного уровня иначе писали
@@ -308,6 +310,9 @@ fn analyze_zip(
                 .to_string(),
         );
     }
+    if skipped > 0 {
+        items.push(overflow_item(source, options.max_mods, skipped));
+    }
     Ok(items)
 }
 
@@ -323,23 +328,29 @@ fn from_folder(
     let mut zips = Vec::new();
     collect_zips(folder, 0, 4, &mut zips, cancel)?;
     zips.sort_by_key(|path| path.to_string_lossy().to_lowercase());
-    if !zips.is_empty() {
-        let mut items = Vec::new();
-        for zip in zips.into_iter().take(options.max_mods) {
-            match analyze_zip(&zip, installed, work_dir, options, budget, cancel, 1, None) {
-                Ok(mut nested) => items.append(&mut nested),
-                Err(message) if message.starts_with("В архиве нет мода") => continue,
-                Err(message) => return Err(message),
-            }
+    let mut items = Vec::new();
+    let skipped = zips.len().saturating_sub(options.max_mods);
+    for zip in zips.into_iter().take(options.max_mods) {
+        match analyze_zip(&zip, installed, work_dir, options, budget, cancel, 1, None) {
+            Ok(mut nested) => items.append(&mut nested),
+            Err(message) if message.starts_with("В архиве нет мода") => continue,
+            Err(message) => return Err(message),
         }
-        return Ok(items);
+    }
+    if skipped > 0 {
+        items.push(overflow_item(source, options.max_mods, skipped));
     }
 
+    // Рядом с zip-ами может лежать и распакованная папка мода: раньше любой zip
+    // в архиве (даже «extras.zip» без мода) прятал её, и архив отклонялся целиком.
     let Some(mod_folder) = find_mod_folder(folder, 3) else {
-        return Err(
-            "В архиве нет мода BeamNG: нет папок vehicles, levels и других, которые ждёт игра."
-                .to_string(),
-        );
+        if items.is_empty() {
+            return Err(
+                "В архиве нет мода BeamNG: нет папок vehicles, levels и других, которые ждёт игра."
+                    .to_string(),
+            );
+        }
+        return Ok(items);
     };
     let zip_path = work_dir.join(format!("folder-{}.zip", short_unique()));
     zip_folder(&mod_folder, &zip_path, budget, cancel)?;
@@ -355,7 +366,7 @@ fn from_folder(
         format!("{}.zip", clean_stem(&name))
     };
     let inspection = inspect_zip(&zip_path, &ArchiveLimits::default());
-    Ok(vec![build_item(
+    items.push(build_item(
         &zip_path,
         file_name,
         &index,
@@ -365,7 +376,8 @@ fn from_folder(
         work_dir,
         &[],
         true,
-    )])
+    ));
+    Ok(items)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -412,6 +424,26 @@ fn build_item(
         findings: inspection.findings,
         content,
     }
+}
+
+/// Модпак больше предела: остальные моды не разобраны. Говорим об этом отдельной
+/// строкой, которую нельзя поставить, — иначе окно считало бы архив поставленным
+/// целиком и могло удалить исходник вместе с неразобранными модами.
+fn overflow_item(source: &Path, max_mods: usize, skipped: usize) -> IncomingItem {
+    let mut item = blocked_item(
+        source,
+        &format!(
+            "В архиве больше {max_mods} модов: ещё {skipped} не разобраны. Распакуйте архив и добавьте моды частями."
+        ),
+        crate::inspect::InspectionResult {
+            findings: Vec::new(),
+            entry_count: 0,
+            total_uncompressed_bytes: 0,
+        },
+        None,
+    );
+    item.title = format!("Ещё {skipped} модов не разобраны");
+    item
 }
 
 fn blocked_item(
@@ -650,20 +682,27 @@ pub fn loose_vehicle(index: &ZipIndex) -> Option<(String, String)> {
     Some((top, folder))
 }
 
+/// Мусор упаковщиков рядом с папкой мода: служебная папка macOS и скрытые файлы.
+fn is_packer_junk(segment: &str) -> bool {
+    segment.eq_ignore_ascii_case("__MACOSX") || segment.starts_with('.')
+}
+
 fn shape_of(index: &ZipIndex) -> Shape {
-    // Первые сегменты путей без учёта регистра: «Car/…» и «car/…» — одна и та же лишняя папка.
+    // Первые сегменты папок без учёта регистра: «Car/…» и «car/…» — одна и та же лишняя
+    // папка. Файлы в корне («README.txt») и мусор упаковщиков («__MACOSX») не мешают
+    // увидеть, что мод лежит в одной лишней папке: их просто не переупаковываем.
     let mut tops: Vec<&str> = Vec::new();
-    let mut root_has_files = false;
     for entry in &index.entries {
         let name = entry.name.trim_start_matches("./").trim_start_matches('/');
-        let first = name.split('/').find(|part| !part.is_empty());
-        if let Some(first) = first
-            && !tops.iter().any(|known| known.eq_ignore_ascii_case(first))
-        {
-            tops.push(first);
+        let mut parts = name.split('/').filter(|part| !part.is_empty());
+        let (Some(first), Some(_)) = (parts.next(), parts.next()) else {
+            continue; // файл в корне
+        };
+        if is_packer_junk(first) {
+            continue;
         }
-        if entry.depth == 1 {
-            root_has_files = true;
+        if !tops.iter().any(|known| known.eq_ignore_ascii_case(first)) {
+            tops.push(first);
         }
     }
 
@@ -678,7 +717,7 @@ fn shape_of(index: &ZipIndex) -> Shape {
         return Shape::Mod;
     }
 
-    if tops.len() == 1 && !root_has_files {
+    if tops.len() == 1 {
         let folder = tops[0];
         let has_known_child = index.entries.iter().any(|entry| {
             let name = entry.name.trim_start_matches("./").trim_start_matches('/');
@@ -1006,6 +1045,7 @@ pub(crate) fn repack(
     // Архив открываем один раз, а записи переносим как есть, без распаковки и нового
     // сжатия: переупаковка 36 МБ занимала ~40 с, теперь — доли секунды.
     let mut archive = crate::zip_index::open_archive(source).map_err(|error| error.to_string())?;
+    let mut copied = 0usize;
     for entry in &index.entries {
         if cancel.load(Ordering::Relaxed) {
             return Err("отменено".to_string());
@@ -1025,8 +1065,14 @@ pub(crate) fn repack(
         writer
             .raw_copy_file_rename(nested, rest)
             .map_err(|error| error.to_string())?;
+        copied += 1;
     }
     writer.finish().map_err(|error| error.to_string())?;
+    // Пустой архив вместо мода хуже отказа: программа предложила бы его поставить.
+    if copied == 0 {
+        let _ = fs::remove_file(&target);
+        return Err("В архиве нет мода BeamNG.".to_string());
+    }
     Ok(target)
 }
 
@@ -1324,6 +1370,144 @@ mod tests {
                 .iter()
                 .all(|entry| !entry.name.starts_with("Wrapper/"))
         );
+    }
+
+    fn repacked_names(entries: &[(&str, &[u8])]) -> Vec<String> {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Mod.zip");
+        build_zip(&source, entries);
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        let item = &analysis.items[0];
+        assert!(item.repacked);
+        let mut names: Vec<String> = read_index(&item.zip_path)
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn dot_slash_wrapper_is_repacked_with_content() {
+        // «./Wrapper/vehicles/…» раньше перепаковывался в пустой архив, и программа
+        // предлагала поставить пустой мод.
+        assert_eq!(
+            repacked_names(&[
+                ("./Wrapper/vehicles/car/a.jbeam", b"x"),
+                ("./Wrapper/vehicles/car/info.json", b"{}"),
+            ]),
+            vec!["vehicles/car/a.jbeam", "vehicles/car/info.json"]
+        );
+    }
+
+    #[test]
+    fn dot_slash_mod_keeps_its_content_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Mod.zip");
+        build_zip(&source, &[("./vehicles/car/a.jbeam", b"x")]);
+        let index = read_index(&source).unwrap();
+        assert!(content_keys(&index).contains("vehicles/car"));
+    }
+
+    #[test]
+    fn wrapper_next_to_readme_and_macos_junk_is_repacked() {
+        // «MyMod/… + README.txt» и «__MACOSX/…» раньше давали «В архиве нет мода».
+        assert_eq!(
+            repacked_names(&[
+                ("MyMod/vehicles/car/a.jbeam", b"x"),
+                ("MyMod/levels/town/info.json", b"{}"),
+                ("README.txt", b"read me"),
+                ("__MACOSX/MyMod/._a.jbeam", b"junk"),
+            ]),
+            vec!["levels/town/info.json", "vehicles/car/a.jbeam"]
+        );
+    }
+
+    #[test]
+    fn modpack_over_the_limit_says_how_many_were_left_out() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Pack.zip");
+        let car = |name: &str| zip_bytes(&[(&format!("vehicles/{name}/a.jbeam"), b"x")]);
+        let (a, b, c) = (car("a"), car("b"), car("c"));
+        build_zip(
+            &source,
+            &[
+                ("a.zip", a.as_slice()),
+                ("b.zip", b.as_slice()),
+                ("c.zip", c.as_slice()),
+            ],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions {
+                max_mods: 2,
+                ..IncomingOptions::default()
+            },
+            &AtomicBool::new(false),
+        );
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        assert_eq!(analysis.items.len(), 3);
+        let overflow = analysis.items.last().unwrap();
+        assert!(overflow.blocked, "неразобранное нельзя поставить");
+        assert!(
+            overflow
+                .findings
+                .iter()
+                .any(|finding| finding.message.contains("ещё 1 не разобраны")),
+            "{:?}",
+            overflow.findings
+        );
+    }
+
+    #[test]
+    fn unpacked_folder_is_found_next_to_a_zip_without_mod() {
+        // 7z/RAR: «extras.zip» без мода раньше прятал лежащую рядом папку мода.
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("unpacked");
+        fs::create_dir_all(folder.join("vehicles/car")).unwrap();
+        fs::write(folder.join("vehicles/car/a.jbeam"), b"x").unwrap();
+        build_zip(&folder.join("extras.zip"), &[("readme.txt", b"hi")]);
+        let work = temp.path().join("work");
+        fs::create_dir_all(&work).unwrap();
+        let mut budget = ExtractBudget::new(IncomingOptions::default().budget_bytes);
+        let items = from_folder(
+            &folder,
+            &temp.path().join("Pack.7z"),
+            &[],
+            &work,
+            IncomingOptions::default(),
+            &mut budget,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].content.contains("vehicles/car"));
+    }
+
+    #[test]
+    fn two_folders_are_still_not_a_wrapper() {
+        let temp = tempfile::tempdir().unwrap();
+        let index_path = temp.path().join("Two.zip");
+        build_zip(
+            &index_path,
+            &[
+                ("A/vehicles/a/a.jbeam", b"x"),
+                ("B/vehicles/b/b.jbeam", b"x"),
+            ],
+        );
+        let index = read_index(&index_path).unwrap();
+        assert!(!matches!(shape_of(&index), Shape::Wrap(_)));
     }
 
     #[test]
