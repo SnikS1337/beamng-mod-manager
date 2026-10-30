@@ -482,95 +482,34 @@ mod tests {
     }
 
     #[test]
-    fn repro_delete_copy_then_restore_its_version() {
+    fn deleted_copy_is_not_a_past_version_of_the_other_copy() {
+        // Две копии одного мода; копия «(1)» помнит имя основного файла. Удалили
+        // основной — у «(1)» в «Прошлых версиях» появлялась «Версия 1.0», и «Вернуть»
+        // возвращало удалённый файл, убирая в копии саму «(1)».
         let (temp, state) = setup();
         let source = temp.path().join("source.zip");
         make_zip(&source);
         install_direct(&state, &source, "acm_v1-0.zip");
         install_direct(&state, &source, "acm_v1-0 (1).zip");
         let snapshot = load_snapshot(&state).unwrap();
-        eprintln!(
-            "MODS {:?}",
+        let id_of = |file: &str| {
             snapshot
                 .mods
                 .iter()
-                .map(|m| (&m.id, &m.file_name))
-                .collect::<Vec<_>>()
-        );
-        let first = snapshot
-            .mods
-            .iter()
-            .find(|m| m.file_name == "acm_v1-0.zip")
-            .unwrap()
-            .id
-            .clone();
-        let copy = snapshot
-            .mods
-            .iter()
-            .find(|m| m.file_name == "acm_v1-0 (1).zip")
-            .unwrap()
-            .id
-            .clone();
+                .find(|item| item.file_name == file)
+                .unwrap()
+                .id
+                .clone()
+        };
+        let (first, copy) = (id_of("acm_v1-0.zip"), id_of("acm_v1-0 (1).zip"));
         state.library.add_file_history(&copy, "acm_v1-0.zip");
         delete_mod(&state, &first).unwrap();
-        let snapshot = load_snapshot(&state).unwrap();
-        eprintln!(
-            "AFTER DELETE {:?}",
-            snapshot
-                .mods
-                .iter()
-                .map(|m| (&m.id, &m.file_name))
-                .collect::<Vec<_>>()
-        );
-        let rows = versions_of(&state, &copy).unwrap();
-        eprintln!(
-            "ROWS {:?}",
-            rows.iter()
-                .map(|r| (&r.file_name, &r.version))
-                .collect::<Vec<_>>()
-        );
-        if let Some(row) = rows.first() {
-            let r = restore_version(&state, &copy, &row.backup_id);
-            eprintln!("RESTORE {:?}", r.as_ref().err().map(|e| format!("{e:?}")));
-        }
-        let snapshot = load_snapshot(&state).unwrap();
-        eprintln!(
-            "AFTER RESTORE {:?} deleted {:?}",
-            snapshot
-                .mods
-                .iter()
-                .map(|m| (&m.id, &m.file_name, m.deleted))
-                .collect::<Vec<_>>(),
-            snapshot
-                .deleted
-                .iter()
-                .map(|d| &d.file_name)
-                .collect::<Vec<_>>()
-        );
-        eprintln!(
-            "LIB {:?}",
-            state
-                .library
-                .mods()
-                .iter()
-                .map(|m| (&m.id, &m.file_name))
-                .collect::<Vec<_>>()
-        );
-        eprintln!("ROWS2 {:?}", versions_of(&state, &copy).map(|r| r.len()));
-        eprintln!(
-            "FORGET {:?}",
-            forget_deleted(&state, &first)
-                .err()
-                .map(|e| format!("{e:?}"))
-        );
-        let snapshot = load_snapshot(&state).unwrap();
-        eprintln!(
-            "AFTER FORGET {:?}",
-            snapshot
-                .mods
-                .iter()
-                .map(|m| (&m.id, &m.file_name))
-                .collect::<Vec<_>>()
-        );
+        load_snapshot(&state).unwrap();
+        assert!(versions_of(&state, &copy).unwrap().is_empty());
+        // Удаление остаётся отменяемым тостом.
+        undelete_mod(&state, &first).unwrap();
+        let mods_dir = installer_for(&state).unwrap().layout().mods_dir.clone();
+        assert!(mods_dir.join("acm_v1-0.zip").is_file());
+        assert!(mods_dir.join("acm_v1-0 (1).zip").is_file());
     }
 }

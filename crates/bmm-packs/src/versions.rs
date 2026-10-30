@@ -27,7 +27,14 @@ pub fn versions_for(
         .map(|item| item.file_name.to_lowercase())
         .collect();
     let key = name_key(&installed.file_name);
-    let mut names: Vec<String> = store.file_history(&installed.id);
+    // Имя из истории, которое сейчас носит другой мод (например, копия «… (1)»
+    // знала имя основного файла), — не прошлая версия: «Вернуть» подменило бы этот
+    // мод чужим файлом, в том числе только что удалённой копией.
+    let mut names: Vec<String> = store
+        .file_history(&installed.id)
+        .into_iter()
+        .filter(|name| !other_current.contains(&name.to_lowercase()))
+        .collect();
     names.push(installed.file_name.clone());
     if !key.is_empty() {
         names.extend(
