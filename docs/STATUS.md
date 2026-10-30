@@ -1,10 +1,10 @@
 # Состояние проекта
 
-На 2026-10-30. Основная ветка разработки — `refactor-rust-poc` (Rust + Tauri);
-`main` пока хранит прежнюю C#/WPF-версию 0.3.12 и будет заменена новой.
+На 2026-10-30. Основная ветка — `main` (Rust + Tauri). Прежняя C#/WPF-версия
+0.3.12 сохранена в ветке `old-main`, её код — ещё и в `legacy/`.
 
 Последний опубликованный выпуск — **1.0.5** (собран из ветки `work/2026-10-24`,
-которая теперь слита в `refactor-rust-poc`). Версии в `Cargo.toml`, `package.json`
+которая теперь слита в `main`). Версии в `Cargo.toml`, `package.json`
 и `src-tauri/tauri.conf.json` — 1.0.5. Что готовится к следующему выпуску —
 раздел «Не выпущено» в [CHANGES.md](../CHANGES.md).
 
@@ -41,8 +41,9 @@
 
 ## Проверки
 
-CI на `windows-2025` (`.github/workflows/ci.yml`): `svelte-check`, Vitest, сборка
-фронтенда, `cargo fmt`, `clippy -D warnings`, `cargo test`. На 2026-10-30:
+CI на `windows-2025` (`.github/workflows/ci.yml`) на каждый push и PR: `svelte-check`,
+Vitest, сборка фронтенда, `cargo fmt`, `clippy -D warnings`, `cargo test`; на `main`
+ещё и полная release-сборка exe. На 2026-10-30:
 **739 тестов Rust** (2 пропущены намеренно) и **126 тестов интерфейса**.
 
 Отдельно проверяется связка окна и Rust: каждый `invoke()` попадает в команду с теми
