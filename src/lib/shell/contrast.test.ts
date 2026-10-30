@@ -1,9 +1,10 @@
+// @ts-expect-error — тесты идут в Node, а типов Node в проекте нет.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /** Токены светлой темы из app.css (первый блок `:root`). */
 function lightTokens(): Record<string, string> {
-  const css = readFileSync(new URL("../../app.css", import.meta.url), "utf8");
+  const css: string = readFileSync(new URL("../../app.css", import.meta.url), "utf8");
   const start = css.indexOf("/* Светлая тема.");
   const block = css.slice(start, css.indexOf("}", start));
   const tokens: Record<string, string> = {};
