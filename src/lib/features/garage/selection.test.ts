@@ -136,3 +136,61 @@ describe("panelOf", () => {
     expect(panelOf({ ids: ["a"], anchor: "a" })).toBe(panelOf({ ids: ["b"], anchor: "b" }));
   });
 });
+
+describe("галочки на карточках", () => {
+  it("первая галочка не открывает панель мода — сетка не перестраивается под курсором", () => {
+    const one = clickSelect(EMPTY, "b", order, { check: true });
+    expect(one.ids).toEqual(["b"]);
+    expect(single(one)).toBeNull();
+    expect(panelOf(one)).toBe("none");
+  });
+
+  it("вторая галочка собирает пачку и показывает «Выбрано 2»", () => {
+    let state = clickSelect(EMPTY, "b", order, { check: true });
+    state = clickSelect(state, "d", order, { check: true });
+    expect(state.ids).toEqual(["b", "d"]);
+    expect(panelOf(state)).toBe("many");
+  });
+
+  it("снятая последняя галочка — выбора нет; снятая предпоследняя — панели мода нет", () => {
+    let state = clickSelect(EMPTY, "b", order, { check: true });
+    state = clickSelect(state, "d", order, { check: true });
+    state = clickSelect(state, "d", order, { check: true });
+    expect(state.ids).toEqual(["b"]);
+    expect(panelOf(state)).toBe("none");
+    expect(clickSelect(state, "b", order, { check: true })).toEqual(EMPTY);
+  });
+
+  it("обычный щелчок по карточке выходит из пачки и открывает панель мода", () => {
+    const checked = clickSelect(EMPTY, "b", order, { check: true });
+    const plain = clickSelect(checked, "c", order);
+    expect(single(plain)).toBe("c");
+    expect(panelOf(plain)).toBe("one");
+  });
+
+  it("Ctrl и Shift внутри пачки остаются пачкой", () => {
+    let state = clickSelect(EMPTY, "b", order, { check: true });
+    state = clickSelect(state, "d", order, { shift: true });
+    expect(state.ids).toEqual(["b", "c", "d"]);
+    state = clickSelect(state, "c", order, { ctrl: true });
+    state = clickSelect(state, "d", order, { ctrl: true });
+    expect(state.ids).toEqual(["b"]);
+    expect(panelOf(state)).toBe("none");
+  });
+
+  it("галочка к уже открытой панели мода добавляет второй мод", () => {
+    const open = clickSelect(EMPTY, "b", order);
+    const both = clickSelect(open, "d", order, { check: true });
+    expect(both.ids).toEqual(["b", "d"]);
+    expect(panelOf(both)).toBe("many");
+  });
+
+  it("фильтр скрыл часть пачки — остаются видимые, без панели мода", () => {
+    let state = clickSelect(EMPTY, "b", order, { check: true });
+    state = clickSelect(state, "d", order, { check: true });
+    const kept = keepVisible(state, ["a", "b", "c"]);
+    expect(kept.ids).toEqual(["b"]);
+    expect(panelOf(kept)).toBe("none");
+    expect(keepVisible(state, ["a"])).toEqual(EMPTY);
+  });
+});

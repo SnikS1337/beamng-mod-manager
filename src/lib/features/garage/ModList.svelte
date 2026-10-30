@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ClickKeys } from "./selection";
   import Car from "phosphor-svelte/lib/Car";
   import Check from "phosphor-svelte/lib/Check";
   import { Switch } from "#lib/components/ui/switch/index.js";
@@ -20,7 +21,7 @@
     items: ModCardDto[];
     /** Выбранные: одна карточка или несколько. */
     selectedIds: string[];
-    onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
+    onselect: (id: string, keys: ClickKeys) => void;
     ontoggle: (mod: ModCardDto) => void;
     resetKey?: string;
   } = $props();
@@ -113,7 +114,7 @@
             title={selectedIds.includes(mod.id) ? "Снять выбор" : "Выбрать для действий"}
             onclick={(event) => {
               event.stopPropagation();
-              onselect(mod.id, { ctrl: true, shift: false });
+              onselect(mod.id, { check: true });
             }}
           >
             {#if selectedIds.includes(mod.id)}<Check size={11} weight="bold" />{/if}

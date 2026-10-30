@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ClickKeys } from "./selection";
   import type { ModCardDto } from "#lib/ipc/library.js";
   import { tick, untrack } from "svelte";
   import { motion } from "#lib/shell/motion.svelte.js";
@@ -7,6 +8,7 @@
   let {
     items,
     selectedIds,
+    selecting = false,
     onselect,
     ontoggle,
     resetKey = "",
@@ -16,7 +18,9 @@
     items: ModCardDto[];
     /** Выбранные: одна карточка или несколько. */
     selectedIds: string[];
-    onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
+    /** Идёт выбор пачки: галочки видны у всех карточек. */
+    selecting?: boolean;
+    onselect: (id: string, keys: ClickKeys) => void;
     ontoggle: (mod: ModCardDto) => void;
     /** Когда сбросить прокрутку (фильтр, тип, поиск). */
     resetKey?: string;
@@ -121,7 +125,7 @@
         {index}
         {appear}
         selected={selectedIds.includes(mod.id)}
-        selecting={selectedIds.length > 1}
+        {selecting}
         {onselect}
         {ontoggle}
       />

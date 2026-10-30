@@ -74,6 +74,7 @@
     selectOnly,
     single,
     panelOf,
+    type ClickKeys,
     type Selection,
   } from "./selection";
   import { motion } from "#lib/shell/motion.svelte.js";
@@ -205,9 +206,9 @@
   $effect(() => {
     const shown = filtered;
     const current = untrack(() => picked);
-    if (current.ids.length === 1) {
+    if (current.ids.length === 1 && !current.checking) {
       if (!isShown(current.ids[0], shown)) picked = EMPTY;
-    } else if (current.ids.length > 1) {
+    } else if (current.ids.length > 0) {
       picked = keepVisible(current, shown.map((mod) => mod.id));
     }
   });
@@ -449,7 +450,7 @@
     }
   }
 
-  function select(id: string, keys: { ctrl: boolean; shift: boolean } = { ctrl: false, shift: false }) {
+  function select(id: string, keys: ClickKeys = {}) {
     pick(clickSelect(picked, id, filtered.map((mod) => mod.id), keys));
   }
 
@@ -1081,6 +1082,7 @@
             <ModGrid
               items={filtered}
               selectedIds={picked.ids}
+              selecting={picked.checking === true || picked.ids.length > 1}
               onselect={select}
               ontoggle={(mod) => {
                 if (!mod.deleted) void toggle(mod);
