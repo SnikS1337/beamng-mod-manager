@@ -33,6 +33,7 @@ const mockUnfollowed: UpdateFinding[] = [];
 
 function mockInitial(): UpdatesSnapshot {
   return {
+    coverage: { mods: 12, tracked: 9, withoutPage: 2, declined: 1 },
     lost: [
       {
         modId: "mock-lost",
@@ -434,5 +435,6 @@ function clone(snapshot: UpdatesSnapshot): UpdatesSnapshot {
     sites: snapshot.sites?.map((item) => ({ ...item })),
     lastChecked: snapshot.lastChecked ?? null,
     lost: snapshot.lost?.map((item) => ({ ...item })),
+    coverage: { ...snapshot.coverage },
   };
 }

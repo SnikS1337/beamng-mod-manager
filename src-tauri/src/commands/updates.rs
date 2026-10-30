@@ -33,6 +33,7 @@ pub async fn updates_snapshot(
 fn progress_event(request_id: u64, progress: &UpdateProgress) -> UpdatesEventDto {
     UpdatesEventDto {
         followed: 0,
+        coverage: None,
         request_id,
         phase: "progress".to_string(),
         progress: Some(progress_dto(progress)),
@@ -118,7 +119,7 @@ fn run_page_search(
         let _ = app_for_progress.emit("updates://event", progress_event(request_id, progress));
     };
     let include_disabled = state.settings.load().settings.check_disabled_mods;
-    bmm_checks::find_pages_with(
+    bmm_checks::find_pages_until(
         store.as_ref(),
         service.as_ref(),
         Utc::now().fixed_offset(),
@@ -128,6 +129,7 @@ fn run_page_search(
         &|mod_id| page_title(state, mod_id),
         &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
         Some(&mut progress),
+        bmm_checks::PAGE_SEARCH_TOTAL_BUDGET,
     )
 }
 
@@ -268,6 +270,7 @@ async fn start_updates(
                     "updates://event",
                     UpdatesEventDto {
                         followed: 0,
+                        coverage: None,
                         request_id,
                         phase: "error".to_string(),
                         progress: None,
@@ -773,6 +776,47 @@ mod tests {
             .single()
             .unwrap()
             .fixed_offset()
+    }
+
+    #[test]
+    fn coverage_counts_followed_declined_and_pageless_mods() {
+        // «Новых версий нет» без этого звучало как «всё проверено», хотя моды без
+        // страницы программа не проверяет вовсе.
+        let (_temp, state) = state();
+        let store = state.library.as_ref();
+        for id in ["followed", "suggested", "declined", "plain"] {
+            store.upsert_mod(InstalledMod {
+                id: id.to_string(),
+                name: id.to_string(),
+                file_name: format!("{id}.zip"),
+                version: None,
+                size_bytes: Some(1),
+                installed_at_utc: chrono::Utc::now().fixed_offset(),
+                enabled: true,
+            });
+        }
+        for (id, confirmed) in [("followed", true), ("suggested", false)] {
+            store
+                .upsert_binding(bmm_domain::library::ModBinding {
+                    mod_id: id.to_string(),
+                    source: "stmods".to_string(),
+                    source_id: id.to_string(),
+                    url: url::Url::parse(&format!("https://stmods.org/beamng_drive/mods/{id}/"))
+                        .unwrap(),
+                    confirmed,
+                })
+                .unwrap();
+        }
+        store.set_checking_declined("declined", true);
+        let coverage = super::snapshot::coverage(&state);
+        assert_eq!(coverage.mods, 4);
+        assert_eq!(coverage.tracked, 1);
+        assert_eq!(coverage.declined, 1);
+        assert_eq!(
+            coverage.without_page, 2,
+            "предложение без подтверждения — ещё не страница"
+        );
+        assert_eq!(build_snapshot(&state).coverage.tracked, 1);
     }
 
     #[test]

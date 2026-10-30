@@ -53,6 +53,7 @@
     sites: [],
     lastChecked: null,
     lost: [],
+    coverage: { mods: 0, tracked: 0, withoutPage: 0, declined: 0 },
   });
   let sources = $state<UpdateSource[]>([]);
   let loading = $state(true);
@@ -87,7 +88,7 @@
     pages: snapshot.suggestions.length + (snapshot.lost?.length ?? 0),
   });
   const headline = $derived(
-    updateHeadline(counts.available, snapshot.sites, snapshot.lastChecked),
+    updateHeadline(counts.available, snapshot.sites, snapshot.lastChecked, snapshot.coverage),
   );
   const failed = $derived(failedSites(snapshot.sites));
 
@@ -184,6 +185,7 @@
           findings: event.findings,
           hidden: event.hidden,
           suggestions: event.suggestions,
+          coverage: event.coverage ?? snapshot.coverage,
         };
         if (event.sources.length > 0) sources = event.sources;
         if (hadProgress) finishProgress();
@@ -214,6 +216,7 @@
       findings: event.findings,
       hidden: event.hidden,
       suggestions: event.suggestions,
+      coverage: event.coverage ?? snapshot.coverage,
     };
     if (event.sources.length > 0) sources = event.sources;
     run.checking = false;

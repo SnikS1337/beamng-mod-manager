@@ -45,6 +45,7 @@ pub async fn updates_find_pages(
         let snapshot = build_snapshot(&state_for_task);
         let event = UpdatesEventDto {
             followed: report.followed,
+            coverage: Some(snapshot.coverage.clone()),
             request_id,
             phase: "pages".to_string(),
             progress: None,

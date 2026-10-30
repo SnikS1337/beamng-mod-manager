@@ -103,6 +103,18 @@ impl PageGuesser {
         include_disabled: bool,
         retry_recent: bool,
     ) -> Vec<InstalledMod> {
+        let mut due = Self::due_all(store, now, include_disabled, retry_recent);
+        due.truncate(PER_RUN);
+        due
+    }
+
+    /// Все моды, которым пора искать страницу, без предела на заход: столько осталось.
+    pub fn due_all(
+        store: &dyn LibraryStore,
+        now: DateTime<FixedOffset>,
+        include_disabled: bool,
+        retry_recent: bool,
+    ) -> Vec<InstalledMod> {
         // По кнопке ищем заново и моды, у которых есть только непроверенное предложение:
         // старые предложения (в том числе перенесённые из 0.3.x) бывали мимо —
         // «LADA 2102» → страница «Lada 2105».
@@ -122,15 +134,18 @@ impl PageGuesser {
             .filter(|installed| match store.get_page_search(&installed.id) {
                 None => true,
                 Some(search) => {
+                    // `now` — время начала этого поиска: мод, найденный в нём же
+                    // (отметка ровно `now`), второй раз в тот же поиск не попадает.
                     !search.rejected
-                        && (retry_recent || now - search.at >= retry_after || search.at > now)
+                        && ((retry_recent && search.at < now)
+                            || now - search.at >= retry_after
+                            || search.at > now)
                 }
             })
             .collect();
         // `sort_by_key` устойчива: при одинаковом времени установки порядок остаётся
         // прежним (по названию из хранилища).
         due.sort_by_key(|installed| std::cmp::Reverse(installed.installed_at_utc));
-        due.truncate(PER_RUN);
         due
     }
 

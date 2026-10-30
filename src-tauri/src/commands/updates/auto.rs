@@ -14,6 +14,7 @@ pub(crate) fn done_event(
 ) -> UpdatesEventDto {
     UpdatesEventDto {
         followed: 0,
+        coverage: Some(snapshot.coverage.clone()),
         request_id,
         phase: phase.unwrap_or("done").to_string(),
         progress: None,
@@ -166,6 +167,7 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                             "updates://event",
                             UpdatesEventDto {
                                 followed: 0,
+                                coverage: None,
                                 request_id: AUTO_REQUEST_ID,
                                 phase: "auto".to_string(),
                                 progress: None,

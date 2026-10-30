@@ -55,8 +55,9 @@ fn declarations(cfg: &Config) -> Vec<String> {
     };
     use crate::commands::settings::SettingsDto;
     use crate::commands::updates::{
-        LostPageDto, PageMatchDto, PageSuggestionDto, PageVerificationDto, UpdateFindingDto,
-        UpdateProgressDto, UpdateSiteDto, UpdateSourceDto, UpdatesEventDto, UpdatesSnapshotDto,
+        CoverageDto, LostPageDto, PageMatchDto, PageSuggestionDto, PageVerificationDto,
+        UpdateFindingDto, UpdateProgressDto, UpdateSiteDto, UpdateSourceDto, UpdatesEventDto,
+        UpdatesSnapshotDto,
     };
     use crate::error::AppError;
 
@@ -102,6 +103,7 @@ fn declarations(cfg: &Config) -> Vec<String> {
         UpdateSourceDto::decl(cfg),
         UpdateProgressDto::decl(cfg),
         LostPageDto::decl(cfg),
+        CoverageDto::decl(cfg),
         UpdatesSnapshotDto::decl(cfg),
         UpdatesEventDto::decl(cfg),
     ]

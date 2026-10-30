@@ -130,6 +130,24 @@ pub struct UpdatesSnapshotDto {
     /// или перенесли. Сама программа за ними уже ничего не узнает.
     #[serde(default)]
     pub lost: Vec<LostPageDto>,
+    /// За сколькими модами программа вообще следит: без этого «Новых версий нет»
+    /// звучало как «всё проверено», хотя моды без страницы не проверялись.
+    #[serde(default)]
+    pub coverage: CoverageDto,
+}
+
+/// Моды по копиям — как карточки в гараже: копии одного мода считаются одним.
+#[derive(Debug, Clone, Default, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverageDto {
+    /// Всего модов.
+    pub mods: usize,
+    /// Со страницей, за которой программа следит.
+    pub tracked: usize,
+    /// Без страницы: их обновления программа не видит.
+    pub without_page: usize,
+    /// Человек сам сказал «не проверять».
+    pub declined: usize,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -164,6 +182,9 @@ pub struct UpdatesEventDto {
     pub cancelled: bool,
     pub stopped_by_time: bool,
     pub error: Option<String>,
+    /// Сколько модов программа проверяет — для честного итога.
+    #[serde(default)]
+    pub coverage: Option<CoverageDto>,
     /// Поиск страниц: за сколькими найденными страницами программа стала следить сама.
     #[serde(default)]
     pub followed: usize,

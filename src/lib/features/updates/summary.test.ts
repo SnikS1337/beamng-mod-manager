@@ -186,5 +186,44 @@ describe("updateHeadline", () => {
         expect(
             updateHeadline(0, [site({ displayName: "STMods" })], now),
         ).toEqual({ text: "Всё актуально", tone: "ok" });
+        expect(
+            updateHeadline(0, [site({ displayName: "STMods" })], now, {
+                mods: 35,
+                tracked: 35,
+                withoutPage: 0,
+                declined: 0,
+            }),
+        ).toEqual({ text: "Всё актуально", tone: "ok" });
+    });
+
+    it("не называет актуальным то, что не проверяли: моды без страницы", () => {
+        expect(
+            updateHeadline(0, [site({ displayName: "STMods" })], now, {
+                mods: 35,
+                tracked: 26,
+                withoutPage: 9,
+                declined: 0,
+            }),
+        ).toEqual({
+            text: "Актуальны 26 из 35: у 9 модов нет страницы — их не проверяли",
+            tone: "warn",
+        });
+    });
+});
+
+describe("итог проверки и моды без страницы", () => {
+    it("называет, сколько модов не проверяли", () => {
+        expect(
+            checkSummary({
+                ...base,
+                coverage: { mods: 1000, tracked: 940, withoutPage: 60, declined: 0 },
+            }).text,
+        ).toBe("Новых версий нет. У 60 модов нет страницы — их не проверяли");
+        expect(
+            checkSummary({
+                ...base,
+                coverage: { mods: 10, tracked: 9, withoutPage: 1, declined: 0 },
+            }).text,
+        ).toBe("Новых версий нет. У 1 мода нет страницы — их не проверяли");
     });
 });

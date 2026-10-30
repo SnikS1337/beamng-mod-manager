@@ -1,4 +1,5 @@
 import type { UpdatesEvent, UpdateSite } from "#lib/ipc/updates.js";
+import type { CoverageDto } from "#lib/ipc/generated.js";
 import { plural } from "#lib/features/garage/format.js";
 
 /** Итог нажатия «Проверить сейчас»: одна строка для тоста и нужна ли «Всё равно проверить». */
@@ -24,10 +25,18 @@ export function failedSites(sites: UpdateSite[] | undefined): UpdateSite[] {
  * «Всё актуально» можно говорить, только если проверка действительно прошла по всем
  * включённым сайтам. Иначе честнее назвать сайты, которые не ответили.
  */
+/** «у 9 модов нет страницы — их не проверяли»; пусто, если таких нет. */
+export function pagelessText(coverage: CoverageDto | null | undefined): string | null {
+    const count = coverage?.withoutPage ?? 0;
+    if (count <= 0) return null;
+    return `у ${count} ${plural(count, "мода", "модов", "модов")} нет страницы — их не проверяли`;
+}
+
 export function updateHeadline(
     availableCount: number,
     sites: UpdateSite[] | undefined,
     lastChecked: string | null | undefined,
+    coverage?: CoverageDto | null,
 ): UpdateHeadline {
     if (availableCount > 0) {
         const failed = failedSites(sites);
@@ -49,13 +58,22 @@ export function updateHeadline(
     if (active.every((site) => site.tracked === 0)) {
         return { text: "Нечего проверять", tone: "muted" };
     }
+    // «Всё актуально» — только про моды со страницей: остальные программа не видит.
+    const pageless = pagelessText(coverage);
+    if (pageless && coverage) {
+        return {
+            text: `Актуальны ${coverage.tracked} из ${coverage.mods}: ${pageless}`,
+            tone: "warn",
+        };
+    }
     return { text: "Всё актуально", tone: "ok" };
 }
 
 type Done = Pick<
     UpdatesEvent,
     "cancelled" | "newCount" | "requests" | "stoppedByTime" | "sources"
->;
+> &
+    Partial<Pick<UpdatesEvent, "coverage">>;
 
 export function checkSummary(event: Done): CheckSummary {
     // Остановили сами — говорить нечего.
@@ -113,5 +131,7 @@ export function checkSummary(event: Done): CheckSummary {
             `${postponed} ${plural(postponed, "мод проверен", "мода проверены", "модов проверены")} недавно — их очередь в следующий раз`,
         );
     }
+    const pageless = pagelessText(event.coverage);
+    if (pageless) parts.push(pageless.charAt(0).toUpperCase() + pageless.slice(1));
     return { text: parts.join(". "), offerForce: false };
 }
