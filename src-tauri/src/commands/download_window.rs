@@ -361,7 +361,10 @@ fn side_space(window_width: f64) -> f64 {
 
 /// В dev панель — маршрут Vite (`/download`), в собранной программе — готовый asset.
 fn panel_url(app: &AppHandle) -> WebviewUrl {
-    if cfg!(debug_assertions)
+    // Адрес дев-сервера — только под `tauri dev`. Отладочная сборка
+    // (`tauri build --debug`) идёт без сервера: по cfg!(debug_assertions) панель
+    // загрузки открывалась пустой.
+    if tauri::is_dev()
         && let Some(dev) = &app.config().build.dev_url
         && let Ok(url) = dev.join("download")
     {
