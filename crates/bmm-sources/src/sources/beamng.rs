@@ -92,9 +92,25 @@ impl ModSource for BeamNgRepoSource {
     }
 }
 
+/// `crash-test-dummy.906` или просто `906`: короткий адрес по номеру — так страницу
+/// мода из игры записывает `db.json`, а сайт перенаправляет на полный.
 fn is_resource_slug(slug: &str) -> bool {
-    let Some((_, id)) = slug.rsplit_once('.') else {
-        return false;
-    };
+    let id = slug.rsplit_once('.').map_or(slug, |(_, id)| id);
     !id.is_empty() && id.chars().all(|ch| ch.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_resource_address_is_a_mod_page() {
+        // Было: моды из игры привязаны к `https://beamng.com/resources/906/`, а такой
+        // адрес не считался страницей мода — все десять «пропадали» при проверке.
+        assert!(is_resource_slug("906"));
+        assert!(is_resource_slug("crash-test-dummy.906"));
+        assert!(!is_resource_slug("categories"));
+        assert!(!is_resource_slug("crash-test-dummy."));
+        assert!(!is_resource_slug(""));
+    }
 }
