@@ -39,6 +39,9 @@ pub struct UpdateCheckOptions {
     pub force: bool,
     /// Общий предел времени одной проверки; остаток переносится на следующую.
     pub max_duration: Duration,
+    /// Датированную ленту можно читать глубже плана, до прошлой проверки. Только в
+    /// первой пачке: следующие перечитывали бы те же страницы ленты зря.
+    pub deep_feed: bool,
 }
 
 impl Default for UpdateCheckOptions {
@@ -52,6 +55,7 @@ impl Default for UpdateCheckOptions {
             check_disabled: true,
             force: false,
             max_duration: DEFAULT_MAX_DURATION,
+            deep_feed: true,
         }
     }
 }

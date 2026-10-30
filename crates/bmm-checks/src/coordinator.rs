@@ -289,7 +289,10 @@ impl UpdateCoordinator {
         for batch in 0..options_snapshot.max_batches.max(1) {
             let now = self.now();
             let batch_force = force && batch == 0;
-            let options = options_snapshot.check.clone().with_force(batch_force);
+            let mut options = options_snapshot.check.clone().with_force(batch_force);
+            // Глубокое чтение ленты — один раз: в следующей пачке те же страницы
+            // ничего нового не скажут, а запросы стоят времени.
+            options.deep_feed = options.deep_feed && batch == 0;
             let due_before = UpdateCheckPlanner::plan_feeds(
                 &UpdateCheckService::tracked(&*self.store),
                 &UpdateCheckService::source_statuses(&*self.store),
@@ -515,6 +518,8 @@ mod tests {
         card_calls: AtomicUsize,
         card: Mutex<Option<bmm_domain::models::Listing>>,
         on_card: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+        /// Лента на каждой странице, а не только на первой: длинная лента.
+        every_page: AtomicBool,
     }
 
     impl Site {
@@ -533,6 +538,7 @@ mod tests {
                 card_calls: AtomicUsize::new(0),
                 card: Mutex::new(None),
                 on_card: Mutex::new(None),
+                every_page: AtomicBool::new(false),
             })
         }
 
@@ -549,6 +555,7 @@ mod tests {
                 card_calls: AtomicUsize::new(0),
                 card: Mutex::new(None),
                 on_card: Mutex::new(None),
+                every_page: AtomicBool::new(false),
             });
             (site, gate, receiver)
         }
@@ -625,7 +632,7 @@ mod tests {
             if let Some(error) = self.feed_fails.lock().unwrap().clone() {
                 return Err(error);
             }
-            if page == 1 {
+            if page == 1 || self.every_page.load(Ordering::SeqCst) {
                 Ok(self.feed.lock().unwrap().clone())
             } else {
                 Ok(Vec::new())
@@ -1120,6 +1127,38 @@ mod tests {
         let _ = checked;
         assert_eq!(site.card_calls(), 4);
         assert_eq!(report.requests, 6, "две ленты и четыре карточки");
+    }
+
+    #[test]
+    fn deep_feed_is_read_only_in_the_first_batch() {
+        // Датированная лента, не дошедшая до прошлой проверки: первая пачка читает её
+        // вглубь (8 страниц на 8 модов), следующие — только по плану (по 3), а не снова
+        // вглубь на оставшиеся моды.
+        let store = store(8);
+        let site = Site::new();
+        let mut fresh = l("other", "2.0");
+        fresh.updated_at = Some(t0());
+        site.set_feed(vec![fresh]);
+        site.every_page.store(true, Ordering::SeqCst);
+        site.set_card(l("m0", "1.0"));
+        let tick = clock_at(t0());
+        let tick_for_card = Arc::clone(&tick);
+        site.on_card(Arc::new(move || {
+            *tick_for_card.lock().unwrap() += TimeDelta::minutes(4);
+        }));
+        let options = UpdateCoordinatorOptions {
+            check: UpdateCheckOptions {
+                max_duration: Duration::from_secs(10 * 60),
+                ..UpdateCheckOptions::default()
+            },
+            ..UpdateCoordinatorOptions::default()
+        };
+        let coordinator = coordinator(store, Arc::clone(&site), clock_of(&tick), options);
+        let report = coordinator.check(false, None);
+        assert!(!report.stopped_by_time);
+        assert_eq!(site.card_calls(), 8);
+        // Три пачки: 8 вглубь, затем по плану 3 и 3 (раньше вторая читала вглубь 5).
+        assert_eq!(site.feed_calls(), 8 + 3 + 3);
     }
 
     #[test]

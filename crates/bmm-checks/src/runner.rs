@@ -531,7 +531,10 @@ impl Worker<'_, '_> {
         // прошлой проверки сама: читаем её глубже плана, пока не дойдём до самой давней
         // проверки. Но не дальше, чем стоило бы открыть страницы самих модов: одна
         // страница ленты не должна стоить дороже, чем она экономит.
-        let deep_limit = if self.request.options.force || oldest_checked.is_none() {
+        let deep_limit = if self.request.options.force
+            || !self.request.options.deep_feed
+            || oldest_checked.is_none()
+        {
             limit
         } else {
             DEEP_FEED_PAGES.min(due_here.len() as u32).max(limit)
@@ -1872,6 +1875,36 @@ mod tests {
         assert_eq!(site.card_calls(), 0, "страницы модов не открывали");
         assert_eq!(site.feed_calls(), 21, "лента ровно до прошлой проверки");
         assert_eq!(report.up_to_date, 30);
+    }
+
+    #[test]
+    fn later_batches_do_not_reread_the_deep_feed() {
+        // Вторая пачка той же проверки: ленту вглубь уже читали — снова 21 страница
+        // дала бы те же записи.
+        let store = InMemoryLibraryStore::new();
+        for index in 0..30 {
+            add(
+                &store,
+                &format!("m{index}"),
+                "x",
+                &format!("m{index}"),
+                Some("1.0"),
+                Some("1.0"),
+                Some(now() - TimeDelta::days(20)),
+            );
+        }
+        let site = Site::new("x");
+        dated_pages(&site, 40);
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions {
+                deep_feed: false,
+                ..UpdateCheckOptions::default()
+            },
+        );
+        assert_eq!(site.feed_calls(), 3, "только по плану");
     }
 
     #[test]
