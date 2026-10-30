@@ -820,6 +820,43 @@ mod tests {
     }
 
     #[test]
+    fn coverage_counts_copies_as_one_mod_and_honours_decline_on_any_copy() {
+        use bmm_packs::duplicates::Duplicate;
+        let copies: HashMap<String, Duplicate> =
+            [("fx_copy", "fx"), ("car_copy", "car"), ("map_copy", "map")]
+                .into_iter()
+                .map(|(copy, of)| {
+                    (
+                        copy.to_string(),
+                        Duplicate {
+                            of: of.to_string(),
+                            exact: true,
+                        },
+                    )
+                })
+                .collect();
+        let followed: std::collections::HashSet<String> =
+            ["car_copy".to_string()].into_iter().collect();
+        let coverage = super::snapshot::tally(
+            &["fx", "fx_copy", "car", "car_copy", "map", "map_copy"],
+            &copies,
+            &followed,
+            // Отказались у копии, а не у основного файла.
+            &|id| id == "map_copy",
+        );
+        assert_eq!(coverage.mods, 3);
+        assert_eq!(
+            coverage.tracked, 1,
+            "следим за копией — группа отслеживается"
+        );
+        assert_eq!(
+            coverage.declined, 1,
+            "отказ у копии — вся группа без проверки"
+        );
+        assert_eq!(coverage.without_page, 1);
+    }
+
+    #[test]
     fn bind_error_codes_match_window_union() {
         use crate::test_support::ts_union;
         let codes = ts_union("unions.ts", "BindErrorCode");

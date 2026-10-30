@@ -29,7 +29,8 @@ export function failedSites(sites: UpdateSite[] | undefined): UpdateSite[] {
 export function pagelessText(coverage: CoverageDto | null | undefined): string | null {
     const count = coverage?.withoutPage ?? 0;
     if (count <= 0) return null;
-    return `у ${count} ${plural(count, "мода", "модов", "модов")} нет страницы — их не проверяли`;
+    // «у 1 мода … — его»; при 21 по смыслу их много: «у 21 мода … — их».
+    return `у ${count} ${plural(count, "мода", "модов", "модов")} нет страницы — ${count === 1 ? "его" : "их"} не проверяли`;
 }
 
 export function updateHeadline(
@@ -62,7 +63,9 @@ export function updateHeadline(
     const pageless = pagelessText(coverage);
     if (pageless && coverage) {
         return {
-            text: `Актуальны ${coverage.tracked} из ${coverage.mods}: ${pageless}`,
+            // Моды, от проверки которых отказались, в счёт не идут: это решение,
+            // а не пробел — иначе «26 из 35» при 9 без страницы и 2 отказах не сходится.
+            text: `Актуальны ${coverage.tracked} из ${coverage.mods - coverage.declined}: ${pageless}`,
             tone: "warn",
         };
     }
