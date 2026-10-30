@@ -206,7 +206,7 @@ impl GameModDb {
             Ok(text) => text,
             Err(_) => return unreadable("файл db.json не читается"),
         };
-        let value: Value = match json5::from_str(&text) {
+        let value: Value = match bmm_domain::json5_safe::from_str(&text) {
             Ok(value) => value,
             Err(_) => return unreadable("файл db.json повреждён"),
         };
@@ -245,7 +245,7 @@ impl GameModDb {
             Ok(text) => text,
             Err(_) => return result(SetActiveOutcome::IoError, Vec::new(), None),
         };
-        let mut root: Value = match json5::from_str(&text) {
+        let mut root: Value = match bmm_domain::json5_safe::from_str(&text) {
             Ok(value) => value,
             Err(_) => return result(SetActiveOutcome::Unreadable, Vec::new(), None),
         };
@@ -262,12 +262,15 @@ impl GameModDb {
                 not_in_db.push((*file_name).to_string());
                 continue;
             };
-            let Some(entry) = mods.get_mut(&key) else {
+            // Запись не объект («"car": 5») — `entry["active"] = …` на ней паникует, и
+            // программа закрывалась. Такую запись не трогаем: мод в игре не управляется.
+            let Some(entry) = mods.get_mut(&key).and_then(Value::as_object_mut) else {
+                not_in_db.push((*file_name).to_string());
                 continue;
             };
             let current = entry.get("active").and_then(Value::as_bool).unwrap_or(true);
             if current != *desired {
-                entry["active"] = Value::Bool(*desired);
+                entry.insert("active".to_string(), Value::Bool(*desired));
                 changed = true;
             }
         }
@@ -347,7 +350,10 @@ pub fn key_of(file_name: &str) -> String {
 
 fn find_object_key(mods: &Map<String, Value>, file_name: &str, wanted_key: &str) -> Option<String> {
     let wanted = wanted_key.to_lowercase();
-    if let Some((key, _)) = mods.iter().find(|(key, _)| key.to_lowercase() == wanted) {
+    if let Some((key, _)) = mods
+        .iter()
+        .find(|(key, value)| key.to_lowercase() == wanted && value.is_object())
+    {
         return Some(key.clone());
     }
     let wanted_name = file_name.to_lowercase();
@@ -564,6 +570,33 @@ mod tests {
         assert_eq!(outcome.outcome, SetActiveOutcome::Done, "{outcome:?}");
         let text = fs::read_to_string(dir.path().join("db.json")).unwrap();
         assert!(text.contains("\"active\": false"), "{text}");
+    }
+
+    #[test]
+    fn non_object_entry_is_skipped_instead_of_crashing() {
+        // «"car": 5» — запись не объект. Раньше `entry["active"] = …` паниковал, а в
+        // выпуске паника закрывает программу; теперь мод просто не управляется.
+        let (dir, db) =
+            temp_db(r#"{"mods":{"car":5,"truck":{"filename":"truck.zip","active":true}}}"#);
+        let outcome = db.set_active(&[("car.zip", false), ("truck.zip", false)], || false);
+        assert_eq!(outcome.outcome, SetActiveOutcome::Done, "{outcome:?}");
+        assert_eq!(outcome.not_in_db, vec!["car.zip".to_string()]);
+        let text = fs::read_to_string(dir.path().join("db.json")).unwrap();
+        assert!(text.contains("\"car\": 5"), "{text}");
+        assert!(text.contains("\"active\": false"), "{text}");
+    }
+
+    #[test]
+    fn deep_db_json_is_unreadable_not_a_crash() {
+        let deep = format!(
+            "{{\"mods\":{}{}}}",
+            "[".repeat(100_000),
+            "]".repeat(100_000)
+        );
+        let (_dir, db) = temp_db(&deep);
+        assert!(db.read().unreadable);
+        let outcome = db.set_active(&[("car.zip", false)], || false);
+        assert_eq!(outcome.outcome, SetActiveOutcome::Unreadable);
     }
 
     #[test]

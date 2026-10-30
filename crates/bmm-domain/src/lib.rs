@@ -4,6 +4,7 @@ pub mod atomic;
 pub mod clock;
 pub mod filename;
 pub mod hosts;
+pub mod json5_safe;
 pub mod library;
 pub mod matches;
 pub mod matching;

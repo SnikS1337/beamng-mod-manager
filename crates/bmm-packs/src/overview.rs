@@ -8,80 +8,12 @@ use crate::zip_index::{self, ZipError};
 
 const MAX_INFO_BYTES: u64 = 256 * 1024;
 const MAX_TITLE: usize = 80;
-/// json5 не ограничивает вложенность, а глубокий `[[[[…` роняет поток переполнением
-/// стека (в release — abort всего приложения). Реальный info.json заметно мельче.
-const MAX_INFO_DEPTH: usize = 64;
-
-fn info_depth(text: &str) -> usize {
-    let bytes = text.as_bytes();
-    let mut depth = 0usize;
-    let mut max = 0usize;
-    let mut quote: Option<u8> = None;
-    let mut escaped = false;
-    let mut line_comment = false;
-    let mut block_comment = false;
-    let mut index = 0usize;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if line_comment {
-            if byte == b'\n' {
-                line_comment = false;
-            }
-            index += 1;
-            continue;
-        }
-        if block_comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                block_comment = false;
-                index += 2;
-                continue;
-            }
-            index += 1;
-            continue;
-        }
-        if let Some(active) = quote {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == active {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        match byte {
-            b'"' | b'\'' => quote = Some(byte),
-            b'/' if bytes.get(index + 1) == Some(&b'/') => {
-                line_comment = true;
-                index += 2;
-                continue;
-            }
-            b'/' if bytes.get(index + 1) == Some(&b'*') => {
-                block_comment = true;
-                index += 2;
-                continue;
-            }
-            b'[' | b'{' => {
-                depth += 1;
-                max = max.max(depth);
-                if depth > MAX_INFO_DEPTH {
-                    return depth;
-                }
-            }
-            b']' | b'}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        index += 1;
-    }
-    max
-}
+/// Вложенность info.json — тот же предел, что у всех файлов JSON5 программы.
+#[cfg(test)]
+const MAX_INFO_DEPTH: usize = bmm_domain::json5_safe::MAX_DEPTH;
 
 fn parse_info(text: &str) -> Option<Value> {
-    if info_depth(text) > MAX_INFO_DEPTH {
-        return None;
-    }
-    json5::from_str(text).ok()
+    bmm_domain::json5_safe::from_str(text).ok()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -448,17 +380,13 @@ mod tests {
     #[test]
     fn deep_info_json_is_rejected_before_json5() {
         let bomb = "[".repeat(10_000);
-        assert!(info_depth(&bomb) > MAX_INFO_DEPTH);
         assert!(parse_info(&bomb).is_none());
-
         let deep = format!(
             "{}{}",
             "[".repeat(MAX_INFO_DEPTH),
             "]".repeat(MAX_INFO_DEPTH)
         );
-        assert_eq!(info_depth(&deep), MAX_INFO_DEPTH);
-        assert_eq!(info_depth(r#"{"text":"[[[[[[[["}"#), 1);
-        assert_eq!(info_depth("// [[[[\n{ /* ]]] */ }"), 1);
+        assert!(parse_info(&deep).is_some());
         assert!(parse_info(r#"{"Brand":"BMW","Name":"M3"}"#).is_some());
     }
 
