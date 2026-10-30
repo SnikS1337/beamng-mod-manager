@@ -896,7 +896,9 @@
               {/if}
             </span>
           </div>
-          {#if site.id === "modland" && site.tone === "warn"}
+          <!-- Modland без единого мода иначе никогда не спросит проверку: без неё он
+               не отвечает и поиску страниц, и мод на нём так и не найдётся. -->
+          {#if site.id === "modland" && (site.tone === "warn" || site.text === "ни одного мода")}
             <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
               {passing ? "Проходим проверку…" : "Пройти проверку Modland"}
             </button>
