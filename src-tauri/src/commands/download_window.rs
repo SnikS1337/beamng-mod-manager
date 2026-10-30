@@ -251,6 +251,12 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
                 }
                 DownloadEvent::Finished { path, success, .. } => {
                     let intercepted = path.as_deref().is_some_and(take_intercepted);
+                    if success
+                        && intercepted
+                        && let Some(path) = path.as_deref()
+                    {
+                        crate::commands::downloads::note_finished(path);
+                    }
                     if success {
                         if let Some(path) = path
                             && intercepted

@@ -24,31 +24,62 @@ static EXPECT_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// Папка, в которую окно загрузки положит файл: сторож должен смотреть и её.
 static EXPECT_FOLDER: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-/// Файлы, которые окно загрузки уже забрало само: сторож не должен предлагать их второй раз.
-static CAUGHT: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+/// Файлы, которые ведёт окно загрузки: путь → загрузка закончилась успешно.
+/// Пока окно открыто, сторож такие файлы не предлагает, сколько бы раз они ни
+/// менялись: файл растёт, пока качается, и каждый новый размер — «новый» файл.
+static CAUGHT: LazyLock<Mutex<HashMap<PathBuf, bool>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Скачанные окном файлы после его закрытия: панель уже предложила их установить,
+/// сторожу остаётся только запомнить их как виденные.
+static HANDLED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub(crate) fn note_caught(path: &Path) {
     let mut caught = CAUGHT.lock().unwrap_or_else(|error| error.into_inner());
     if caught.len() >= 128 {
         caught.clear();
     }
-    caught.insert(path.to_path_buf());
+    caught.insert(path.to_path_buf(), false);
 }
 
-fn take_caught(path: &Path) -> bool {
+/// Окно загрузки докачало файл и передало его своей панели.
+pub(crate) fn note_finished(path: &Path) {
+    if let Some(finished) = CAUGHT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get_mut(path)
+    {
+        *finished = true;
+    }
+}
+
+fn is_caught(path: &Path) -> bool {
     CAUGHT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .contains_key(path)
+}
+
+fn take_handled(path: &Path) -> bool {
+    HANDLED
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .remove(path)
 }
 
-/// Окно загрузки закрыли до конца: файл должен снова стать виден сторожу,
-/// иначе он навсегда пропустит его как «уже забранный».
+/// Окно загрузки закрыли. Недокачанный файл снова виден сторожу, иначе он навсегда
+/// пропустил бы его как «уже забранный». Докачанный панель уже предлагала — второй
+/// раз его не показываем.
 pub(crate) fn forget_caught() {
-    CAUGHT
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
+    let caught = std::mem::take(&mut *CAUGHT.lock().unwrap_or_else(|error| error.into_inner()));
+    let mut handled = HANDLED.lock().unwrap_or_else(|error| error.into_inner());
+    if handled.len() >= 128 {
+        handled.clear();
+    }
+    handled.extend(
+        caught
+            .into_iter()
+            .filter_map(|(path, finished)| finished.then_some(path)),
+    );
 }
 
 fn now_millis() -> u64 {
@@ -151,8 +182,8 @@ impl Scanner {
                 if self.seen.contains(&signature) {
                     continue;
                 }
-                if take_caught(&path) {
-                    // Файл уже ведёт окно загрузки: его панель сама предложит установку.
+                if is_caught(&path) || take_handled(&path) {
+                    // Файл ведёт окно загрузки: его панель сама предложит установку.
                     // Второй раз через `incoming://download` — это двойной диалог.
                     self.pending.remove(&path);
                     self.seen.insert(signature);
@@ -618,6 +649,91 @@ mod tests {
                 .is_empty(),
             "после того как окно загрузки забрало файл, сторож не должен предлагать его снова"
         );
+    }
+
+    #[test]
+    fn growing_download_of_the_window_is_not_offered_twice() {
+        // Было: метка снималась при первом взгляде, а файл ещё качался. Следующий
+        // размер считался новым файлом, и после загрузки главное окно предлагало
+        // «Обновить» тот же архив, который уже установила панель окна загрузки.
+        let _guard = CAUGHT_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().to_path_buf();
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), start)
+                .is_empty()
+        );
+        let path = folder.join("car_v1.6.zip");
+        note_caught(&path);
+        std::fs::write(&path, b"part").unwrap();
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), at(10))
+                .is_empty()
+        );
+        std::fs::write(&path, b"part and more").unwrap();
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), at(20))
+                .is_empty()
+        );
+        std::fs::write(&path, b"part and more, whole archive").unwrap();
+        note_finished(&path);
+        for ms in [30, 40, 1000] {
+            assert!(
+                scanner
+                    .scan(std::slice::from_ref(&folder), at(ms))
+                    .is_empty(),
+                "файл ведёт окно загрузки — сторож молчит"
+            );
+        }
+        forget_caught();
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), at(2000))
+                .is_empty()
+        );
+        assert!(
+            scanner.scan(&[folder], at(3000)).is_empty(),
+            "окно закрыли после загрузки — архив уже предлагала его панель"
+        );
+    }
+
+    #[test]
+    fn handled_download_is_offered_again_when_rewritten() {
+        let _guard = CAUGHT_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().to_path_buf();
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), start)
+                .is_empty()
+        );
+        let path = folder.join("car.zip");
+        note_caught(&path);
+        std::fs::write(&path, b"from window").unwrap();
+        note_finished(&path);
+        forget_caught();
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), at(10))
+                .is_empty()
+        );
+        // Потом тот же файл скачали ещё раз браузером — это уже новый архив.
+        std::fs::write(&path, b"downloaded again by browser").unwrap();
+        assert!(
+            scanner
+                .scan(std::slice::from_ref(&folder), at(20))
+                .is_empty()
+        );
+        assert_eq!(scanner.scan(&[folder], at(30)), vec![path]);
     }
 
     #[test]
