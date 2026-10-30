@@ -360,17 +360,23 @@ fn side_space(window_width: f64) -> f64 {
 }
 
 /// В dev панель — маршрут Vite (`/download`), в собранной программе — готовый asset.
+/// Маршрут панели загрузки в интерфейсе (`src/routes/download`).
+const PANEL_ROUTE: &str = "download";
+
 fn panel_url(app: &AppHandle) -> WebviewUrl {
     // Адрес дев-сервера — только под `tauri dev`. Отладочная сборка
     // (`tauri build --debug`) идёт без сервера: по cfg!(debug_assertions) панель
     // загрузки открывалась пустой.
     if tauri::is_dev()
         && let Some(dev) = &app.config().build.dev_url
-        && let Ok(url) = dev.join("download")
+        && let Ok(url) = dev.join(PANEL_ROUTE)
     {
         return WebviewUrl::External(url);
     }
-    WebviewUrl::App("download.html".into())
+    // Именно «download», а не «download.html»: файл Tauri найдёт и так (download →
+    // download.html), а роутер SvelteKit знает путь /download. По адресу
+    // /download.html панель показывала «404 Not Found» вместо шагов.
+    WebviewUrl::App(PANEL_ROUTE.into())
 }
 
 /// `blob:` и `data:` тоже бывают загрузками, хотя в них нет обычного адреса файла.
@@ -611,6 +617,18 @@ mod tests {
         }
         let local = Url::parse("file:///C:/mods/mod.zip").unwrap();
         assert!(!accepts_download(&local, "mod.zip"));
+    }
+
+    #[test]
+    fn panel_route_exists_in_the_interface() {
+        // Адрес панели — путь маршрута SvelteKit, без «.html»: иначе роутер не
+        // находит страницу и вместо шагов загрузки показывает 404.
+        let route = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../src/routes")
+            .join(PANEL_ROUTE)
+            .join("+page.svelte");
+        assert!(route.is_file(), "нет страницы {}", route.display());
+        assert!(!PANEL_ROUTE.ends_with(".html"));
     }
 
     #[test]
