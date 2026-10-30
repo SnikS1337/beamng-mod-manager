@@ -415,12 +415,24 @@ fn cancelled_attempt_does_not_remove_the_next_attempt() {
     let downloader = UpdateDownloader::new(net);
     let root = tempfile::tempdir().unwrap();
     let next = downloader
-        .download_into_named(&manifest, root.path(), "update-2.zip", &mut |_| {}, &CancelToken::new())
+        .download_into_named(
+            &manifest,
+            root.path(),
+            "update-2.zip",
+            &mut |_| {},
+            &CancelToken::new(),
+        )
         .unwrap();
     let cancelled = CancelToken::new();
     cancelled.cancel();
     let error = downloader
-        .download_into_named(&manifest, root.path(), "update-1.zip", &mut |_| {}, &cancelled)
+        .download_into_named(
+            &manifest,
+            root.path(),
+            "update-1.zip",
+            &mut |_| {},
+            &cancelled,
+        )
         .unwrap_err();
     assert_eq!(error, DownloadError::Cancelled);
     assert_eq!(fs::read(&next.path).unwrap(), zip, "новая попытка цела");

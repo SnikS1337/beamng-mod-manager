@@ -294,7 +294,10 @@ mod tests {
         let card = card_url(
             &url::Url::parse("https://www.beamng.com/resources/acng.39760/updates?x=1").unwrap(),
         );
-        assert_eq!(card.as_str(), "https://www.beamng.com/resources/acng.39760/");
+        assert_eq!(
+            card.as_str(),
+            "https://www.beamng.com/resources/acng.39760/"
+        );
     }
 
     #[test]
