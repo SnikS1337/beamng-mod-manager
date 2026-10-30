@@ -404,17 +404,33 @@
     }
   }
 
+  // Сайты, чью проверку прошли в этом запуске: кнопка «Пройти проверку» им больше
+  // не нужна, пока сайт сам снова не попросит.
+  let passedSites = $state<string[]>([]);
+
   async function openCheck(source: string) {
     if (passing) return;
     passing = true;
     try {
       const passed = await updatesOpenCheck(source);
       if (passed) {
-        toasts.show(`${CHECK_SITES[source] ?? source} пускает программу — проверяем снова`);
+        passedSites = [...passedSites.filter((id) => id !== source), source];
         sources = sources.map((item) =>
           item.id === source ? { ...item, status: "ok", note: null } : item,
         );
-        await check();
+        const tracked = snapshot.sites?.find((site) => site.id === source)?.tracked ?? 0;
+        const name = CHECK_SITES[source] ?? source;
+        // За сайтом ещё не следит ни один мод — проверять на нём нечего, а вот
+        // страницы модов на нём теперь можно найти.
+        if (tracked === 0) {
+          toasts.show(`${name} пускает программу — ищем на нём страницы модов`);
+          passing = false;
+          await findPages();
+        } else {
+          toasts.show(`${name} пускает программу — проверяем снова`);
+          passing = false;
+          await check();
+        }
       }
     } catch (reason) {
       error = errorText(reason);
@@ -537,6 +553,9 @@
           when,
           retry: true,
         };
+      }
+      if (site.tracked === 0 && passedSites.includes(site.id)) {
+        return { id: site.id, name: site.displayName, tone: "ok", text: "пускает программу", when, retry: false };
       }
       if (site.tracked === 0) {
         return { id: site.id, name: site.displayName, tone: "off", text: "ни одного мода", when, retry: false };
