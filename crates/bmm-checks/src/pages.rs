@@ -467,6 +467,7 @@ fn note_human_checks(store: &dyn LibraryStore, sources: &[bmm_sources::search::S
 pub fn find_extra_pages(
     store: &dyn LibraryStore,
     search: &SearchService,
+    now: DateTime<FixedOffset>,
     cancel: &AtomicBool,
     include_disabled: bool,
     title_of: &dyn Fn(&str) -> Option<String>,
@@ -486,10 +487,15 @@ pub fn find_extra_pages(
         .into_iter()
         .filter(|installed| include_disabled || installed.enabled)
         .filter(|installed| !store.is_checking_declined(&installed.id))
-        .filter(|installed| {
-            !store
-                .get_page_search(&installed.id)
-                .is_some_and(|search| search.rejected)
+        // Вторые страницы ищем не чаще раза в две недели: каждый поиск — запрос на
+        // каждый недостающий сайт, а Modland и ModHub отвечают по несколько секунд.
+        // По журналу: повторное нажатие «Найти страницы» тратило на это пять минут.
+        .filter(|installed| match store.get_page_search(&installed.id) {
+            None => true,
+            Some(search) => {
+                !search.rejected
+                    && (now - search.at >= crate::page_guesser::RETRY_AFTER || search.at > now)
+            }
         })
         .filter_map(|installed| {
             let own: Vec<&ModBinding> = bindings
@@ -576,6 +582,13 @@ pub fn find_extra_pages(
             continue;
         }
         result.searched += 1;
+        store.set_page_search(
+            &installed.id,
+            Some(PageSearch {
+                at: now,
+                rejected: false,
+            }),
+        );
         let author = author_of(&installed.id);
         for site in missing {
             let on_site: Vec<Listing> = listings
@@ -1219,6 +1232,7 @@ mod tests {
         let report = find_extra_pages(
             &store,
             &search,
+            now(),
             &AtomicBool::new(false),
             true,
             &|_| None,
@@ -1235,6 +1249,18 @@ mod tests {
         assert!(modland[0].confirmed);
         assert_eq!(modland[0].source_id, "ml");
         assert_eq!(store.bindings().len(), 2, "страница на STMods осталась");
+        // Второе нажатие «Найти страницы» не ищет тот же мод заново.
+        let again = find_extra_pages(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        );
+        assert_eq!(again.searched, 0);
     }
 
     #[test]
@@ -1339,6 +1365,7 @@ mod tests {
         let report = find_extra_pages(
             &store,
             &search,
+            now(),
             &AtomicBool::new(false),
             true,
             &|_| None,
@@ -1395,6 +1422,7 @@ mod tests {
         let report = find_extra_pages(
             &store,
             &search,
+            now(),
             &AtomicBool::new(false),
             true,
             &|_| None,
