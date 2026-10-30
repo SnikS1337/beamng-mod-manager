@@ -472,6 +472,14 @@ pub fn find_extra_pages(
         .collect();
 
     let deadline = Instant::now() + PAGE_SEARCH_BUDGET;
+    // Сайты, которые уже просят проверку, в этот раз не спрашиваем вовсе.
+    let mut skipped: std::collections::HashSet<&'static str> = sites
+        .iter()
+        .copied()
+        .filter(|site| {
+            store.source_status(site) == bmm_domain::library::SourceStatus::NeedsHumanCheck
+        })
+        .collect();
     for (index, (installed, missing)) in due.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
@@ -490,29 +498,46 @@ pub fn find_extra_pages(
         }
         let title = title_of(&installed.id);
         let query = PageGuesser::query_for(installed, title.as_deref());
-        let response = search.search(&query, cancel, None);
-        note_human_checks(store, &response.sources);
+        // Спрашиваем только сайты, где страницы ещё нет: общий поиск ходил бы и на
+        // сайт, где мод уже есть, а Modland и ModHub грузятся по одной странице за раз.
+        let mut listings: Vec<Listing> = Vec::new();
+        let mut answered = false;
+        for site in missing {
+            if skipped.contains(site) {
+                continue;
+            }
+            let Some(source) = search.sources().iter().find(|source| source.id() == *site) else {
+                continue;
+            };
+            match source.search(&query, cancel) {
+                Ok(found) => {
+                    answered = true;
+                    listings.extend(found);
+                }
+                Err(error) => {
+                    // Сайт просит проверку или не отвечает — до конца поиска его не трогаем,
+                    // иначе каждый мод ждал бы его заново.
+                    if error.status == bmm_sources::sources::SourceStatus::NeedsHumanCheck {
+                        store.set_source_status(
+                            site,
+                            bmm_domain::library::SourceStatus::NeedsHumanCheck,
+                        );
+                    }
+                    skipped.insert(site);
+                }
+            }
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+        }
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
             break;
         }
-        if !response
-            .sources
-            .iter()
-            .any(|source| source.status == bmm_sources::sources::SourceStatus::Ok)
-        {
+        if !answered {
             continue;
         }
         result.searched += 1;
-        let listings: Vec<Listing> = if response.listings.is_empty() {
-            response
-                .cards
-                .into_iter()
-                .flat_map(|card| card.listings)
-                .collect()
-        } else {
-            response.listings
-        };
         let author = author_of(&installed.id);
         for site in missing {
             let on_site: Vec<Listing> = listings
@@ -1196,6 +1221,53 @@ mod tests {
             &|_| None,
             &|_| None,
             None,
+        );
+        assert_eq!(
+            store.source_status("modsgaming"),
+            bmm_domain::library::SourceStatus::NeedsHumanCheck
+        );
+    }
+
+    #[test]
+    fn extra_pages_ask_only_missing_sites_and_drop_a_blocked_one() {
+        // Было: поиск вторых страниц спрашивал все сайты для каждого мода, а сайт за
+        // Cloudflare ждал заново на каждом — «Ищем страницы» шёл минутами.
+        let store = InMemoryLibraryStore::new();
+        for id in ["a", "b"] {
+            let mut item = installed(id, &format!("{id}_car.zip"));
+            item.name = "Maserati GranTurismo".to_string();
+            store.upsert_mod(item);
+            store
+                .upsert_binding(ModBinding {
+                    mod_id: id.to_string(),
+                    source: "stmods".to_string(),
+                    source_id: id.to_string(),
+                    url: Url::parse(&format!("https://stmods.test/{id}")).unwrap(),
+                    confirmed: true,
+                })
+                .unwrap();
+        }
+        let blocked = Site::new(|_| {
+            Err(SourceError {
+                status: SourceStatus::NeedsHumanCheck,
+                message: "Cloudflare".to_string(),
+            })
+        });
+        let search = search(Arc::clone(&blocked));
+        let report = find_extra_pages(
+            &store,
+            &search,
+            &AtomicBool::new(false),
+            true,
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(report.followed, 0);
+        assert_eq!(
+            blocked.calls.load(Ordering::SeqCst),
+            1,
+            "второй мод сайт уже не ждёт"
         );
         assert_eq!(
             store.source_status("modsgaming"),

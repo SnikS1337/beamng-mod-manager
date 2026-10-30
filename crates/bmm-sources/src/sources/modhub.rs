@@ -18,8 +18,9 @@ use super::common;
 use super::{ModSource, SourceError};
 
 static ROOT: LazyLock<Url> = LazyLock::new(|| Url::parse(parser::BASE).unwrap());
-/// Страниц поиска за раз: на странице 8 модов.
-const SEARCH_PAGES: u32 = 2;
+/// Страниц поиска за раз. Сайт грузится скрытым браузером по одной странице, а
+/// подходящий мод почти всегда на первой: вторая удваивала время поиска страниц.
+const SEARCH_PAGES: u32 = 1;
 
 pub struct ModHubSource {
     fetcher: Arc<PoliteFetcher>,
