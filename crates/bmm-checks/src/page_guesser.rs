@@ -42,6 +42,26 @@ pub const SIZE_MIN_RATIO: f64 = 0.85;
 pub const CERTAIN_NAME: f64 = 0.9;
 /// Размеры архива и страницы, которые считаются «тем же файлом».
 pub const CERTAIN_SIZE_RATIO: f64 = 0.97;
+/// Сайт назван в имени файла («…_modland.zip»): архив скачан оттуда.
+pub const SITE_HINT_BONUS: f64 = 0.05;
+
+/// С какого сайта, судя по имени файла, скачан архив: сайты дописывают своё имя
+/// («porsche_992_gt3rs_v2.0_modland.zip»).
+pub fn site_hint(file_name: &str) -> Option<&'static str> {
+    let name = file_name.to_lowercase();
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    [
+        ("modland", "modland"),
+        ("stmods", "stmods"),
+        ("modsgaming", "modsgaming"),
+    ]
+    .into_iter()
+    .find(|(word, _)| words.contains(word))
+    .map(|(_, source)| source)
+}
 
 /// Предложенная страница: запись на сайте и насколько она похожа.
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +183,7 @@ impl PageGuesser {
         }
 
         let installed_version = installed.version.clone().or_else(|| guess.version.clone());
+        let hint = site_hint(&installed.file_name);
         let author = author_key(guess.author.as_deref());
         let file_key = author_key(Some(&installed.file_name));
         // Имя файла одним словом без разделителей — его ищем в адресе страницы.
@@ -265,6 +286,10 @@ impl PageGuesser {
             if same_author {
                 score += AUTHOR_IN_FILE_BONUS;
             }
+            let hinted = hint == Some(listing.source.as_str());
+            if hinted {
+                score += SITE_HINT_BONUS;
+            }
             let other_author =
                 !same_author && !authors_overlap(archive_author, listing.author.as_deref());
             let certain = (similarity >= CERTAIN_NAME
@@ -279,7 +304,14 @@ impl PageGuesser {
                         && tokens >= 3
                         && (listing.author.is_some() || site_version.is_some()))))
                 // Тот же автор и та же версия при похожем названии — тот же мод.
-                || (same_author && order == VersionOrder::Same);
+                || (same_author && order == VersionOrder::Same)
+                // Файл скачан с этого сайта, название совпало, автор не спорит, версия
+                // не старее — та же страница.
+                || (hinted
+                    && similarity >= CERTAIN_NAME
+                    && tokens >= 2
+                    && !other_author
+                    && order != VersionOrder::Unknown);
             fits.push(PageGuess {
                 listing: listing.clone(),
                 score,
@@ -631,6 +663,49 @@ mod tests {
         )
         .expect("предлагаем");
         assert!(!guess.certain, "без автора и версии — только предложение");
+    }
+
+    #[test]
+    fn site_in_file_name_is_a_hint() {
+        assert_eq!(
+            site_hint("porsche_992_gt3rs_v2.0_modland.zip"),
+            Some("modland")
+        );
+        assert_eq!(site_hint("weather_fx_modland.zip"), Some("modland"));
+        assert_eq!(site_hint("Sumner_Road_tg_m0dsbeamng.zip"), None);
+        assert_eq!(
+            site_hint("modlandia_cars.zip"),
+            None,
+            "только отдельным словом"
+        );
+    }
+
+    #[test]
+    fn page_on_the_site_from_file_name_is_followed() {
+        let modland = listing(
+            "modland",
+            "p",
+            "Porsche 911 GT3 RS (992) v2.0",
+            Some("Someone"),
+            None,
+            PriceStatus::Free,
+        );
+        let mut on_modland = modland.clone();
+        on_modland.mod_version = Some("2.0".to_string());
+        let copy = l(
+            "modsgaming",
+            "c",
+            "Мод автомобиль Porsche 911 GT3 RS (992) для BeamNG . drive",
+        );
+        let guess = PageGuesser::pick_with_author(
+            &installed("p", "porsche_992_gt3rs_v2.0_modland.zip", Some("2.0"), None),
+            Some("Porsche 911 GT3 RS (992)"),
+            None,
+            &[copy, on_modland],
+        )
+        .expect("страница с Modland");
+        assert_eq!(guess.listing.source, "modland");
+        assert!(guess.certain, "сайт из имени файла и та же версия");
     }
 
     #[test]

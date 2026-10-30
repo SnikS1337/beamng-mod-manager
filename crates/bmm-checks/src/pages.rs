@@ -403,6 +403,162 @@ pub fn find_pages_with(
     result
 }
 
+/// Страницы на других сайтах для модов, у которых страница уже есть.
+///
+/// Мод со страницей на STMods раньше никогда не искался на Modland и ModsGaming, и
+/// обновление, вышедшее там раньше, проходило мимо. Здесь берём только уверенные
+/// совпадения: следить за второй страницей без вопроса можно, лишних предложений
+/// человеку не добавляем. Моды, где человек отказывался от страницы или от проверки,
+/// не трогаем.
+#[allow(clippy::too_many_arguments)]
+pub fn find_extra_pages(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    cancel: &AtomicBool,
+    include_disabled: bool,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
+    mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+) -> PageSearchReport {
+    let mut result = PageSearchReport::default();
+    let sites: Vec<&'static str> = search
+        .sources()
+        .iter()
+        .filter(|source| source.supports_search())
+        .map(|source| source.id())
+        .collect();
+    let bindings = store.bindings();
+    let due: Vec<(InstalledMod, Vec<&'static str>)> = store
+        .mods()
+        .into_iter()
+        .filter(|installed| include_disabled || installed.enabled)
+        .filter(|installed| !store.is_checking_declined(&installed.id))
+        .filter(|installed| {
+            !store
+                .get_page_search(&installed.id)
+                .is_some_and(|search| search.rejected)
+        })
+        .filter_map(|installed| {
+            let own: Vec<&ModBinding> = bindings
+                .iter()
+                .filter(|binding| binding.mod_id == installed.id)
+                .collect();
+            // Без страницы — дело обычного поиска; с неподтверждённой — ждём человека.
+            if own.is_empty() || own.iter().any(|binding| !binding.confirmed) {
+                return None;
+            }
+            let missing: Vec<&'static str> = sites
+                .iter()
+                .copied()
+                .filter(|site| !own.iter().any(|binding| binding.source == *site))
+                .collect();
+            (!missing.is_empty()).then_some((installed, missing))
+        })
+        .collect();
+
+    let deadline = Instant::now() + PAGE_SEARCH_BUDGET;
+    for (index, (installed, missing)) in due.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            result.cancelled = true;
+            break;
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        if let Some(callback) = progress.as_mut() {
+            (*callback)(&UpdateProgress {
+                source: "страницы".to_string(),
+                stage: "страницы".to_string(),
+                done: index,
+                total: due.len(),
+            });
+        }
+        let title = title_of(&installed.id);
+        let query = PageGuesser::query_for(installed, title.as_deref());
+        let response = search.search(&query, cancel, None);
+        if cancel.load(Ordering::Relaxed) {
+            result.cancelled = true;
+            break;
+        }
+        if !response
+            .sources
+            .iter()
+            .any(|source| source.status == bmm_sources::sources::SourceStatus::Ok)
+        {
+            continue;
+        }
+        result.searched += 1;
+        let listings: Vec<Listing> = if response.listings.is_empty() {
+            response
+                .cards
+                .into_iter()
+                .flat_map(|card| card.listings)
+                .collect()
+        } else {
+            response.listings
+        };
+        let author = author_of(&installed.id);
+        for site in missing {
+            let on_site: Vec<Listing> = listings
+                .iter()
+                .filter(|listing| listing.source == *site)
+                .cloned()
+                .collect();
+            if on_site.is_empty() {
+                continue;
+            }
+            let mut guess = PageGuesser::pick_with_author(
+                installed,
+                title.as_deref(),
+                author.as_deref(),
+                &on_site,
+            );
+            if guess.as_ref().is_some_and(|guess| {
+                guess.certain
+                    && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
+            }) {
+                let found = guess.as_ref().map(|guess| guess.listing.clone());
+                guess = found
+                    .and_then(|found| page_details(search, &found, cancel))
+                    .and_then(|detail| {
+                        PageGuesser::pick_with_author(
+                            installed,
+                            title.as_deref(),
+                            author.as_deref(),
+                            &[detail],
+                        )
+                    });
+            }
+            let Some(guess) = guess.filter(|guess| guess.certain) else {
+                continue;
+            };
+            let _gate = gate();
+            // За время поиска мод могли удалить, отказаться от проверки или привязать сайт.
+            if store.get_mod(&installed.id).is_none()
+                || store.is_checking_declined(&installed.id)
+                || store
+                    .bindings()
+                    .iter()
+                    .any(|binding| binding.mod_id == installed.id && binding.source == *site)
+            {
+                continue;
+            }
+            let binding = ModBinding {
+                mod_id: installed.id.clone(),
+                source: guess.listing.source,
+                source_id: guess.listing.source_id,
+                url: guess.listing.url,
+                confirmed: true,
+            };
+            if store.upsert_binding(binding).is_ok() {
+                result.found += 1;
+                result.followed += 1;
+            }
+        }
+    }
+    result
+}
+
 /// Запись со страницы мода поверх записи из поиска: размер, автор и версия, которых
 /// в выдаче поиска обычно нет. `None` — страницу не открыть.
 fn page_details(search: &SearchService, found: &Listing, cancel: &AtomicBool) -> Option<Listing> {
@@ -921,6 +1077,139 @@ mod tests {
         ) -> Result<Option<Listing>, SourceError> {
             Ok(self.page.clone())
         }
+    }
+
+    fn on_site(source: &'static str, id: &str, title: &str) -> Listing {
+        let mut listing = Listing::new(
+            source,
+            Url::parse(&format!("https://{source}.test/{id}")).unwrap(),
+            id,
+            title,
+        );
+        listing.author = Some("Flanje".to_string());
+        listing.mod_version = Some("1.0".to_string());
+        listing.size_bytes = Some(100_000_000);
+        listing
+    }
+
+    fn sites(sites: Vec<Arc<VerifySite>>) -> SearchService {
+        SearchService::new(
+            sites
+                .into_iter()
+                .map(|site| site as Arc<dyn ModSource>)
+                .collect(),
+            Arc::new(|_| SourceStatus::Ok),
+            SearchOptions {
+                per_source_timeout: std::time::Duration::from_secs(5),
+                ..SearchOptions::default()
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn mod_with_a_page_gets_a_sure_page_on_other_sites() {
+        // Было: мод со страницей на STMods никогда не искался на Modland, и обновление,
+        // вышедшее там раньше, программа не видела.
+        let store = InMemoryLibraryStore::new();
+        let mut car = installed("car", "maserati_granturismo.zip");
+        car.name = "Maserati GranTurismo".to_string();
+        car.size_bytes = Some(100_000_000);
+        store.upsert_mod(car);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "car".to_string(),
+                source: "stmods".to_string(),
+                source_id: "st".to_string(),
+                url: Url::parse("https://stmods.test/st").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        let search = sites(vec![
+            VerifySite::new(
+                "stmods",
+                None,
+                vec![on_site("stmods", "st", "Maserati GranTurismo")],
+            ),
+            VerifySite::new(
+                "modland",
+                None,
+                vec![on_site("modland", "ml", "Maserati GranTurismo")],
+            ),
+        ]);
+        let report = find_extra_pages(
+            &store,
+            &search,
+            &AtomicBool::new(false),
+            true,
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        );
+        assert_eq!(report.followed, 1);
+        let modland: Vec<ModBinding> = store
+            .bindings()
+            .into_iter()
+            .filter(|binding| binding.source == "modland")
+            .collect();
+        assert_eq!(modland.len(), 1);
+        assert!(modland[0].confirmed);
+        assert_eq!(modland[0].source_id, "ml");
+        assert_eq!(store.bindings().len(), 2, "страница на STMods осталась");
+    }
+
+    #[test]
+    fn extra_pages_skip_unsure_matches_and_refusals() {
+        let store = InMemoryLibraryStore::new();
+        for id in ["unsure", "refused", "nopage"] {
+            let mut item = installed(id, &format!("{id}_car.zip"));
+            item.name = "Maserati GranTurismo".to_string();
+            item.size_bytes = Some(100_000_000);
+            store.upsert_mod(item);
+        }
+        for id in ["unsure", "refused"] {
+            store
+                .upsert_binding(ModBinding {
+                    mod_id: id.to_string(),
+                    source: "stmods".to_string(),
+                    source_id: id.to_string(),
+                    url: Url::parse(&format!("https://stmods.test/{id}")).unwrap(),
+                    confirmed: true,
+                })
+                .unwrap();
+        }
+        store.set_page_search(
+            "refused",
+            Some(PageSearch {
+                at: now(),
+                rejected: true,
+            }),
+        );
+        // Другой автор и другой размер — не уверены, молча не следим.
+        let mut other = on_site("modland", "ml", "Maserati GranTurismo");
+        other.author = Some("Someone Else".to_string());
+        other.size_bytes = Some(40_000_000);
+        let search = sites(vec![
+            VerifySite::new("stmods", None, Vec::new()),
+            VerifySite::new("modland", None, vec![other]),
+        ]);
+        let report = find_extra_pages(
+            &store,
+            &search,
+            &AtomicBool::new(false),
+            true,
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        );
+        assert_eq!(report.followed, 0);
+        assert!(
+            store
+                .bindings()
+                .iter()
+                .all(|binding| binding.source == "stmods"),
+            "мод без страницы — дело обычного поиска, отказ не трогаем"
+        );
     }
 
     #[test]

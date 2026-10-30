@@ -25,8 +25,17 @@ pub async fn updates_find_pages(
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            // Нажал человек: ищем все моды без страницы, даже искавшиеся недавно.
-            run_page_search(&app, &state_for_task, request_id, &cancel, true)
+            // Нажал человек: ищем все моды без страницы, даже искавшиеся недавно,
+            // а модам со страницей — уверенные страницы на остальных сайтах.
+            let mut report = run_page_search(&app, &state_for_task, request_id, &cancel, true);
+            if !report.cancelled {
+                let extra = run_extra_page_search(&app, &state_for_task, request_id, &cancel);
+                report.found += extra.found;
+                report.followed += extra.followed;
+                report.searched += extra.searched;
+                report.cancelled = extra.cancelled;
+            }
+            report
         }))
         .unwrap_or_default();
         if report.followed > 0 {
@@ -35,6 +44,7 @@ pub async fn updates_find_pages(
         }
         let snapshot = build_snapshot(&state_for_task);
         let event = UpdatesEventDto {
+            followed: report.followed,
             request_id,
             phase: "pages".to_string(),
             progress: None,

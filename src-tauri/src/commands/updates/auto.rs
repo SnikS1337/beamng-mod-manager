@@ -13,6 +13,7 @@ pub(crate) fn done_event(
     error: Option<String>,
 ) -> UpdatesEventDto {
     UpdatesEventDto {
+        followed: 0,
         request_id,
         phase: phase.unwrap_or("done").to_string(),
         progress: None,
@@ -164,6 +165,7 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                         let _ = app.emit(
                             "updates://event",
                             UpdatesEventDto {
+                                followed: 0,
                                 request_id: AUTO_REQUEST_ID,
                                 phase: "auto".to_string(),
                                 progress: None,

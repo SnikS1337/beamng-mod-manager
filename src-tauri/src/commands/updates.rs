@@ -32,6 +32,7 @@ pub async fn updates_snapshot(
 
 fn progress_event(request_id: u64, progress: &UpdateProgress) -> UpdatesEventDto {
     UpdatesEventDto {
+        followed: 0,
         request_id,
         phase: "progress".to_string(),
         progress: Some(progress_dto(progress)),
@@ -124,6 +125,34 @@ fn run_page_search(
         cancel,
         include_disabled,
         retry_recent,
+        &|mod_id| page_title(state, mod_id),
+        &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
+        Some(&mut progress),
+    )
+}
+
+/// Вторые страницы для модов, у которых страница уже есть (только уверенные).
+fn run_extra_page_search(
+    app: &AppHandle,
+    state: &AppState,
+    request_id: u64,
+    cancel: &AtomicBool,
+) -> bmm_checks::PageSearchReport {
+    let Some(service) = page_search_service(state) else {
+        return bmm_checks::PageSearchReport::default();
+    };
+    let _batch = state.library.batch();
+    let store = state.library.clone();
+    let app_for_progress = app.clone();
+    let mut progress = |progress: &UpdateProgress| {
+        let _ = app_for_progress.emit("updates://event", progress_event(request_id, progress));
+    };
+    let include_disabled = state.settings.load().settings.check_disabled_mods;
+    bmm_checks::find_extra_pages(
+        store.as_ref(),
+        service.as_ref(),
+        cancel,
+        include_disabled,
         &|mod_id| page_title(state, mod_id),
         &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
         Some(&mut progress),
@@ -237,6 +266,7 @@ async fn start_updates(
                 let _ = app.emit(
                     "updates://event",
                     UpdatesEventDto {
+                        followed: 0,
                         request_id,
                         phase: "error".to_string(),
                         progress: None,

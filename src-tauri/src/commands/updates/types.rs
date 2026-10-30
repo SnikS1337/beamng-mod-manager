@@ -164,4 +164,7 @@ pub struct UpdatesEventDto {
     pub cancelled: bool,
     pub stopped_by_time: bool,
     pub error: Option<String>,
+    /// Поиск страниц: за сколькими найденными страницами программа стала следить сама.
+    #[serde(default)]
+    pub followed: usize,
 }

@@ -221,7 +221,12 @@
       if (summary.text) toasts.show(summary.text);
     }
     if (event.phase === "pages") filter = "pages";
-    if (found > 0) toasts.show(`Нашли новые страницы (${found})`);
+    const followed = event.phase === "pages" ? (event.followed ?? 0) : 0;
+    if (followed > 0 && found > 0) {
+      toasts.show(`Следим за новыми страницами: ${followed}; на проверку: ${found}`);
+    } else if (followed > 0) {
+      toasts.show(`Следим за новыми страницами: ${followed}`);
+    } else if (found > 0) toasts.show(`Нашли новые страницы (${found})`);
     else if (event.phase === "pages" && !event.cancelled) {
       // Говорим, что именно искали: «не нашли» без числа звучало как «не искали».
       toasts.show(
