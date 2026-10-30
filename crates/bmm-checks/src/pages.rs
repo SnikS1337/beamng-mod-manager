@@ -442,6 +442,67 @@ pub fn find_pages_with(
     result
 }
 
+/// Сколько всего может длиться поиск страниц за одну проверку. Программу открывают
+/// раз в две-четыре недели: тысячу старых модов без страницы нужно разобрать за один
+/// раз, а не по 60 модов за запуск.
+pub const PAGE_SEARCH_TOTAL_BUDGET: Duration = Duration::from_secs(45 * 60);
+
+/// Ищет страницы заходами по [`find_pages_with`], пока есть кому, сайты отвечают и не
+/// вышло время `budget`. Ход — общий на весь поиск, а не «12 из 60» на каждый заход.
+#[allow(clippy::too_many_arguments)]
+pub fn find_pages_until(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    now: DateTime<FixedOffset>,
+    cancel: &AtomicBool,
+    include_disabled: bool,
+    retry_recent: bool,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
+    mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+    budget: Duration,
+) -> PageSearchReport {
+    let total = PageGuesser::due_all(store, now, include_disabled, retry_recent).len();
+    let started = Instant::now();
+    let mut report = PageSearchReport::default();
+    let mut done = 0usize;
+    loop {
+        let round = {
+            let mut forward = |step: &UpdateProgress| {
+                if let Some(callback) = progress.as_mut() {
+                    (*callback)(&UpdateProgress {
+                        source: step.source.clone(),
+                        stage: step.stage.clone(),
+                        done: (done + step.done).min(total.max(done + step.total)),
+                        total: total.max(done + step.total),
+                    });
+                }
+            };
+            find_pages_with(
+                store,
+                search,
+                now,
+                cancel,
+                include_disabled,
+                retry_recent,
+                title_of,
+                author_of,
+                Some(&mut forward),
+            )
+        };
+        report.found += round.found;
+        report.followed += round.followed;
+        report.searched += round.searched;
+        report.cancelled |= round.cancelled;
+        done += round.searched;
+        // Никто не ответил или искать больше некого — дальше заходы ничего не дадут.
+        if round.cancelled || round.searched == 0 || started.elapsed() >= budget {
+            break;
+        }
+    }
+    report
+}
+
 /// Сайт ответил проверкой «вы человек?» — запоминаем, как и при проверке обновлений:
 /// иначе Modland, к которому не привязан ни один мод, навсегда остаётся «ещё не
 /// проверялся», и кнопки «Пройти проверку» человек так и не видит.
@@ -1289,6 +1350,112 @@ mod tests {
         assert_eq!(
             store.source_status("modsgaming"),
             bmm_domain::library::SourceStatus::NeedsHumanCheck
+        );
+    }
+
+    fn many_mods(store: &InMemoryLibraryStore, count: usize) {
+        for index in 0..count {
+            store.upsert_mod(installed(
+                &format!("m{index}"),
+                &format!("car_number_{index}.zip"),
+            ));
+        }
+    }
+
+    #[test]
+    fn long_search_goes_past_sixty_mods_in_one_run() {
+        // Программу открывают раз в несколько недель: 150 модов без страницы должны
+        // разобраться за один раз, а не по 60 за запуск.
+        let store = InMemoryLibraryStore::new();
+        many_mods(&store, 150);
+        let site = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&site));
+        let mut steps: Vec<(usize, usize)> = Vec::new();
+        let report = find_pages_until(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            false,
+            &|_| None,
+            &|_| None,
+            Some(&mut |step: &UpdateProgress| steps.push((step.done, step.total))),
+            Duration::from_secs(600),
+        );
+        assert_eq!(report.searched, 150);
+        assert!(PageGuesser::due_all(&store, now(), true, false).is_empty());
+        assert!(
+            steps.iter().all(|(_, total)| *total == 150),
+            "ход — на весь поиск"
+        );
+        assert!(
+            steps.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+            "ход не откатывается между заходами"
+        );
+        assert_eq!(steps.last(), Some(&(150, 150)));
+    }
+
+    #[test]
+    fn manual_long_search_visits_each_mod_once() {
+        // По кнопке ищем и недавно искавшиеся моды; найденный в этом же поиске мод
+        // второй раз не берём — иначе заходы шли бы по кругу до конца времени.
+        let store = InMemoryLibraryStore::new();
+        many_mods(&store, 70);
+        for index in 0..70 {
+            store.set_page_search(
+                &format!("m{index}"),
+                Some(PageSearch {
+                    at: now() - TimeDelta::days(2),
+                    rejected: false,
+                }),
+            );
+        }
+        let site = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&site));
+        let report = find_pages_until(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            true,
+            &|_| None,
+            &|_| None,
+            None,
+            Duration::from_secs(600),
+        );
+        assert_eq!(report.searched, 70);
+    }
+
+    #[test]
+    fn long_search_stops_when_no_site_answers() {
+        let store = InMemoryLibraryStore::new();
+        many_mods(&store, 100);
+        let site = Site::new(|_| Err(SourceError::unavailable("нет связи")));
+        let search = search(Arc::clone(&site));
+        let report = find_pages_until(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            false,
+            &|_| None,
+            &|_| None,
+            None,
+            Duration::from_secs(600),
+        );
+        assert_eq!(report.searched, 0);
+        assert!(
+            site.calls.load(Ordering::SeqCst) <= 60 * 4,
+            "один заход и стоп, а не круги: {}",
+            site.calls.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            PageGuesser::due_all(&store, now(), true, false).len(),
+            100,
+            "попробуем потом"
         );
     }
 

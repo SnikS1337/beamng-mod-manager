@@ -191,6 +191,24 @@ export type UpdateProgress = { source: string, stage: string, done: number, tota
 
 export type LostPage = { modId: string, modName: string, source: string, url: string, previewUrl: string | null, role: ModRole | null, };
 
+export type CoverageDto = { 
+/**
+ * Всего модов.
+ */
+mods: number, 
+/**
+ * Со страницей, за которой программа следит.
+ */
+tracked: number, 
+/**
+ * Без страницы: их обновления программа не видит.
+ */
+withoutPage: number, 
+/**
+ * Человек сам сказал «не проверять».
+ */
+declined: number, };
+
 export type UpdatesSnapshot = { findings: Array<UpdateFinding>, hidden: Array<UpdateFinding>, suggestions: Array<PageSuggestion>, 
 /**
  * Сайты и их состояние — панель «Проверка».
@@ -204,9 +222,18 @@ lastChecked: string | null,
  * Страницы, которых несколько проверок подряд нет на сайте: мод удалили
  * или перенесли. Сама программа за ними уже ничего не узнает.
  */
-lost: Array<LostPage>, };
+lost: Array<LostPage>, 
+/**
+ * За сколькими модами программа вообще следит: без этого «Новых версий нет»
+ * звучало как «всё проверено», хотя моды без страницы не проверялись.
+ */
+coverage: CoverageDto, };
 
 export type UpdatesEvent = { requestId: number, phase: UpdatesPhase, progress: UpdateProgress | null, findings: Array<UpdateFinding>, hidden: Array<UpdateFinding>, suggestions: Array<PageSuggestion>, sources: Array<UpdateSource>, newCount: number, upToDate: number, requests: number, cancelled: boolean, stoppedByTime: boolean, error: string | null, 
+/**
+ * Сколько модов программа проверяет — для честного итога.
+ */
+coverage: CoverageDto | null, 
 /**
  * Поиск страниц: за сколькими найденными страницами программа стала следить сама.
  */

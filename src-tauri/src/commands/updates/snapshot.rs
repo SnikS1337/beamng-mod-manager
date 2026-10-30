@@ -156,7 +156,66 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
                 }
             })
             .collect(),
+        coverage: coverage(state),
     }
+}
+
+/// Сколько модов программа проверяет. Копии одного мода — одна позиция, как в гараже:
+/// иначе четыре «weather_fx» дали бы четыре мода без страницы.
+pub(crate) fn coverage(state: &AppState) -> CoverageDto {
+    let store = state.library.as_ref();
+    let mods = store.mods();
+    let keys: HashMap<String, String> = state
+        .previews_by_id
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, target)| (id.clone(), target.key.clone()))
+        .collect();
+    let contents = state.previews.contents_shared();
+    let empty: Vec<String> = Vec::new();
+    let items: Vec<bmm_packs::duplicates::DupItem> = mods
+        .iter()
+        .map(|item| bmm_packs::duplicates::DupItem {
+            id: &item.id,
+            file_name: &item.file_name,
+            size: item.size_bytes.unwrap_or(0),
+            content: keys
+                .get(&item.id)
+                .and_then(|key| contents.get(key))
+                .unwrap_or(&empty),
+            version: item.version.as_deref(),
+            modified: None,
+        })
+        .collect();
+    let copies = bmm_packs::duplicates::find(&items);
+    let followed: std::collections::HashSet<String> = store
+        .bindings()
+        .into_iter()
+        .filter(|binding| binding.confirmed)
+        .map(|binding| binding.mod_id)
+        .collect();
+    let mut groups: HashMap<String, Vec<&str>> = HashMap::new();
+    for item in &mods {
+        let head = copies
+            .get(&item.id)
+            .map_or(item.id.as_str(), |copy| copy.of.as_str());
+        groups.entry(head.to_string()).or_default().push(&item.id);
+    }
+    let mut result = CoverageDto {
+        mods: groups.len(),
+        ..CoverageDto::default()
+    };
+    for (head, members) in &groups {
+        if members.iter().any(|id| followed.contains(*id)) {
+            result.tracked += 1;
+        } else if store.is_checking_declined(head) {
+            result.declined += 1;
+        } else {
+            result.without_page += 1;
+        }
+    }
+    result
 }
 
 pub(crate) fn finding_dto(
