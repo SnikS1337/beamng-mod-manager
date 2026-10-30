@@ -156,6 +156,8 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         .inner_size(window_width, window_height)
         .resizable(false)
         .decorations(false)
+        // Пока панель грузится, окно не вспыхивает белым.
+        .background_color(tauri::window::Color(14, 15, 17, 255))
         .visible(false)
         .center()
         .build()
@@ -169,7 +171,9 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
     });
 
     let panel = match window.add_child(
-        WebviewBuilder::new(PANEL_LABEL, panel_url(&app)),
+        // Панель всегда во всё окно: при масштабе 125 % размеры округлялись,
+        // и снизу оставалась белая полоса окна.
+        WebviewBuilder::new(PANEL_LABEL, panel_url(&app)).auto_resize(),
         LogicalPosition::new(0.0, 0.0),
         LogicalSize::new(window_width, window_height),
     ) {
