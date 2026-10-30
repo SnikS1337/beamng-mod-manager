@@ -25,6 +25,16 @@ export function groupDigits(count: number): string {
   return count.toLocaleString("ru-RU").replace(/[\u00a0\u202f]/g, " ");
 }
 
+/**
+ * «21 из 49 модов»: после «из N» слово стоит в родительном падеже по N
+ * («из 21 мода», «из 49 модов»), а не по первому числу («21 из 49 мод»).
+ */
+export function shownOfLabel(shown: number, total: number): string {
+  if (shown === total) return modsLabel(total);
+  const word = Math.abs(total) % 10 === 1 && Math.abs(total) % 100 !== 11 ? "мода" : "модов";
+  return `${groupDigits(shown)} из ${groupDigits(total)} ${word}`;
+}
+
 export function modsLabel(count: number): string {
   return `${groupDigits(count)} ${plural(count, "мод", "мода", "модов")}`;
 }

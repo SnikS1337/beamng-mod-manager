@@ -8,7 +8,7 @@
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import X from "phosphor-svelte/lib/X";
   import Car from "phosphor-svelte/lib/Car";
-  import { formatSize, plural } from "#lib/features/garage/format.js";
+  import { formatSize, plural, shownOfLabel } from "#lib/features/garage/format.js";
   import { categoryIntent, type BrowseKind } from "#lib/features/search/category.js";
   import { searchKindLabel } from "#lib/features/search/kind.js";
   import { filterAndSort, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
@@ -770,8 +770,7 @@
         {:else if searching}
           ищем на сайтах…
         {:else if searched}
-          {shownCards.length}{#if shownCards.length !== cards.length} из {cards.length}{/if}
-          {plural(shownCards.length, "мод", "мода", "модов")}
+          {shownOfLabel(shownCards.length, cards.length)}
         {:else}
           сразу на нескольких сайтах
         {/if}
