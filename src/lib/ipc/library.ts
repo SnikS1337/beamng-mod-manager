@@ -162,7 +162,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
     gameVersion: "0.39.4",
     gameRunning: false,
     warning: null,
-    manyEnabled: "Включено 3 333 мода. Игра может грузиться дольше",
+    manyEnabled: "Включено 3 333 мода (3 340 файлов с копиями). Игра может грузиться дольше",
     deleted: [],
   };
 }

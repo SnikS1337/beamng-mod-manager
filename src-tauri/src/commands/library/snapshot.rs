@@ -362,7 +362,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     );
     let many_enabled = (settings.active_mods_warn_above > 0
         && enabled_files as i32 > settings.active_mods_warn_above)
-        .then(|| many_enabled_text(enabled_files));
+        .then(|| many_enabled_text(enabled, enabled_files));
 
     Ok(LibrarySnapshot {
         counts: FilterCounts {
