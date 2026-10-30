@@ -236,12 +236,25 @@ fn analyze_zip(
         let nested_index =
             read_index(&repacked).map_err(|_| "Архив повреждён и не читается.".to_string())?;
         let nested_overview = read_overview(&repacked);
+        // Подсказки о структуре — по перепакованному архиву (его и поставим), а
+        // запреты исходного остаются: перепаковка не делает опасное безопасным.
+        let mut checked = inspect_zip(&repacked, &ArchiveLimits::default());
+        for finding in inspection.findings {
+            if finding.severity == Severity::Block
+                && !checked
+                    .findings
+                    .iter()
+                    .any(|known| known.code == finding.code)
+            {
+                checked.findings.push(finding);
+            }
+        }
         return Ok(vec![build_item(
             &repacked,
             file_name,
             &nested_index,
             nested_overview.title,
-            inspection,
+            checked,
             installed,
             work_dir,
             &[],
@@ -1430,6 +1443,29 @@ mod tests {
             ]),
             vec!["levels/town/info.json", "vehicles/car/a.jbeam"]
         );
+        // И без ложного «нет привычных папок»: проверяется уже перепакованный архив.
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("Mod.zip");
+        build_zip(
+            &source,
+            &[
+                ("MyMod/vehicles/car/a.jbeam", b"x"),
+                ("README.txt", b"read me"),
+            ],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        let codes: Vec<&str> = analysis.items[0]
+            .findings
+            .iter()
+            .map(|finding| finding.code)
+            .collect();
+        assert!(!codes.contains(&"unusual-structure"), "{codes:?}");
     }
 
     #[test]
