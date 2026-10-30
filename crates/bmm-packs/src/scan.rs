@@ -208,12 +208,12 @@ fn scan_subfolders(
             .map(|component| component.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/");
-        let sub_folder = if sub_folder.is_empty() {
-            None
-        } else {
-            Some(sub_folder)
-        };
-        add_mod(&file_name, true, sub_folder, &metadata, seen, result);
+        // Файлы в самом корне mods уже учёл scan_flat. Пропускаем их здесь, иначе
+        // каждый мод считался бы «одинаковым именем в разных папках».
+        if sub_folder.is_empty() {
+            continue;
+        }
+        add_mod(&file_name, true, Some(sub_folder), &metadata, seen, result);
     }
 }
 
@@ -320,6 +320,23 @@ mod tests {
             .find(|item| item.file_name == "nested.zip")
             .unwrap();
         assert_eq!(nested.sub_folder.as_deref(), Some("sub"));
+    }
+
+    #[test]
+    fn plain_mods_folder_has_no_duplicate_warnings() {
+        // Обычная папка: все моды в корне, часть выключена программой. Ни одного
+        // «одинакового имени» — раньше корень обходился дважды и предупреждение
+        // получал каждый мод.
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        let layout = ModLayout::beside(&mods);
+        write_file(&mods.join("a.zip"), b"a");
+        write_file(&mods.join("b.zip"), b"b");
+        write_file(&layout.disabled_dir.join("off.zip"), b"c");
+        write_file(&mods.join("repo").join("c.zip"), b"d");
+        let result = scan_mods(&layout);
+        assert_eq!(result.mods.len(), 4);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     }
 
     #[test]
