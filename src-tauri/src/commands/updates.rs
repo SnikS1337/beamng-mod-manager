@@ -151,6 +151,7 @@ fn run_extra_page_search(
     bmm_checks::find_extra_pages(
         store.as_ref(),
         service.as_ref(),
+        Utc::now().fixed_offset(),
         cancel,
         include_disabled,
         &|mod_id| page_title(state, mod_id),

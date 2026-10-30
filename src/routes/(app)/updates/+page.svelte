@@ -225,7 +225,8 @@
       offerForce = summary.offerForce;
       if (summary.text) toasts.show(summary.text);
     }
-    if (event.phase === "pages") filter = "pages";
+    // На «Страницы» переводим, только если там появилось что проверить.
+    if (event.phase === "pages" && found > 0) filter = "pages";
     const followed = event.phase === "pages" ? (event.followed ?? 0) : 0;
     if (followed > 0 && found > 0) {
       toasts.show(`Следим за новыми страницами: ${followed}; на проверку: ${found}`);
