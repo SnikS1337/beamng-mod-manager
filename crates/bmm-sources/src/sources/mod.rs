@@ -2,6 +2,7 @@
 
 pub mod beamng;
 pub mod common;
+pub mod modhub;
 pub mod modland;
 pub mod modsgaming;
 pub mod stmods;
@@ -81,6 +82,7 @@ pub fn all_sources(fetcher: std::sync::Arc<PoliteFetcher>) -> Vec<std::sync::Arc
         std::sync::Arc::new(modland::ModlandSource::new(fetcher.clone())),
         std::sync::Arc::new(stmods::StModsSource::new(fetcher.clone())),
         std::sync::Arc::new(modsgaming::ModsGamingSource::new(fetcher.clone())),
+        std::sync::Arc::new(modhub::ModHubSource::new(fetcher.clone())),
         std::sync::Arc::new(beamng::BeamNgRepoSource::new(fetcher)),
     ]
 }
@@ -122,7 +124,15 @@ mod tests {
                 .unwrap()
                 .push(format!("GET {}", url.path()));
             let host = url.host_str().unwrap_or("");
-            let text = if host.ends_with("modland.net") {
+            let text = if host.ends_with("modhub.us") {
+                if url.path().starts_with("/search/") {
+                    fixture(&["modhub", "search-bmw-real.html"])
+                } else if url.path().starts_with("/beamng-drive-mods/") {
+                    fixture(&["modhub", "mod-monster-frame-real.html"])
+                } else {
+                    fixture(&["modhub", "list-main-real.html"])
+                }
+            } else if host.ends_with("modland.net") {
                 if url.path().starts_with("/search/") {
                     fixture(&["modland", "search-real.html"])
                 } else {
@@ -441,8 +451,36 @@ mod tests {
             Arc::new(modland::ModlandSource::new(fetcher.clone())),
             Arc::new(stmods::StModsSource::new(fetcher.clone())),
             Arc::new(modsgaming::ModsGamingSource::new(fetcher.clone())),
+            Arc::new(modhub::ModHubSource::new(fetcher.clone())),
             Arc::new(beamng::BeamNgRepoSource::new(fetcher)),
         ]
+    }
+
+    #[test]
+    fn modhub_search_feed_and_page_read_saved_pages() {
+        let fake = FakeFetcher::new();
+        let source = modhub::ModHubSource::new(polite(fake.clone()));
+        let found = source.search("bmw", &cancel()).unwrap();
+        assert_eq!(
+            found.len(),
+            8,
+            "вторая страница поиска даёт те же моды — не дублируем"
+        );
+        assert!(found.iter().all(|item| source.is_mod_page(&item.url)));
+        let calls = fake.calls.lock().unwrap().clone();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == "GET /search/bmw/beamng-drive-mods"),
+            "{calls:?}"
+        );
+        let feed = source.feed_page(1, &cancel()).unwrap();
+        assert_eq!(feed.len(), 8);
+        let page = source
+            .listing(&feed[0].url, &cancel())
+            .unwrap()
+            .expect("страница мода");
+        assert_eq!(page.mod_version.as_deref(), Some("4.1.96"));
     }
 
     #[test]
@@ -463,6 +501,8 @@ mod tests {
             "https://www.modsgaming.us/load/beamng/vehicles/audi_a6_c7_v1_3/71-1-0-1405",
             "https://beamng.com/resources/acng-tire-heat-pressure-wear.34567/",
             "https://www.beamng.com/resources/acng.34567/updates",
+            "https://www.modhub.us/beamng-drive-mods/bmw-m8-cs-039",
+            "https://modhub.us/beamng-drive-mods/chevrolet-corvette-c6-v13-040x-1",
         ];
         for raw in mods {
             let url = Url::parse(raw).unwrap();
@@ -505,6 +545,12 @@ mod tests {
             "https://beamng.com/resources/",
             "https://beamng.com/resources/categories/vehicles.2/",
             "https://beamng.com/forums/x.12/",
+            "https://www.modhub.us/",
+            "https://www.modhub.us/category/beamng-drive-mods",
+            "https://www.modhub.us/category/beamng-drive-mods/cars/page/2",
+            "https://www.modhub.us/search/bmw/beamng-drive-mods",
+            "https://www.modhub.us/farming-simulator-25-mods/john-deere",
+            "https://www.modhub.us/user/Bruno32600",
             "https://evil.example/beamng_drive/mods/x/",
             "ftp://stmods.org/beamng_drive/mods/x/",
         ];

@@ -487,27 +487,61 @@ pub async fn updates_restore(
 mod pages;
 pub use pages::*;
 
-const MODLAND_CHECK_LABEL: &str = "modland-check";
-const MODLAND_CHECK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const MODLAND_CHECK_POLL: Duration = Duration::from_millis(400);
+const CHECK_LABEL: &str = "site-check";
+const CHECK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const CHECK_POLL: Duration = Duration::from_millis(400);
 /// Сколько подряд не читать DOM, прежде чем считать, что окно закрыли.
 /// Перезагрузка и Cloudflare на секунды делают документ недоступным — это не закрытие.
-const MODLAND_CHECK_CLOSED_MISSES: u32 = 25;
-static MODLAND_CHECK_BUSY: AtomicBool = AtomicBool::new(false);
+const CHECK_CLOSED_MISSES: u32 = 25;
+static CHECK_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// Сайт за Cloudflare, чью проверку «вы человек?» проходит человек.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CheckSite {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub home: &'static str,
+    /// Домен без «www.»: страница этого сайта значит, что он пустил.
+    pub host: &'static str,
+}
+
+pub(crate) const CHECK_SITES: &[CheckSite] = &[
+    CheckSite {
+        id: "modland",
+        name: "Modland",
+        home: "https://www.modland.net/",
+        host: "modland.net",
+    },
+    CheckSite {
+        id: "modhub",
+        name: "ModHub",
+        home: "https://www.modhub.us/",
+        host: "modhub.us",
+    },
+];
+
+pub(crate) fn check_site(id: &str) -> Result<CheckSite, AppError> {
+    CHECK_SITES
+        .iter()
+        .copied()
+        .find(|site| site.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| AppError::new("check", "Этот сайт не просит проверку."))
+}
 
 /// Окно проверки одно на приложение: в нём человек проходит Cloudflare, а программа
 /// сама замечает, что сайт пустил, и продолжает работу.
-pub(crate) async fn open_modland_check(
+pub(crate) async fn open_site_check(
     app: AppHandle,
     state: Arc<AppState>,
+    site: CheckSite,
     url: url::Url,
 ) -> Result<bool, AppError> {
-    if MODLAND_CHECK_BUSY.swap(true, Ordering::SeqCst) {
-        return Err(AppError::new("check", "Проверка Modland уже идёт."));
+    if CHECK_BUSY.swap(true, Ordering::SeqCst) {
+        return Err(AppError::new("check", "Проверка сайта уже идёт."));
     }
     let _busy = BusyGuard;
 
-    let window = modland_window(&app, url.clone())?;
+    let window = check_window(&app, site, url.clone())?;
     let token = format!(
         "bmm-check-{}",
         std::time::SystemTime::now()
@@ -528,26 +562,27 @@ pub(crate) async fn open_modland_check(
             .navigate(url)
             .map_err(|error| AppError::new("window", error.to_string()))?;
     }
+    let _ = window.set_title(&format!("Проверка {}", site.name));
     let _ = window.set_focus();
 
     let worker_app = app.clone();
     let worker_window = window.clone();
     let passed = tauri::async_runtime::spawn_blocking(move || {
-        wait_for_check(&worker_app, &worker_window, &token)
+        wait_for_check(&worker_app, &worker_window, &token, site)
     })
     .await
     .map_err(|error| AppError::new("check", error.to_string()))?;
 
     // Окно могли закрыть сразу после проверки. Тогда true от DOM уже не придёт,
     // поэтому доступ подтверждаем тем же скрытым браузером, которым работает поиск.
-    let closed = app.get_webview_window(MODLAND_CHECK_LABEL).is_none();
+    let closed = app.get_webview_window(CHECK_LABEL).is_none();
     let confirmed = if passed || closed {
-        modland_access_confirmed(&state).await
+        access_confirmed(&state, site).await
     } else {
         false
     };
     if confirmed {
-        reset_modland_check(&state);
+        reset_check(&state, site);
         if !closed {
             let _ = window.close();
         }
@@ -557,16 +592,16 @@ pub(crate) async fn open_modland_check(
 
 /// Проверка настоящим запросом программы: видимая страница могла пустить,
 /// а скрытый браузер всё ещё видеть заглушку. Тогда поиск запускать рано.
-async fn modland_access_confirmed(state: &Arc<AppState>) -> bool {
+async fn access_confirmed(state: &Arc<AppState>, site: CheckSite) -> bool {
     let Some(search) = state.search.clone() else {
         return false;
     };
-    let Ok(home) = "https://www.modland.net/".parse::<url::Url>() else {
+    let Ok(home) = site.home.parse::<url::Url>() else {
         return false;
     };
     tauri::async_runtime::spawn_blocking(move || {
-        search.fetcher.reset_source("modland", &home);
-        search.fetcher.get("modland", &home).status == SourceStatus::Ok
+        search.fetcher.reset_source(site.id, &home);
+        search.fetcher.get(site.id, &home).status == SourceStatus::Ok
     })
     .await
     .unwrap_or(false)
@@ -576,17 +611,21 @@ struct BusyGuard;
 
 impl Drop for BusyGuard {
     fn drop(&mut self) {
-        MODLAND_CHECK_BUSY.store(false, Ordering::SeqCst);
+        CHECK_BUSY.store(false, Ordering::SeqCst);
     }
 }
 
-fn modland_window(app: &AppHandle, url: url::Url) -> Result<WebviewWindow, AppError> {
-    if let Some(window) = app.get_webview_window(MODLAND_CHECK_LABEL) {
+fn check_window(
+    app: &AppHandle,
+    site: CheckSite,
+    url: url::Url,
+) -> Result<WebviewWindow, AppError> {
+    if let Some(window) = app.get_webview_window(CHECK_LABEL) {
         return Ok(window);
     }
-    WebviewWindowBuilder::new(app, MODLAND_CHECK_LABEL, WebviewUrl::External(url))
+    WebviewWindowBuilder::new(app, CHECK_LABEL, WebviewUrl::External(url))
         .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
-        .title("Проверка Modland")
+        .title(format!("Проверка {}", site.name))
         .inner_size(980.0, 720.0)
         .min_inner_size(520.0, 420.0)
         .center()
@@ -594,13 +633,13 @@ fn modland_window(app: &AppHandle, url: url::Url) -> Result<WebviewWindow, AppEr
         .map_err(|error| AppError::new("window", error.to_string()))
 }
 
-/// Пока окно открыто, смотрим на страницу: обычная страница Modland без маркера
+/// Пока окно открыто, смотрим на страницу: обычная страница сайта без маркера
 /// старого документа и без cloudflare-заглушки означает, что сайт пустил.
-fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str) -> bool {
-    let deadline = Instant::now() + MODLAND_CHECK_TIMEOUT;
+fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str, site: CheckSite) -> bool {
+    let deadline = Instant::now() + CHECK_TIMEOUT;
     let mut misses = 0;
     loop {
-        if app.get_webview_window(MODLAND_CHECK_LABEL).is_none() || window.is_visible().is_err() {
+        if app.get_webview_window(CHECK_LABEL).is_none() || window.is_visible().is_err() {
             return false;
         }
         if Instant::now() >= deadline {
@@ -610,7 +649,7 @@ fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str) -> bool 
             Ok(html) => {
                 misses = 0;
                 if let Ok(url) = window.url()
-                    && page_passed(&html, token, &url)
+                    && page_passed(&html, token, &url, site)
                 {
                     return true;
                 }
@@ -618,12 +657,12 @@ fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str) -> bool 
             Err(_) => {
                 // Окно закрыли, а Tauri ещё держит его объект: не ждём полного таймаута.
                 misses += 1;
-                if misses >= MODLAND_CHECK_CLOSED_MISSES {
+                if misses >= CHECK_CLOSED_MISSES {
                     return false;
                 }
             }
         }
-        std::thread::sleep(MODLAND_CHECK_POLL);
+        std::thread::sleep(CHECK_POLL);
     }
 }
 
@@ -631,41 +670,44 @@ fn same_page(current: Option<&url::Url>, target: &url::Url) -> bool {
     current.is_some_and(|current| current == target)
 }
 
-fn page_passed(html: &str, token: &str, url: &url::Url) -> bool {
+fn page_passed(html: &str, token: &str, url: &url::Url, site: CheckSite) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
-    let modland = host.eq_ignore_ascii_case("modland.net")
-        || host.to_ascii_lowercase().ends_with(".modland.net");
-    modland
-        && html.len() > 200
+    let host = host.to_ascii_lowercase();
+    let own = host == site.host || host.ends_with(&format!(".{}", site.host));
+    own && html.len() > 200
         && !html.contains(token)
         && !html.contains("id=\"main-frame-error\"")
         && !bmm_sources::net::is_challenge_page(html)
 }
 
-fn reset_modland_check(state: &AppState) {
+fn reset_check(state: &AppState, site: CheckSite) {
     if let Some(runtime) = &state.update {
-        runtime.coordinator.resolve_human_check("modland");
+        runtime.coordinator.resolve_human_check(site.id);
         return;
     }
     if let Some(search) = &state.search
-        && let Ok(home) = "https://www.modland.net/".parse()
+        && let Ok(home) = site.home.parse()
     {
-        search.fetcher.reset_source("modland", &home);
+        search.fetcher.reset_source(site.id, &home);
     }
 }
 
+/// «Пройти проверку» для сайта за Cloudflare (Modland, ModHub).
 #[tauri::command]
-pub async fn updates_open_modland(
+pub async fn updates_open_check(
     app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
+    source: String,
 ) -> Result<bool, AppError> {
-    let url: url::Url = "https://www.modland.net/"
+    let site = check_site(&source)?;
+    let url: url::Url = site
+        .home
         .parse()
-        .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?;
+        .map_err(|_| AppError::new("url", "Некорректный адрес сайта."))?;
     let state = state.inner().clone();
-    open_modland_check(app, state, url).await
+    open_site_check(app, state, site, url).await
 }
 
 mod snapshot;
@@ -868,23 +910,37 @@ mod tests {
 
     #[test]
     fn check_window_detects_a_page_the_site_let_through() {
+        let modland = check_site("modland").unwrap();
         let page = format!("<html><body>{}</body></html>", "Toyota Sienna ".repeat(30));
         let url = url::Url::parse("https://www.modland.net/search/sienna").unwrap();
-        assert!(page_passed(&page, "bmm-check-2", &url));
+        assert!(page_passed(&page, "bmm-check-2", &url, modland));
         let old = format!("{page} data-bmm-check=\"bmm-check-1\"");
-        assert!(!page_passed(&old, "bmm-check-1", &url));
+        assert!(!page_passed(&old, "bmm-check-1", &url, modland));
         assert!(!page_passed(
             "<html><head><title>Один момент…</title></head></html>",
             "bmm-check-1",
-            &url
+            &url,
+            modland
         ));
         assert!(!page_passed(
             "<html><body><div id=\"main-frame-error\">ERR_TIMED_OUT</div></body></html>",
             "bmm-check-1",
-            &url
+            &url,
+            modland
         ));
         let other = url::Url::parse("https://stmods.org/beamng_drive/").unwrap();
-        assert!(!page_passed(&page, "bmm-check-1", &other));
+        assert!(!page_passed(&page, "bmm-check-1", &other, modland));
+    }
+
+    #[test]
+    fn modhub_check_counts_only_its_own_pages() {
+        let modhub = check_site("modhub").unwrap();
+        let page = format!("<html><body>{}</body></html>", "BMW M8 CS ".repeat(30));
+        let own = url::Url::parse("https://www.modhub.us/category/beamng-drive-mods").unwrap();
+        assert!(page_passed(&page, "bmm-check-1", &own, modhub));
+        let modland = url::Url::parse("https://www.modland.net/").unwrap();
+        assert!(!page_passed(&page, "bmm-check-1", &modland, modhub));
+        assert!(check_site("stmods").is_err(), "STMods проверку не просит");
     }
 
     #[test]

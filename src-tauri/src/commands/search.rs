@@ -562,23 +562,38 @@ pub async fn search_cancel(
     Ok(())
 }
 
+/// «Пройти проверку» из поиска: окно открывает поиск на том же сайте, чтобы после
+/// проверки человек сразу видел выдачу.
 #[tauri::command]
-pub async fn search_open_modland(
+pub async fn search_open_check(
     app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
+    source: String,
     query: String,
 ) -> Result<bool, AppError> {
-    let mut url = Url::parse("https://www.modland.net/search")
-        .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?;
-    url.path_segments_mut()
-        .map_err(|_| AppError::new("url", "Некорректный адрес Modland."))?
-        .push(query.trim());
+    let site = crate::commands::updates::check_site(&source)?;
+    let url = check_search_url(site.id, &query)
+        .ok_or_else(|| AppError::new("url", "Некорректный адрес сайта."))?;
     let state = state.inner().clone();
-    crate::commands::updates::open_modland_check(app, state, url).await
+    crate::commands::updates::open_site_check(app, state, site, url).await
+}
+
+fn check_search_url(source: &str, query: &str) -> Option<Url> {
+    let query = query.trim();
+    match source {
+        "modhub" => bmm_sources::sources::modhub::ModHubSource::search_url(query, 1)
+            .or_else(|| Url::parse("https://www.modhub.us/category/beamng-drive-mods").ok()),
+        _ => {
+            let mut url = Url::parse("https://www.modland.net/search").ok()?;
+            url.path_segments_mut().ok()?.push(query);
+            Some(url)
+        }
+    }
 }
 
 const PREVIEW_HOSTS: &[&str] = &[
     "modland.net",
+    "modhub.us",
     "stmods.org",
     "modsgaming.ru",
     "modsgaming.us",

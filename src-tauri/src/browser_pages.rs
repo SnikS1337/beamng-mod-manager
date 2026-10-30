@@ -1,4 +1,4 @@
-//! Страницы Modland за Cloudflare грузятся скрытым WebView2: обычный запрос сайт
+//! Страницы Modland и ModHub за Cloudflare грузятся скрытым WebView2: обычный запрос сайт
 //! не пускает. Окно живёт за краем экрана, страницы грузит по одной; куки общие
 //! с окном проверки «вы человек?». Капчу программа не решает и не обходит.
 
@@ -13,7 +13,7 @@ use bmm_sources::net::{FetchError, PageFetcher, RawResponse, is_challenge_page};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
-const LABEL: &str = "modland-pages";
+const LABEL: &str = "site-pages";
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 // Cloudflare иногда снимает проверку сам за несколько секунд; ждём.
 const SELF_CLEAR_WAIT: Duration = Duration::from_secs(10);
@@ -68,7 +68,7 @@ impl BrowserPages {
             .expect("статический адрес about:blank");
         let created = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External(blank))
             .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
-            .title("Modland")
+            .title("Страницы сайтов")
             .position(-32000.0, -32000.0)
             .inner_size(1024.0, 900.0)
             .decorations(false)

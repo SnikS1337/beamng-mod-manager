@@ -146,7 +146,9 @@ impl Default for AppSettings {
             check_app_updates: true,
             auto_check_every_hours: 0,
             check_disabled_mods: true,
-            disabled_sources: vec!["modland".to_string()],
+            // Сайты за Cloudflare просят проверку «вы человек?» — у новой установки
+            // они выключены, человек включает их сам.
+            disabled_sources: vec!["modland".to_string(), "modhub".to_string()],
             keep_backups: 3,
             max_card_checks_per_source: 150,
             liquid_glass: true,
@@ -290,12 +292,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_match_old_app() {
+    fn defaults() {
         let settings = AppSettings::default();
         assert_eq!(settings.schema_version, 2);
         assert!(!settings.allow_downloads);
         assert_eq!(settings.check_ttl_hours, 6);
-        assert_eq!(settings.disabled_sources, vec!["modland"]);
+        assert_eq!(settings.disabled_sources, vec!["modland", "modhub"]);
         assert_eq!(settings.keep_backups, 3);
         assert_eq!(settings.max_card_checks_per_source, 150);
         assert_eq!(settings.mode, UiMode::Dark);

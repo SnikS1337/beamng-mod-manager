@@ -23,7 +23,7 @@
     searchBrowse,
     searchCancel,
     searchDecide,
-    searchOpenModland,
+    searchOpenCheck,
     searchPagePreview,
     searchPreview,
     searchRetrySource,
@@ -404,13 +404,13 @@
     await openExternal(url);
   }
 
-  async function openModland() {
+  async function openCheck(source: string, name: string) {
     if (passing) return;
     passing = true;
     try {
-      const passed = await searchOpenModland(submitted || query);
+      const passed = await searchOpenCheck(source, submitted || query);
       if (passed) {
-        toasts.show("Modland пускает программу — ищем снова");
+        toasts.show(`${name} пускает программу — ищем снова`);
         if (submitted) {
           query = submitted;
           await runSearch();
@@ -1210,15 +1210,15 @@
           {#if source.note && !source.pending}
             <p class="site-note">{source.note}</p>
           {/if}
-          {#if source.id === "modland" && source.status === "needsHumanCheck"}
-            <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
-              {passing ? "Проходим проверку…" : "Пройти проверку Modland"}
+          {#if (source.id === "modland" || source.id === "modhub") && source.status === "needsHumanCheck"}
+            <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openCheck(source.id, source.displayName)}>
+              {passing ? "Проходим проверку…" : `Пройти проверку ${source.displayName}`}
             </button>
           {/if}
         {/each}
       </div>
     {:else}
-      <p class="sub">Modland, STMods и ModsGaming — сразу, одним запросом.</p>
+      <p class="sub">Modland, STMods, ModsGaming и ModHub — сразу, одним запросом.</p>
     {/if}
     {#if !searching && sources.some((source) => !source.pending && (source.status !== "ok" || (source.note ?? "").includes("не загрузилась")))}
       <button class="btn-glass pass" type="button" onclick={retryAll}>

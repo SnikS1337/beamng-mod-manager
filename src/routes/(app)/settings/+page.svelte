@@ -109,6 +109,7 @@
   type SectionId = (typeof SECTIONS)[number]["id"];
   const SOURCES = [
     { id: "modland", label: "Modland", note: "Иногда просит подтвердить, что вы человек" },
+    { id: "modhub", label: "ModHub", note: "Иногда просит подтвердить, что вы человек" },
     { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
     { id: "modsgaming", label: "ModsGaming", note: "Русский каталог модов" },
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления; в поиске не участвует" },

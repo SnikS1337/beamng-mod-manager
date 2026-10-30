@@ -55,6 +55,7 @@ pub fn site_hint(file_name: &str) -> Option<&'static str> {
         .collect();
     [
         ("modland", "modland"),
+        ("modhub", "modhub"),
         ("stmods", "stmods"),
         ("modsgaming", "modsgaming"),
     ]
@@ -673,6 +674,7 @@ mod tests {
         );
         assert_eq!(site_hint("weather_fx_modland.zip"), Some("modland"));
         assert_eq!(site_hint("Sumner_Road_tg_m0dsbeamng.zip"), None);
+        assert_eq!(site_hint("bmw_m8_modhub.zip"), Some("modhub"));
         assert_eq!(
             site_hint("modlandia_cars.zip"),
             None,

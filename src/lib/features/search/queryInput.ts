@@ -28,6 +28,8 @@ const KIND_ALIASES: Record<string, SearchKindFilter> = {
 
 const SOURCE_ALIASES: Record<string, string> = {
   modland: "modland",
+  modhub: "modhub",
+  "modhub.us": "modhub",
   stmods: "stmods",
   modsgaming: "modsgaming",
   "modsgaming.us": "modsgaming",

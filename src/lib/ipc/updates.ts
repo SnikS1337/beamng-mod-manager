@@ -362,18 +362,33 @@ export async function updatesRefollow(modId: string, source: string): Promise<Up
   return clone(mockSnapshot);
 }
 
-export async function updatesOpenModland(): Promise<boolean> {
+/** Сайты за Cloudflare: проверку «вы человек?» проходит человек в отдельном окне. */
+export const CHECK_SITES: Record<string, string> = { modland: "Modland", modhub: "ModHub" };
+
+/** «Пройти проверку» сайта (`modland`, `modhub`). `true` — сайт пустил программу. */
+export async function updatesOpenCheck(source: string): Promise<boolean> {
   if (!isTauri()) {
     await new Promise((resolve) => setTimeout(resolve, 900));
-    mockModlandNeedsCheck = false;
+    if (source === "modland") mockModlandNeedsCheck = false;
     mockSources = mockSources.map((item) =>
-      item.id === "modland"
+      item.id === source
         ? { ...item, status: "ok", cardsFetched: 12, feedPagesFetched: 3, note: null }
         : item,
     );
     return true;
   }
-  return invoke<boolean>("updates_open_modland");
+  return invoke<boolean>("updates_open_check", { source });
+}
+
+/** Какой сайт просит проверку по адресу страницы: для «Указать страницу». */
+export function checkSiteOf(url: string): string {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === "modhub.us" || host.endsWith(".modhub.us")) return "modhub";
+  } catch {
+    // Адрес ещё не дописан — по умолчанию Modland, как раньше.
+  }
+  return "modland";
 }
 
 function mockStart(requestId: number): void {

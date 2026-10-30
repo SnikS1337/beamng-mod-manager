@@ -1,6 +1,7 @@
 //! Общие помощники разбора HTML: сущности, теги, размеры, даты.
 
 pub mod beamng;
+pub mod modhub;
 pub mod modland;
 pub mod modsgaming;
 pub mod stmods;

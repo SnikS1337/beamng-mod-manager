@@ -89,7 +89,7 @@ pub fn run() {
     let pages: Arc<dyn PageFetcher> = Arc::new(RoutingPageFetcher::new(
         default_fetcher(),
         browser_pages.clone(),
-        &["modland.net"],
+        &["modland.net", "modhub.us"],
     ));
     let fetcher = Arc::new(PoliteFetcher::new(pages.clone(), PoliteOptions::default()));
     let source_list: Arc<Vec<Arc<dyn ModSource>>> = Arc::new(all_sources(fetcher.clone()));
@@ -210,7 +210,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Служебное окно браузера не должно всплывать на экране при следующем запуске.
-                .with_denylist(&["modland-pages"])
+                .with_denylist(&["site-pages"])
                 .build(),
         )
         .manage(state)
@@ -271,7 +271,7 @@ pub fn run() {
             commands::search::search_decide,
             commands::search::search_preview,
             commands::search::search_page_preview,
-            commands::search::search_open_modland,
+            commands::search::search_open_check,
             commands::updates::updates_snapshot,
             commands::updates::updates_start,
             commands::updates::updates_retry_source,
@@ -300,7 +300,7 @@ pub fn run() {
             commands::download_window::download_panel_state,
             commands::download_window::download_ready,
             commands::download_window::download_close,
-            commands::updates::updates_open_modland,
+            commands::updates::updates_open_check,
             commands::settings::settings_load,
             commands::settings::settings_save,
             commands::settings::app_data_folder,
@@ -434,23 +434,23 @@ mod tests {
 
     #[test]
     fn closing_main_window_closes_hidden_ones() {
-        let open = vec!["modland-pages".to_string(), "modland-check".to_string()];
+        let open = vec!["site-pages".to_string(), "site-check".to_string()];
         assert_eq!(windows_to_close("main", &open), open);
         let with_main = vec![
             "main".to_string(),
-            "modland-pages".to_string(),
+            "site-pages".to_string(),
             "download".to_string(),
         ];
         assert_eq!(
             windows_to_close("main", &with_main),
-            vec!["modland-pages".to_string(), "download".to_string()]
+            vec!["site-pages".to_string(), "download".to_string()]
         );
     }
 
     #[test]
     fn closing_a_service_window_keeps_the_rest() {
-        let open = vec!["main".to_string(), "modland-pages".to_string()];
-        assert!(windows_to_close("modland-check", &open).is_empty());
+        let open = vec!["main".to_string(), "site-pages".to_string()];
+        assert!(windows_to_close("site-check", &open).is_empty());
     }
 
     #[test]
