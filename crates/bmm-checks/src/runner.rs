@@ -158,6 +158,14 @@ pub fn run(
     runner.run()
 }
 
+/// Глубже этого датированную ленту не читаем даже ради давней проверки.
+const DEEP_FEED_PAGES: u32 = 40;
+
+/// У всех прочитанных записей ленты есть дата: по ней можно доказать «не менялся».
+fn is_dated(ordered: &[FeedEntry]) -> bool {
+    !ordered.is_empty() && ordered.iter().all(|entry| entry.updated.is_some())
+}
+
 struct Budget<'a> {
     started: DateTime<FixedOffset>,
     clock: Option<&'a (dyn Fn() -> DateTime<FixedOffset> + Sync)>,
@@ -519,8 +527,18 @@ impl Worker<'_, '_> {
             .min();
 
         let limit = pages;
+        // Датированная лента (репозиторий BeamNG) покрывает все изменения со времени
+        // прошлой проверки сама: читаем её глубже плана, пока не дойдём до самой давней
+        // проверки. Но не дальше, чем стоило бы открыть страницы самих модов: одна
+        // страница ленты не должна стоить дороже, чем она экономит.
+        let deep_limit = if self.request.options.force || oldest_checked.is_none() {
+            limit
+        } else {
+            DEEP_FEED_PAGES.min(due_here.len() as u32).max(limit)
+        };
         let mut page = 1u32;
-        while page <= limit {
+        while page <= limit || (page <= deep_limit && is_dated(&ordered)) {
+            let total = if page > limit { deep_limit } else { limit };
             if self.is_cancelled() {
                 outcome.cancelled = true;
                 return outcome;
@@ -533,7 +551,7 @@ impl Worker<'_, '_> {
                 source: source.to_string(),
                 stage: "лента".to_string(),
                 done: page.saturating_sub(1) as usize,
-                total: limit as usize,
+                total: total as usize,
             });
             match adapter.feed_page(page, self.request.cancel) {
                 Ok(items) => {
@@ -838,6 +856,8 @@ mod tests {
         card_fails: Mutex<Option<SourceError>>,
         on_card: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
         feed_covers: bool,
+        /// Многостраничная лента: страница N — элемент N-1. Пусто — только `feed`.
+        pages: Mutex<Vec<Vec<Listing>>>,
     }
 
     impl Site {
@@ -852,6 +872,7 @@ mod tests {
                 card_fails: Mutex::new(None),
                 on_card: Mutex::new(None),
                 feed_covers: true,
+                pages: Mutex::new(Vec::new()),
             })
         }
 
@@ -922,6 +943,10 @@ mod tests {
             self.feed_calls.fetch_add(1, Ordering::SeqCst);
             if let Some(error) = self.feed_fails.lock().unwrap().clone() {
                 return Err(error);
+            }
+            let pages = self.pages.lock().unwrap();
+            if !pages.is_empty() {
+                return Ok(pages.get(page as usize - 1).cloned().unwrap_or_default());
             }
             if page == 1 {
                 Ok(self.feed.lock().unwrap().clone())
@@ -1802,6 +1827,111 @@ mod tests {
         assert_eq!(site.card_calls(), 0);
         assert_eq!(report.up_to_date, 1);
         assert_eq!(site.feed_calls(), 1, "лента дошла до давней проверки");
+    }
+
+    /// Лента на `days` страниц: на странице p — 20 записей, обновлённых p дней назад.
+    fn dated_pages(site: &Site, days: i64) {
+        let mut pages = site.pages.lock().unwrap();
+        for day in 1..=days {
+            pages.push(
+                (0..20)
+                    .map(|index| {
+                        let mut entry = l("x", &format!("f{day}-{index}"), Some("1.0"), None);
+                        entry.updated_at = Some(now() - TimeDelta::days(day));
+                        entry
+                    })
+                    .collect(),
+            );
+        }
+    }
+
+    #[test]
+    fn dated_feed_is_read_back_to_the_last_check_instead_of_opening_pages() {
+        // Программу открыли через 20 дней: лента репозитория за эти дни — 21 страница,
+        // а модов 30. Читаем ленту вглубь вместо 30 страниц модов.
+        let store = InMemoryLibraryStore::new();
+        for index in 0..30 {
+            add(
+                &store,
+                &format!("m{index}"),
+                "x",
+                &format!("m{index}"),
+                Some("1.0"),
+                Some("1.0"),
+                Some(now() - TimeDelta::days(20)),
+            );
+        }
+        let site = Site::new("x");
+        dated_pages(&site, 40);
+        let report = run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(site.card_calls(), 0, "страницы модов не открывали");
+        assert_eq!(site.feed_calls(), 21, "лента ровно до прошлой проверки");
+        assert_eq!(report.up_to_date, 30);
+    }
+
+    #[test]
+    fn deep_feed_never_costs_more_than_opening_the_pages() {
+        // Модов всего 5 — двадцать страниц ленты ради них дороже, чем 5 страниц модов.
+        let store = InMemoryLibraryStore::new();
+        for index in 0..5 {
+            add(
+                &store,
+                &format!("m{index}"),
+                "x",
+                &format!("m{index}"),
+                Some("1.0"),
+                Some("1.0"),
+                Some(now() - TimeDelta::days(20)),
+            );
+        }
+        let site = Site::new("x");
+        dated_pages(&site, 40);
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(site.feed_calls(), 5);
+    }
+
+    #[test]
+    fn undated_feed_is_not_read_deeper_than_planned() {
+        let store = InMemoryLibraryStore::new();
+        for index in 0..30 {
+            add(
+                &store,
+                &format!("m{index}"),
+                "x",
+                &format!("m{index}"),
+                Some("1.0"),
+                Some("1.0"),
+                Some(now() - TimeDelta::days(20)),
+            );
+        }
+        let site = Site::new("x");
+        {
+            let mut pages = site.pages.lock().unwrap();
+            for page in 0..40 {
+                pages.push(
+                    (0..20)
+                        .map(|index| l("x", &format!("u{page}-{index}"), None, None))
+                        .collect(),
+                );
+            }
+        }
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(site.feed_calls(), 3, "без дат лента ничего не доказывает");
     }
 
     #[test]
