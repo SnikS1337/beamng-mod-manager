@@ -506,6 +506,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn main_window_may_destroy_itself_after_close_request() {
+        // Раздел «Настройки» слушает onCloseRequested; после обработчика Tauri
+        // вызывает destroy(). Без этого разрешения окно не закрывалось крестиком.
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let permissions: Vec<&str> = capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert!(permissions.contains(&"core:window:allow-close"));
+        assert!(permissions.contains(&"core:window:allow-destroy"));
+    }
+
+    #[test]
     fn release_build_unwinds_panics() {
         // `catch_unwind` вокруг сайтов и фоновых задач работает только при unwind.
         let manifest = include_str!("../../Cargo.toml");

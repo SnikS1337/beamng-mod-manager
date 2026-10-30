@@ -174,9 +174,17 @@ pub(crate) fn save_settings(
     let _save = SAVE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let loaded = state.settings.load();
     if loaded.save_blocked {
+        let newer = loaded
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("более новой версией"));
         return Err(AppError::new(
             "settings",
-            "Не удалось прочитать файл настроек. Чтобы не потерять данные, сохранение остановлено: проверьте доступ к файлу и перезапустите программу.",
+            if newer {
+                "Настройки записаны более новой версией программы. Чтобы не потерять их, эта версия изменения не сохраняет: обновите программу."
+            } else {
+                "Не удалось прочитать файл настроек. Чтобы не потерять данные, сохранение остановлено: проверьте доступ к файлу и перезапустите программу."
+            },
         ));
     }
     let mut current = loaded.settings;

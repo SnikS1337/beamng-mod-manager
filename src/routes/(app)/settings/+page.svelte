@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SaveQueue } from "#lib/features/settings/saveQueue.js";
   import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -153,7 +154,10 @@
       void getCurrentWindow()
         .onCloseRequested(async () => {
           if (saveTimer) clearTimeout(saveTimer);
-          if (dirty) await save(true);
+          // Сначала дожидаемся идущего сохранения: правка, сделанная во время него,
+          // иначе терялась — окно закрывалось раньше, чем её успевали записать.
+          await saves.idle().catch(() => {});
+          if (dirty) await save(true).catch(() => {});
         })
         .then((stop) => {
           if (disposed) stop();
@@ -293,9 +297,12 @@
 
   async function boot() {
     loading = true;
+    error = null;
     try {
       const loaded = appearance.settings ?? (await appearance.load());
       if (loaded) draft = clone(loaded);
+      // Без настроек раздел раньше навсегда показывал «Загружаем…».
+      else error = "Не удалось прочитать настройки.";
     } catch (reason) {
       error = errorText(reason);
     } finally {
@@ -405,17 +412,21 @@
     saveTimer = setTimeout(() => void save(), 350);
   }
 
-  let saveQueued = false;
+  // Сохранения идут по одному; закрытие окна ждёт последнее (см. onCloseRequested).
   let queuedFallbacks = false;
+  const saves = new SaveQueue(async () => {
+    const fallbacks = queuedFallbacks;
+    queuedFallbacks = false;
+    await saveOnce(fallbacks);
+  });
 
-  async function save(useNumberFallbacks = false) {
-    if (!draft) return;
-    if (saving) {
-      // Сохранение уже идёт: не теряем правку, досохраним после него.
-      saveQueued = true;
-      queuedFallbacks ||= useNumberFallbacks;
-      return;
-    }
+  function save(useNumberFallbacks = false): Promise<void> {
+    queuedFallbacks ||= useNumberFallbacks;
+    return saves.request();
+  }
+
+  async function saveOnce(useNumberFallbacks: boolean) {
+    if (!draft || !dirty) return;
     if (!numbersValid && !useNumberFallbacks) return;
     const rev = revision;
     const payload = useNumberFallbacks ? withNumberFallbacks(draft) : draft;
@@ -432,14 +443,7 @@
       error = errorText(reason);
     } finally {
       saving = false;
-      if (saveQueued) {
-        const fallbacks = queuedFallbacks;
-        saveQueued = false;
-        queuedFallbacks = false;
-        if (dirty) void save(fallbacks);
-      } else if (dirty && revision !== rev) {
-        scheduleSave();
-      }
+      if (dirty && revision !== rev) scheduleSave();
     }
   }
 
@@ -623,8 +627,13 @@
     <div class="banner error">{error}</div>
   {/if}
 
-  {#if loading || !draft}
+  {#if loading}
     <div class="state"><p>Загружаем настройки…</p></div>
+  {:else if !draft}
+    <div class="state">
+      <p>Настройки не загрузились.</p>
+      <button class="btn-glass" type="button" onclick={() => void boot()}>Повторить</button>
+    </div>
   {:else}
     <div class="settings-layout">
       <nav class="settings-side" aria-label="Разделы настроек">
