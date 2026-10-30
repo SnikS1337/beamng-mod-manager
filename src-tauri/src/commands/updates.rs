@@ -104,6 +104,7 @@ fn run_page_search(
     state: &AppState,
     request_id: u64,
     cancel: &AtomicBool,
+    retry_recent: bool,
 ) -> bmm_checks::PageSearchReport {
     let Some(service) = page_search_service(state) else {
         return bmm_checks::PageSearchReport::default();
@@ -122,6 +123,7 @@ fn run_page_search(
         Utc::now().fixed_offset(),
         cancel,
         include_disabled,
+        retry_recent,
         &|mod_id| page_title(state, mod_id),
         &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
         Some(&mut progress),
@@ -215,7 +217,7 @@ async fn start_updates(
                     page_cancel.store(false, Ordering::SeqCst);
                     // Подбор — подсказка: его сбой не должен съедать итог проверки.
                     let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        run_page_search(&app, &state_for_task, request_id, &page_cancel)
+                        run_page_search(&app, &state_for_task, request_id, &page_cancel, false)
                     }))
                     .unwrap_or_default();
                     // Взятые под наблюдение сами — проверяем сразу, а не при следующем запуске.

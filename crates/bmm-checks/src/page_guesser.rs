@@ -70,6 +70,18 @@ impl PageGuesser {
         now: DateTime<FixedOffset>,
         include_disabled: bool,
     ) -> Vec<InstalledMod> {
+        Self::due_for(store, now, include_disabled, false)
+    }
+
+    /// Как [`Self::due_with`]; `retry_recent` — человек сам нажал «Найти страницы»:
+    /// ищем и те моды, что искали недавно. Отказы («это не мой мод», «не проверять»)
+    /// по-прежнему не трогаем.
+    pub fn due_for(
+        store: &dyn LibraryStore,
+        now: DateTime<FixedOffset>,
+        include_disabled: bool,
+        retry_recent: bool,
+    ) -> Vec<InstalledMod> {
         let bound: HashSet<String> = store
             .bindings()
             .into_iter()
@@ -85,7 +97,8 @@ impl PageGuesser {
             .filter(|installed| match store.get_page_search(&installed.id) {
                 None => true,
                 Some(search) => {
-                    !search.rejected && (now - search.at >= retry_after || search.at > now)
+                    !search.rejected
+                        && (retry_recent || now - search.at >= retry_after || search.at > now)
                 }
             })
             .collect();
@@ -973,6 +986,38 @@ mod tests {
             ids.iter()
                 .all(|id| !["m0", "m1", "m2", "m3", "m5"].contains(id))
         );
+    }
+
+    #[test]
+    fn manual_search_retries_recent_attempts_but_not_refusals() {
+        // Было: «Найти страницы для остальных модов» молчало две недели после первого
+        // поиска — все моды без страницы уже «искали», и кнопка ничего не делала.
+        let store = InMemoryLibraryStore::new();
+        for id in ["recent", "refused", "declined"] {
+            store.upsert_mod(installed(id, &format!("{id}.zip"), None, None));
+        }
+        store.set_page_search(
+            "recent",
+            Some(PageSearch {
+                at: now() - TimeDelta::days(3),
+                rejected: false,
+            }),
+        );
+        store.set_page_search(
+            "refused",
+            Some(PageSearch {
+                at: now() - TimeDelta::days(3),
+                rejected: true,
+            }),
+        );
+        store.set_checking_declined("declined", true);
+
+        assert!(PageGuesser::due_for(&store, now(), true, false).is_empty());
+        let manual: Vec<String> = PageGuesser::due_for(&store, now(), true, true)
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+        assert_eq!(manual, ["recent"]);
     }
 
     #[test]
