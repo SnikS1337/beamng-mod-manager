@@ -417,7 +417,7 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-/// Аргументы режима установщика. `--backup` передаёт только Rust-версия; C#-версия 0.3.x
+/// Аргументы режима установщика. `--backup` передают версии 1.x; версия 0.3.x
 /// запускает новую с `--install-update <pid> --target <exe>`, и копия прежней тогда кладётся
 /// туда же, куда её клала сама 0.3.x: `%LOCALAPPDATA%\BeamModManager\update\previous.exe`.
 fn parse_installer_args(
@@ -1062,8 +1062,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_launch_without_backup_uses_default_copy() {
-        // Так новую версию запускает C# 0.3.12: без --backup.
+    fn launch_from_0_3_without_backup_uses_default_copy() {
+        // Так новую версию запускает 0.3.12: без --backup.
         let args = strings(&[
             "BeamModManager.exe",
             "--install-update",
@@ -1099,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn started_event_matches_legacy_name() {
+    fn started_event_keeps_its_name() {
         assert_eq!(
             started_event_name(1234),
             "Local\\BeamModManager.Started.1234"

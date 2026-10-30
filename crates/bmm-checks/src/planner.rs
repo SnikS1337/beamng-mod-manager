@@ -240,7 +240,7 @@ impl UpdateCheckPlanner {
         let mut postponed = Vec::new();
         let mut to_fetch: BTreeMap<String, Vec<TrackedBinding>> = BTreeMap::new();
 
-        // Порядок сайтов — по первому появлению в `due`, как в legacy.
+        // Порядок сайтов — по первому появлению в `due`.
         let mut order: Vec<String> = Vec::new();
         for binding in due {
             if !order.contains(&binding.source) {

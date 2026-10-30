@@ -1005,7 +1005,7 @@ impl PoliteFetcher {
                             continue;
                         }
                     } else if matches!(response.status, 502 | 504 | 520..=524) {
-                        // Шлюз/Cloudflare моргнул: ровно один повтор, как в legacy.
+                        // Шлюз/Cloudflare моргнул: ровно один повтор.
                         // Retry-After важнее нашей паузы, а при retries = 0 спать не за что.
                         last_message =
                             format!("Сайт временно недоступен (код {}).", response.status);
@@ -1050,7 +1050,7 @@ impl PoliteFetcher {
                             self.remember(source, SourceStatus::Ok, None, None);
                             return FetchResult::ok(response);
                         }
-                        // 403, 500 и прочие коды повтором не лечатся: как legacy, сразу отступаем,
+                        // 403, 500 и прочие коды повтором не лечатся: сразу отступаем,
                         // а не стучимся ещё дважды без паузы.
                         last_message = format!("Сайт вернул ошибку {}.", response.status);
                         break;
@@ -1061,8 +1061,7 @@ impl PoliteFetcher {
                         return cancelled();
                     }
                     last_message = error.user_message();
-                    // Legacy повторяет и таймаут, и обрыв соединения (IOException /
-                    // HttpRequestException). Прочие ошибки (слишком большой ответ,
+                    // Повторяем и таймаут, и обрыв соединения. Прочие ошибки (слишком большой ответ,
                     // неверный адрес) повтором не лечатся.
                     if attempt < self.options.retries
                         && matches!(error, FetchError::Timeout | FetchError::Network)
@@ -1916,7 +1915,7 @@ mod tests {
     }
 
     #[test]
-    fn retries_network_errors_like_legacy() {
+    fn retries_network_errors() {
         for error in [FetchError::Network, FetchError::Timeout] {
             let fake = FakeFetcher::new(vec![Err(error), Ok(response(200, "<html>ok</html>"))]);
             let polite = PoliteFetcher::new(fake.clone(), options());
@@ -2240,7 +2239,7 @@ mod tests {
 
     #[test]
     fn single_failure_does_not_latch_and_cooldown_expires() {
-        // Одиночный сбой: следующий поиск снова пробует сайт (как StatusOf в legacy).
+        // Одиночный сбой: следующий поиск снова пробует сайт.
         let fake = FakeFetcher::new(vec![
             Err(FetchError::Network),
             Ok(response(200, "<html>ok</html>")),

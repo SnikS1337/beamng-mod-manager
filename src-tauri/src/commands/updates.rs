@@ -237,7 +237,7 @@ async fn start_updates(
         drop(batch);
         match result {
             Ok(mut report) => {
-                // Моды без страницы ищем тем же ходом, как legacy, — но не после отмены.
+                // Моды без страницы ищем тем же ходом — но не после отмены.
                 if !report.cancelled
                     && let Some(_guard) = PageBusyGuard::acquire(page_busy)
                 {

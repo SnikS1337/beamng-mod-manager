@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn file_name_guess_matches_legacy() {
+    fn file_name_guess() {
         let first = BindingSuggester::from_file_name("BMW_M3_E30_v1.2.zip");
         assert_eq!(first.name, "BMW M3 E30");
         assert_eq!(first.version.as_deref(), Some("1.2"));

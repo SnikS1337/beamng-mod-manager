@@ -94,7 +94,7 @@ export function matchesQuery(mod: { name: string; fileName: string }, query: str
   return needles.every((needle) => haystack.some((word) => word.startsWith(needle)));
 }
 
-/** «18 минут назад», «2 дня назад», «3 недели назад» — как в legacy. */
+/** «18 минут назад», «2 дня назад», «3 недели назад». */
 export function formatAgo(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "";
   const at = new Date(iso).getTime();

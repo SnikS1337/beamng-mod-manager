@@ -424,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_legacy_limits() {
+    fn default_limits() {
         let limits = ArchiveLimits::default();
         assert_eq!(limits.max_entries, 50_000);
         assert_eq!(limits.max_total_uncompressed_bytes, 20 * 1024 * 1024 * 1024);

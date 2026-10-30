@@ -87,7 +87,7 @@
           .catch(() => {});
         continue;
       }
-      // В выдаче ModsGaming картинок нет — берём её со страницы мода, как legacy.
+      // В выдаче ModsGaming картинок нет — берём её со страницы мода.
       if (pageRequests >= PAGE_PREVIEW_LIMIT || requestedPages.has(card.id)) continue;
       const listing = card.listings.find((item) => item.source === "modsgaming");
       if (!listing) continue;

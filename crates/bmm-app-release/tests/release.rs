@@ -1,5 +1,4 @@
-//! Порт ключевых тестов `legacy/tests/BeamModManager.Core.Tests/AppUpdateTests.cs`:
-//! описание версии, сеть (локальная подделка и локальный HTTP-сервер), распаковка,
+//! Самообновление программы: описание версии, сеть (локальная подделка и локальный HTTP-сервер), распаковка,
 //! подмена/откат, Unicode-пути, отмена. Процессы не запускаются.
 
 use std::collections::HashMap;
@@ -48,7 +47,7 @@ fn default_user_agent_uses_the_crate_version() {
 }
 
 #[test]
-fn release_build_detection_matches_legacy() {
+fn release_build_is_detected() {
     for text in ["0.3", "0.2", "0.3.1", "0.1.129"] {
         assert!(
             AppVersion::parse(text).unwrap().is_release(),
@@ -73,7 +72,7 @@ fn parses_manifest_and_normalizes_version() {
 }
 
 #[test]
-fn short_versions_compare_and_display_like_legacy() {
+fn short_versions_compare_and_display() {
     assert_eq!(
         AppVersion::parse("0.2").unwrap(),
         AppVersion::parse("v0.2.0.0").unwrap()
@@ -189,7 +188,7 @@ fn newer_is_strictly_greater() {
     assert_eq!(
         AppVersion::parse("1.2 ").unwrap().display(),
         "1.2",
-        "хвостовой пробел срезается, как в legacy"
+        "хвостовой пробел срезается"
     );
 }
 
@@ -689,7 +688,7 @@ fn extract_rejects_symlink_entry() {
 }
 
 #[test]
-fn swap_rollback_and_cleanup_match_legacy() {
+fn swap_rollback_and_cleanup() {
     let rig = Rig::new();
     let new = rig.write_new("новая");
     fs::write(suffixed(&rig.exe, OLD_SUFFIX), "совсем старая").unwrap();
@@ -998,7 +997,7 @@ fn skipped_version_roundtrip_and_garbage() {
 }
 
 #[test]
-fn writable_check_matches_legacy() {
+fn writable_check() {
     let rig = Rig::new();
     assert!(bmm_app_release::check_writable(&rig.exe).is_ok());
     assert_eq!(

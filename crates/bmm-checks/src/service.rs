@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn possible_update_is_chosen_over_likely_as_more_confident() {
-        // Legacy сравнивает enum как числа: Possible > Likely.
+        // Порядок вариантов: Possible > Likely.
         let store = InMemoryLibraryStore::new();
         add(
             &store,

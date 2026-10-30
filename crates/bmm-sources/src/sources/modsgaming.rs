@@ -18,7 +18,7 @@ use super::{ModSource, SourceError};
 static ROOT: LazyLock<Url> = LazyLock::new(|| Url::parse(parser::BASE).unwrap());
 /// Старые привязки могли быть сохранены на прежний домен: карточку по прямой
 /// ссылке ещё читаем, но поиск и лента работают уже на новом сайте.
-static LEGACY_ROOT: LazyLock<Url> = LazyLock::new(|| Url::parse("https://modsgaming.ru/").unwrap());
+static OLD_ROOT: LazyLock<Url> = LazyLock::new(|| Url::parse("https://modsgaming.ru/").unwrap());
 
 pub struct ModsGamingSource {
     fetcher: Arc<PoliteFetcher>,
@@ -113,7 +113,7 @@ impl ModSource for ModsGamingSource {
     }
 
     fn owns(&self, url: &Url) -> bool {
-        common::belongs_to(&ROOT, url) || common::belongs_to(&LEGACY_ROOT, url)
+        common::belongs_to(&ROOT, url) || common::belongs_to(&OLD_ROOT, url)
     }
 
     fn is_mod_page(&self, url: &Url) -> bool {
