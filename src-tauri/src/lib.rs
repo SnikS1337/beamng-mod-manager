@@ -87,11 +87,14 @@ pub fn run() {
     let library = Arc::new(JsonLibraryStore::new(paths.library(), system_clock()));
     // У каждого сайта за Cloudflare своё скрытое окно: в одном окне страницы шли
     // строго по очереди, и Modland с ModHub ждали друг друга.
+    let browser_log = Some(paths.root().join("browser-pages.log"));
     let modland_pages = Arc::new(browser_pages::BrowserPages::new(
         browser_pages::MODLAND_LABEL,
+        browser_log.clone(),
     ));
     let modhub_pages = Arc::new(browser_pages::BrowserPages::new(
         browser_pages::MODHUB_LABEL,
+        browser_log,
     ));
     let pages: Arc<dyn PageFetcher> = Arc::new(RoutingPageFetcher::new(
         Arc::new(RoutingPageFetcher::new(
