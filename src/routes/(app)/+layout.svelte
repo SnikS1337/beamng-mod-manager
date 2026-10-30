@@ -9,6 +9,7 @@
   import NavRail from "#lib/shell/NavRail.svelte";
   import Titlebar from "#lib/shell/Titlebar.svelte";
   import ToastHost from "#lib/shell/ToastHost.svelte";
+  import AppUpdateNotice from "#lib/shell/AppUpdateNotice.svelte";
   import WelcomeTour from "#lib/shell/WelcomeTour.svelte";
   import { appearance } from "#lib/shell/appearance.svelte.js";
 
@@ -64,6 +65,7 @@
     <IncomingHost />
     <CommandPalette />
     <ToastHost />
+    <AppUpdateNotice />
     <WelcomeTour open={welcome} onClose={() => void closeWelcome()} />
   </div>
 </IconContext>

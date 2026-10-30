@@ -1144,7 +1144,7 @@
           </div>
           {#if releaseNotes.length > 0}
             <details class="about-notes">
-              <summary>Что нового в версии {appUpdate?.currentVersion ?? ""}</summary>
+              <summary>Что нового в версии {appUpdate?.state.manifest?.version ?? appUpdate?.currentVersion ?? ""}</summary>
               <ul>
                 {#each releaseNotes as note}
                   <li>{note}</li>
@@ -1833,6 +1833,7 @@
   }
 
   .about-notes ul {
+    overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
     gap: 4px;

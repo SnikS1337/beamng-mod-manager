@@ -15,8 +15,9 @@ use crate::version::AppVersion;
 pub const MIN_SIZE: u64 = 1024 * 1024;
 /// Защита от подмены огромным файлом.
 pub const MAX_SIZE: u64 = 400 * 1024 * 1024;
-/// Заметки длиннее не показываем целиком.
-pub const MAX_NOTES_CHARS: usize = 500;
+/// Заметки длиннее не показываем целиком. Было 500 — и список «Что нового» в
+/// 1.2 обрывался на третьей строке посреди слова.
+pub const MAX_NOTES_CHARS: usize = 8000;
 
 /// Разобранное и проверенное описание обновления.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -121,11 +122,15 @@ pub fn parse_manifest(json: &str) -> Result<UpdateManifest, ManifestError> {
     })
 }
 
+/// Длинные заметки режем по концу строки, а не посреди слова.
 fn truncate_notes(notes: &str) -> String {
-    if notes.chars().count() > MAX_NOTES_CHARS {
-        notes.chars().take(MAX_NOTES_CHARS).collect()
-    } else {
-        notes.to_string()
+    if notes.chars().count() <= MAX_NOTES_CHARS {
+        return notes.to_string();
+    }
+    let head: String = notes.chars().take(MAX_NOTES_CHARS).collect();
+    match head.rfind('\n') {
+        Some(end) if end > 0 => head[..end].trim_end().to_string(),
+        _ => head,
     }
 }
 
