@@ -6,7 +6,7 @@
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
-  import { downloadOpen } from "#lib/ipc/download.js";
+  import { downloadOpen, downloadOpenBatch, type DownloadRequest } from "#lib/ipc/download.js";
   import { onDestroy, onMount } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
   import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
@@ -414,17 +414,38 @@
     await openExternal(url);
   }
 
+  function requestOf(finding: UpdateFinding): DownloadRequest {
+    return {
+      modName: finding.modName,
+      installedVersion: finding.installedVersion,
+      latestVersion: finding.latestVersion,
+      pageUrl: finding.url,
+      previewUrl: finding.previewUrl ?? null,
+      role: finding.role ?? null,
+    };
+  }
+
+  // «Обновить все» — только уверенные обновления: «возможно» сначала смотрит человек.
+  const sure = $derived(snapshot.findings.filter((finding) => finding.status === "likely"));
+
+  /** «Обновить все»: окно загрузки проводит по страницам, установка — одна в конце. */
+  async function updateAll() {
+    if (sure.length === 0) return;
+    if (sure.length === 1) {
+      await update(sure[0]);
+      return;
+    }
+    try {
+      await downloadOpenBatch(sure.map(requestOf));
+    } catch (reason) {
+      error = errorText(reason);
+    }
+  }
+
   /** «Обновить»: окно загрузки; если оно недоступно — браузер и наблюдение за «Загрузками». */
   async function update(finding: UpdateFinding) {
     try {
-      await downloadOpen({
-        modName: finding.modName,
-        installedVersion: finding.installedVersion,
-        latestVersion: finding.latestVersion,
-        pageUrl: finding.url,
-        previewUrl: finding.previewUrl ?? null,
-        role: finding.role ?? null,
-      });
+      await downloadOpen(requestOf(finding));
       return;
     } catch {
       // Ниже — прежний путь: системный браузер и «Загрузки».
@@ -641,6 +662,20 @@
           </span>
         </div>
       {:else if filter === "available" || filter === "hidden"}
+        {#if filter === "available" && sure.length > 1}
+          <div class="all">
+            <div>
+              <b>Обновить все — {sure.length} {plural(sure.length, "мод", "мода", "модов")}</b>
+              <span>
+                Окно загрузки откроет страницы по очереди: вы нажимаете Download, а в конце
+                программа ставит всё одной кнопкой.
+              </span>
+            </div>
+            <button class="btn-primary" type="button" onclick={() => void updateAll()}>
+              Обновить все
+            </button>
+          </div>
+        {/if}
         {#each filter === "available" ? snapshot.findings : snapshot.hidden as finding (finding.modId)}
           {@const possible = finding.status !== "likely"}
           <article class="card">
@@ -974,6 +1009,33 @@
     min-width: 0;
     overflow-y: auto;
     padding: 20px 24px 24px;
+  }
+
+  .all {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--accent-brand);
+    border-radius: 12px;
+    background: var(--accent-brand-soft);
+  }
+
+  .all > div {
+    display: grid;
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .all span {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+  }
+
+  .all button {
+    flex: none;
   }
 
   .card {

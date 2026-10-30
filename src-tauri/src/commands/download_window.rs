@@ -51,6 +51,8 @@ pub(crate) struct DownloadPanelEvent {
 
 static CONTEXT: Mutex<Option<DownloadRequest>> = Mutex::new(None);
 static READY: Mutex<Option<String>> = Mutex::new(None);
+/// Обновление пачкой: страницы модов по очереди, установка — одна, в конце.
+static BATCH: Mutex<Vec<DownloadRequest>> = Mutex::new(Vec::new());
 static INTERCEPTED: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -96,6 +98,10 @@ fn clear_ready() {
 /// Незаконченная загрузка после этого снова видна сторожу «Загрузок».
 fn clear_session() {
     clear_ready();
+    BATCH
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clear();
     *CONTEXT.lock().unwrap_or_else(|error| error.into_inner()) = None;
     INTERCEPTED
         .lock()
@@ -112,8 +118,68 @@ pub fn download_close(app: AppHandle) {
     }
 }
 
+/// Очередь пачки для панели (пустая — обычное обновление одного мода).
+#[tauri::command]
+pub fn download_batch() -> Vec<DownloadRequest> {
+    BATCH
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+}
+
 #[tauri::command]
 pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(), AppError> {
+    BATCH
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clear();
+    // Окно могло вести пачку: панель должна узнать, что очередь кончилась.
+    let _ = app.emit_to(
+        PANEL_LABEL,
+        "download://batch",
+        Vec::<DownloadRequest>::new(),
+    );
+    open_request(app, request).await
+}
+
+/// «Обновить все»: окно откроет первую страницу, панель поведёт по остальным.
+#[tauri::command]
+pub async fn download_open_batch(
+    app: AppHandle,
+    requests: Vec<DownloadRequest>,
+) -> Result<(), AppError> {
+    let first = requests
+        .first()
+        .cloned()
+        .ok_or_else(|| AppError::new("batch", "Нечего обновлять."))?;
+    if let Some(bad) = requests.iter().find(|request| {
+        Url::parse(&request.page_url)
+            .ok()
+            .is_none_or(|url| !page_url_allowed(&url))
+    }) {
+        return Err(AppError::new(
+            "url",
+            format!("Некорректный адрес страницы «{}».", bad.mod_name),
+        ));
+    }
+    *BATCH.lock().unwrap_or_else(|error| error.into_inner()) = requests;
+    let _ = app.emit_to(PANEL_LABEL, "download://batch", download_batch());
+    open_request(app, first).await
+}
+
+/// Следующая (или любая) страница пачки — без сброса очереди.
+#[tauri::command]
+pub async fn download_batch_goto(app: AppHandle, index: usize) -> Result<(), AppError> {
+    let request = BATCH
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(index)
+        .cloned()
+        .ok_or_else(|| AppError::new("batch", "Такого мода в очереди нет."))?;
+    open_request(app, request).await
+}
+
+async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), AppError> {
     let url = Url::parse(&request.page_url)
         .map_err(|_| AppError::new("url", "Некорректный адрес страницы мода."))?;
     if !page_url_allowed(&url) {
