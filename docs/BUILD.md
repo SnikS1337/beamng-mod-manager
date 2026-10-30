@@ -16,7 +16,7 @@ TypeScript остаётся 6.0.x: svelte-check пока не поддержив
 лежат в `src/lib/components/ui` и собираются без CLI. Новые компоненты через CLI
 добавлять после проверки, что он понимает SvelteKit 3 (конфиг в `vite.config.js`,
 импорты `#lib/…`). Dependabot (`.github/dependabot.yml`) раз в неделю проверяет
-npm, Cargo и GitHub Actions; PR идут в `refactor-rust-poc`.
+npm, Cargo и GitHub Actions; PR идут в `main`.
 
 ## Обычная сборка (x64)
 
@@ -87,9 +87,12 @@ Windows UAC считает exe с таким словом в имени уста
 
 `.github/workflows/ci.yml` — на каждый push и PR, `windows-2025`, x64: `npm ci`,
 `svelte-check`, Vitest, сборка фронтенда, `cargo fmt`, `clippy -D warnings`,
-`cargo test`. Полная release-сборка окна — только при ручном запуске
-(`workflow_dispatch`): с LTO она долгая, а exe для выпуска всё равно собирает
-`release.yml`.
+`cargo test`. Полная release-сборка exe (с LTO, долгая) идёт на каждом push в `main`
+и при ручном запуске (`workflow_dispatch`); в рабочих ветках её нет, чтобы CI был
+быстрым. Готовый exe из `main` лежит в артефактах запуска.
+
+Основная ветка — `main`. Крупные изменения делаются в отдельной ветке и попадают в
+`main` fast-forward после зелёного CI. Прежняя C#/WPF-версия — в ветке `old-main`.
 
 Старый C# workflow лежит в `legacy/.github/workflows/` и GitHub его не запускает.
 
@@ -110,8 +113,7 @@ Windows UAC считает exe с таким словом в имени уста
 1. Перенести строки из «Не выпущено» в новый раздел `## <версия>` в `CHANGES.md`.
 2. Поднять версию в `Cargo.toml`, `package.json` и `src-tauri/tauri.conf.json`
    (и `Cargo.lock` — `cargo check` обновит).
-3. Дождаться зелёного CI на коммите основной ветки и поставить на него тег
-   `v<версия>`. Выпуск — только по решению владельца проекта.
+3. Дождаться зелёного CI на коммите `main` и поставить на него тег `v<версия>`. Выпуск — только по решению владельца проекта.
 
 Если выпуск меняет способ проверки или установки обновления, проверьте обновление со
 старой версии на новую до тега: 1.0.4 не смогла принять 1.0.5 сама.
