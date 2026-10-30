@@ -258,7 +258,18 @@ pub fn find_pages_with(
             {
                 queries.push(from_file);
             }
+            // Без скобок и пометок: «LADA 2106 (Remaster Version)» → «lada 2106» —
+            // поиск сайта по точной фразе со скобками часто пуст.
+            let plain = TitleNormalizer::normalize(title.as_deref().unwrap_or_default());
+            if plain.split_whitespace().count() >= 2
+                && !queries
+                    .iter()
+                    .any(|query| query.eq_ignore_ascii_case(&plain))
+            {
+                queries.push(plain);
+            }
         }
+        let author = author_of(&installed.id);
         let mut searched_ok = false;
         let mut listings: Vec<Listing> = Vec::new();
         let mut seen_listings: std::collections::HashSet<(String, String)> =
@@ -293,6 +304,18 @@ pub fn find_pages_with(
                     listings.push(listing);
                 }
             }
+            // Уверенная страница уже есть — остальные варианты запроса не нужны:
+            // каждый запрос — несколько сайтов, а Modland и ModHub грузятся медленно.
+            if PageGuesser::pick_with_author(
+                installed,
+                title.as_deref(),
+                author.as_deref(),
+                &listings,
+            )
+            .is_some_and(|guess| guess.certain)
+            {
+                break;
+            }
         }
         if stopped {
             break;
@@ -309,7 +332,6 @@ pub fn find_pages_with(
 
         // Страницу с размером и автором читаем до защёлки: иначе «Следить» и
         // ручная привязка ждут сеть до двух минут.
-        let author = author_of(&installed.id);
         let mut guess = PageGuesser::pick_with_author(
             installed,
             title.as_deref(),
@@ -360,14 +382,30 @@ pub fn find_pages_with(
 
         let _gate = gate();
         // За время поиска мод могли удалить, привязать вручную или отказаться от проверки.
+        // Старое непроверенное предложение при поиске по кнопке не мешает: его заменит
+        // новое или, если ничего не нашлось, оно уйдёт.
         if store.get_mod(&installed.id).is_none()
             || store.is_checking_declined(&installed.id)
-            || store
-                .bindings()
-                .iter()
-                .any(|binding| binding.mod_id == installed.id)
+            || store.bindings().iter().any(|binding| {
+                binding.mod_id == installed.id && (binding.confirmed || !retry_recent)
+            })
         {
             continue;
+        }
+        if retry_recent {
+            for stale in store
+                .bindings()
+                .into_iter()
+                .filter(|binding| binding.mod_id == installed.id && !binding.confirmed)
+            {
+                let same = guess.as_ref().is_some_and(|guess| {
+                    guess.listing.source == stale.source
+                        && guess.listing.source_id == stale.source_id
+                });
+                if !same {
+                    store.remove_binding(&stale.mod_id, &stale.source);
+                }
+            }
         }
         if let Some(guess) = guess {
             let binding = ModBinding {
@@ -1225,6 +1263,50 @@ mod tests {
         assert_eq!(
             store.source_status("modsgaming"),
             bmm_domain::library::SourceStatus::NeedsHumanCheck
+        );
+    }
+
+    #[test]
+    fn manual_search_replaces_an_old_wrong_suggestion() {
+        // Было: «LADA 2102» с предложением «Lada 2105» (из старых данных) кнопка
+        // «Найти страницы» не трогала — мод уже «со страницей».
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("lada", "LADA2102.zip"));
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "lada".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "lada-2105".to_string(),
+                url: Url::parse("https://modsgaming.test/lada-2105").unwrap(),
+                confirmed: false,
+            })
+            .unwrap();
+        let site = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&site));
+        let run = |retry_recent: bool| {
+            find_pages_with(
+                &store,
+                &search,
+                now(),
+                &AtomicBool::new(false),
+                true,
+                retry_recent,
+                &|_| Some("LADA 2102".to_string()),
+                &|_| None,
+                None,
+            )
+        };
+        run(false);
+        assert_eq!(
+            store.bindings().len(),
+            1,
+            "сама по себе программа предложение не трогает"
+        );
+        let report = run(true);
+        assert_eq!(report.searched, 1);
+        assert!(
+            store.bindings().is_empty(),
+            "по кнопке неверное предложение ушло"
         );
     }
 
