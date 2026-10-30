@@ -195,21 +195,34 @@ pub(crate) fn coverage(state: &AppState) -> CoverageDto {
         .filter(|binding| binding.confirmed)
         .map(|binding| binding.mod_id)
         .collect();
-    let mut groups: HashMap<String, Vec<&str>> = HashMap::new();
-    for item in &mods {
-        let head = copies
-            .get(&item.id)
-            .map_or(item.id.as_str(), |copy| copy.of.as_str());
-        groups.entry(head.to_string()).or_default().push(&item.id);
+    let ids: Vec<&str> = mods.iter().map(|item| item.id.as_str()).collect();
+    tally(&ids, &copies, &followed, &|id| {
+        store.is_checking_declined(id)
+    })
+}
+
+/// Подсчёт по группам копий. Группа отслеживается, если отслеживается любая её копия,
+/// и «без проверки», если от проверки отказались у любой копии: отказ мог быть
+/// сделан у копии, а не у основного файла.
+pub(crate) fn tally(
+    ids: &[&str],
+    copies: &HashMap<String, bmm_packs::duplicates::Duplicate>,
+    followed: &std::collections::HashSet<String>,
+    declined: &dyn Fn(&str) -> bool,
+) -> CoverageDto {
+    let mut groups: HashMap<&str, Vec<&str>> = HashMap::new();
+    for id in ids {
+        let head = copies.get(*id).map_or(*id, |copy| copy.of.as_str());
+        groups.entry(head).or_default().push(id);
     }
     let mut result = CoverageDto {
         mods: groups.len(),
         ..CoverageDto::default()
     };
-    for (head, members) in &groups {
+    for members in groups.values() {
         if members.iter().any(|id| followed.contains(*id)) {
             result.tracked += 1;
-        } else if store.is_checking_declined(head) {
+        } else if members.iter().any(|id| declined(id)) {
             result.declined += 1;
         } else {
             result.without_page += 1;

@@ -209,6 +209,17 @@ describe("updateHeadline", () => {
             tone: "warn",
         });
     });
+
+    it("не считает моды, от проверки которых отказались", () => {
+        expect(
+            updateHeadline(0, [site({ displayName: "STMods" })], now, {
+                mods: 35,
+                tracked: 26,
+                withoutPage: 7,
+                declined: 2,
+            }).text,
+        ).toBe("Актуальны 26 из 33: у 7 модов нет страницы — их не проверяли");
+    });
 });
 
 describe("итог проверки и моды без страницы", () => {
@@ -224,6 +235,12 @@ describe("итог проверки и моды без страницы", () => 
                 ...base,
                 coverage: { mods: 10, tracked: 9, withoutPage: 1, declined: 0 },
             }).text,
-        ).toBe("Новых версий нет. У 1 мода нет страницы — их не проверяли");
+        ).toBe("Новых версий нет. У 1 мода нет страницы — его не проверяли");
+        expect(
+            checkSummary({
+                ...base,
+                coverage: { mods: 30, tracked: 9, withoutPage: 21, declined: 0 },
+            }).text,
+        ).toBe("Новых версий нет. У 21 мода нет страницы — их не проверяли");
     });
 });

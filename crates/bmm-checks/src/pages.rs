@@ -269,6 +269,24 @@ pub fn find_pages_with(
                 queries.push(plain);
             }
         }
+        // Слишком короткое название («x5.zip» → «x5») сайты не ищут вовсе. Отмечаем
+        // мод как искавшийся: иначе он навсегда оставался бы в очереди, занимал место
+        // в каждом заходе и раздувал «осталось искать».
+        queries
+            .retain(|query| search.normalize(query).chars().count() >= search.min_query_length());
+        if queries.is_empty() {
+            let _gate = gate();
+            if store.get_mod(&installed.id).is_some() {
+                store.set_page_search(
+                    &installed.id,
+                    Some(PageSearch {
+                        at: now,
+                        rejected: false,
+                    }),
+                );
+            }
+            continue;
+        }
         let author = author_of(&installed.id);
         let mut searched_ok = false;
         let mut listings: Vec<Listing> = Vec::new();
@@ -466,6 +484,7 @@ pub fn find_pages_until(
     let started = Instant::now();
     let mut report = PageSearchReport::default();
     let mut done = 0usize;
+    let mut left = total;
     loop {
         let round = {
             let mut forward = |step: &UpdateProgress| {
@@ -494,11 +513,15 @@ pub fn find_pages_until(
         report.followed += round.followed;
         report.searched += round.searched;
         report.cancelled |= round.cancelled;
-        done += round.searched;
-        // Никто не ответил или искать больше некого — дальше заходы ничего не дадут.
-        if round.cancelled || round.searched == 0 || started.elapsed() >= budget {
+        // Очередь не сдвинулась (никто не ответил) или кончилась — дальше заходы
+        // ничего не дадут. Считаем по очереди, а не по `searched`: заход из одних
+        // безымянных модов никого не «искал», но очередь сдвинул.
+        let now_left = PageGuesser::due_all(store, now, include_disabled, retry_recent).len();
+        if round.cancelled || now_left == 0 || now_left >= left || started.elapsed() >= budget {
             break;
         }
+        left = now_left;
+        done = total.saturating_sub(now_left);
     }
     report
 }
@@ -1426,6 +1449,59 @@ mod tests {
             Duration::from_secs(600),
         );
         assert_eq!(report.searched, 70);
+    }
+
+    #[test]
+    fn too_short_name_is_marked_and_not_searched_again() {
+        // «x.zip» сайты не ищут (короче двух знаков): раньше мод не отмечался и
+        // оставался в очереди навсегда — в каждом заходе и в каждой проверке.
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "x.zip"));
+        let site = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&site));
+        let report = find_pages(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(report.searched, 0, "сайты не спрашивали");
+        assert_eq!(site.calls.load(Ordering::SeqCst), 0);
+        assert!(store.get_page_search("a").is_some());
+        assert!(PageGuesser::due_all(&store, now(), true, false).is_empty());
+    }
+
+    #[test]
+    fn long_search_goes_on_after_a_round_of_unsearchable_names() {
+        // Первый заход целиком из безымянных модов «никого не искал», но очередь
+        // сдвинул: поиск не должен на этом останавливаться.
+        let store = InMemoryLibraryStore::new();
+        many_mods(&store, 10);
+        for index in 0..60 {
+            let mut short = installed(&format!("s{index}"), "x.zip");
+            // Новее остальных — в очереди первыми.
+            short.installed_at_utc = now() - TimeDelta::hours(1);
+            store.upsert_mod(short);
+        }
+        let site = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&site));
+        let report = find_pages_until(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            false,
+            &|_| None,
+            &|_| None,
+            None,
+            Duration::from_secs(600),
+        );
+        assert_eq!(report.searched, 10);
+        assert!(PageGuesser::due_all(&store, now(), true, false).is_empty());
     }
 
     #[test]
