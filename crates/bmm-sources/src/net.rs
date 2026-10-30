@@ -2484,7 +2484,16 @@ mod tests {
                 fetcher.get("site", &Url::parse("https://site.test/a").unwrap())
             })
         };
-        std::thread::sleep(Duration::from_millis(50));
+        // Ждём, пока медленный запрос действительно занял очередь сайта: 50 мс сна под
+        // нагрузкой не хватало, и «отменяемый» запрос сам уходил в 600-мс загрузку.
+        let waited = Instant::now();
+        while site.calls.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            assert!(
+                waited.elapsed() < Duration::from_secs(5),
+                "медленный запрос не начался"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         let stopper = {
             let cancel = cancel.clone();

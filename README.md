@@ -69,9 +69,14 @@ npm test
 npm run build
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo test --workspace --all-targets
+cargo test --workspace --doc
 npm run tauri dev
 ```
+
+`npm run dev` — только интерфейс в браузере, без Rust: данные там поддельные
+(5000 модов, версия программы 1.0.2 и «обновление» 1.0.3 — заглушки из
+`src/lib/ipc/*.ts`). Настоящая программа — `npm run tauri dev` или собранный exe.
 
 Структура: `crates/` — Rust-библиотеки (домен, игра, архивы, сайты, проверки,
 обновление приложения), `src-tauri/` — окна и команды, `src/` — SvelteKit-интерфейс,

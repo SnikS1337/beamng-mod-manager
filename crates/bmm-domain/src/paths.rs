@@ -45,24 +45,17 @@ impl AppPaths {
         self.root.join("search-previews")
     }
 
-    pub fn webview2(&self) -> PathBuf {
-        self.root.join("WebView2")
-    }
-
     pub fn update_dir(&self) -> PathBuf {
         self.root.join("update")
     }
 
-    pub fn errors_log(&self) -> PathBuf {
-        self.root.join("errors.log")
-    }
-
+    /// Пустой `WebView2\` прежние версии создавали зря: профиль браузера WebView2
+    /// хранит в своей папке (`%LOCALAPPDATA%\com.sniks1337.beammodmanager`).
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         for path in [
             self.root(),
             self.previews().as_path(),
             self.search_previews().as_path(),
-            self.webview2().as_path(),
             self.update_dir().as_path(),
         ] {
             std::fs::create_dir_all(path)?;
@@ -86,9 +79,7 @@ mod tests {
             paths.search_previews(),
             paths.root().join("search-previews")
         );
-        assert_eq!(paths.webview2(), paths.root().join("WebView2"));
         assert_eq!(paths.update_dir(), paths.root().join("update"));
-        assert_eq!(paths.errors_log(), paths.root().join("errors.log"));
     }
 
     #[test]
@@ -100,10 +91,13 @@ mod tests {
             paths.root(),
             paths.previews().as_path(),
             paths.search_previews().as_path(),
-            paths.webview2().as_path(),
             paths.update_dir().as_path(),
         ] {
             assert!(path.is_dir(), "нет каталога {path:?}");
         }
+        assert!(
+            !paths.root().join("WebView2").exists(),
+            "пустую папку не создаём"
+        );
     }
 }

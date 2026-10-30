@@ -52,10 +52,22 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Тесты Rust
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Примеры в документации Rust
+        run: cargo test --workspace --doc --locked
+
+      # rust-version в Cargo.toml — обещание: обновление зависимостей не должно
+      # незаметно поднять нужную версию Rust.
+      - name: Минимальная версия Rust
+        shell: pwsh
+        run: |
+          $msrv = (Select-String -Path Cargo.toml -Pattern '^rust-version = "(.+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $msrv --profile minimal --target x86_64-pc-windows-msvc
+          cargo "+$msrv" check --workspace --all-targets --locked
 
       # Release-сборка с LTO — самая долгая часть. В рабочих ветках она не нужна:
       # код уже проверен clippy и тестами. На main собираем всегда — основная ветка
@@ -66,7 +78,7 @@ jobs:
 
       - name: Exe в артефакты
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BeamModManager-${{ github.sha }}
           path: target/release/BeamModManager.exe

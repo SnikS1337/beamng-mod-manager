@@ -35,7 +35,8 @@ npm run tauri build -- --no-bundle
 
 `tauri build` кладёт exe в `target/release/BeamModManager.exe`, с `--debug` — в
 `target/debug/BeamModManager.exe` (интерфейс встроен, дев-сервер не нужен). Установщик
-не используется: выпуск — portable zip с exe и `latest.json`. Сколько тестов сейчас —
+не используется: выпуск — portable zip с одним exe, рядом в релизе отдельно лежит
+`latest.json` (по нему программа узнаёт о новой версии). Сколько тестов сейчас —
 в [STATUS](STATUS.md).
 
 ## Типы для интерфейса
@@ -86,7 +87,8 @@ Windows UAC считает exe с таким словом в имени уста
 
 `.github/workflows/ci.yml` — на каждый push и PR, `windows-2025`, x64: `npm ci`,
 `svelte-check`, Vitest, сборка фронтенда, `cargo fmt`, `clippy -D warnings`,
-`cargo test`. Полная release-сборка exe (с LTO, долгая) идёт на каждом push в `main`
+`cargo test --all-targets` и доктесты (всё с `--locked`), `cargo check` на
+минимальной версии Rust из `rust-version`. Полная release-сборка exe (с LTO, долгая) идёт на каждом push в `main`
 и при ручном запуске (`workflow_dispatch`); в рабочих ветках её нет, чтобы CI был
 быстрым. Готовый exe из `main` лежит в артефактах запуска.
 
@@ -95,10 +97,12 @@ Windows UAC считает exe с таким словом в имени уста
 
 ## Релиз и обновление программы
 
-`.github/workflows/release.yml` запускается на тег `v*`. Перед тегом версия должна
-совпадать в `Cargo.toml`, `package.json` и `src-tauri/tauri.conf.json`; workflow
-проверяет это и падает при расхождении. Он же требует непустой раздел `## <версия>`
-в `CHANGES.md`.
+`.github/workflows/release.yml` запускается только на тег `v*`, и тег должен стоять
+на коммите из `main`. Перед тегом версия должна совпадать в `Cargo.toml`,
+`package.json` и `src-tauri/tauri.conf.json`; workflow проверяет это и падает при
+расхождении. Он же требует непустой раздел `## <версия>` в `CHANGES.md`, ещё раз
+прогоняет тесты и собирает с `--locked`. Право писать в репозиторий есть только у
+отдельного шага публикации.
 
 Сборка делает `BeamModManager-<версия>.zip`, считает SHA-256, пишет `latest.json`
 и публикует GitHub Release. Приложение читает `releases/latest/download/latest.json`,
