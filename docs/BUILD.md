@@ -34,11 +34,25 @@ npm run tauri dev
 npm run tauri build -- --no-bundle
 ```
 
-Отладочный бинарник — `target/debug/bmm-desktop.exe`; release-сборка Tauri кладёт
-`target/release/BeamModManager.exe`. Установщик не используется: выпуск — portable
-zip с exe и `latest.json`.
+`tauri build` кладёт exe в `target/release/BeamModManager.exe`, с `--debug` — в
+`target/debug/BeamModManager.exe` (интерфейс встроен, дев-сервер не нужен). Установщик
+не используется: выпуск — portable zip с exe и `latest.json`. Сколько тестов сейчас —
+в [STATUS](STATUS.md).
 
-На 2026-10-27 проходят 656 тестов Rust (1 ignored) и 90 тестов фронтенда.
+## Типы для интерфейса
+
+DTO команд описаны в Rust; TypeScript-типы для окна генерируются из них в
+`src/lib/ipc/generated.ts`:
+
+```bash
+UPDATE_TS=1 cargo test -p bmm-desktop export_ts_types
+```
+
+Без `UPDATE_TS` этот тест проверяет, что `generated.ts` не отстал от Rust. Строковые
+значения (`kind`, `status`, `phase`…) лежат в `src/lib/ipc/unions.ts` и сверяются
+тестами. Тест `every_window_call_reaches_a_command_with_the_same_arguments` следит,
+чтобы каждый `invoke()` окна попадал в зарегистрированную команду с теми же
+аргументами.
 
 ## Если хост ARM64
 
@@ -71,10 +85,11 @@ Windows UAC считает exe с таким словом в имени уста
 
 ## CI
 
-`.github/workflows/ci.yml` — `windows-2025`, x64: `npm ci`, `svelte-check`, Vitest,
-сборка фронтенда, `cargo fmt`, `clippy -D warnings`, `cargo test`. Полная сборка окна
-запускается только вручную (`workflow_dispatch`), потому что release-сборка с LTO
-долгая; выпуск всё равно проверяется отдельным workflow.
+`.github/workflows/ci.yml` — на каждый push и PR, `windows-2025`, x64: `npm ci`,
+`svelte-check`, Vitest, сборка фронтенда, `cargo fmt`, `clippy -D warnings`,
+`cargo test`. Полная release-сборка окна — только при ручном запуске
+(`workflow_dispatch`): с LTO она долгая, а exe для выпуска всё равно собирает
+`release.yml`.
 
 Старый C# workflow лежит в `legacy/.github/workflows/` и GitHub его не запускает.
 
@@ -90,8 +105,16 @@ Windows UAC считает exe с таким словом в имени уста
 скачивает архив, проверяет размер и хеш и после кнопки «Перезапустить» заменяет exe
 через отдельный процесс `--install-update` с откатом.
 
-В манифестах **1.0.4**, в `CHANGES.md` описан этот выпуск. Тег `v1.0.4` собирается
-workflow `release.yml` из ветки `work/2026-10-24`; `main` и `refactor-rust-poc` не трогаются.
+Порядок выпуска:
+
+1. Перенести строки из «Не выпущено» в новый раздел `## <версия>` в `CHANGES.md`.
+2. Поднять версию в `Cargo.toml`, `package.json` и `src-tauri/tauri.conf.json`
+   (и `Cargo.lock` — `cargo check` обновит).
+3. Дождаться зелёного CI на коммите основной ветки и поставить на него тег
+   `v<версия>`. Выпуск — только по решению владельца проекта.
+
+Если выпуск меняет способ проверки или установки обновления, проверьте обновление со
+старой версии на новую до тега: 1.0.4 не смогла принять 1.0.5 сама.
 
 ## Значок
 
@@ -108,9 +131,10 @@ npm run tauri icon -- design/icon/app-large.svg
 ## Данные при проверках
 
 Приложение использует `%LOCALAPPDATA%\BeamModManager` (тот же каталог, что старая
-версия). Тесты домена и архивов пишут только во временные каталоги. Реальная папка
-модов и игра для ручной проверки: `.dev\mods`/`.dev\mds` в Desktop-worktree и
-`C:\Users\Admin\Desktop\BeamNG.drive`.
+версия). Тесты пишут только во временные каталоги. Для ручной проверки удобна
+отдельная копия папки модов; чистый профиль программы — запуск exe с
+`LOCALAPPDATA`, указывающим на пустую папку. Папка `.dev/` в корне исключена из git
+(локальные скрипты, журналы, патчи).
 
 Для сбора сведений о BeamNG на другой машине есть `tools/windows/collect-beamng-info.ps1`:
 он только читает файлы игры и складывает zip на рабочем столе.
