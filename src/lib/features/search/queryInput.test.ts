@@ -24,6 +24,11 @@ describe("операторы поиска", () => {
     });
   });
 
+  it("знает ModHub", () => {
+    expect(parseSearchInput("bmw сайт:modhub.us").source).toBe("modhub");
+    expect(parseSearchInput("bmw site:modhub").source).toBe("modhub");
+  });
+
   it("оставляет неизвестные операторы обычным текстом", () => {
     expect(parseSearchInput("audi цена:дорого")).toEqual({
       text: "audi цена:дорого",

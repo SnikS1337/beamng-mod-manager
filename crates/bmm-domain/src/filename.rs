@@ -31,9 +31,9 @@ fn patterns() -> &'static Patterns {
         )
         .unwrap(),
         // Метки сайтов и каналов, которые дописывают к имени файла при раздаче:
-        // modland(.net), modsgaming, stmods, телеграм-канал «tg_m0dsbeamng».
+        // modland(.net), modhub, modsgaming, stmods, телеграм-канал «tg_m0dsbeamng».
         site_tag: Regex::new(
-            r"(?i)(?<![\p{L}\p{Nd}])[_\-\s]?(?:modland(?:[_\-\s]?net)?|modsgaming|stmods|(?:tg[_\-\s]?)?m0dsbeamng)(?![\p{L}\p{Nd}])",
+            r"(?i)(?<![\p{L}\p{Nd}])[_\-\s]?(?:modland(?:[_\-\s]?net)?|modhub(?:[_\-\s]?us)?|modsgaming|stmods|(?:tg[_\-\s]?)?m0dsbeamng)(?![\p{L}\p{Nd}])",
         )
         .unwrap(),
         // Копия, которую браузер сохранил повторно: «weather_fx (1)».
@@ -277,6 +277,7 @@ mod tests {
             ),
             ("weather_fx_tg_m0dsbeamng.zip", "weather fx", None, None),
             ("weather_fx_modland.zip", "weather fx", None, None),
+            ("bmw_m8_cs_modhub.zip", "bmw m8 cs", None, None),
             ("weather_fx (1).zip", "weather fx", None, None),
             (
                 "acm_percheron_addon_GR_v1-0 (1).zip",

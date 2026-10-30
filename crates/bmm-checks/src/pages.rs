@@ -881,7 +881,7 @@ pub fn bind_url(
         .ok_or_else(|| {
             BindError::new(
                 BindErrorCode::UnknownSite,
-                "Этот сайт программа не знает: подойдут STMods, ModsGaming, Modland и репозиторий BeamNG.",
+                "Этот сайт программа не знает: подойдут STMods, ModsGaming, Modland, ModHub и репозиторий BeamNG.",
             )
         })?;
     if !source.is_mod_page(&url) {

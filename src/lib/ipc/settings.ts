@@ -25,7 +25,7 @@ export async function settingsLoad(): Promise<SettingsDto> {
     checkAppUpdates: true,
     autoCheckEveryHours: 0,
     checkDisabledMods: true,
-    disabledSources: ["modland"],
+    disabledSources: ["modland", "modhub"],
     keepBackups: 3,
     maxCardChecksPerSource: 150,
     liquidGlass: true,

@@ -10,7 +10,8 @@
     updatesCheckMod,
     updatesDeclineMod,
     updatesFindPage,
-    updatesOpenModland,
+    updatesOpenCheck,
+    checkSiteOf,
     updatesRefollow,
     updatesResumeMod,
     updatesUndoDecline,
@@ -1136,7 +1137,7 @@
           if (name) void goto(`/search?q=${encodeURIComponent(name)}`);
         }}
         {findingPage}
-        onPassCheck={updatesOpenModland}
+        onPassCheck={(url) => updatesOpenCheck(checkSiteOf(url))}
         onCheckUpdates={checkUpdatesSelected}
         onDeclineChecking={declineCheckingSelected}
         onResumeChecking={resumeCheckingSelected}

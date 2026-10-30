@@ -21,7 +21,8 @@
     updatesConfirmPage,
     updatesDismiss,
     updatesFindPages,
-    updatesOpenModland,
+    updatesOpenCheck,
+    CHECK_SITES,
     updatesRefollow,
     updatesRejectPage,
     updatesUnfollow,
@@ -403,15 +404,15 @@
     }
   }
 
-  async function openModland() {
+  async function openCheck(source: string) {
     if (passing) return;
     passing = true;
     try {
-      const passed = await updatesOpenModland();
+      const passed = await updatesOpenCheck(source);
       if (passed) {
-        toasts.show("Modland пускает программу — проверяем снова");
+        toasts.show(`${CHECK_SITES[source] ?? source} пускает программу — проверяем снова`);
         sources = sources.map((item) =>
-          item.id === "modland" ? { ...item, status: "ok", note: null } : item,
+          item.id === source ? { ...item, status: "ok", note: null } : item,
         );
         await check();
       }
@@ -896,11 +897,11 @@
               {/if}
             </span>
           </div>
-          <!-- Modland без единого мода иначе никогда не спросит проверку: без неё он
+          <!-- Сайт за Cloudflare без единого мода иначе никогда не спросит проверку: без неё он
                не отвечает и поиску страниц, и мод на нём так и не найдётся. -->
-          {#if site.id === "modland" && (site.tone === "warn" || site.text === "ни одного мода")}
-            <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openModland()}>
-              {passing ? "Проходим проверку…" : "Пройти проверку Modland"}
+          {#if site.id in CHECK_SITES && (site.tone === "warn" || site.text === "ни одного мода")}
+            <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openCheck(site.id)}>
+              {passing ? "Проходим проверку…" : `Пройти проверку ${CHECK_SITES[site.id]}`}
             </button>
           {/if}
         {/each}

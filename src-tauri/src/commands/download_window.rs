@@ -500,6 +500,21 @@ const SITE_HELPERS: &str = r#"
     event.preventDefault();
     location.href = next.href;
   }, true);
+  // Кнопка-зеркало ModHub — форма POST с target=_blank. Новое окно открыло бы адрес
+  // без данных формы, поэтому такие формы своего сайта отправляем в это же окно.
+  document.addEventListener("click", (event) => {
+    const button = event.target && event.target.closest
+      ? event.target.closest("button, input[type=submit]")
+      : null;
+    const form = button && button.form;
+    if (!form) return;
+    let action;
+    try { action = new URL(form.getAttribute("action") || location.href, location.href); } catch { return; }
+    if (action.host !== location.host) return;
+    if (!downloadPath.test(action.pathname + action.search)) return;
+    if (button.getAttribute("formtarget") === "_blank") button.setAttribute("formtarget", "_self");
+    if (form.getAttribute("target") === "_blank") form.setAttribute("target", "_self");
+  }, true);
 })();
 "#;
 

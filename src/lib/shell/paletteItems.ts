@@ -31,7 +31,7 @@ const COMMANDS: Omit<PaletteItem, "id" | "group">[] = [
 const SECTIONS: Omit<PaletteItem, "id" | "group">[] = [
   { label: "Гараж", hint: "ваши моды", action: { kind: "go", href: "/" } },
   { label: "Обновления", hint: "найденные версии", action: { kind: "go", href: "/updates" } },
-  { label: "Поиск на сайтах", hint: "Modland, STMods, ModsGaming", action: { kind: "go", href: "/search" } },
+  { label: "Поиск на сайтах", hint: "Modland, STMods, ModsGaming, ModHub", action: { kind: "go", href: "/search" } },
   { label: "Настройки", hint: "оформление, сайты, проверка", action: { kind: "go", href: "/settings" } },
   { label: "Папки игры и модов", hint: "настройки", action: { kind: "go", href: "/settings?section=folders" } },
 ];
@@ -60,7 +60,7 @@ export function paletteItems(query: string, mods: ModCardDto[]): PaletteItem[] {
   if (text) {
     commands.unshift({
       label: `Найти «${text}» на сайтах`,
-      hint: "Modland · STMods · ModsGaming",
+      hint: "Modland · STMods · ModsGaming · ModHub",
       action: { kind: "search", query: text },
     });
   }

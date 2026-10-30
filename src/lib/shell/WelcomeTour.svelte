@@ -28,7 +28,7 @@
     {
       icon: Search,
       title: "Поиск сразу везде",
-      text: "Modland, STMods и ModsGaming; один мод с разных сайтов — одна карточка.",
+      text: "Modland, STMods, ModsGaming и ModHub; один мод с разных сайтов — одна карточка.",
     },
     {
       icon: Sparkles,

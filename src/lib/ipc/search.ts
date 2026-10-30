@@ -94,13 +94,14 @@ export async function searchPagePreview(
   return invoke<string | null>("search_page_preview", { source, page });
 }
 
-export async function searchOpenModland(query: string): Promise<boolean> {
+/** «Пройти проверку» сайта из поиска: окно открывает выдачу этого сайта. */
+export async function searchOpenCheck(source: string, query: string): Promise<boolean> {
   if (!isTauri()) {
     await new Promise((resolve) => setTimeout(resolve, 900));
-    mockModlandNeedsCheck = false;
+    if (source === "modland") mockModlandNeedsCheck = false;
     return true;
   }
-  return invoke<boolean>("search_open_modland", { query });
+  return invoke<boolean>("search_open_check", { source, query });
 }
 
 export async function searchDecide(
@@ -141,6 +142,7 @@ const SOURCE_NAMES: Record<string, string> = {
   modland: "Modland",
   stmods: "STMods",
   modsgaming: "ModsGaming",
+  modhub: "ModHub",
   beamng: "BeamNG (официальный)",
 };
 

@@ -88,7 +88,7 @@
     onSearchSites?: () => void;
     findingPage?: boolean;
     /** Сайт просит подтвердить, что вы человек: открыть его проверку. `true` — пройдена. */
-    onPassCheck?: () => Promise<boolean>;
+    onPassCheck?: (pageUrl: string) => Promise<boolean>;
     /** Проверить обновления только этого мода по его странице. */
     onCheckUpdates?: () => Promise<void>;
     /** «Не проверять обновления» для этого мода. */
@@ -170,7 +170,7 @@
   async function passCheck() {
     if (!onPassCheck || bindBusy) return;
     bindBusy = true;
-    const passed = await onPassCheck().catch(() => false);
+    const passed = await onPassCheck(pageUrl.trim()).catch(() => false);
     bindBusy = false;
     // Проверку прошли — сразу пробуем ещё раз, вставлять ссылку заново не нужно.
     if (passed) await bindPage();
