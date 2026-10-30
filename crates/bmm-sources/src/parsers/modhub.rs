@@ -126,12 +126,7 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
             .captures(html)
             .and_then(|captures| captures.name("d"))
             .map(|text| clean(text.as_str()))
-            .and_then(|text| {
-                DESCRIPTION_VERSION
-                    .captures(&text)
-                    .and_then(|captures| captures.name("v"))
-                    .map(|version| version.as_str().to_string())
-            })
+            .and_then(|text| description_version(&text))
     {
         listing.mod_version = Some(version);
     }
@@ -144,6 +139,24 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
         listing.price = price;
     }
     listing
+}
+
+/// Версия мода из описания. «Game version: 0.38» и «BeamNG version 0.40» — версия
+/// игры, а не мода: приняв её за версию мода, программа сравнила бы «0.38» с
+/// установленной «0.1» и показала ложное обновление.
+fn description_version(text: &str) -> Option<String> {
+    DESCRIPTION_VERSION
+        .captures_iter(text)
+        .find_map(|captures| {
+            let whole = captures.get(0)?;
+            let before = text[..whole.start()].to_lowercase();
+            let tail: String = before.chars().rev().take(16).collect::<String>();
+            let tail: String = tail.chars().rev().collect();
+            let about_game = ["game", "beamng", "игры", "игра"]
+                .iter()
+                .any(|word| tail.contains(word));
+            (!about_game).then(|| captures.name("v").map(|v| v.as_str().to_string()))?
+        })
 }
 
 /// Файлообменники под кнопками скачивания («modsfire.com», «mods.to»): скачивание
@@ -176,10 +189,20 @@ fn credits(html: &str) -> Option<String> {
         .filter(|line| !line.is_empty() && !line.eq_ignore_ascii_case("credits"))
         .flat_map(|line| line.split([',', ';']))
         .map(|name| name.trim().trim_end_matches('.').to_string())
-        // Сайт-источник в «Credits» («mods.to», «modsfire.com») — не автор.
-        .filter(|name| !name.is_empty() && !name.contains('.') && name.len() <= 40)
+        // Сайт-источник в «Credits» («mods.to», «modsfire.com») — не автор; а вот
+        // «J.D. Smith» — автор, хоть и с точками.
+        .filter(|name| !name.is_empty() && !looks_like_site(name) && name.chars().count() <= 40)
         .collect();
     (!names.is_empty()).then(|| names.join(", "))
+}
+
+/// «mods.to», «www.modsfire.com»: слова через точки без пробелов.
+fn looks_like_site(name: &str) -> bool {
+    !name.contains(' ')
+        && name.contains('.')
+        && name.split('.').all(|part| {
+            !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
 }
 
 fn uploader(html: &str) -> Option<String> {
@@ -370,5 +393,27 @@ mod tests {
         ] {
             assert!(!is_mod_url(&url::Url::parse(no).unwrap()), "{no}");
         }
+    }
+
+    #[test]
+    fn game_version_in_description_is_not_the_mod_version() {
+        assert_eq!(description_version("Game version: 0.38"), None);
+        assert_eq!(description_version("Tested on BeamNG version 0.40"), None);
+        assert_eq!(description_version("Версия игры: 0.38"), None);
+        assert_eq!(
+            description_version("Game version: 0.38. Changes v1.3: new wheels"),
+            Some("1.3".to_string()),
+            "версия игры пропускается, версия мода дальше находится"
+        );
+        assert_eq!(
+            description_version("In versions 4.1.96: fixes"),
+            Some("4.1.96".to_string())
+        );
+    }
+
+    #[test]
+    fn credits_keep_names_with_dots_but_drop_sites() {
+        let html = r#"<div class="credits x"><div class="title">Credits</div><div class="content">J.D. Smith, mods.to, Car Maker</div></div>"#;
+        assert_eq!(credits(html).as_deref(), Some("J.D. Smith, Car Maker"));
     }
 }

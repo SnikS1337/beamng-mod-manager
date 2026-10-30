@@ -133,6 +133,27 @@ fn run_page_search(
     )
 }
 
+/// «Найти страницу» у одного мода: только он, без общей очереди.
+fn run_single_page_search(
+    state: &AppState,
+    mod_id: &str,
+    cancel: &AtomicBool,
+) -> bmm_checks::PageSearchReport {
+    let Some(service) = page_search_service(state) else {
+        return bmm_checks::PageSearchReport::default();
+    };
+    let _batch = state.library.batch();
+    bmm_checks::find_page_of(
+        state.library.as_ref(),
+        service.as_ref(),
+        Utc::now().fixed_offset(),
+        cancel,
+        mod_id,
+        &|mod_id| page_title(state, mod_id),
+        &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
+    )
+}
+
 /// Вторые страницы для модов, у которых страница уже есть (только уверенные).
 fn run_extra_page_search(
     app: &AppHandle,

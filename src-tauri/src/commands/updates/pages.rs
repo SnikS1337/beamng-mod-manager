@@ -2,9 +2,6 @@
 
 use super::*;
 
-/// Одиночный поиск не должен выдавать себя за авто-проверку (id 0).
-const SINGLE_PAGE_REQUEST_ID: u64 = u64::MAX;
-
 #[tauri::command]
 pub async fn updates_find_pages(
     app: AppHandle,
@@ -67,7 +64,6 @@ pub async fn updates_find_pages(
 
 #[tauri::command]
 pub async fn updates_find_page(
-    app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     mod_id: String,
 ) -> Result<UpdatesSnapshotDto, AppError> {
@@ -95,13 +91,7 @@ pub async fn updates_find_page(
         // Снимаем 14-дневную паузу только у выбранного мода.
         state_for_task.library.set_page_search(&mod_id, None);
         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            run_page_search(
-                &app,
-                &state_for_task,
-                SINGLE_PAGE_REQUEST_ID,
-                &cancel,
-                false,
-            )
+            run_single_page_search(&state_for_task, &mod_id, &cancel)
         }))
         .unwrap_or_default();
         if report.followed > 0 {
