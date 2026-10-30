@@ -392,21 +392,28 @@ impl ModInstaller {
             return OpResult::fail("Недопустимое имя файла.");
         };
         let _guard = self.gate.lock().unwrap();
-        let mut backup = None;
-        let mut removed = 0;
-        for dir in [&self.layout.mods_dir, &self.layout.disabled_dir] {
-            let path = dir.join(&name);
-            if !path.is_file() {
-                continue;
-            }
-            match self.backup_file(&path, &name) {
-                Ok(saved) => {
-                    removed += 1;
-                    backup.get_or_insert(saved);
-                }
-                Err(error) => return OpResult::fail(io_message(&error)),
+        let paths: Vec<PathBuf> = [&self.layout.mods_dir, &self.layout.disabled_dir]
+            .into_iter()
+            .map(|dir| dir.join(&name))
+            .filter(|path| path.is_file())
+            .collect();
+        let moved = match move_all(
+            &paths,
+            |path| self.backup_file(path, &name),
+            |saved, original| self.restore_moved(&Some(saved.to_path_buf()), original),
+        ) {
+            Ok(moved) => moved,
+            Err(error) => return OpResult::fail(io_message(&error)),
+        };
+        // Копия выключенного мода помнит, что он был выключен: «Вернуть» из списка
+        // удалённых раньше включал его.
+        for (saved, original) in moved.iter().zip(&paths) {
+            if original.parent() == Some(self.layout.disabled_dir.as_path()) {
+                let _ = File::create(disabled_marker(saved));
             }
         }
+        let backup = moved.first().cloned();
+        let removed = moved.len();
         if removed == 0 {
             return OpResult::fail("Файл не найден.");
         }
@@ -437,9 +444,21 @@ impl ModInstaller {
             return OpResult::fail(io_message(&error));
         }
         match move_file(&source, &target) {
-            Ok(()) => OpResult::ok("Возвращено.", Some(target)),
+            Ok(()) => {
+                let _ = fs::remove_file(disabled_marker(&source));
+                OpResult::ok("Возвращено.", Some(target))
+            }
             Err(error) => OpResult::fail(io_message(&error)),
         }
+    }
+
+    /// Мод был выключен, когда его удалили (см. [`Self::remove`]).
+    pub fn backup_was_disabled(&self, file_name: &str, backup_id: &str) -> bool {
+        let Some(name) = safe_file_name(Some(file_name)) else {
+            return false;
+        };
+        self.find_backup(&name, backup_id)
+            .is_some_and(|path| disabled_marker(&path).exists())
     }
 
     pub fn backups(&self, file_name: &str) -> Vec<PathBuf> {
@@ -703,7 +722,7 @@ impl ModInstaller {
         Ok(destination)
     }
 
-    fn restore_moved(&self, moved: &Option<PathBuf>, target: &Path) {
+    pub(crate) fn restore_moved(&self, moved: &Option<PathBuf>, target: &Path) {
         if let Some(moved) = moved
             && !target.exists()
         {
@@ -751,6 +770,7 @@ impl ModInstaller {
         }
         for old in all.iter().take(all.len() - keep) {
             let _ = fs::remove_file(old);
+            let _ = fs::remove_file(disabled_marker(old));
         }
     }
 }
@@ -944,6 +964,37 @@ fn parse_backup(path: &Path, mod_name: &str) -> Option<BackupEntry> {
         saved_at,
         size_bytes,
     })
+}
+
+/// Пометка рядом с копией: мод был выключен. Имя не похоже на копию мода, поэтому
+/// в списки копий и удалённых не попадает.
+fn disabled_marker(backup: &Path) -> PathBuf {
+    let mut name = backup.as_os_str().to_os_string();
+    name.push(".off");
+    PathBuf::from(name)
+}
+
+/// Убрать все файлы или ни одного: если второй не убрался (занят, нет места),
+/// первый возвращается на место. Возвращает, куда легли убранные файлы.
+fn move_all(
+    paths: &[PathBuf],
+    mut take: impl FnMut(&Path) -> io::Result<PathBuf>,
+    put_back: impl Fn(&Path, &Path),
+) -> io::Result<Vec<PathBuf>> {
+    let mut moved: Vec<(PathBuf, &PathBuf)> = Vec::new();
+    for path in paths {
+        match take(path) {
+            Ok(saved) => moved.push((saved, path)),
+            Err(error) => {
+                // Иначе человек видел «Файл занят», а включённый мод уже пропадал из игры.
+                for (saved, original) in moved.iter().rev() {
+                    put_back(saved, original);
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(moved.into_iter().map(|(saved, _)| saved).collect())
 }
 
 #[cfg(test)]
