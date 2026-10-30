@@ -19,6 +19,7 @@
   let {
     mod,
     selected,
+    selecting = false,
     index = 0,
     appear = false,
     onselect,
@@ -26,6 +27,8 @@
   }: {
     mod: ModCardDto;
     selected: boolean;
+    /** Что-то уже выбрано: галочки видны у всех карточек, не только под курсором. */
+    selecting?: boolean;
     /** Порядок в видимой части — для небольшой задержки появления. */
     index?: number;
     /** Появиться с анимацией (первый показ списка, смена фильтра). */
@@ -95,6 +98,7 @@
 <div
   class="card flow-card"
   class:selected
+  class:selecting
   class:appear
   class:sleeping={!mod.enabled && !mod.deleted}
   class:deleted={mod.deleted}
@@ -145,12 +149,12 @@
       <span class="placeholder"><Icon size={40} weight="thin" /></span>
     {/if}
 
-    <span class="badges">
-      <span class="kind-tag {tag}">{typeLabel(tag)}</span>
-      {#if status}
-        <span class="status {status.tone}">{status.text}</span>
-      {/if}
-    </span>
+    <!-- Тип слева, состояние справа. Галочка выбора встаёт на место типа
+         при наведении и пока что-то выбрано — без стопки меток над иконкой. -->
+    <span class="kind-tag {tag} corner">{typeLabel(tag)}</span>
+    {#if status}
+      <span class="status {status.tone}">{status.text}</span>
+    {/if}
     {#if copies}
       <span
         class="copies"
@@ -240,7 +244,8 @@
     outline-offset: 2px;
   }
 
-  /* Ненавязчивый выбор пачки: виден всегда, ярче — при наведении и выборе. */
+  /* Галочка выбора: появляется на месте метки типа при наведении, с клавиатуры
+     и пока что-то выбрано. Скрыта прозрачностью — фокус и клик доступны всегда. */
   .check {
     position: absolute;
     top: 8px;
@@ -256,7 +261,7 @@
     /* Без размытия: на сетке из тысяч карточек blur — заметная нагрузка. */
     background: color-mix(in oklab, var(--surface) 92%, transparent);
     color: var(--foreground);
-    opacity: 0.5;
+    opacity: 0;
     cursor: pointer;
     transition:
       opacity var(--dur-1) var(--ease-out),
@@ -265,9 +270,23 @@
   }
 
   .card:hover .check,
+  .card.selecting .check,
   .check:focus-visible,
   .check[aria-checked="true"] {
     opacity: 1;
+  }
+
+  .corner {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    transition: opacity var(--dur-1) var(--ease-out);
+  }
+
+  .card:hover .corner,
+  .card.selecting .corner,
+  .card:has(.check:focus-visible) .corner {
+    opacity: 0;
   }
 
   .check:focus-visible {
@@ -338,26 +357,15 @@
     font-weight: 700;
   }
 
-  .badges {
+
+  .status {
     position: absolute;
     top: 10px;
     right: 10px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
-    max-width: calc(100% - 44px);
-  }
-
-  .kind-tag {
-    position: static;
-  }
-
-  .status {
     display: inline-flex;
     align-items: center;
     height: 22px;
-    max-width: 100%;
+    max-width: calc(100% - 110px);
     overflow: hidden;
     padding: 0 8px;
     border-radius: 5px;

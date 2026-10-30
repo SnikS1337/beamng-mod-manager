@@ -116,7 +116,15 @@
 
   <div class="grid" style={`grid-template-columns:repeat(${columns}, minmax(0, 1fr)); gap:${GAP}px`}>
     {#each visible as mod, index (mod.id)}
-      <ModCard {mod} {index} {appear} selected={selectedIds.includes(mod.id)} {onselect} {ontoggle} />
+      <ModCard
+        {mod}
+        {index}
+        {appear}
+        selected={selectedIds.includes(mod.id)}
+        selecting={selectedIds.length > 1}
+        {onselect}
+        {ontoggle}
+      />
     {/each}
   </div>
 
