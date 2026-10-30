@@ -29,15 +29,19 @@ const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
 pub struct BrowserPages {
     label: &'static str,
+    /// Журнал загрузок: сколько страница ждала очереди и грузилась. По нему видно,
+    /// что тормозит проверку, — без него остаётся только гадать.
+    log: Option<std::path::PathBuf>,
     app: Mutex<Option<AppHandle>>,
     window: Mutex<Option<WebviewWindow>>,
     one: Mutex<()>,
 }
 
 impl BrowserPages {
-    pub fn new(label: &'static str) -> Self {
+    pub fn new(label: &'static str, log: Option<std::path::PathBuf>) -> Self {
         Self {
             label,
+            log,
             app: Mutex::new(None),
             window: Mutex::new(None),
             one: Mutex::new(()),
@@ -130,13 +134,96 @@ impl BrowserPages {
     }
 }
 
+/// Журнал не растёт бесконечно: дорос до предела — начинается заново.
+const MAX_LOG_BYTES: u64 = 512 * 1024;
+
+impl BrowserPages {
+    fn note(&self, kind: &str, url: &Url, queued: Duration, loading: Duration, outcome: &str) {
+        let Some(path) = &self.log else { return };
+        use std::io::Write;
+        if std::fs::metadata(path).is_ok_and(|meta| meta.len() > MAX_LOG_BYTES) {
+            let _ = std::fs::remove_file(path);
+        }
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        else {
+            return;
+        };
+        let _ = writeln!(
+            file,
+            "{}\t{}\t{kind}\tочередь {} мс\tзагрузка {} мс\t{outcome}\t{}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            self.label,
+            queued.as_millis(),
+            loading.as_millis(),
+            url
+        );
+    }
+}
+
+fn outcome_of<T>(result: &Result<T, FetchError>, challenge: bool) -> String {
+    match result {
+        Ok(_) if challenge => "проверка Cloudflare".to_string(),
+        Ok(_) => "готово".to_string(),
+        Err(FetchError::Cancelled) => "отменено".to_string(),
+        Err(error) => format!("ошибка: {}", error.user_message()),
+    }
+}
+
 impl PageFetcher for BrowserPages {
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
         self.get_cancellable(url, &AtomicBool::new(false))
     }
 
     fn get_cancellable(&self, url: &Url, cancel: &AtomicBool) -> Result<RawResponse, FetchError> {
-        let _one = self.guard_cancelled(cancel)?;
+        let asked = Instant::now();
+        let one = self.guard_cancelled(cancel);
+        let queued = asked.elapsed();
+        let started = Instant::now();
+        let result = one.and_then(|_one| self.load_page(url, cancel));
+        let challenge = result
+            .as_ref()
+            .is_ok_and(|response| is_challenge_page(&response.text));
+        self.note(
+            "страница",
+            url,
+            queued,
+            started.elapsed(),
+            &outcome_of(&result, challenge),
+        );
+        result
+    }
+
+    fn get_bytes(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+        self.get_bytes_cancellable(url, &AtomicBool::new(false))
+    }
+
+    fn get_bytes_cancellable(
+        &self,
+        url: &Url,
+        cancel: &AtomicBool,
+    ) -> Result<Option<(String, Vec<u8>)>, FetchError> {
+        let asked = Instant::now();
+        let one = self.guard_cancelled(cancel);
+        let queued = asked.elapsed();
+        let started = Instant::now();
+        let result = one.and_then(|_one| self.load_bytes(url, cancel));
+        let challenge = result.as_ref().is_ok_and(Option::is_none);
+        self.note(
+            "картинка",
+            url,
+            queued,
+            started.elapsed(),
+            &outcome_of(&result, challenge),
+        );
+        result
+    }
+}
+
+impl BrowserPages {
+    fn load_page(&self, url: &Url, cancel: &AtomicBool) -> Result<RawResponse, FetchError> {
         let window = self.window()?;
         let token = self.begin(&window, url)?;
         wait_loaded(&window, url, &token, cancel)?;
@@ -168,16 +255,11 @@ impl PageFetcher for BrowserPages {
         })
     }
 
-    fn get_bytes(&self, url: &Url) -> Result<Option<(String, Vec<u8>)>, FetchError> {
-        self.get_bytes_cancellable(url, &AtomicBool::new(false))
-    }
-
-    fn get_bytes_cancellable(
+    fn load_bytes(
         &self,
         url: &Url,
         cancel: &AtomicBool,
     ) -> Result<Option<(String, Vec<u8>)>, FetchError> {
-        let _one = self.guard_cancelled(cancel)?;
         let window = self.window()?;
         let token = self.begin(&window, url)?;
         wait_loaded(&window, url, &token, cancel)?;

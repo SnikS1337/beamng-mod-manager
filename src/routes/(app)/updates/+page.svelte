@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { page } from "$app/state";
   import Package from "phosphor-svelte/lib/Package";
@@ -55,7 +56,6 @@
   });
   let sources = $state<UpdateSource[]>([]);
   let loading = $state(true);
-  let checking = $state(false);
   let passing = $state(false);
   let filter = $state<Filter>("available");
   let verifying = $state<string | null>(null);
@@ -68,19 +68,15 @@
       filter = next;
     }, "flow-section");
   }
-  let progress = $state<UpdateProgress | null>(null);
   /** Ход проверки при запуске (она идёт сама, без нажатия). */
-  let autoProgress = $state<UpdateProgress | null>(null);
   /** Полоса проверки доходит до конца и только потом уступает кнопкам. */
   let finishing = $state(false);
   let finishTimer: ReturnType<typeof setTimeout> | undefined;
   /** Номер запроса проверки при запуске (`AUTO_REQUEST_ID` в окне). */
-  const AUTO_REQUEST = 0;
   let error = $state<string | null>(null);
   // Обычная проверка не трогает моды, проверенные недавно (срок — в настройках). Если она
   // никуда не сходила, следующее нажатие проверяет всё заново.
   let offerForce = $state(false);
-  let requestId = 0;
   let readToken = 0;
   let unlisten: (() => void) | undefined;
   let disposed = false;
@@ -104,7 +100,13 @@
   });
 
   onMount(() => {
-    void load();
+    run.start();
+    void load().then(() => {
+      // Проверка закончилась, пока раздел был закрыт: показываем её итог.
+      const pending = run.pending;
+      run.pending = null;
+      if (pending) onEvent(pending);
+    });
     void listenUpdates(onEvent)
       .then((stop) => {
         if (disposed) {
@@ -139,7 +141,7 @@
     disposed = true;
     unlisten?.();
     if (finishTimer) clearTimeout(finishTimer);
-    if (checking) void updatesCancel();
+    // Проверку не отменяем: она идёт дальше, а при возврате раздел покажет её ход.
   });
 
   function stopFinishing() {
@@ -160,20 +162,21 @@
   function onEvent(event: UpdatesEvent) {
     if (event.requestId === AUTO_REQUEST && event.phase === "progress") {
       stopFinishing();
-      autoProgress = event.progress;
+      run.autoProgress = event.progress;
       return;
     }
     if (event.requestId === AUTO_REQUEST && event.phase === "error") {
       stopFinishing();
-      autoProgress = null;
+      run.autoProgress = null;
       return;
     }
     if (event.phase === "auto") {
-      const hadProgress = autoProgress !== null;
-      autoProgress = null;
+      const hadProgress = run.autoProgress !== null;
+      run.autoProgress = null;
       void refreshSites();
-      // Фоновая проверка закончилась: показываем найденное, если сами сейчас не проверяем.
-      if (!checking) {
+      // Фоновая проверка закончилась. Найденное фоновой проверкой показываем, даже если идёт своя: раньше
+      // значок на «Обновлениях» показывал 8, а список оставался прежним.
+      {
         readToken += 1;
         loading = false;
         snapshot = {
@@ -187,17 +190,18 @@
       }
       return;
     }
-    if (event.requestId !== requestId) return;
+    if (event.requestId !== run.requestId) return;
+    if (event.phase !== "progress") run.pending = null;
     if (event.phase === "progress") {
       stopFinishing();
-      progress = event.progress;
+      run.progress = event.progress;
       if (event.sources.length > 0) sources = event.sources;
       return;
     }
     if (event.phase === "error") {
       error = event.error ?? "Проверка не удалась.";
-      checking = false;
-      progress = null;
+      run.checking = false;
+      run.progress = null;
       stopFinishing();
       return;
     }
@@ -212,8 +216,8 @@
       suggestions: event.suggestions,
     };
     if (event.sources.length > 0) sources = event.sources;
-    checking = false;
-    progress = null;
+    run.checking = false;
+    run.progress = null;
     finishProgress();
     if (event.phase === "done" || event.phase === "pages") void refreshSites();
     if (event.phase === "done") {
@@ -271,43 +275,43 @@
   }
 
   async function check() {
-    if (checking) return;
+    if (run.checking) return;
     stopFinishing();
-    requestId += 1;
-    checking = true;
-    progress = null;
+    run.requestId += 1;
+    run.checking = true;
+    run.progress = null;
     error = null;
     const force = offerForce;
     offerForce = false;
     try {
-      await updatesStart(force, requestId);
+      await updatesStart(force, run.requestId);
     } catch (reason) {
       error = errorText(reason);
-      checking = false;
+      run.checking = false;
     }
   }
 
   async function cancel() {
     stopFinishing();
-    requestId += 1;
-    checking = false;
-    progress = null;
-    autoProgress = null;
+    run.requestId += 1;
+    run.checking = false;
+    run.progress = null;
+    run.autoProgress = null;
     await updatesCancel().catch(() => {});
   }
 
   async function findPages() {
-    if (checking) return;
+    if (run.checking) return;
     stopFinishing();
-    checking = true;
-    progress = null;
+    run.checking = true;
+    run.progress = null;
     error = null;
-    requestId += 1;
+    run.requestId += 1;
     try {
-      await updatesFindPages(requestId);
+      await updatesFindPages(run.requestId);
     } catch (reason) {
       error = errorText(reason);
-      checking = false;
+      run.checking = false;
     }
   }
 
@@ -486,25 +490,25 @@
     );
   }
 
-  function progressText(current: UpdateProgress | null = progress): string {
-    const progress = current;
-    if (!progress) return "Проверяем сайты…";
-    if (progress.source === "страницы") {
-      return progress.total > 0
-        ? `Ищем страницы: ${progress.done} из ${progress.total}`
+  function progressText(current: UpdateProgress | null = run.progress): string {
+    const shown = current;
+    if (!shown) return "Проверяем сайты…";
+    if (shown.source === "страницы") {
+      return shown.total > 0
+        ? `Ищем страницы: ${shown.done} из ${shown.total}`
         : "Ищем страницы…";
     }
-    const where = progress.source ? `${sourceName(progress.source)}` : "проверка";
+    const where = shown.source ? `${sourceName(shown.source)}` : "проверка";
     const stage =
-      progress.stage === "лента"
+      shown.stage === "лента"
         ? "лента"
-        : progress.stage === "карточки"
+        : shown.stage === "карточки"
           ? "карточки"
-          : progress.stage === "страницы"
+          : shown.stage === "страницы"
             ? "страницы"
             : "готово";
-    return progress.total > 0
-      ? `${where} · ${stage} ${progress.done} из ${progress.total}`
+    return shown.total > 0
+      ? `${where} · ${stage} ${shown.done} из ${shown.total}`
       : `${where} · ${stage}`;
   }
 
@@ -572,18 +576,18 @@
   }
 
   async function retrySource(source: string) {
-    if (checking) return;
+    if (run.checking) return;
     stopFinishing();
-    requestId += 1;
-    checking = true;
-    progress = null;
+    run.requestId += 1;
+    run.checking = true;
+    run.progress = null;
     error = null;
     offerForce = false;
     try {
-      await updatesRetrySource(source, requestId);
+      await updatesRetrySource(source, run.requestId);
     } catch (reason) {
       error = errorText(reason);
-      checking = false;
+      run.checking = false;
     }
   }
 </script>
@@ -853,10 +857,10 @@
     <aside class="panel" aria-label="Проверка обновлений">
       <h2 class="display">Проверка</h2>
       <p class="sub">
-        {#if checking}
+        {#if run.checking}
           {progressText()}
-        {:else if autoProgress}
-          Проверка при запуске: {progressText(autoProgress)}
+        {:else if run.autoProgress}
+          Проверка при запуске: {progressText(run.autoProgress)}
         {:else if finishing}
           Проверка завершена.
         {:else if snapshot.lastChecked}
@@ -869,8 +873,8 @@
           Ещё не проверяли. Проверим моды, за которыми следим на сайтах.
         {/if}
       </p>
-      {#if checking || autoProgress || finishing}
-        {@const shown = checking ? progress : autoProgress}
+      {#if run.checking || run.autoProgress || finishing}
+        {@const shown = run.checking ? run.progress : run.autoProgress}
         <div class="track" class:complete={finishing}>
           <span
             class="bar"
@@ -906,7 +910,7 @@
                 <button
                   class="site-retry"
                   type="button"
-                  disabled={checking}
+                  disabled={run.checking}
                   onclick={() => void retrySource(site.id)}
                 >
                   Повторить
