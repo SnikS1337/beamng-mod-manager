@@ -77,7 +77,7 @@ impl SettingsStore {
             }
         };
 
-        let value: Value = match json5::from_str(&text) {
+        let value: Value = match crate::json5_safe::from_str(&text) {
             Ok(value) => value,
             Err(_) => return self.quarantine("файл настроек повреждён"),
         };
@@ -390,6 +390,15 @@ mod tests {
         assert!(result.warnings.is_empty(), "{:?}", result.warnings);
         assert_eq!(result.settings.downloads_folder, None);
         assert!(!result.settings.delete_downloads_after_install);
+    }
+
+    #[test]
+    fn too_deep_settings_are_quarantined_not_a_crash() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with(dir.path(), &"[".repeat(100_000));
+        let result = store.load();
+        assert!(!result.warnings.is_empty());
+        assert_eq!(result.settings, AppSettings::default());
     }
 
     #[test]

@@ -506,6 +506,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn release_build_unwinds_panics() {
+        // `catch_unwind` вокруг сайтов и фоновых задач работает только при unwind.
+        let manifest = include_str!("../../Cargo.toml");
+        let release = manifest
+            .split("[profile.release]")
+            .nth(1)
+            .and_then(|rest| rest.split("\n[").next())
+            .expect("[profile.release]");
+        assert!(
+            !release
+                .lines()
+                .any(|line| line.trim_start().starts_with("panic") && line.contains("abort")),
+            "{release}"
+        );
+    }
+
+    #[test]
     fn devtools_port_only_from_a_number() {
         assert!(devtools_args(None).is_none());
         assert!(devtools_args(Some("abc")).is_none());

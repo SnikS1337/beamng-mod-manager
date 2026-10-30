@@ -243,7 +243,7 @@ fn load(
         }
     };
 
-    let value: serde_json::Value = match json5::from_str(&text) {
+    let value: serde_json::Value = match crate::json5_safe::from_str(&text) {
         Ok(value) => value,
         Err(_) => {
             let blocked = quarantine(path, now, "файл решений повреждён", warnings);

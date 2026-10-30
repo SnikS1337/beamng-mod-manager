@@ -476,7 +476,7 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
         return (inner, warnings, true);
     };
 
-    let value: serde_json::Value = match json5::from_str(&text) {
+    let value: serde_json::Value = match crate::json5_safe::from_str(&text) {
         Ok(value) => value,
         Err(_) => {
             let blocked = quarantine(path, now, "файл библиотеки повреждён", &mut warnings);
@@ -845,6 +845,18 @@ mod tests {
         assert!(!path.exists());
         store.upsert_mod(installed("a", "A", "1.0"));
         assert!(path.exists());
+    }
+
+    #[test]
+    fn too_deep_file_is_quarantined_not_a_crash() {
+        // json5 без предела вложенности переполнял стек — программа закрывалась
+        // ещё до окна.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(&path, format!("{{\"Mods\":{}", "[".repeat(100_000))).unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(store.load_warnings().len(), 1);
+        assert!(store.mods().is_empty());
     }
 
     #[cfg(windows)]
