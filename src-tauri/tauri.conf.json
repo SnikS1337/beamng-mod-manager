@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "ModManager BeamNG",
         "width": 1280,
         "height": 820,
