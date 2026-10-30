@@ -250,4 +250,20 @@ mod tests {
         let url = url::Url::parse("https://beamng.com/resources/acng.39760/").unwrap();
         assert_eq!(slug_of(&url), "39760");
     }
+
+    #[test]
+    fn real_page_by_short_address_reads_version_and_download() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/beamng/mod-906-real.html");
+        let html = std::fs::read_to_string(path).unwrap();
+        let basis = Listing::new(
+            SOURCE_ID,
+            url::Url::parse("https://beamng.com/resources/crash-test-dummy.906/").unwrap(),
+            "906",
+            "Crash Test Dummy",
+        );
+        let detail = parse_detail(&html, &basis);
+        assert_eq!(detail.mod_version.as_deref(), Some("1.1"));
+        assert!(!detail.offers.is_empty(), "кнопка Download Now");
+    }
 }
