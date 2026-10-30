@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  shownOfLabel,
   formatAgo,
   formatSize,
   formatWhen,
@@ -99,5 +100,20 @@ describe("formatWhen", () => {
     expect(formatWhen(new Date(2026, 9, 12, 9, 5).toISOString(), now)).toBe("12 октября в 9:05");
     expect(formatWhen(new Date(2025, 9, 12, 9, 5).toISOString(), now)).toContain("2025");
     expect(formatWhen(undefined, now)).toBe("");
+  });
+});
+
+describe("shownOfLabel", () => {
+  it("«из N» — родительный падеж по N, а не по первому числу", () => {
+    expect(shownOfLabel(21, 49)).toBe("21 из 49 модов");
+    expect(shownOfLabel(3, 21)).toBe("3 из 21 мода");
+    expect(shownOfLabel(1, 11)).toBe("1 из 11 модов");
+    expect(shownOfLabel(2, 101)).toBe("2 из 101 мода");
+    expect(shownOfLabel(0, 1500)).toBe("0 из 1 500 модов");
+  });
+
+  it("все показаны — просто число модов", () => {
+    expect(shownOfLabel(21, 21)).toBe("21 мод");
+    expect(shownOfLabel(4, 4)).toBe("4 мода");
   });
 });
