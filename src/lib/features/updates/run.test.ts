@@ -43,4 +43,16 @@ describe("идущая проверка", () => {
     updatesRun.onEvent(event(id + 5, "done"));
     expect(updatesRun.checking).toBe(true);
   });
+
+  it("пока раздел открыт, итог не откладывает: его показывает сам раздел", () => {
+    const id = updatesRun.begin();
+    updatesRun.attached = true;
+    try {
+      updatesRun.onEvent(event(id, "done"));
+      // Иначе при следующем входе тот же итог и тост показались бы ещё раз.
+      expect(updatesRun.pending).toBeNull();
+    } finally {
+      updatesRun.attached = false;
+    }
+  });
 });

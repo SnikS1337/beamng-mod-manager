@@ -16,6 +16,12 @@ class UpdatesRun {
   requestId = 0;
   /** Итог, пришедший, пока раздел был закрыт: страница покажет его при возврате. */
   pending: UpdatesEvent | null = null;
+  /**
+   * Раздел открыт и сам разбирает события. Тогда здесь их не трогаем: оба слушателя
+   * получают одно событие в неизвестном порядке, и итог мог остаться в `pending` —
+   * при следующем входе раздел показал бы старый итог и тост ещё раз.
+   */
+  attached = false;
   private started = false;
 
   start(): void {
@@ -36,6 +42,7 @@ class UpdatesRun {
   }
 
   onEvent(event: UpdatesEvent): void {
+    if (this.attached) return;
     if (event.requestId === AUTO_REQUEST) {
       if (event.phase === "progress") this.autoProgress = event.progress;
       else this.autoProgress = null;

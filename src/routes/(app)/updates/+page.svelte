@@ -102,6 +102,7 @@
 
   onMount(() => {
     run.start();
+    run.attached = true;
     void load().then(() => {
       // Проверка закончилась, пока раздел был закрыт: показываем её итог.
       const pending = run.pending;
@@ -140,6 +141,7 @@
 
   onDestroy(() => {
     disposed = true;
+    run.attached = false;
     unlisten?.();
     if (finishTimer) clearTimeout(finishTimer);
     // Проверку не отменяем: она идёт дальше, а при возврате раздел покажет её ход.

@@ -217,9 +217,64 @@ pub fn find_pages_with(
     retry_recent: bool,
     title_of: &dyn Fn(&str) -> Option<String>,
     author_of: &dyn Fn(&str) -> Option<String>,
-    mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+    progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
     let due = PageGuesser::due_for(store, now, include_disabled, retry_recent);
+    search_pages_of(
+        store,
+        search,
+        now,
+        cancel,
+        retry_recent,
+        title_of,
+        author_of,
+        progress,
+        due,
+    )
+}
+
+/// Страница одного мода (кнопка «Найти страницу» в гараже): ищем только его, а не
+/// всю очередь — иначе одно нажатие запускало общий поиск на десятки минут.
+pub fn find_page_of(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    now: DateTime<FixedOffset>,
+    cancel: &AtomicBool,
+    mod_id: &str,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
+) -> PageSearchReport {
+    let Some(installed) = store.get_mod(mod_id) else {
+        return PageSearchReport::default();
+    };
+    if store.is_checking_declined(mod_id) {
+        return PageSearchReport::default();
+    }
+    search_pages_of(
+        store,
+        search,
+        now,
+        cancel,
+        false,
+        title_of,
+        author_of,
+        None,
+        vec![installed],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_pages_of(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    now: DateTime<FixedOffset>,
+    cancel: &AtomicBool,
+    retry_recent: bool,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
+    mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+    due: Vec<InstalledMod>,
+) -> PageSearchReport {
     let mut result = PageSearchReport::default();
     if due.is_empty() {
         return result;
@@ -1449,6 +1504,50 @@ mod tests {
             Duration::from_secs(600),
         );
         assert_eq!(report.searched, 70);
+    }
+
+    #[test]
+    fn single_mod_search_touches_only_that_mod() {
+        // «Найти страницу» в гараже раньше запускал общий поиск по всей очереди —
+        // после перехода на поиск без предела это были бы десятки минут.
+        let store = InMemoryLibraryStore::new();
+        many_mods(&store, 30);
+        let site = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&site));
+        let report = find_page_of(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            "m7",
+            &|_| None,
+            &|_| None,
+        );
+        assert_eq!(report.searched, 1);
+        assert!(store.get_page_search("m7").is_some());
+        assert_eq!(PageGuesser::due_all(&store, now(), true, false).len(), 29);
+    }
+
+    #[test]
+    fn single_mod_search_skips_declined_and_unknown_mods() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "toyota_sienna.zip"));
+        store.set_checking_declined("a", true);
+        let site = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&site));
+        for id in ["a", "missing"] {
+            let report = find_page_of(
+                &store,
+                &search,
+                now(),
+                &AtomicBool::new(false),
+                id,
+                &|_| None,
+                &|_| None,
+            );
+            assert_eq!(report.searched, 0);
+        }
+        assert_eq!(site.calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
