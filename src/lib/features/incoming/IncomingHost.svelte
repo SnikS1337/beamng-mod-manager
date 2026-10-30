@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { isTauri } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -83,9 +83,15 @@
     if (!current && !busy) void pump();
   });
 
+  // Фокус на «Установить» — только когда пришёл новый архив. Раньше эффект срабатывал
+  // и на галочку (от неё зависит canInstall): фокус уезжал с чекбокса, и следующий
+  // пробел запускал установку.
+  let focusedArchive: unknown = null;
   $effect(() => {
-    if (busy || !current || !canInstall) return;
-    void tick().then(() => installButton?.focus());
+    const archive = current;
+    if (busy || !archive || archive === focusedArchive) return;
+    focusedArchive = archive;
+    if (untrack(() => canInstall)) void tick().then(() => installButton?.focus());
   });
 
   onMount(() => {

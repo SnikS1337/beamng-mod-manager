@@ -65,14 +65,14 @@
 :root {
   --radius: 0.625rem;
 
-  /* Светлая тема. */
+  /* Светлая тема. Цвета текста — не ниже 4.5:1 к фонам (WCAG AA), см. contrast.test.ts. */
   --background: #f1f2f4;
   --surface: #ffffff;
   --surface-2: #f6f7f9;
   --surface-3: #eceef1;
   --foreground: #16181c;
   --muted-foreground: #5b626c;
-  --faint-foreground: #6b717a;
+  --faint-foreground: #656b73;
   --border: rgb(22 24 28 / 0.1);
   --border-strong: rgb(22 24 28 / 0.18);
   --shadow-1: 0 1px 2px rgb(16 18 22 / 0.06), 0 2px 8px rgb(16 18 22 / 0.05);
@@ -83,19 +83,19 @@
   --accent-brand-hover: #ff7a1a;
   --accent-brand-contrast: #1a0e04;
   --accent-brand-soft: rgb(242 106 15 / 0.12);
-  --accent-brand-text: #b84d05;
+  --accent-brand-text: #b24a04;
 
-  --ok: #1f9a62;
-  --warning: #9a6a0c;
+  --ok: #18794d;
+  --warning: #8f620b;
   --warning-soft: rgb(242 181 68 / 0.18);
   --warning-border: rgb(196 140 30 / 0.45);
-  --danger: #c93b30;
+  --danger: #c2392e;
   --danger-soft: rgb(255 107 94 / 0.12);
 
-  --kind-vehicle: #b45a12;
-  --kind-map: #1d8a5a;
-  --kind-addon: #5361d6;
-  --kind-script: #23799f;
+  --kind-vehicle: #a75310;
+  --kind-map: #19794f;
+  --kind-addon: #515fd1;
+  --kind-script: #217297;
 
   /* Совместимость со shadcn-компонентами и старыми классами. */
   --card: var(--surface);

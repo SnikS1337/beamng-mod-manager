@@ -16,6 +16,10 @@ const FOCUSABLE =
  * `use:trapFocus` на корне окна; `autofocus` — элемент, на который встать сразу.
  */
 export function trapFocus(node: HTMLElement, autofocus?: string) {
+  // Откуда открыли окно: после закрытия фокус возвращается туда, а не на body
+  // (Ctrl+K → Escape раньше оставлял фокус «нигде»).
+  const previous =
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null);
   const start = autofocus ? node.querySelector<HTMLElement>(autofocus) : null;
   queueMicrotask(() => (start ?? node.querySelector<HTMLElement>(FOCUSABLE))?.focus());
   function onkeydown(event: KeyboardEvent) {
@@ -31,6 +35,9 @@ export function trapFocus(node: HTMLElement, autofocus?: string) {
   return {
     destroy() {
       node.removeEventListener("keydown", onkeydown);
+      if (previous && previous.isConnected && typeof previous.focus === "function") {
+        queueMicrotask(() => previous.focus({ preventScroll: true }));
+      }
     },
   };
 }

@@ -294,6 +294,10 @@
   }
 
   function leaveBrowse() {
+    // Ответ раздела, пришедший после выхода, не должен лечь на стартовый экран.
+    if (searching) void searchCancel(requestId).catch(() => {});
+    requestId += 1;
+    searching = false;
     browseKind = null;
     browseFrom = 0;
     browseHasMore = false;

@@ -8,7 +8,8 @@
   import { versionLine } from "./cardText";
   import { formatSize } from "./format";
   import { modStatus } from "./status";
-  import { typeLabel, typeTag } from "./view";
+  import { revealScroll, typeLabel, typeTag } from "./view";
+  import { tick } from "svelte";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
 
   let {
@@ -17,6 +18,7 @@
     onselect,
     ontoggle,
     resetKey = "",
+    revealId = null,
   }: {
     items: ModCardDto[];
     /** Выбранные: одна карточка или несколько. */
@@ -24,6 +26,8 @@
     onselect: (id: string, keys: ClickKeys) => void;
     ontoggle: (mod: ModCardDto) => void;
     resetKey?: string;
+    /** Строка, выбранная стрелками: прокрутить к ней и перевести фокус. */
+    revealId?: string | null;
   } = $props();
 
   // Плотный список для сотен модов: строка 48, рисуются только видимые.
@@ -43,6 +47,25 @@
       viewport.scrollTop = 0;
       scrollTop = 0;
     }
+  });
+
+  $effect(() => {
+    const id = revealId;
+    const el = viewport;
+    if (!id || !el) return;
+    const index = items.findIndex((mod) => mod.id === id);
+    if (index < 0) return;
+    const target = revealScroll(index, ROW, el.scrollTop, el.clientHeight);
+    if (target !== null) {
+      el.scrollTop = target;
+      scrollTop = target;
+    }
+    void tick().then(() => {
+      const row = [...el.querySelectorAll<HTMLElement>("[data-mod-id]")].find(
+        (element) => element.dataset.modId === id,
+      );
+      row?.querySelector<HTMLElement>("button.select")?.focus({ preventScroll: true });
+    });
   });
 
   function select(event: MouseEvent, id: string) {
