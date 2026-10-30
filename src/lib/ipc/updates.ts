@@ -273,6 +273,7 @@ export async function updatesFindPages(requestId: number): Promise<void> {
       requests: 6,
       cancelled: false,
       stoppedByTime: false,
+      followed: 0,
       error: null,
     });
   }, 500);
@@ -388,6 +389,7 @@ function mockStart(requestId: number): void {
       requests: 7,
       cancelled: false,
       stoppedByTime: false,
+      followed: 0,
       error: null,
     });
   }, 250);
@@ -403,6 +405,7 @@ function mockStart(requestId: number): void {
       requests: 31,
       cancelled: false,
       stoppedByTime: false,
+      followed: 0,
       error: null,
     });
   }, 900);

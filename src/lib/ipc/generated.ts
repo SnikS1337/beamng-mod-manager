@@ -206,5 +206,9 @@ lastChecked: string | null,
  */
 lost: Array<LostPage>, };
 
-export type UpdatesEvent = { requestId: number, phase: UpdatesPhase, progress: UpdateProgress | null, findings: Array<UpdateFinding>, hidden: Array<UpdateFinding>, suggestions: Array<PageSuggestion>, sources: Array<UpdateSource>, newCount: number, upToDate: number, requests: number, cancelled: boolean, stoppedByTime: boolean, error: string | null, };
+export type UpdatesEvent = { requestId: number, phase: UpdatesPhase, progress: UpdateProgress | null, findings: Array<UpdateFinding>, hidden: Array<UpdateFinding>, suggestions: Array<PageSuggestion>, sources: Array<UpdateSource>, newCount: number, upToDate: number, requests: number, cancelled: boolean, stoppedByTime: boolean, error: string | null, 
+/**
+ * Поиск страниц: за сколькими найденными страницами программа стала следить сама.
+ */
+followed: number, };
 
