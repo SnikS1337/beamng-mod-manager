@@ -253,11 +253,11 @@
     padding: 0;
     border: 1px solid var(--border-strong);
     border-radius: 6px;
-    background: color-mix(in oklab, var(--surface) 76%, transparent);
+    /* Без размытия: на сетке из тысяч карточек blur — заметная нагрузка. */
+    background: color-mix(in oklab, var(--surface) 92%, transparent);
     color: var(--foreground);
     opacity: 0.5;
     cursor: pointer;
-    backdrop-filter: blur(4px);
     transition:
       opacity var(--dur-1) var(--ease-out),
       background-color var(--dur-1) var(--ease-out),
