@@ -143,7 +143,11 @@ pub fn restore_deleted(
             None => return OpResult::fail("Копий нет."),
         },
     };
-    let result = installer.restore_backup(&deleted.file_name, &id);
+    let result = if installer.backup_was_disabled(&deleted.file_name, &id) {
+        installer.unremove(&deleted.file_name, &id, true)
+    } else {
+        installer.restore_backup(&deleted.file_name, &id)
+    };
     if !result.success {
         return result;
     }
@@ -369,5 +373,30 @@ mod tests {
         assert!(restored.success, "{}", restored.message);
         assert!(store.get_mod("old.zip").is_some());
         assert!(installer.layout().mods_dir.join("old.zip").is_file());
+    }
+
+    #[test]
+    fn restore_deleted_keeps_disabled_mod_disabled() {
+        // Выключенный мод удалили, а потом вернули из списка удалённых: раньше он
+        // возвращался включённым — и игра начинала его грузить.
+        let (temp, installer) = setup();
+        let source = temp.path().join("source.zip");
+        zip(&source);
+        installer.install_from_path(&source, "off.zip", InstallOptions::default());
+        assert!(installer.disable("off.zip").success);
+        assert!(installer.remove("off.zip").success);
+        let store = InMemoryLibraryStore::new();
+        let item = deleted(&installer, &store).into_iter().next().unwrap();
+        let restored = restore_deleted(&installer, &store, &item, None, now());
+        assert!(restored.success, "{}", restored.message);
+        assert!(installer.layout().disabled_dir.join("off.zip").is_file());
+        assert!(!installer.layout().mods_dir.join("off.zip").exists());
+        assert!(!store.get_mod("off.zip").unwrap().enabled);
+        // Пометка не считается копией мода и не остаётся лишним файлом.
+        assert!(installer.list_backups("off.zip").is_empty());
+        let leftovers: Vec<_> = std::fs::read_dir(installer.layout().backup_dir.join("off.zip"))
+            .map(|entries| entries.filter_map(Result::ok).collect())
+            .unwrap_or_default();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 }

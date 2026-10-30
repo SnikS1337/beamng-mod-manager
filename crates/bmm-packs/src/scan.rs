@@ -115,12 +115,29 @@ fn is_reparse(metadata: &fs::Metadata) -> bool {
     }
 }
 
+/// Записи каталога; нечитаемая запись делает обход неполным. Раньше такие записи
+/// молча пропускались, обход считался полным, и сверка стирала у «пропавшего» мода
+/// страницу, проверки и историю.
+fn readable<T>(
+    entries: impl Iterator<Item = std::io::Result<T>>,
+    result: &mut ScanResult,
+) -> Vec<T> {
+    let mut ok = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => ok.push(entry),
+            Err(_) => result.complete = false,
+        }
+    }
+    ok
+}
+
 fn scan_flat(dir: &Path, enabled: bool, seen: &mut HashSet<String>, result: &mut ScanResult) {
     let Ok(entries) = fs::read_dir(dir) else {
         result.complete = false;
         return;
     };
-    for entry in entries.filter_map(Result::ok) {
+    for entry in readable(entries, result) {
         let path = entry.path();
         let Ok(metadata) = fs::symlink_metadata(&path) else {
             result.complete = false;
@@ -163,7 +180,7 @@ fn scan_subfolders(
         result.complete = false;
         return;
     };
-    for entry in entries.filter_map(Result::ok) {
+    for entry in readable(entries, result) {
         let path = entry.path();
         let Ok(metadata) = fs::symlink_metadata(&path) else {
             result.complete = false;
@@ -225,6 +242,13 @@ fn add_mod(
     seen: &mut HashSet<String>,
     result: &mut ScanResult,
 ) {
+    // Имя, с которым программа не работает (начинается с точки, длиннее 200 знаков):
+    // мод виден, но выключить или удалить его нельзя — говорим, что делать.
+    if crate::safe_name::safe_file_name(Some(file_name)).as_deref() != Some(file_name) {
+        result.warnings.push(format!(
+            "Файл «{file_name}» программа не может выключить или удалить: переименуйте его (без точки в начале, короче 200 знаков)."
+        ));
+    }
     let key = file_name.to_lowercase();
     if !seen.insert(key) {
         result.warnings.push(format!(
@@ -356,6 +380,32 @@ mod tests {
             "{:?}",
             result.warnings
         );
+    }
+
+    #[test]
+    fn unreadable_entry_makes_scan_incomplete() {
+        let mut result = ScanResult::default();
+        let entries = vec![Ok(1), Err(std::io::Error::other("нет доступа")), Ok(2)];
+        assert_eq!(readable(entries.into_iter(), &mut result), vec![1, 2]);
+        assert!(!result.complete, "иначе сверка сочла бы мод удалённым");
+    }
+
+    #[test]
+    fn unmanageable_names_are_reported() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        let layout = ModLayout::beside(&mods);
+        write_file(&mods.join(".hidden.zip"), b"x");
+        let long = format!("{}.zip", "a".repeat(210));
+        write_file(&mods.join(&long), b"x");
+        write_file(&mods.join("normal.zip"), b"x");
+        let result = scan_mods(&layout);
+        let flagged: Vec<&String> = result
+            .warnings
+            .iter()
+            .filter(|warning| warning.contains("переименуйте"))
+            .collect();
+        assert_eq!(flagged.len(), 2, "{:?}", result.warnings);
     }
 
     #[test]
