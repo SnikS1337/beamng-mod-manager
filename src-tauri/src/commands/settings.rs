@@ -252,6 +252,19 @@ mod tests {
     use bmm_domain::settings_store::SettingsStore;
 
     #[test]
+    fn folder_must_be_absolute_and_not_a_disk_root() {
+        // То же правило на любой системе: корень диска, относительный путь и «..» — нет.
+        let temp = tempfile::tempdir().unwrap();
+        assert!(acceptable_folder(temp.path()));
+        assert!(!acceptable_folder(Path::new("relative")));
+        assert!(!acceptable_folder(&temp.path().join("..")));
+        let root = temp.path().ancestors().last().unwrap();
+        assert!(!acceptable_folder(root), "корень диска не папка загрузок");
+    }
+
+    // Пути Windows («C:\\», «D:\\Downloads»): на других системах они не абсолютные.
+    #[cfg(windows)]
+    #[test]
     fn unsafe_folders_are_dropped_from_settings() {
         let mut settings = AppSettings {
             downloads_folder: Some("C:\\".to_string()),

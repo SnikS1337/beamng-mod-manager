@@ -226,6 +226,8 @@ notes: 0.1"
         assert_eq!(user_root_from_startup_ini_text(STARTUP, game_dir), None);
     }
 
+    // «D:\\BeamNG User» абсолютен только в Windows: игра и программа живут там.
+    #[cfg(windows)]
     #[test]
     fn startup_ini_absolute_relative_and_comments() {
         let game_dir = Path::new(r"C:\Games\BeamNG.drive");
