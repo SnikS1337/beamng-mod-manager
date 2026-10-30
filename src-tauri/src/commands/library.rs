@@ -1153,14 +1153,25 @@ fn kind_of(mod_type: &str) -> &'static str {
     }
 }
 
-/// «Включено 3 333 файла. Игра может грузиться дольше»: разряды и падеж.
-/// Считаются файлы: включённые копии одного мода тоже замедляют загрузку.
-fn many_enabled_text(count: usize) -> String {
-    format!(
-        "Включено {} {}. Игра может грузиться дольше",
-        group_digits(count),
-        plural(count, "файл", "файла", "файлов")
-    )
+/// «Включено 35 модов (39 файлов с копиями). Игра может грузиться дольше».
+/// Число модов — как карточек в гараже; файлы с копиями — отдельно, потому что
+/// игра грузит каждую включённую копию. Было только «39 файлов» при 35 модах в
+/// списке — читалось как ошибка счёта.
+fn many_enabled_text(mods: usize, files: usize) -> String {
+    let main = format!(
+        "Включено {} {}",
+        group_digits(mods),
+        plural(mods, "мод", "мода", "модов")
+    );
+    if files > mods {
+        format!(
+            "{main} ({} {} с копиями). Игра может грузиться дольше",
+            group_digits(files),
+            plural(files, "файл", "файла", "файлов")
+        )
+    } else {
+        format!("{main}. Игра может грузиться дольше")
+    }
 }
 
 fn group_digits(value: usize) -> String {
@@ -1538,13 +1549,17 @@ mod tests {
     #[test]
     fn many_enabled_text_has_digits_and_right_case() {
         assert_eq!(
-            many_enabled_text(39),
-            "Включено 39 файлов. Игра может грузиться дольше"
+            many_enabled_text(35, 39),
+            "Включено 35 модов (39 файлов с копиями). Игра может грузиться дольше"
         );
-        assert!(many_enabled_text(21).starts_with("Включено 21 файл."));
-        assert!(many_enabled_text(3_333).starts_with("Включено 3 333 файла."));
-        assert!(many_enabled_text(111).starts_with("Включено 111 файлов."));
-        assert!(many_enabled_text(20_000).starts_with("Включено 20 000 файлов."));
+        assert_eq!(
+            many_enabled_text(39, 39),
+            "Включено 39 модов. Игра может грузиться дольше"
+        );
+        assert!(many_enabled_text(21, 21).starts_with("Включено 21 мод."));
+        assert!(many_enabled_text(3_333, 3_333).starts_with("Включено 3 333 мода."));
+        assert!(many_enabled_text(111, 112).starts_with("Включено 111 модов (112 файлов"));
+        assert!(many_enabled_text(20_000, 20_001).contains("(20 001 файл с копиями)"));
         assert_eq!(group_digits(999), "999");
         assert_eq!(group_digits(1_000), "1 000");
     }
