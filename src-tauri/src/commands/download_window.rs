@@ -16,7 +16,7 @@ use url::Url;
 use crate::error::AppError;
 
 const WINDOW_LABEL: &str = "download";
-const PANEL_LABEL: &str = "download-panel";
+pub(crate) const PANEL_LABEL: &str = "download-panel";
 const SITE_LABEL: &str = "download-site";
 const SITE_X: f64 = 24.0;
 const SITE_Y: f64 = 116.0;
@@ -331,6 +331,7 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
             return Err(AppError::new("site", error.to_string()));
         }
     };
+    crate::commands::download_progress::attach(&site, app.clone());
 
     if let Err(error) = window.show() {
         let _ = window.close();

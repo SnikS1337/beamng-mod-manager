@@ -362,6 +362,8 @@ dependencies = [
  "tokio",
  "ts-rs",
  "url",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.61.2",
  "zip",
 ]

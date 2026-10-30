@@ -3,12 +3,14 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   DownloadPanelEvent,
+  DownloadProgress,
   DownloadReady,
   DownloadRequest,
 } from "./generated.js";
 
 export type {
   DownloadPanelEvent,
+  DownloadProgress,
   DownloadReady,
   DownloadRequest,
 } from "./generated.js";
@@ -61,4 +63,12 @@ export async function listenDownloadState(
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<DownloadPanelEvent>("download://state", (event) => handler(event.payload));
+}
+
+/** Ход загрузки: байты, размер, скорость — несколько раз в секунду. */
+export async function listenDownloadProgress(
+  handler: (progress: DownloadProgress) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DownloadProgress>("download://progress", (event) => handler(event.payload));
 }
