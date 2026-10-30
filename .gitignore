@@ -1,9 +1,3 @@
-# Сборка старого C#/WPF (legacy/)
-bin/
-obj/
-out/
-publish/
-
 # SvelteKit / Vite
 node_modules
 /build

@@ -144,7 +144,7 @@ pub fn page_title(html: &str) -> String {
 }
 
 /// На странице есть хоть что-то, по чему видно обновление: версия, размер или файл.
-/// Ничего нет — это лента/заглушка, а не карточка мода (как `SiteAdapter.Readable` в legacy).
+/// Ничего нет — это лента/заглушка, а не карточка мода.
 pub fn readable(listing: &Listing) -> bool {
     listing.mod_version.is_some() || listing.size_bytes.is_some() || !listing.offers.is_empty()
 }

@@ -193,7 +193,7 @@ export type LostPage = { modId: string, modName: string, source: string, url: st
 
 export type UpdatesSnapshot = { findings: Array<UpdateFinding>, hidden: Array<UpdateFinding>, suggestions: Array<PageSuggestion>, 
 /**
- * Сайты и их состояние — панель «Проверка», как в legacy.
+ * Сайты и их состояние — панель «Проверка».
  */
 sites: Array<UpdateSite>, 
 /**

@@ -21,7 +21,7 @@ pub const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(5 * 60);
 
 /// Сколько запросов можно потратить на проверку и что считать свежим.
 ///
-/// Значения по умолчанию повторяют legacy: TTL 6 ч, 3 страницы ленты плюс
+/// Значения по умолчанию: TTL 6 ч, 3 страницы ленты плюс
 /// страница на каждые 50 привязок, не больше 10 страниц, 150 карточек на сайт
 /// и 5 минут на всю проверку.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_match_legacy() {
+    fn defaults() {
         let options = UpdateCheckOptions::default();
         assert_eq!(options.ttl, TimeDelta::hours(6));
         assert_eq!(options.feed_pages_base, 3);

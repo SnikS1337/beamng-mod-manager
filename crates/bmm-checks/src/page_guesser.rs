@@ -123,7 +123,7 @@ impl PageGuesser {
             })
             .collect();
         // `sort_by_key` устойчива: при одинаковом времени установки порядок остаётся
-        // прежним (по названию из хранилища), как и в legacy.
+        // прежним (по названию из хранилища).
         due.sort_by_key(|installed| std::cmp::Reverse(installed.installed_at_utc));
         due.truncate(PER_RUN);
         due
@@ -333,7 +333,7 @@ impl PageGuesser {
             return None;
         }
 
-        // Первый максимум, как `OrderByDescending(...).First()` в legacy.
+        // При равных баллах — первый найденный.
         let mut best = 0usize;
         for index in 1..fits.len() {
             if fits[index].score > fits[best].score {

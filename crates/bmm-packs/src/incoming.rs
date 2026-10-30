@@ -668,7 +668,7 @@ fn shape_of(index: &ZipIndex) -> Shape {
     }
 
     // Файл с именем «vehicles» в корне — не папка мода: известный корень должен быть
-    // первым сегментом пути, за которым что-то есть (как в legacy ShapeOf).
+    // первым сегментом пути, за которым что-то есть.
     let is_mod = index.entries.iter().any(|entry| {
         let name = entry.name.trim_start_matches("./").trim_start_matches('/');
         let mut parts = name.split('/').filter(|part| !part.is_empty());
@@ -860,7 +860,7 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
 
 fn clean_name(source: &Path) -> String {
     // Не Path::file_name: на Windows «a:b.zip» он прочитал бы как диск «a:» и файл «b.zip»,
-    // а имя записи внутри архива может содержать что угодно (в legacy было так же).
+    // а имя записи внутри архива может содержать что угодно.
     let full = source.to_string_lossy();
     let raw = full.rsplit(['/', '\\']).next().unwrap_or("").to_string();
     let raw = if raw.is_empty() {

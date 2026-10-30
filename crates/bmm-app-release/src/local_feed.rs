@@ -36,7 +36,7 @@ impl HttpTransport for LocalFeedTransport {
         else {
             return Ok(not_found());
         };
-        // Адрес в URL закодирован; в legacy имя раскодировалось (Uri.UnescapeDataString).
+        // Адрес в URL закодирован: имя файла раскодируем.
         let Some(name) = percent_decode(raw_name) else {
             return Ok(not_found());
         };

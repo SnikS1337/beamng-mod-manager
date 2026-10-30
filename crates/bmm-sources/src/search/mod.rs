@@ -329,7 +329,7 @@ impl SearchService {
                         }
                     }
                 }
-                // Как связанный CancellationToken в legacy: зависший сайт должен
+                // Общая отмена: зависший сайт должен
                 // по возможности свернуть работу, а не висеть после возврата поиска.
                 shared_cancel.store(true, Ordering::Relaxed);
                 break;

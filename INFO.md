@@ -257,7 +257,6 @@ src/               SvelteKit 3: маршруты, компоненты, IPC и �
 fixtures/          сохранённые страницы сайтов и данные игры для тестов
 design/icon/       исходники значка
 tools/             перерисовка значка, сбор сведений об игре на другой машине
-legacy/            старый C#/WPF и его макеты, в новой сборке не участвует
 ```
 
 Сборка и проверки:
@@ -276,8 +275,7 @@ npm run tauri dev
 Подробнее про CI, типы для интерфейса, версии и выпуск — в
 [docs/BUILD.md](docs/BUILD.md). Актуальное состояние — в [docs/STATUS.md](docs/STATUS.md),
 принятые решения — в [docs/DECISIONS.md](docs/DECISIONS.md), движение интерфейса —
-в [docs/MOTION.md](docs/MOTION.md). Материалы прошлых этапов —
-в [docs/history/](docs/history/).
+в [docs/MOTION.md](docs/MOTION.md).
 
 ## Лицензия
 

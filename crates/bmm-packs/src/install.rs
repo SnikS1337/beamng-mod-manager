@@ -615,7 +615,7 @@ impl ModInstaller {
             return 0;
         };
         // Возраст считается по тем же часам, что и метки копий: так поведение проверяется подменяемыми
-        // часами и не зависит от системного времени (в legacy было ровно так же).
+        // часами и не зависит от системного времени.
         let now = (self.now)();
         let threshold = chrono::Duration::from_std(older_than).unwrap_or(chrono::Duration::MAX);
         let mut removed = 0;

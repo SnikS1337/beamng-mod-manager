@@ -120,7 +120,7 @@ pub struct UpdatesSnapshotDto {
     pub findings: Vec<UpdateFindingDto>,
     pub hidden: Vec<UpdateFindingDto>,
     pub suggestions: Vec<PageSuggestionDto>,
-    /// Сайты и их состояние — панель «Проверка», как в legacy.
+    /// Сайты и их состояние — панель «Проверка».
     #[serde(default)]
     pub sites: Vec<UpdateSiteDto>,
     /// Последняя проверка любого мода (RFC 3339).
