@@ -35,7 +35,7 @@ pub async fn updates_find_pages(
             report
         }))
         .unwrap_or_default();
-        if report.followed > 0 {
+        if recheck_after_pages(&report) {
             let _batch = state_for_task.library.batch();
             let _ = runtime.coordinator.check(false, None);
         }
@@ -94,7 +94,7 @@ pub async fn updates_find_page(
             run_single_page_search(&state_for_task, &mod_id, &cancel)
         }))
         .unwrap_or_default();
-        if report.followed > 0 {
+        if recheck_after_pages(&report) {
             let _batch = state_for_task.library.batch();
             let _ = runtime.coordinator.check(false, None);
         }

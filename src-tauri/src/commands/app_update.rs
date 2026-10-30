@@ -446,6 +446,45 @@ pub fn installer_args() -> Option<InstallerArgs> {
     })
 }
 
+/// Подпись программы внутри exe: имя есть и в 1.x (Rust), и в 0.3.x (.NET, UTF-16).
+const PROGRAM_MARK: &str = "BeamModManager";
+
+/// Файл — exe этой программы: существует, `.exe` и внутри есть её имя.
+fn is_our_program(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let is_exe = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"));
+    if !is_exe || !path.is_file() {
+        return false;
+    }
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let ascii = PROGRAM_MARK.as_bytes().to_vec();
+    let wide: Vec<u8> = PROGRAM_MARK
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect();
+    let keep = wide.len();
+    let mut window: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; 1024 * 1024];
+    loop {
+        let read = match file.read(&mut chunk) {
+            Ok(0) | Err(_) => return false,
+            Ok(read) => read,
+        };
+        window.extend_from_slice(&chunk[..read]);
+        if window.windows(ascii.len()).any(|part| part == ascii.as_slice())
+            || window.windows(wide.len()).any(|part| part == wide.as_slice())
+        {
+            return true;
+        }
+        let cut = window.len().saturating_sub(keep);
+        window.drain(..cut);
+    }
+}
+
 /// Код выхода новой версии, которая сама вернула прежнюю: откатывать второй раз не нужно.
 const ROLLED_BACK_EXIT_CODE: i32 = 3;
 /// Сколько ждать, пока новая версия покажет окно.
@@ -466,6 +505,11 @@ fn started_event_name(installer_pid: u32) -> String {
 /// файл (прежнюю — в копию), запускает программу и ждёт её окна до минуты. Программа упала
 /// раньше — прежняя возвращается из копии и запускается с `--rolled-back`.
 pub fn run_installer(arguments: InstallerArgs) {
+    // `--target` приходит из командной строки: заменять можно только саму программу,
+    // а не любой exe, имя которого передали.
+    if !is_our_program(&arguments.target) {
+        return;
+    }
     wait_for_exit(arguments.old_pid, Duration::from_secs(30));
     let self_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -1080,6 +1124,33 @@ mod tests {
             parsed.backup,
             PathBuf::from("D:\\data\\update\\previous.exe")
         );
+    }
+
+    #[test]
+    fn installer_replaces_only_this_program() {
+        // `--install-update 4 --target C:\\…\\SomeApp.exe` мог заменить чужой exe.
+        let temp = tempfile::tempdir().unwrap();
+        let ours = temp.path().join("Renamed.exe");
+        let mut body = vec![0u8; 3 * 1024 * 1024];
+        body.extend_from_slice(b"BeamModManager");
+        std::fs::write(&ours, &body).unwrap();
+        assert!(is_our_program(&ours), "своё — даже переименованное");
+
+        let old_dotnet = temp.path().join("Old.exe");
+        let wide: Vec<u8> = "BeamModManager"
+            .encode_utf16()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect();
+        std::fs::write(&old_dotnet, [b"MZ".as_slice(), &wide].concat()).unwrap();
+        assert!(is_our_program(&old_dotnet), "0.3.x пишет имя в UTF-16");
+
+        let foreign = temp.path().join("SomeApp.exe");
+        std::fs::write(&foreign, b"MZ other program").unwrap();
+        assert!(!is_our_program(&foreign));
+        let not_exe = temp.path().join("BeamModManager.txt");
+        std::fs::write(&not_exe, b"BeamModManager").unwrap();
+        assert!(!is_our_program(&not_exe));
+        assert!(!is_our_program(&temp.path().join("missing.exe")));
     }
 
     #[test]

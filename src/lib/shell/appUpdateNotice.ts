@@ -25,7 +25,8 @@ export function noticeFor(
     case "downloading":
       return { ...base, stage: "downloading" };
     case "readyToRestart":
-      return { ...base, stage: "ready", progress: 1 };
+      // «Позже» прячет и готовое обновление: раньше плашка оставалась на месте.
+      return dismissed === manifest.version ? null : { ...base, stage: "ready", progress: 1 };
     case "failed":
       // Сбой показываем, только если человек уже начал обновление из плашки.
       return dismissed === manifest.version

@@ -74,11 +74,25 @@ struct State {
     retry_after: HashMap<String, DateTime<FixedOffset>>,
     /// Сколько вызовов ждут идущую проверку (диагностика и тесты коалесинга).
     waiters: usize,
+    /// Идёт проверка одного мода ([`UpdateCoordinator::hold`]): полная ждёт её конца.
+    held: bool,
 }
 
 struct Running {
     id: u64,
     cancel: Arc<AtomicBool>,
+}
+
+/// Проверка одного мода заняла координатор; отпускается при выходе из области.
+pub struct CoordinatorHold<'a> {
+    coordinator: &'a UpdateCoordinator,
+}
+
+impl Drop for CoordinatorHold<'_> {
+    fn drop(&mut self) {
+        self.coordinator.lock().held = false;
+        self.coordinator.idle.notify_all();
+    }
 }
 
 impl UpdateCoordinator {
@@ -123,7 +137,20 @@ impl UpdateCoordinator {
     }
 
     pub fn is_running(&self) -> bool {
-        self.lock().running.is_some()
+        let state = self.lock();
+        state.running.is_some() || state.held
+    }
+
+    /// Занять проверку для одного мода. Пока держится, полная проверка ждёт: иначе обе
+    /// писали одно состояние проверки, и старый результат мог затереть свежий.
+    /// `None` — уже идёт другая проверка.
+    pub fn hold(&self) -> Option<CoordinatorHold<'_>> {
+        let mut state = self.lock();
+        if state.running.is_some() || state.held {
+            return None;
+        }
+        state.held = true;
+        Some(CoordinatorHold { coordinator: self })
     }
 
     pub fn last_report(&self) -> Option<UpdateRunReport> {
@@ -143,6 +170,12 @@ impl UpdateCoordinator {
         let mut waited: Option<u64> = None;
         loop {
             let mut state = self.lock();
+            while state.held {
+                state = self
+                    .idle
+                    .wait(state)
+                    .unwrap_or_else(|error| error.into_inner());
+            }
             if let Some(running) = &state.running {
                 let id = running.id;
                 waited = Some(id);
@@ -1127,6 +1160,29 @@ mod tests {
         let _ = checked;
         assert_eq!(site.card_calls(), 4);
         assert_eq!(report.requests, 6, "две ленты и четыре карточки");
+    }
+
+    #[test]
+    fn full_check_waits_for_a_single_mod_check() {
+        // Проверка одного мода и полная писали одно состояние параллельно — старый
+        // результат мог затереть свежий. Теперь полная ждёт.
+        let site = Site::new();
+        let coordinator = Arc::new(coordinator(
+            store(1),
+            Arc::clone(&site),
+            clock_of(&clock_at(t0())),
+            UpdateCoordinatorOptions::default(),
+        ));
+        let hold = coordinator.hold().expect("свободен");
+        assert!(coordinator.is_running());
+        assert!(coordinator.hold().is_none(), "второй раз не занять");
+        let run = spawn_check(Arc::clone(&coordinator), false);
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(site.feed_calls(), 0, "полная проверка ждёт");
+        drop(hold);
+        run.join().unwrap();
+        assert!(site.feed_calls() > 0);
+        assert!(!coordinator.is_running());
     }
 
     #[test]

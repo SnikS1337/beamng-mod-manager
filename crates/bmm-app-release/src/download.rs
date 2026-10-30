@@ -271,8 +271,11 @@ impl UpdateDownloader {
             .map_err(|error| DownloadError::io("не удалось создать папку обновления", error))?;
         let path = directory.join(file_name);
         if let Err(error) = self.download(manifest, &path, progress, cancel) {
-            // Недокачанный архив и распакованный exe не оставляем.
-            let _ = fs::remove_dir_all(&directory);
+            // Убираем только свою попытку. Папку версии целиком не трогаем: после
+            // «Отмены» человек мог сразу начать новую попытку, и прежний поток стирал
+            // её архив и распакованный exe.
+            let _ = fs::remove_file(&path);
+            let _ = fs::remove_dir(&directory); // только если пустая
             return Err(error);
         }
         Ok(DownloadedUpdate {

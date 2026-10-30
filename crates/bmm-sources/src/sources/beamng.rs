@@ -79,10 +79,17 @@ impl ModSource for BeamNgRepoSource {
     }
 
     fn listing(&self, url: &Url, cancel: &AtomicBool) -> Result<Option<Listing>, SourceError> {
+        // Вкладку «Updates»/«Reviews» читаем как саму карточку: на вкладке нет ни
+        // версии, ни кнопки скачивания.
+        let card = if self.is_mod_page(url) {
+            parser::card_url(url)
+        } else {
+            url.clone()
+        };
         common::read_listing(
             &self.fetcher,
             self.id(),
-            url,
+            &card,
             &|url| self.owns(url),
             &|url| self.is_mod_page(url),
             &parser::slug_of,

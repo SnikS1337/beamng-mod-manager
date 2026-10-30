@@ -134,7 +134,7 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                         run_page_search(&app, &state, AUTO_REQUEST_ID, &runtime.page_cancel, false)
                     }))
                     .unwrap_or_default();
-                    if pages.followed > 0
+                    if recheck_after_pages(&pages)
                         && let Some(again) = contained(|| {
                             let _batch = state.library.batch();
                             runtime.coordinator.check(false, None)

@@ -655,6 +655,9 @@ struct HostInner {
     last_request: Option<Instant>,
     failures: u32,
     blocked_until: Option<Instant>,
+    /// Паузу назначил сам сайт (Retry-After, 429/503): её соблюдаем всегда, даже
+    /// при «Проверить принудительно».
+    blocked_by_site: bool,
     /// До какого момента сайт требует проверку. После срока пробуем снова.
     human_until: Option<Instant>,
     status: SourceStatus,
@@ -667,6 +670,7 @@ impl Default for HostInner {
             last_request: None,
             failures: 0,
             blocked_until: None,
+            blocked_by_site: false,
             human_until: None,
             status: SourceStatus::Ok,
             message: None,
@@ -1128,6 +1132,7 @@ impl PoliteFetcher {
         inner.failures = 0;
         inner.status = SourceStatus::Unavailable;
         inner.message = Some(message.clone());
+        inner.blocked_by_site = true;
         inner.blocked_until = Some(
             inner
                 .blocked_until
@@ -1150,7 +1155,12 @@ impl PoliteFetcher {
         inner.status = SourceStatus::Unavailable;
         inner.message = Some(message.clone());
         if inner.failures >= self.options.failure_limit {
-            inner.blocked_until = Some(Instant::now() + self.options.cooldown);
+            let until = Instant::now() + self.options.cooldown;
+            // Пауза сайта длиннее нашей — оставляем её признак.
+            if inner.blocked_until.is_none_or(|current| current <= until) {
+                inner.blocked_by_site = false;
+            }
+            inner.blocked_until = Some(inner.blocked_until.map_or(until, |current| current.max(until)));
             inner.failures = 0;
         }
         let cooldown_until = inner.blocked_until;
@@ -1234,6 +1244,32 @@ impl PoliteFetcher {
 
     pub fn clear_cache(&self) {
         lock(&self.cache).clear();
+    }
+
+    /// «Проверить принудительно»: снять нашу паузу после серии сбоев, чтобы проверка
+    /// действительно сходила на сайт. Паузу, которую назначил сам сайт, и проверку
+    /// «вы человек?» не трогаем.
+    pub fn forgive_failures(&self) {
+        let mut forgiven_hosts = 0usize;
+        for entry in lock(&self.hosts).values() {
+            let mut inner = lock(&entry.inner);
+            inner.failures = 0;
+            if inner.blocked_until.is_some() && !inner.blocked_by_site {
+                inner.blocked_until = None;
+                if inner.status == SourceStatus::Unavailable {
+                    inner.status = SourceStatus::Ok;
+                    inner.message = None;
+                }
+                forgiven_hosts += 1;
+            }
+        }
+        if forgiven_hosts > 0 {
+            for state in lock(&self.sources).values_mut() {
+                if state.status == SourceStatus::Unavailable {
+                    *state = SourceState::default();
+                }
+            }
+        }
     }
 
     pub fn reset_source(&self, source: &str, url: &Url) {
@@ -2029,6 +2065,13 @@ mod tests {
             1,
             "источник отдыхает до указанного срока"
         );
+        // Срок назначил сайт — его соблюдает и принудительная проверка.
+        polite.forgive_failures();
+        assert_eq!(
+            polite.get("site", &url("https://example.org/third")).status,
+            SourceStatus::Unavailable
+        );
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -2235,6 +2278,32 @@ mod tests {
         }
         assert_eq!(polite.status_of("site"), SourceStatus::Unavailable);
         assert!(polite.message_of("site").is_some());
+    }
+
+    #[test]
+    fn forced_check_forgives_our_pause_but_not_the_sites() {
+        // «Проверить принудительно» не делала ни одного запроса, пока шла наша
+        // десятиминутная пауза после трёх сбоев.
+        let fake = FakeFetcher::new(vec![
+            Err(FetchError::Network),
+            Err(FetchError::Network),
+            Err(FetchError::Network),
+            Ok(response(200, "<html>ok</html>")),
+        ]);
+        let mut opts = options();
+        opts.retries = 0;
+        opts.cooldown = Duration::from_secs(600);
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://example.org/mod");
+        for _ in 0..3 {
+            polite.clear_cache();
+            polite.get("site", &page);
+        }
+        assert_eq!(polite.status_of("site"), SourceStatus::Unavailable);
+        polite.forgive_failures();
+        assert_eq!(polite.status_of("site"), SourceStatus::Ok);
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        assert_eq!(fake.calls.lock().unwrap().len(), 4);
     }
 
     #[test]

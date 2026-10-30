@@ -197,7 +197,11 @@ pub fn run() {
         check: UpdateCheckOptions::from_settings(&settings_snapshot),
         ..UpdateCoordinatorOptions::default()
     })
-    .with_clear_cache(Arc::new(move || clear_fetcher.clear_cache()))
+    .with_clear_cache(Arc::new(move || {
+        // Принудительная проверка: заново и с сайтами, на которых мы сами взяли паузу.
+        clear_fetcher.clear_cache();
+        clear_fetcher.forgive_failures();
+    }))
     .with_reset_source(Arc::new(move |source| {
         if let Some(url) = homes.get(source) {
             reset_fetcher.reset_source(source, url);
