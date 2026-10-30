@@ -271,6 +271,7 @@ pub fn find_pages_with(
                 break;
             }
             let response = search.search(query, cancel, None);
+            note_human_checks(store, &response.sources);
             if response
                 .sources
                 .iter()
@@ -403,6 +404,20 @@ pub fn find_pages_with(
     result
 }
 
+/// Сайт ответил проверкой «вы человек?» — запоминаем, как и при проверке обновлений:
+/// иначе Modland, к которому не привязан ни один мод, навсегда остаётся «ещё не
+/// проверялся», и кнопки «Пройти проверку» человек так и не видит.
+fn note_human_checks(store: &dyn LibraryStore, sources: &[bmm_sources::search::SourceReport]) {
+    for report in sources {
+        if report.status == bmm_sources::sources::SourceStatus::NeedsHumanCheck {
+            store.set_source_status(
+                &report.source_id,
+                bmm_domain::library::SourceStatus::NeedsHumanCheck,
+            );
+        }
+    }
+}
+
 /// Страницы на других сайтах для модов, у которых страница уже есть.
 ///
 /// Мод со страницей на STMods раньше никогда не искался на Modland и ModsGaming, и
@@ -476,6 +491,7 @@ pub fn find_extra_pages(
         let title = title_of(&installed.id);
         let query = PageGuesser::query_for(installed, title.as_deref());
         let response = search.search(&query, cancel, None);
+        note_human_checks(store, &response.sources);
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
             break;
@@ -1156,6 +1172,35 @@ mod tests {
         assert!(modland[0].confirmed);
         assert_eq!(modland[0].source_id, "ml");
         assert_eq!(store.bindings().len(), 2, "страница на STMods осталась");
+    }
+
+    #[test]
+    fn page_search_remembers_that_a_site_asks_for_human_check() {
+        // Было: Modland без привязанных модов отвечал поиску страниц проверкой
+        // Cloudflare, а в панели оставался «ещё не проверялся» без кнопки «Пройти
+        // проверку» — и Modland так ни разу и не участвовал.
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "toyota_sienna.zip"));
+        let site = Site::new(|_| {
+            Err(SourceError {
+                status: SourceStatus::NeedsHumanCheck,
+                message: "Cloudflare".to_string(),
+            })
+        });
+        let search = search(site);
+        find_pages(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(
+            store.source_status("modsgaming"),
+            bmm_domain::library::SourceStatus::NeedsHumanCheck
+        );
     }
 
     #[test]
