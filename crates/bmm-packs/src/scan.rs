@@ -400,11 +400,9 @@ mod tests {
                 return; // среда не разрешает junction — проверка не применима
             }
         }
-        #[cfg(not(windows))]
-        {
-            let _ = &link;
-            return;
-        }
+        // На других системах то же самое делает символическая ссылка на папку.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
         let layout = ModLayout {
             mods_dir: mods,
             disabled_dir: temp.path().join("disabled"),

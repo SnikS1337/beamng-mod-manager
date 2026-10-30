@@ -165,11 +165,6 @@ fn steam_path_from_registry() -> Option<PathBuf> {
     (!text.is_empty()).then(|| PathBuf::from(text))
 }
 
-#[cfg(not(windows))]
-fn steam_path_from_registry() -> Option<PathBuf> {
-    None
-}
-
 /// Пути библиотек из `libraryfolders.vdf`: строки `"path"  "D:\\SteamLibrary"`
 /// внутри секций, а не любое упоминание `path` в файле.
 pub fn steam_libraries(vdf: &str) -> Vec<PathBuf> {
