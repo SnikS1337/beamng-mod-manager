@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ClickKeys } from "./selection";
   import Car from "phosphor-svelte/lib/Car";
   import Check from "phosphor-svelte/lib/Check";
   import MapTrifold from "phosphor-svelte/lib/MapTrifold";
@@ -33,7 +34,7 @@
     index?: number;
     /** Появиться с анимацией (первый показ списка, смена фильтра). */
     appear?: boolean;
-    onselect: (id: string, keys: { ctrl: boolean; shift: boolean }) => void;
+    onselect: (id: string, keys: ClickKeys) => void;
     ontoggle: (mod: ModCardDto) => void;
   } = $props();
 
@@ -123,7 +124,7 @@
     title={selected ? "Снять выбор" : "Выбрать для действий"}
     onclick={(event) => {
       event.stopPropagation();
-      onselect(mod.id, { ctrl: true, shift: false });
+      onselect(mod.id, { check: true });
     }}
   >
     {#if selected}<Check size={12} weight="bold" />{/if}
@@ -285,6 +286,7 @@
 
   .card:hover .corner,
   .card.selecting .corner,
+  .card.selected .corner,
   .card:has(.check:focus-visible) .corner {
     opacity: 0;
   }
