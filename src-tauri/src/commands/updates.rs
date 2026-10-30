@@ -648,14 +648,18 @@ fn check_window(
     if let Some(window) = app.get_webview_window(CHECK_LABEL) {
         return Ok(window);
     }
-    WebviewWindowBuilder::new(app, CHECK_LABEL, WebviewUrl::External(url))
-        .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
-        .title(format!("Проверка {}", site.name))
-        .inner_size(980.0, 720.0)
-        .min_inner_size(520.0, 420.0)
-        .center()
-        .build()
-        .map_err(|error| AppError::new("window", error.to_string()))
+    crate::with_browser_args!(WebviewWindowBuilder::new(
+        app,
+        CHECK_LABEL,
+        WebviewUrl::External(url)
+    ))
+    .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
+    .title(format!("Проверка {}", site.name))
+    .inner_size(980.0, 720.0)
+    .min_inner_size(520.0, 420.0)
+    .center()
+    .build()
+    .map_err(|error| AppError::new("window", error.to_string()))
 }
 
 /// Пока окно открыто, смотрим на страницу: обычная страница сайта без маркера
