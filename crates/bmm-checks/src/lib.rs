@@ -41,7 +41,7 @@ pub use bindings::{
     BindingActions, BindingRepair, BindingSuggester, BindingSuggestion, DeadBinding, DeclineUndo,
     RepairProposal,
 };
-pub use coordinator::{UpdateCoordinator, UpdateCoordinatorOptions};
+pub use coordinator::{CoordinatorHold, UpdateCoordinator, UpdateCoordinatorOptions};
 pub use options::UpdateCheckOptions;
 pub use page_guesser::{PageGuess, PageGuesser};
 pub use pages::{

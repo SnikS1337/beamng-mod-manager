@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { page } from "$app/state";
@@ -322,14 +323,15 @@
   }
 
   /** Мутация возвращает новый снимок: применяем его, только если ответ не устарел. */
-  async function applySnapshot(load: () => Promise<UpdatesSnapshot>) {
+  /** `false` — бэкенд отказал: тост об успехе и следующие шаги показывать нельзя. */
+  async function applySnapshot(load: () => Promise<UpdatesSnapshot>): Promise<boolean> {
     const token = ++readToken;
-    try {
-      const next = await load();
-      if (token === readToken) snapshot = next;
-    } catch (reason) {
-      if (token === readToken) error = errorText(reason);
+    const result = await settle(load);
+    if (token === readToken) {
+      if (result.ok) snapshot = result.value;
+      else error = errorText(result.error);
     }
+    return result.ok;
   }
 
   async function dismiss(finding: UpdateFinding) {
@@ -341,7 +343,7 @@
   }
 
   async function confirmPage(suggestion: PageSuggestion) {
-    await applySnapshot(() => updatesConfirmPage(suggestion.modId));
+    if (!(await applySnapshot(() => updatesConfirmPage(suggestion.modId)))) return;
     toasts.show(`Следим за страницей «${suggestion.modName}»`, {
       undo: async () => {
         await applySnapshot(() => updatesUndoPage(suggestion));
@@ -377,7 +379,7 @@
   }
 
   async function rejectPage(suggestion: PageSuggestion) {
-    await applySnapshot(() => updatesRejectPage(suggestion.modId));
+    if (!(await applySnapshot(() => updatesRejectPage(suggestion.modId)))) return;
     toasts.show(`Страница «${suggestion.modName}» отклонена`, {
       undo: async () => {
         await applySnapshot(() => updatesUndoPage(suggestion));
@@ -386,7 +388,7 @@
   }
 
   async function unfollow(finding: UpdateFinding) {
-    await applySnapshot(() => updatesUnfollow(finding.modId, finding.source));
+    if (!(await applySnapshot(() => updatesUnfollow(finding.modId, finding.source)))) return;
     toasts.show(`Больше не следим за страницей «${finding.modName}»`, {
       undo: async () => {
         await applySnapshot(() =>
@@ -398,9 +400,10 @@
 
   /** «Страница пропала»: искать новую (сразу запускаем поиск) или просто перестать следить. */
   async function forgetLost(page: LostPage, searchAgain: boolean) {
-    await applySnapshot(() =>
+    const forgotten = await applySnapshot(() =>
       updatesForgetLost(page.modId, page.source, searchAgain),
     );
+    if (!forgotten) return;
     if (searchAgain) {
       await findPages();
     } else {

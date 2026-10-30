@@ -406,6 +406,43 @@ fn download_into_builds_update_folder_for_version() {
 }
 
 #[test]
+fn cancelled_attempt_does_not_remove_the_next_attempt() {
+    // «Отмена», потом сразу новая загрузка: прежний поток при ошибке стирал всю
+    // папку версии вместе с файлом новой попытки.
+    let net = Arc::new(MemoryTransport::new());
+    let zip = release_zip(true, true, EXE_NAME);
+    let manifest = publish(&net, "0.1.30", &zip, None);
+    let downloader = UpdateDownloader::new(net);
+    let root = tempfile::tempdir().unwrap();
+    let next = downloader
+        .download_into_named(&manifest, root.path(), "update-2.zip", &mut |_| {}, &CancelToken::new())
+        .unwrap();
+    let cancelled = CancelToken::new();
+    cancelled.cancel();
+    let error = downloader
+        .download_into_named(&manifest, root.path(), "update-1.zip", &mut |_| {}, &cancelled)
+        .unwrap_err();
+    assert_eq!(error, DownloadError::Cancelled);
+    assert_eq!(fs::read(&next.path).unwrap(), zip, "новая попытка цела");
+    assert!(!root.path().join("0.1.30").join("update-1.zip").exists());
+}
+
+#[test]
+fn failed_only_attempt_leaves_no_empty_folder() {
+    let net = Arc::new(MemoryTransport::new());
+    let zip = release_zip(true, true, EXE_NAME);
+    let manifest = publish(&net, "0.1.30", &zip, None);
+    let downloader = UpdateDownloader::new(net);
+    let root = tempfile::tempdir().unwrap();
+    let cancelled = CancelToken::new();
+    cancelled.cancel();
+    downloader
+        .download_into(&manifest, root.path(), &mut |_| {}, &cancelled)
+        .unwrap_err();
+    assert!(!root.path().join("0.1.30").exists());
+}
+
+#[test]
 fn foreign_redirect_is_not_followed() {
     let net = Arc::new(MemoryTransport::new());
     let zip = release_zip(true, true, EXE_NAME);

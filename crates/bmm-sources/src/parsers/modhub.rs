@@ -149,10 +149,19 @@ fn description_version(text: &str) -> Option<String> {
         .captures_iter(text)
         .find_map(|captures| {
             let whole = captures.get(0)?;
+            // Своё предложение до числа: «Needs BeamNG.drive version 0.40» — слово
+            // «BeamNG» стоит дальше 16 знаков, которых раньше хватало лишь на «version».
+            // Но «Game version: 0.38. Changes v1.3» — уже другое предложение.
             let before = text[..whole.start()].to_lowercase();
-            let tail: String = before.chars().rev().take(16).collect::<String>();
+            let sentence_start = [". ", "\n", "; ", "! ", "? "]
+                .iter()
+                .filter_map(|mark| before.rfind(mark).map(|at| at + mark.len()))
+                .max()
+                .unwrap_or(0);
+            let sentence = &before[sentence_start..];
+            let tail: String = sentence.chars().rev().take(48).collect::<String>();
             let tail: String = tail.chars().rev().collect();
-            let about_game = ["game", "beamng", "игры", "игра"]
+            let about_game = ["game", "beamng", ".drive", "игры", "игра", "игре"]
                 .iter()
                 .any(|word| tail.contains(word));
             (!about_game).then(|| captures.name("v").map(|v| v.as_str().to_string()))?
@@ -400,6 +409,11 @@ mod tests {
         assert_eq!(description_version("Game version: 0.38"), None);
         assert_eq!(description_version("Tested on BeamNG version 0.40"), None);
         assert_eq!(description_version("Версия игры: 0.38"), None);
+        assert_eq!(description_version("Needs BeamNG.drive version 0.40"), None);
+        assert_eq!(
+            description_version("Works in BeamNG.drive game version: 0.36.x"),
+            None
+        );
         assert_eq!(
             description_version("Game version: 0.38. Changes v1.3: new wheels"),
             Some("1.3".to_string()),

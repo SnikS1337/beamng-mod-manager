@@ -133,6 +133,12 @@ fn run_page_search(
     )
 }
 
+/// Взятые под наблюдение страницы проверяем сразу — но не после «Остановить»:
+/// иначе отменённый поиск превращался в новую проверку на минуты.
+pub(crate) fn recheck_after_pages(report: &bmm_checks::PageSearchReport) -> bool {
+    report.followed > 0 && !report.cancelled
+}
+
 /// «Найти страницу» у одного мода: только он, без общей очереди.
 fn run_single_page_search(
     state: &AppState,
@@ -274,7 +280,7 @@ async fn start_updates(
                     }))
                     .unwrap_or_default();
                     // Взятые под наблюдение сами — проверяем сразу, а не при следующем запуске.
-                    if pages.followed > 0 {
+                    if recheck_after_pages(&pages) {
                         let again = {
                             let _batch = state_for_task.library.batch();
                             coordinator.check(false, None)
@@ -357,12 +363,14 @@ fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, 
         .update
         .as_ref()
         .ok_or_else(|| AppError::new("updates", "Проверка обновлений недоступна."))?;
-    if runtime.coordinator.is_running() {
+    // Занимаем координатор до записи результата: полная проверка, начатая в это
+    // время, подождёт, а не перепишет состояние параллельно.
+    let Some(_hold) = runtime.coordinator.hold() else {
         return Err(AppError::new(
             "updates",
             "Проверка обновлений уже идёт. Дождитесь её окончания.",
         ));
-    }
+    };
     let source = runtime
         .sources
         .iter()
@@ -801,6 +809,18 @@ mod tests {
             .single()
             .unwrap()
             .fixed_offset()
+    }
+
+    #[test]
+    fn stopped_page_search_does_not_start_a_new_check() {
+        let mut report = bmm_checks::PageSearchReport {
+            followed: 2,
+            ..Default::default()
+        };
+        assert!(recheck_after_pages(&report));
+        report.cancelled = true;
+        assert!(!recheck_after_pages(&report), "«Остановить» — значит остановить");
+        assert!(!recheck_after_pages(&bmm_checks::PageSearchReport::default()));
     }
 
     #[test]

@@ -176,19 +176,47 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
     listing
 }
 
+/// Номер ресурса из адреса: `resources/acng.39760/…` → `39760`, `resources/906/` → `906`.
+/// Берём сегмент сразу после `resources`, а не последний: у вкладок `/updates` и
+/// `/reviews` последним было бы «updates».
 pub fn slug_of(url: &url::Url) -> String {
-    let last = url
-        .path()
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
+    let parts: Vec<&str> = url
+        .path_segments()
+        .map(|segments| segments.filter(|part| !part.is_empty()).collect())
+        .unwrap_or_default();
+    let resource = parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("resources"))
+        .and_then(|at| parts.get(at + 1))
+        .or_else(|| parts.last())
+        .copied()
         .unwrap_or("");
-    let digits = Regex::new(r"\.(\d+)$").unwrap();
-    digits
-        .captures(last)
-        .and_then(|captures| captures.get(1))
-        .map(|value| value.as_str().to_string())
-        .unwrap_or_else(|| last.to_string())
+    resource
+        .rsplit_once('.')
+        .map(|(_, id)| id)
+        .filter(|id| !id.is_empty() && id.chars().all(|ch| ch.is_ascii_digit()))
+        .unwrap_or(resource)
+        .to_string()
+}
+
+/// Адрес самой карточки мода: вкладки `/updates`, `/reviews` и `?…` отбрасываются.
+pub fn card_url(url: &url::Url) -> url::Url {
+    let mut card = url.clone();
+    let parts: Vec<String> = url
+        .path_segments()
+        .map(|segments| {
+            segments
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if parts.len() >= 2 && parts[0].eq_ignore_ascii_case("resources") {
+        card.set_path(&format!("/resources/{}/", parts[1]));
+        card.set_query(None);
+        card.set_fragment(None);
+    }
+    card
 }
 
 #[cfg(test)]
@@ -249,6 +277,24 @@ mod tests {
     fn slug_from_resource_url() {
         let url = url::Url::parse("https://beamng.com/resources/acng.39760/").unwrap();
         assert_eq!(slug_of(&url), "39760");
+    }
+
+    #[test]
+    fn tabs_of_a_resource_keep_its_number_and_card_address() {
+        // «/updates» раньше давал номер «updates»: проверка шла не по той записи.
+        for raw in [
+            "https://www.beamng.com/resources/acng.39760/updates",
+            "https://www.beamng.com/resources/acng.39760/reviews?page=2",
+            "https://beamng.com/resources/906/",
+        ] {
+            let url = url::Url::parse(raw).unwrap();
+            let id = slug_of(&url);
+            assert!(id == "39760" || id == "906", "{raw}: {id}");
+        }
+        let card = card_url(
+            &url::Url::parse("https://www.beamng.com/resources/acng.39760/updates?x=1").unwrap(),
+        );
+        assert_eq!(card.as_str(), "https://www.beamng.com/resources/acng.39760/");
     }
 
     #[test]
