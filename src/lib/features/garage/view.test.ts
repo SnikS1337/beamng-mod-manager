@@ -5,8 +5,7 @@ import {
   saveViewMode,
   typeCounts,
   typeLabel,
-  typeTag,
-} from "./view";
+  typeTag, revealScroll } from "./view";
 
 describe("typeTag", () => {
   it("верит составу архива", () => {
@@ -57,5 +56,14 @@ describe("вид гаража", () => {
       },
     };
     expect(loadViewMode(broken)).toBe("grid");
+  });
+});
+
+describe("прокрутка к строке списка", () => {
+  it("прокручивает, только если строки не видно", () => {
+    // Строки по 48: экран 0–480 показывает строки 0–9.
+    expect(revealScroll(3, 48, 0, 480)).toBeNull();
+    expect(revealScroll(10, 48, 0, 480)).toBe(48);
+    expect(revealScroll(2, 48, 200, 480)).toBe(96);
   });
 });

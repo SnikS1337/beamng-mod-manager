@@ -98,3 +98,21 @@ function safeStorage(): Storage | null {
     return null;
   }
 }
+
+/**
+ * Куда прокрутить список строк одинаковой высоты, чтобы строка `index` стала видна.
+ * `null` — она уже на экране. В режиме списка стрелки раньше меняли выбор, но
+ * строка за краем экрана так и оставалась невидимой.
+ */
+export function revealScroll(
+  index: number,
+  row: number,
+  scrollTop: number,
+  height: number,
+): number | null {
+  const top = index * row;
+  const bottom = top + row;
+  if (top < scrollTop) return top;
+  if (bottom > scrollTop + height) return Math.max(0, bottom - height);
+  return null;
+}

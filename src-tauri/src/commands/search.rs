@@ -649,6 +649,11 @@ pub async fn search_page_preview(
     Ok(result)
 }
 
+/// Сколько картинок выдачи грузится одновременно.
+const SEARCH_PREVIEW_LIMIT: usize = 6;
+static SEARCH_PREVIEW_GATE: std::sync::LazyLock<tokio::sync::Semaphore> =
+    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(SEARCH_PREVIEW_LIMIT));
+
 #[tauri::command]
 pub async fn search_preview(
     state: tauri::State<'_, Arc<AppState>>,
@@ -666,6 +671,12 @@ pub async fn search_preview(
             "Картинка с этого сайта не загружается.",
         ));
     }
+    // Выдача на 150 карточек раньше запускала 150 фоновых потоков сразу: каждый ждал
+    // очереди сайта по 1,5–2,5 с и держал поток. Не больше нескольких одновременно.
+    let _permit = SEARCH_PREVIEW_GATE
+        .acquire()
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?;
     let cache = runtime.previews.clone();
     let result = tauri::async_runtime::spawn_blocking(move || cache.fetch(&parsed))
         .await
@@ -851,6 +862,22 @@ fn price_summary(price: PriceSummary) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_previews_are_limited() {
+        assert_eq!(
+            SEARCH_PREVIEW_GATE.available_permits(),
+            SEARCH_PREVIEW_LIMIT
+        );
+        let held: Vec<_> = (0..SEARCH_PREVIEW_LIMIT)
+            .map(|_| SEARCH_PREVIEW_GATE.try_acquire().unwrap())
+            .collect();
+        assert!(
+            SEARCH_PREVIEW_GATE.try_acquire().is_err(),
+            "седьмая картинка ждёт, а не занимает ещё поток"
+        );
+        drop(held);
+    }
     use bmm_domain::library::{InMemoryLibraryStore, InstalledMod, LibraryStore, ModBinding};
     use chrono::Utc;
 

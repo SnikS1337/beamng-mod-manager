@@ -1078,6 +1078,7 @@
                 if (!mod.deleted) void toggle(mod);
               }}
               resetKey={`${filter}|${typeFilter}|${query}`}
+              {revealId}
             />
           {:else}
             <ModGrid

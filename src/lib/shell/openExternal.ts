@@ -17,7 +17,13 @@ export async function openExternal(raw: string): Promise<boolean> {
     return true;
   } catch {
     try {
-      if (window.open(url, "_blank", "noopener")) return true;
+      // С "noopener" window.open по стандарту возвращает null и при успехе: открываем
+      // без него и сразу обрываем связь со страницей — так видно, открылось ли окно.
+      const opened = window.open(url, "_blank");
+      if (opened) {
+        opened.opener = null;
+        return true;
+      }
     } catch {
       // Браузер запретил и запасной путь.
     }
