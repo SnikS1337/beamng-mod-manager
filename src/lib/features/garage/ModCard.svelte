@@ -150,12 +150,15 @@
       <span class="placeholder"><Icon size={40} weight="thin" /></span>
     {/if}
 
-    <!-- Тип слева, состояние справа. Галочка выбора встаёт на место типа
-         при наведении и пока что-то выбрано — без стопки меток над иконкой. -->
-    <span class="kind-tag {tag} corner">{typeLabel(tag)}</span>
-    {#if status}
-      <span class="status {status.tone}">{status.text}</span>
-    {/if}
+    <!-- Слева только галочка выбора, справа — что это за мод и его состояние.
+         Тип не прячется ни при наведении, ни пока выбрано несколько: выбирая
+         галочками, видно, машина это или карта. -->
+    <span class="tags">
+      <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+      {#if status}
+        <span class="status {status.tone}">{status.text}</span>
+      {/if}
+    </span>
     {#if copies}
       <span
         class="copies"
@@ -245,8 +248,8 @@
     outline-offset: 2px;
   }
 
-  /* Галочка выбора: появляется на месте метки типа при наведении, с клавиатуры
-     и пока что-то выбрано. Скрыта прозрачностью — фокус и клик доступны всегда. */
+  /* Галочка выбора: появляется в левом углу при наведении, с клавиатуры и пока
+     что-то выбрано. Скрыта прозрачностью — фокус и клик доступны всегда. */
   .check {
     position: absolute;
     top: 8px;
@@ -277,18 +280,16 @@
     opacity: 1;
   }
 
-  .corner {
+  /* Тип и состояние — столбиком в правом углу, левый угол свободен для галочки. */
+  .tags {
     position: absolute;
     top: 10px;
-    left: 10px;
-    transition: opacity var(--dur-1) var(--ease-out);
-  }
-
-  .card:hover .corner,
-  .card.selecting .corner,
-  .card.selected .corner,
-  .card:has(.check:focus-visible) .corner {
-    opacity: 0;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    max-width: calc(100% - 50px);
   }
 
   .check:focus-visible {
@@ -361,13 +362,10 @@
 
 
   .status {
-    position: absolute;
-    top: 10px;
-    right: 10px;
     display: inline-flex;
     align-items: center;
     height: 22px;
-    max-width: calc(100% - 110px);
+    max-width: 100%;
     overflow: hidden;
     padding: 0 8px;
     border-radius: 5px;
