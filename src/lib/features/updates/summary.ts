@@ -107,7 +107,11 @@ export function checkSummary(event: Done): CheckSummary {
     if (event.stoppedByTime) {
         parts.push("Проверили не всё — остальное в следующий раз");
     } else if (postponed > 0) {
-        parts.push(`Отложено до следующего раза: ${postponed}`);
+        // Это не «не успели»: страницы этих модов проверялись недавно, открывать их
+        // снова незачем.
+        parts.push(
+            `${postponed} ${plural(postponed, "мод проверен", "мода проверены", "модов проверены")} недавно — их очередь в следующий раз`,
+        );
     }
     return { text: parts.join(". "), offerForce: false };
 }

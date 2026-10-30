@@ -13,7 +13,10 @@ use bmm_sources::net::{FetchError, PageFetcher, RawResponse, is_challenge_page};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use url::Url;
 
-const LABEL: &str = "site-pages";
+/// Скрытые окна: у каждого сайта за Cloudflare своё, чтобы Modland и ModHub
+/// грузились одновременно, а не по очереди в одном окне.
+pub const MODLAND_LABEL: &str = "modland-pages";
+pub const MODHUB_LABEL: &str = "modhub-pages";
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 // Cloudflare иногда снимает проверку сам за несколько секунд; ждём.
 const SELF_CLEAR_WAIT: Duration = Duration::from_secs(10);
@@ -25,14 +28,16 @@ const MAX_HTML_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
 pub struct BrowserPages {
+    label: &'static str,
     app: Mutex<Option<AppHandle>>,
     window: Mutex<Option<WebviewWindow>>,
     one: Mutex<()>,
 }
 
 impl BrowserPages {
-    pub fn new() -> Self {
+    pub fn new(label: &'static str) -> Self {
         Self {
+            label,
             app: Mutex::new(None),
             window: Mutex::new(None),
             one: Mutex::new(()),
@@ -59,14 +64,14 @@ impl BrowserPages {
             .map_err(|_| FetchError::Network)?
             .clone()
             .ok_or(FetchError::Network)?;
-        if let Some(existing) = app.get_webview_window(LABEL) {
+        if let Some(existing) = app.get_webview_window(self.label) {
             *held = Some(existing.clone());
             return Ok(existing);
         }
         let blank: Url = "about:blank"
             .parse()
             .expect("статический адрес about:blank");
-        let created = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External(blank))
+        let created = WebviewWindowBuilder::new(&app, self.label, WebviewUrl::External(blank))
             .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
             .title("Страницы сайтов")
             .position(-32000.0, -32000.0)

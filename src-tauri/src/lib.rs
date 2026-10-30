@@ -85,11 +85,22 @@ pub fn run() {
     let settings_store = SettingsStore::with_system_clock(paths.settings());
     let settings_snapshot = settings_store.load().settings;
     let library = Arc::new(JsonLibraryStore::new(paths.library(), system_clock()));
-    let browser_pages = Arc::new(browser_pages::BrowserPages::new());
+    // У каждого сайта за Cloudflare своё скрытое окно: в одном окне страницы шли
+    // строго по очереди, и Modland с ModHub ждали друг друга.
+    let modland_pages = Arc::new(browser_pages::BrowserPages::new(
+        browser_pages::MODLAND_LABEL,
+    ));
+    let modhub_pages = Arc::new(browser_pages::BrowserPages::new(
+        browser_pages::MODHUB_LABEL,
+    ));
     let pages: Arc<dyn PageFetcher> = Arc::new(RoutingPageFetcher::new(
-        default_fetcher(),
-        browser_pages.clone(),
-        &["modland.net", "modhub.us"],
+        Arc::new(RoutingPageFetcher::new(
+            default_fetcher(),
+            modhub_pages.clone(),
+            &["modhub.us"],
+        )),
+        modland_pages.clone(),
+        &["modland.net"],
     ));
     let fetcher = Arc::new(PoliteFetcher::new(pages.clone(), PoliteOptions::default()));
     let source_list: Arc<Vec<Arc<dyn ModSource>>> = Arc::new(all_sources(fetcher.clone()));
@@ -210,7 +221,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Служебное окно браузера не должно всплывать на экране при следующем запуске.
-                .with_denylist(&["site-pages"])
+                .with_denylist(&[browser_pages::MODLAND_LABEL, browser_pages::MODHUB_LABEL])
                 .build(),
         )
         .manage(state)
@@ -227,7 +238,8 @@ pub fn run() {
             preview_protocol(context.app_handle(), request)
         })
         .setup(move |app| {
-            browser_pages.attach(app.handle().clone());
+            modland_pages.attach(app.handle().clone());
+            modhub_pages.attach(app.handle().clone());
             let state = app.state::<Arc<AppState>>().inner().clone();
             // Прерванная установка оставляет в папке модов тяжёлые `.part`.
             // Убираем только старые: свежий файл может принадлежать идущей установке.
@@ -434,22 +446,22 @@ mod tests {
 
     #[test]
     fn closing_main_window_closes_hidden_ones() {
-        let open = vec!["site-pages".to_string(), "site-check".to_string()];
+        let open = vec!["modland-pages".to_string(), "site-check".to_string()];
         assert_eq!(windows_to_close("main", &open), open);
         let with_main = vec![
             "main".to_string(),
-            "site-pages".to_string(),
+            "modland-pages".to_string(),
             "download".to_string(),
         ];
         assert_eq!(
             windows_to_close("main", &with_main),
-            vec!["site-pages".to_string(), "download".to_string()]
+            vec!["modland-pages".to_string(), "download".to_string()]
         );
     }
 
     #[test]
     fn closing_a_service_window_keeps_the_rest() {
-        let open = vec!["main".to_string(), "site-pages".to_string()];
+        let open = vec!["main".to_string(), "modland-pages".to_string()];
         assert!(windows_to_close("site-check", &open).is_empty());
     }
 
