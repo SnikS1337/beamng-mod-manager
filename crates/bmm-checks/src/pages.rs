@@ -202,7 +202,7 @@ pub fn find_pages(
     progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
     find_pages_with(
-        store, search, now, cancel, true, title_of, author_of, progress,
+        store, search, now, cancel, true, false, title_of, author_of, progress,
     )
 }
 
@@ -214,11 +214,12 @@ pub fn find_pages_with(
     now: DateTime<FixedOffset>,
     cancel: &AtomicBool,
     include_disabled: bool,
+    retry_recent: bool,
     title_of: &dyn Fn(&str) -> Option<String>,
     author_of: &dyn Fn(&str) -> Option<String>,
     mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
-    let due = PageGuesser::due_with(store, now, include_disabled);
+    let due = PageGuesser::due_for(store, now, include_disabled, retry_recent);
     let mut result = PageSearchReport::default();
     if due.is_empty() {
         return result;

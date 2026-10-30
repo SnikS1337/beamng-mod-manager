@@ -129,7 +129,7 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                 {
                     runtime.page_cancel.store(false, Ordering::SeqCst);
                     let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        run_page_search(&app, &state, AUTO_REQUEST_ID, &runtime.page_cancel)
+                        run_page_search(&app, &state, AUTO_REQUEST_ID, &runtime.page_cancel, false)
                     }))
                     .unwrap_or_default();
                     if pages.followed > 0

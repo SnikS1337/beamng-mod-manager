@@ -222,7 +222,14 @@
     }
     if (event.phase === "pages") filter = "pages";
     if (found > 0) toasts.show(`Нашли новые страницы (${found})`);
-    else if (event.phase === "pages" && !event.cancelled) toasts.show("Новых страниц не нашли");
+    else if (event.phase === "pages" && !event.cancelled) {
+      // Говорим, что именно искали: «не нашли» без числа звучало как «не искали».
+      toasts.show(
+        event.requests > 0
+          ? `Искали страницы для ${event.requests} ${plural(event.requests, "мода", "модов", "модов")} — новых не нашли`
+          : "Страницы не искали: сайты не ответили или искать нечего",
+      );
+    }
   }
 
   // Панель «Проверка»: состояние сайтов и время последней проверки — из снимка.

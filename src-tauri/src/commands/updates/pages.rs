@@ -25,7 +25,8 @@ pub async fn updates_find_pages(
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            run_page_search(&app, &state_for_task, request_id, &cancel)
+            // Нажал человек: ищем все моды без страницы, даже искавшиеся недавно.
+            run_page_search(&app, &state_for_task, request_id, &cancel, true)
         }))
         .unwrap_or_default();
         if report.followed > 0 {
@@ -83,7 +84,13 @@ pub async fn updates_find_page(
         // Снимаем 14-дневную паузу только у выбранного мода.
         state_for_task.library.set_page_search(&mod_id, None);
         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            run_page_search(&app, &state_for_task, SINGLE_PAGE_REQUEST_ID, &cancel)
+            run_page_search(
+                &app,
+                &state_for_task,
+                SINGLE_PAGE_REQUEST_ID,
+                &cancel,
+                false,
+            )
         }))
         .unwrap_or_default();
         if report.followed > 0 {
