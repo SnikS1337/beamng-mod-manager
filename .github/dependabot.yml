@@ -1,4 +1,5 @@
-# Основная ветка репозитория — архивная (C#/WPF), поэтому PR идут в рабочую.
+# PR идут в main. Мажорные версии, которые сознательно не берём (docs/DECISIONS.md):
+# TypeScript 7 — пока svelte-check его не поддерживает; Tauri 3 — до стабильного выпуска.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -11,6 +12,11 @@ updates:
       npm-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@tauri-apps/*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "cargo"
     directory: "/"
@@ -22,6 +28,9 @@ updates:
       cargo-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "tauri*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
