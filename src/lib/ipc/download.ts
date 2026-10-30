@@ -72,3 +72,26 @@ export async function listenDownloadProgress(
   if (!isTauri()) return () => {};
   return listen<DownloadProgress>("download://progress", (event) => handler(event.payload));
 }
+
+/** «Обновить все»: окно откроет страницы модов по очереди, установка — в конце. */
+export async function downloadOpenBatch(requests: DownloadRequest[]): Promise<void> {
+  if (!isTauri()) throw new Error("Окно загрузки доступно в приложении.");
+  await invoke("download_open_batch", { requests });
+}
+
+/** Очередь пачки; пустая — обычное обновление одного мода. */
+export async function downloadBatch(): Promise<DownloadRequest[]> {
+  if (!isTauri()) return [];
+  return invoke<DownloadRequest[]>("download_batch");
+}
+
+export async function downloadBatchGoto(index: number): Promise<void> {
+  if (isTauri()) await invoke("download_batch_goto", { index });
+}
+
+export async function listenDownloadBatch(
+  handler: (requests: DownloadRequest[]) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DownloadRequest[]>("download://batch", (event) => handler(event.payload));
+}

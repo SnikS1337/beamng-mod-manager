@@ -28,9 +28,12 @@
   import { formatSize, plural } from "#lib/features/garage/format.js";
   import { safeExternalUrl } from "#lib/url.js";
   import {
+    downloadBatch,
+    downloadBatchGoto,
     downloadClose,
     downloadPanelState,
     downloadReady,
+    listenDownloadBatch,
     listenDownloadContext,
     listenDownloadProgress,
     listenDownloadReady,
@@ -39,6 +42,15 @@
     type DownloadRequest,
   } from "#lib/ipc/download.js";
   import { progressView } from "#lib/features/download/progress.js";
+  import {
+    batchLine,
+    collect,
+    modsLabel,
+    nextPosition,
+    pickedItems,
+    positionOf,
+    type Collected,
+  } from "#lib/features/download/batch.js";
 
   let context = $state<DownloadRequest | null>(null);
   let step = $state(1);
@@ -52,6 +64,13 @@
   let installError = $state<string | null>(null);
   let handledPath = "";
   let progress = $state<DownloadProgress | null>(null);
+  // Обновление пачкой: страницы по очереди, архивы копятся, установка — одна в конце.
+  let batch = $state<DownloadRequest[]>([]);
+  let collected = $state<Collected[]>([]);
+  let batchDone = $state(false);
+  const inBatch = $derived(batch.length > 1);
+  const position = $derived(positionOf(batch, context));
+  const batchPicked = $derived(pickedItems(collected));
   let changedAt = $state(0);
   let now = $state(Date.now());
 
@@ -156,6 +175,10 @@
         return;
       }
       if (!found) throw new Error("Не удалось проверить архив.");
+      if (inBatch && context) {
+        keepForBatch(context, found);
+        return;
+      }
       archive = found;
       selected = found.items.map(preselected);
       if (found.problem) {
@@ -178,6 +201,142 @@
       }
     } finally {
       if (token === prepareToken) inspecting = false;
+    }
+  }
+
+  /** Архив пачки проверен: откладываем к общей установке и открываем следующий мод. */
+  function keepForBatch(request: DownloadRequest, found: IncomingArchiveDto): void {
+    const old = collected.find((entry) => entry.request.pageUrl === request.pageUrl);
+    if (old && old.archive.workDir !== found.workDir) {
+      void incomingDiscard(old.archive.workDir).catch(() => {});
+    }
+    collected = [
+      ...collected.filter((entry) => entry.request.pageUrl !== request.pageUrl),
+      collect(request, found),
+    ];
+    advance(found.problem ? `«${request.modName}»: ${found.problem}` : null);
+  }
+
+  function advance(note: string | null = null): void {
+    const next = nextPosition(batch, position, collected);
+    error = null;
+    if (next === null) {
+      finishBatch();
+      return;
+    }
+    step = 1;
+    status = note ?? "Архив проверен — открываем следующий мод";
+    detail = `Скачано ${collected.length} из ${batch.length}. Установка — одна, в конце.`;
+    void downloadBatchGoto(next).catch((reason) => {
+      error = errorText(reason);
+    });
+  }
+
+  function skipMod(): void {
+    if (installing || inspecting) return;
+    handledPath = "";
+    advance(`«${context?.modName ?? "Мод"}» пропущен`);
+  }
+
+  function finishBatch(): void {
+    batchDone = true;
+    step = 4;
+    status = collected.length > 0 ? "Всё скачано" : "Ничего не скачано";
+    detail =
+      collected.length > 0
+        ? "Проверьте список и установите всё одной кнопкой. Прошлые версии останутся в копиях."
+        : "Можно закрыть окно.";
+  }
+
+  function toggleCollected(entry: number, index: number, event: Event): void {
+    const checked = (event.currentTarget as HTMLInputElement).checked;
+    collected = collected.map((item, position) =>
+      position === entry
+        ? { ...item, selected: item.selected.map((value, i) => (i === index ? checked : value)) }
+        : item,
+    );
+  }
+
+  function discardCollected(): void {
+    for (const entry of collected) {
+      if (entry.archive.workDir) void incomingDiscard(entry.archive.workDir).catch(() => {});
+    }
+    collected = [];
+  }
+
+  async function installBatch(): Promise<void> {
+    const items = batchPicked;
+    if (items.length === 0 || installing) return;
+    installing = true;
+    installError = null;
+    status = "Устанавливаем";
+    detail = `${modsLabel(items.length)}: заменяем архивы, прошлые версии сохраняем.`;
+    try {
+      const results = await incomingInstall(
+        items.map((item) => ({
+          zipPath: item.zipPath,
+          fileName: item.fileName,
+          replaces: item.replaces,
+          allowWarnings: true,
+        })),
+      );
+      const tickets: IncomingTicket[] = [];
+      const failures: string[] = [];
+      let warning: string | null = null;
+      results.forEach((result, index) => {
+        if (result.success) {
+          if (result.warning) warning = result.warning;
+          tickets.push({
+            fileName: result.fileName,
+            replaces: result.replaces,
+            backupId: result.backupId,
+            wasDisabled: result.wasDisabled,
+            sameName: result.sameName,
+          });
+        } else {
+          failures.push(
+            `«${items[index]?.title ?? result.fileName}»: ${result.message ?? "установить не получилось"}`,
+          );
+        }
+      });
+      const installedFiles = new Set(tickets.map((ticket) => ticket.fileName.toLowerCase()));
+      for (const entry of collected) {
+        const whole = entry.archive.items
+          .filter(installable)
+          .every((item) => installedFiles.has(item.fileName.toLowerCase()));
+        if (whole && !entry.archive.problem) {
+          void incomingRemoveSource(entry.archive.source).catch(() => {});
+        }
+      }
+      if (tickets.length > 0) {
+        await emit("download://installed", {
+          tickets,
+          fileNames: tickets.map((ticket) => ticket.fileName),
+          message:
+            tickets.length === 1 ? "Обновлён 1 мод" : `Обновлено ${modsLabel(tickets.length)}`,
+          warning,
+        }).catch(() => {});
+      }
+      if (failures.length > 0) {
+        installError = failures.join("; ");
+        status =
+          tickets.length > 0
+            ? `Установлено ${tickets.length}, не удалось ${failures.length}`
+            : "Установка не удалась";
+        detail = installError;
+        installing = false;
+        return;
+      }
+      status = "Установлено";
+      detail = warning ?? "Библиотека обновлена, прошлые версии остались в копиях.";
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      installing = false;
+      await close();
+    } catch (reason) {
+      installError = errorText(reason);
+      status = "Установка не удалась";
+      detail = installError;
+      installing = false;
     }
   }
 
@@ -293,6 +452,9 @@
     selected = [];
     handledPath = "";
     if (work) void incomingDiscard(work).catch(() => {});
+    discardCollected();
+    batch = [];
+    batchDone = false;
     await downloadClose().catch(() => {});
   }
 
@@ -323,6 +485,22 @@
     stops.push(() => clearInterval(ticker));
     void listenDownloadProgress((value) => {
       if (!disposed) onProgress(value);
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
+      })
+      .catch(() => {});
+    void downloadBatch()
+      .then((value) => {
+        if (!disposed) batch = value;
+      })
+      .catch(() => {});
+    void listenDownloadBatch((value) => {
+      if (disposed) return;
+      discardCollected();
+      batchDone = false;
+      batch = value;
     })
       .then((stop) => {
         if (disposed) stop();
@@ -419,6 +597,24 @@
   </div>
 
   <aside class="steps" aria-label="Этапы загрузки">
+    {#if inBatch}
+      <section class="batch" aria-label="Обновление пачкой">
+        <b>{batchDone ? `Скачано ${collected.length} из ${batch.length}` : batchLine(position, batch.length, collected.length)}</b>
+        {#if !batchDone}
+          <span>Скачайте архив — окно само откроет следующий мод. Установка — одна, в конце.</span>
+          <div class="batch-actions">
+            <button class="ghost" type="button" disabled={inspecting || installing} onclick={skipMod}>
+              Пропустить мод
+            </button>
+            {#if collected.length > 0}
+              <button class="ghost" type="button" disabled={inspecting || installing} onclick={finishBatch}>
+                Установить скачанные ({collected.length})
+              </button>
+            {/if}
+          </div>
+        {/if}
+      </section>
+    {/if}
     <div class="steps-title">ЭТАПЫ</div>
     {#each steps as item (item.id)}
       {@const state = step > item.id ? "done" : step === item.id ? "active" : "waiting"}
@@ -462,6 +658,55 @@
 
     {#if inspecting}
       <div class="ready-state">Проверяем архив…</div>
+    {:else if inBatch && batchDone}
+      <section class="ready" aria-label="Установка пачкой">
+        <div class="ready-items">
+          {#each collected as entry, entryIndex (entry.request.pageUrl)}
+            <article class="ready-item" class:blocked={!!entry.archive.problem}>
+              <div class="ready-text">
+                <b>{entry.request.modName}</b>
+                <small class="file">{archiveBaseName(entry.archive.source)}</small>
+              </div>
+              {#if entry.archive.problem}
+                <p class="problem">{entry.archive.problem}</p>
+              {:else}
+                {#each entry.archive.items as item, index (item.zipPath + index)}
+                  <label class="ready-check-row" class:disabled={!installable(item)}>
+                    <input
+                      type="checkbox"
+                      checked={entry.selected[index] ?? false}
+                      disabled={!installable(item) || installing}
+                      onchange={(event) => toggleCollected(entryIndex, index, event)}
+                    />
+                    <span>
+                      {item.title}
+                      <small>{kindText(item)} · {formatSize(item.size)}</small>
+                      {#if item.blocked}<small class="bad">Есть опасные файлы или пути</small>
+                      {:else if suspiciousFiles(item).length > 0}
+                        <small class="bad">Сомнительные файлы: {suspiciousText(suspiciousFiles(item))}</small>
+                      {/if}
+                    </span>
+                  </label>
+                {/each}
+              {/if}
+            </article>
+          {/each}
+        </div>
+        {#if installError}<p class="problem">{installError}</p>{/if}
+        <div class="ready-actions">
+          <button
+            class="primary"
+            type="button"
+            disabled={installing || batchPicked.length === 0}
+            onclick={() => void installBatch()}
+          >
+            {installing ? "Устанавливаем…" : `Установить ${modsLabel(batchPicked.length)}`}
+          </button>
+          <button class="ghost" type="button" disabled={installing} onclick={() => void close()}>
+            Отмена
+          </button>
+        </div>
+      </section>
     {:else if archive}
       <section class="ready" aria-label="Установка">
         <div class="ready-head">
@@ -795,6 +1040,58 @@
 
   .status span {
     color: var(--muted-foreground);
+  }
+
+  .batch {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent-brand);
+    border-radius: 9px;
+    background: var(--accent-brand-soft);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .batch b {
+    font-size: 13px;
+  }
+
+  .batch span {
+    color: var(--muted-foreground);
+  }
+
+  .batch-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .ready-check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 12.5px;
+  }
+
+  .ready-check-row span {
+    display: grid;
+    gap: 1px;
+  }
+
+  .ready-check-row small {
+    color: var(--muted-foreground);
+  }
+
+  .ready-check-row small.bad {
+    color: var(--danger);
+  }
+
+  .ready-check-row.disabled {
+    opacity: 0.6;
   }
 
   .bar {
