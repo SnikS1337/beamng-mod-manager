@@ -103,9 +103,13 @@ impl PageGuesser {
         include_disabled: bool,
         retry_recent: bool,
     ) -> Vec<InstalledMod> {
+        // По кнопке ищем заново и моды, у которых есть только непроверенное предложение:
+        // старые предложения (в том числе перенесённые из 0.3.x) бывали мимо —
+        // «LADA 2102» → страница «Lada 2105».
         let bound: HashSet<String> = store
             .bindings()
             .into_iter()
+            .filter(|binding| !retry_recent || binding.confirmed)
             .map(|binding| binding.mod_id)
             .collect();
         let retry_after = RETRY_AFTER;
@@ -457,6 +461,62 @@ mod tests {
 
     fn l(source: &str, id: &str, title: &str) -> Listing {
         listing(source, id, title, None, None, PriceStatus::Unknown)
+    }
+
+    #[test]
+    fn neighbour_model_number_is_not_the_same_mod() {
+        // Старое предложение: «LADA 2102» → страница «Lada 2105» того же автора.
+        let lada = PageGuesser::pick_with_author(
+            &installed("l", "LADA2102.zip", None, Some(41_421_554)),
+            Some("LADA 2102"),
+            Some("Andrey2020"),
+            &[
+                listing(
+                    "modland",
+                    "lada-2105",
+                    "Lada 2105",
+                    Some("Andrey2020"),
+                    None,
+                    PriceStatus::Free,
+                ),
+                l("modland", "lada-2105b", "LADA 2105"),
+            ],
+        );
+        assert!(
+            lada.is_none(),
+            "{:?}",
+            lada.map(|guess| guess.listing.title)
+        );
+        let poland = PageGuesser::pick_with_author(
+            &installed("p", "poland_map_tg_m0dsbeamng.zip", None, Some(513_420_316)),
+            Some("Poland"),
+            Some("feway, BeamNG"),
+            &[l("modsgaming", "32117", "Quality skins for MAN TGS 6")],
+        );
+        assert!(poland.is_none());
+    }
+
+    #[test]
+    fn archive_title_finds_a_page_the_file_name_hides() {
+        // «AndrLada2106remasterVer1.0.zip» — по имени файла не найти, а по названию
+        // из архива «LADA 2106 (Remaster Version)» это ModHub «Lada 2106 Remaster v1.0».
+        let guess = PageGuesser::pick_with_author(
+            &installed(
+                "a",
+                "AndrLada2106remasterVer1.0.zip",
+                Some("1.0"),
+                Some(384_817_258),
+            ),
+            Some("LADA 2106 (Remaster Version)"),
+            Some("USSR Project"),
+            &[l(
+                "modhub",
+                "lada-2106-remaster-v10-038x",
+                "Lada 2106 Remaster v1.0 0.38.x",
+            )],
+        )
+        .expect("страница ModHub");
+        assert!(guess.certain);
     }
 
     #[test]
