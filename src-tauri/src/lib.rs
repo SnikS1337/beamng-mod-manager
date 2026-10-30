@@ -29,6 +29,40 @@ use state::{AppState, AppUpdateRuntime, SearchRuntime, UpdateRuntime};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Главное окно из `tauri.conf.json`. Создаём сами, а не через `create`: отладочной
+/// сборке можно открыть порт DevTools (`BMM_DEVTOOLS_PORT`) и проверять интерфейс
+/// автоматически на настоящих данных. В выпуске переменная не действует.
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .cloned()
+    else {
+        return Err("в tauri.conf.json нет окна main".into());
+    };
+    #[allow(unused_mut)]
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+    #[cfg(debug_assertions)]
+    if let Some(args) = devtools_args(std::env::var("BMM_DEVTOOLS_PORT").ok().as_deref()) {
+        builder = builder.additional_browser_args(&args);
+    }
+    builder.build()?;
+    Ok(())
+}
+
+/// Аргументы WebView2 с портом DevTools; `None` — порт не задан или не число.
+/// Флаги по умолчанию (`--disable-features=…`) сохраняются: свои аргументы их заменяют.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+fn devtools_args(port: Option<&str>) -> Option<String> {
+    let port: u16 = port?.trim().parse().ok()?;
+    Some(format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port}"
+    ))
+}
+
 pub fn run() {
     if let Some(arguments) = commands::app_update::installer_args() {
         commands::app_update::run_installer(arguments);
@@ -241,6 +275,7 @@ pub fn run() {
             preview_protocol(context.app_handle(), request)
         })
         .setup(move |app| {
+            create_main_window(app)?;
             modland_pages.attach(app.handle().clone());
             modhub_pages.attach(app.handle().clone());
             let state = app.state::<Arc<AppState>>().inner().clone();
@@ -446,6 +481,25 @@ fn preview_protocol(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn devtools_port_only_from_a_number() {
+        assert!(devtools_args(None).is_none());
+        assert!(devtools_args(Some("abc")).is_none());
+        let args = devtools_args(Some("9222")).unwrap();
+        assert!(args.contains("--remote-debugging-port=9222"));
+        assert!(args.contains("msSmartScreenProtection"), "флаги по умолчанию на месте");
+    }
+
+    #[test]
+    fn main_window_is_created_by_the_app() {
+        // `create: false` — окно создаёт `create_main_window`; без этого было бы два окна main.
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let main = &config["app"]["windows"][0];
+        assert_eq!(main["label"], "main");
+        assert_eq!(main["create"], false);
+    }
 
     #[test]
     fn closing_main_window_closes_hidden_ones() {

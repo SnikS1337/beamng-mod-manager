@@ -133,6 +133,16 @@ fn freshness(a: &DupItem, b: &DupItem) -> std::cmp::Ordering {
         VersionOrder::Older => return Ordering::Less,
         _ => {}
     }
+    // «weather_fx (1).zip» — повторная загрузка браузером: даже если она свежее,
+    // основным остаётся файл с чистым именем. По нему видно, что это за мод (картинка
+    // и название), а удалять предлагается копия с «(1)».
+    let (a_copy, b_copy) = (
+        is_copy(&a.file_name.to_lowercase()),
+        is_copy(&b.file_name.to_lowercase()),
+    );
+    if a_copy != b_copy {
+        return a_copy.cmp(&b_copy);
+    }
     // Без даты — как самый старый: порядок должен быть полным, иначе выбор зависит
     // от того, в каком порядке пришли моды.
     let (x, y) = (
@@ -302,6 +312,36 @@ mod tests {
                 exact: false
             }
         );
+    }
+
+    #[test]
+    fn clean_name_stays_main_even_if_the_copy_is_newer() {
+        // Браузер скачал мод второй раз: «… (1).zip» свежее, но основным остаётся
+        // файл без «(1)», а копией — повторная загрузка.
+        let content = keys(&["vehicles/percheron"]);
+        let mut clean = item("clean", "acm_percheron_addon_GR_v1-0.zip", 776, &content);
+        clean.modified = Some(100);
+        let mut copy = item("copy", "acm_percheron_addon_GR_v1-0 (1).zip", 776, &content);
+        copy.modified = Some(500);
+        let found = find(&[copy, clean]);
+        assert_eq!(
+            found["copy"],
+            Duplicate {
+                of: "clean".to_string(),
+                exact: true
+            }
+        );
+    }
+
+    #[test]
+    fn newer_version_beats_clean_name() {
+        let content = keys(&["vehicles/rs3y8"]);
+        let mut old = item("old", "Audi_RS3.zip", 100, &content);
+        old.version = Some("1.0");
+        let mut new = item("new", "Audi_RS3 (1).zip", 120, &content);
+        new.version = Some("1.1");
+        let found = find(&[old, new]);
+        assert_eq!(found["old"].of, "new", "версия важнее имени");
     }
 
     #[test]
