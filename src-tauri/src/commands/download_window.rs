@@ -191,13 +191,18 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
         .on_download(move |_webview, event| {
             match event {
                 DownloadEvent::Requested { url, destination } => {
-                    if !is_download_url(&url) {
-                        return false;
-                    }
                     let name = download_name(&url, destination);
-                    if !is_archive_name(Path::new(&name)) {
-                        // Картинки, установщики и прочее пусть качает сам WebView2.
-                        return true;
+                    if !accepts_download(&url, &name) {
+                        // Окно — только для архивов модов. Установщик или другой файл
+                        // с той же страницы молча лёг бы в «Загрузки»; не качаем его.
+                        emit_state(
+                            &download_app,
+                            1,
+                            "Это не архив мода",
+                            &format!("Сайт предложил скачать «{name}» — такой файл менеджер не берёт."),
+                            Some("Нужна кнопка, которая скачивает zip, rar или 7z.".to_string()),
+                        );
+                        return false;
                     }
                     let state = download_app.state::<std::sync::Arc<crate::state::AppState>>();
                     let settings = state.settings.load().settings;
@@ -368,6 +373,11 @@ fn panel_url(app: &AppHandle) -> WebviewUrl {
 /// `blob:` и `data:` тоже бывают загрузками, хотя в них нет обычного адреса файла.
 fn is_download_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "blob" | "data")
+}
+
+/// Скачивать из окна можно только архив мода по обычной ссылке браузера.
+fn accepts_download(url: &Url, name: &str) -> bool {
+    is_download_url(url) && is_archive_name(Path::new(name))
 }
 
 /// Страницу мода открываем только во внешнем браузере WebView2: localhost,
@@ -579,6 +589,25 @@ mod tests {
         assert!(is_archive_name(Path::new("mod.7z")));
         assert!(!is_archive_name(Path::new("setup.exe")));
         assert!(!is_archive_name(Path::new("image.png")));
+    }
+
+    #[test]
+    fn only_mod_archives_are_downloaded_from_the_window() {
+        let page = Url::parse("https://modsfire.com/d/abc").unwrap();
+        assert!(accepts_download(&page, "BMW_M2_v1.5.zip"));
+        assert!(accepts_download(&page, "map.7z"));
+        // Установщики, картинки, документы и архив без расширения — нет.
+        for name in [
+            "setup.exe",
+            "update.msi",
+            "preview.png",
+            "readme.pdf",
+            "mod",
+        ] {
+            assert!(!accepts_download(&page, name), "{name}");
+        }
+        let local = Url::parse("file:///C:/mods/mod.zip").unwrap();
+        assert!(!accepts_download(&local, "mod.zip"));
     }
 
     #[test]
