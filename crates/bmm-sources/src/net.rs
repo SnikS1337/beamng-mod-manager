@@ -1160,7 +1160,11 @@ impl PoliteFetcher {
             if inner.blocked_until.is_none_or(|current| current <= until) {
                 inner.blocked_by_site = false;
             }
-            inner.blocked_until = Some(inner.blocked_until.map_or(until, |current| current.max(until)));
+            inner.blocked_until = Some(
+                inner
+                    .blocked_until
+                    .map_or(until, |current| current.max(until)),
+            );
             inner.failures = 0;
         }
         let cooldown_until = inner.blocked_until;

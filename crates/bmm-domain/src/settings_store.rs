@@ -421,7 +421,12 @@ mod tests {
         let result = store.load();
         assert!(result.settings.allow_downloads, "известное прочитано");
         assert!(result.save_blocked, "файл новой версии не затираем");
-        assert!(result.warnings.iter().any(|warning| warning.contains("схема 3")));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("схема 3"))
+        );
     }
 
     #[test]

@@ -475,8 +475,12 @@ fn is_our_program(path: &std::path::Path) -> bool {
             Ok(read) => read,
         };
         window.extend_from_slice(&chunk[..read]);
-        if window.windows(ascii.len()).any(|part| part == ascii.as_slice())
-            || window.windows(wide.len()).any(|part| part == wide.as_slice())
+        if window
+            .windows(ascii.len())
+            .any(|part| part == ascii.as_slice())
+            || window
+                .windows(wide.len())
+                .any(|part| part == wide.as_slice())
         {
             return true;
         }

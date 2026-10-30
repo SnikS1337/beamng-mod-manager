@@ -819,8 +819,13 @@ mod tests {
         };
         assert!(recheck_after_pages(&report));
         report.cancelled = true;
-        assert!(!recheck_after_pages(&report), "«Остановить» — значит остановить");
-        assert!(!recheck_after_pages(&bmm_checks::PageSearchReport::default()));
+        assert!(
+            !recheck_after_pages(&report),
+            "«Остановить» — значит остановить"
+        );
+        assert!(!recheck_after_pages(
+            &bmm_checks::PageSearchReport::default()
+        ));
     }
 
     #[test]
