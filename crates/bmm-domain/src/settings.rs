@@ -146,9 +146,9 @@ impl Default for AppSettings {
             check_app_updates: true,
             auto_check_every_hours: 0,
             check_disabled_mods: true,
-            // Сайты за Cloudflare просят проверку «вы человек?» — у новой установки
-            // они выключены, человек включает их сам.
-            disabled_sources: vec!["modland".to_string(), "modhub".to_string()],
+            // Все сайты включены: Modland и ModHub за Cloudflare иногда просят
+            // проверку «вы человек?», но без них поиск и проверка беднее.
+            disabled_sources: Vec::new(),
             keep_backups: 3,
             max_card_checks_per_source: 150,
             liquid_glass: true,
@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(settings.schema_version, 2);
         assert!(!settings.allow_downloads);
         assert_eq!(settings.check_ttl_hours, 6);
-        assert_eq!(settings.disabled_sources, vec!["modland", "modhub"]);
+        assert!(settings.disabled_sources.is_empty(), "все сайты включены");
         assert_eq!(settings.keep_backups, 3);
         assert_eq!(settings.max_card_checks_per_source, 150);
         assert_eq!(settings.mode, UiMode::Dark);
