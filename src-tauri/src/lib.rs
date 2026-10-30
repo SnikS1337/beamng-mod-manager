@@ -29,6 +29,18 @@ use state::{AppState, AppUpdateRuntime, SearchRuntime, UpdateRuntime};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Подставляет [`browser_args`] в построитель окна или вида.
+macro_rules! with_browser_args {
+    ($builder:expr) => {{
+        let builder = $builder;
+        match crate::browser_args() {
+            Some(args) => builder.additional_browser_args(&args),
+            None => builder,
+        }
+    }};
+}
+pub(crate) use with_browser_args;
+
 /// Главное окно из `tauri.conf.json`. Создаём сами, а не через `create`: отладочной
 /// сборке можно открыть порт DevTools (`BMM_DEVTOOLS_PORT`) и проверять интерфейс
 /// автоматически на настоящих данных. В выпуске переменная не действует.
@@ -43,14 +55,25 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     else {
         return Err("в tauri.conf.json нет окна main".into());
     };
-    #[allow(unused_mut)]
-    let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
-    #[cfg(debug_assertions)]
-    if let Some(args) = devtools_args(std::env::var("BMM_DEVTOOLS_PORT").ok().as_deref()) {
-        builder = builder.additional_browser_args(&args);
-    }
-    builder.build()?;
+    let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+    with_browser_args!(builder).build()?;
     Ok(())
+}
+
+/// Аргументы WebView2 для всех окон программы. Они обязаны совпадать: WebView2 с одной
+/// папкой данных и разными аргументами не открывает окно — скрытые окна Modland и
+/// ModHub тогда молча не грузили страницы. `None` — аргументы по умолчанию.
+pub(crate) fn browser_args() -> Option<String> {
+    #[cfg(debug_assertions)]
+    {
+        static ARGS: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        ARGS.get_or_init(|| devtools_args(std::env::var("BMM_DEVTOOLS_PORT").ok().as_deref()))
+            .clone()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
 }
 
 /// Аргументы WebView2 с портом DevTools; `None` — порт не задан или не число.
@@ -488,7 +511,10 @@ mod tests {
         assert!(devtools_args(Some("abc")).is_none());
         let args = devtools_args(Some("9222")).unwrap();
         assert!(args.contains("--remote-debugging-port=9222"));
-        assert!(args.contains("msSmartScreenProtection"), "флаги по умолчанию на месте");
+        assert!(
+            args.contains("msSmartScreenProtection"),
+            "флаги по умолчанию на месте"
+        );
     }
 
     #[test]

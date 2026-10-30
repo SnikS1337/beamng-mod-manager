@@ -489,25 +489,88 @@ mod tests {
         install_direct(&state, &source, "acm_v1-0.zip");
         install_direct(&state, &source, "acm_v1-0 (1).zip");
         let snapshot = load_snapshot(&state).unwrap();
-        eprintln!("MODS {:?}", snapshot.mods.iter().map(|m| (&m.id, &m.file_name)).collect::<Vec<_>>());
-        let first = snapshot.mods.iter().find(|m| m.file_name == "acm_v1-0.zip").unwrap().id.clone();
-        let copy = snapshot.mods.iter().find(|m| m.file_name == "acm_v1-0 (1).zip").unwrap().id.clone();
+        eprintln!(
+            "MODS {:?}",
+            snapshot
+                .mods
+                .iter()
+                .map(|m| (&m.id, &m.file_name))
+                .collect::<Vec<_>>()
+        );
+        let first = snapshot
+            .mods
+            .iter()
+            .find(|m| m.file_name == "acm_v1-0.zip")
+            .unwrap()
+            .id
+            .clone();
+        let copy = snapshot
+            .mods
+            .iter()
+            .find(|m| m.file_name == "acm_v1-0 (1).zip")
+            .unwrap()
+            .id
+            .clone();
         state.library.add_file_history(&copy, "acm_v1-0.zip");
         delete_mod(&state, &first).unwrap();
         let snapshot = load_snapshot(&state).unwrap();
-        eprintln!("AFTER DELETE {:?}", snapshot.mods.iter().map(|m| (&m.id, &m.file_name)).collect::<Vec<_>>());
+        eprintln!(
+            "AFTER DELETE {:?}",
+            snapshot
+                .mods
+                .iter()
+                .map(|m| (&m.id, &m.file_name))
+                .collect::<Vec<_>>()
+        );
         let rows = versions_of(&state, &copy).unwrap();
-        eprintln!("ROWS {:?}", rows.iter().map(|r| (&r.file_name, &r.version)).collect::<Vec<_>>());
+        eprintln!(
+            "ROWS {:?}",
+            rows.iter()
+                .map(|r| (&r.file_name, &r.version))
+                .collect::<Vec<_>>()
+        );
         if let Some(row) = rows.first() {
             let r = restore_version(&state, &copy, &row.backup_id);
             eprintln!("RESTORE {:?}", r.as_ref().err().map(|e| format!("{e:?}")));
         }
         let snapshot = load_snapshot(&state).unwrap();
-        eprintln!("AFTER RESTORE {:?} deleted {:?}", snapshot.mods.iter().map(|m| (&m.id, &m.file_name, m.deleted)).collect::<Vec<_>>(), snapshot.deleted.iter().map(|d| &d.file_name).collect::<Vec<_>>());
-        eprintln!("LIB {:?}", state.library.mods().iter().map(|m| (&m.id, &m.file_name)).collect::<Vec<_>>());
+        eprintln!(
+            "AFTER RESTORE {:?} deleted {:?}",
+            snapshot
+                .mods
+                .iter()
+                .map(|m| (&m.id, &m.file_name, m.deleted))
+                .collect::<Vec<_>>(),
+            snapshot
+                .deleted
+                .iter()
+                .map(|d| &d.file_name)
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "LIB {:?}",
+            state
+                .library
+                .mods()
+                .iter()
+                .map(|m| (&m.id, &m.file_name))
+                .collect::<Vec<_>>()
+        );
         eprintln!("ROWS2 {:?}", versions_of(&state, &copy).map(|r| r.len()));
-        eprintln!("FORGET {:?}", forget_deleted(&state, &first).err().map(|e| format!("{e:?}")));
+        eprintln!(
+            "FORGET {:?}",
+            forget_deleted(&state, &first)
+                .err()
+                .map(|e| format!("{e:?}"))
+        );
         let snapshot = load_snapshot(&state).unwrap();
-        eprintln!("AFTER FORGET {:?}", snapshot.mods.iter().map(|m| (&m.id, &m.file_name)).collect::<Vec<_>>());
+        eprintln!(
+            "AFTER FORGET {:?}",
+            snapshot
+                .mods
+                .iter()
+                .map(|m| (&m.id, &m.file_name))
+                .collect::<Vec<_>>()
+        );
     }
 }

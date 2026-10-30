@@ -239,7 +239,7 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
     let panel = match window.add_child(
         // Панель всегда во всё окно: при масштабе 125 % размеры округлялись,
         // и снизу оставалась белая полоса окна.
-        WebviewBuilder::new(PANEL_LABEL, panel_url(&app)).auto_resize(),
+        crate::with_browser_args!(WebviewBuilder::new(PANEL_LABEL, panel_url(&app))).auto_resize(),
         LogicalPosition::new(0.0, 0.0),
         LogicalSize::new(window_width, window_height),
     ) {
@@ -251,139 +251,138 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
         }
     };
     let download_app = app.clone();
-    let site_builder = WebviewBuilder::new(SITE_LABEL, WebviewUrl::External(url))
-        .initialization_script(SITE_HELPERS)
-        // Первый адрес проверен выше; каждый следующий переход и редирект тоже
-        // не должен уводить в localhost/частную сеть.
-        .on_navigation(|url| {
-            url.scheme() == "about" || bmm_sources::net::redirect_allowed(url)
-        })
-        .on_download(move |_webview, event| {
-            match event {
-                DownloadEvent::Requested { url, destination } => {
-                    let name = download_name(&url, destination);
-                    if !accepts_download(&url, &name) {
-                        // Окно — только для архивов модов. Установщик или другой файл
-                        // с той же страницы молча лёг бы в «Загрузки»; не качаем его.
-                        emit_state(
-                            &download_app,
-                            1,
-                            "Это не архив мода",
-                            &format!("Сайт предложил скачать «{name}» — такой файл менеджер не берёт."),
-                            Some("Нужна кнопка, которая скачивает zip, rar или 7z.".to_string()),
-                        );
-                        return false;
-                    }
-                    let state = download_app.state::<std::sync::Arc<crate::state::AppState>>();
-                    let settings = state.settings.load().settings;
-                    let app_root = state.paths.root().to_path_buf();
-                    let (mods_dir, _) = crate::commands::library::resolve_folder(&settings);
-                    let Some(downloads) = crate::commands::downloads::download_folder(
-                        &settings,
-                        &app_root,
-                        mods_dir.as_deref(),
-                    ) else {
-                        emit_state(
-                            &download_app,
-                            2,
-                            "Не удалось начать загрузку",
-                            "Не нашли папку, куда сохранить архив.",
-                            Some("Проверьте доступ к папке загрузки.".to_string()),
-                        );
-                        return false;
-                    };
-                    crate::commands::downloads::expect_folder(&downloads);
-                    let path = unique_path(&downloads, &name);
-                    if std::fs::create_dir_all(&downloads).is_err() {
-                        emit_state(
-                            &download_app,
-                            2,
-                            "Не удалось начать загрузку",
-                            "Не получилось создать папку загрузки.",
-                            Some("Проверьте доступ к папке данных программы.".to_string()),
-                        );
-                        return false;
-                    }
-                    crate::commands::downloads::note_caught(&path);
-                    mark_intercepted(&path);
-                    *destination = path;
+    let site_builder = crate::with_browser_args!(WebviewBuilder::new(
+        SITE_LABEL,
+        WebviewUrl::External(url)
+    ))
+    .initialization_script(SITE_HELPERS)
+    // Первый адрес проверен выше; каждый следующий переход и редирект тоже
+    // не должен уводить в localhost/частную сеть.
+    .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
+    .on_download(move |_webview, event| {
+        match event {
+            DownloadEvent::Requested { url, destination } => {
+                let name = download_name(&url, destination);
+                if !accepts_download(&url, &name) {
+                    // Окно — только для архивов модов. Установщик или другой файл
+                    // с той же страницы молча лёг бы в «Загрузки»; не качаем его.
+                    emit_state(
+                        &download_app,
+                        1,
+                        "Это не архив мода",
+                        &format!("Сайт предложил скачать «{name}» — такой файл менеджер не берёт."),
+                        Some("Нужна кнопка, которая скачивает zip, rar или 7z.".to_string()),
+                    );
+                    return false;
+                }
+                let state = download_app.state::<std::sync::Arc<crate::state::AppState>>();
+                let settings = state.settings.load().settings;
+                let app_root = state.paths.root().to_path_buf();
+                let (mods_dir, _) = crate::commands::library::resolve_folder(&settings);
+                let Some(downloads) = crate::commands::downloads::download_folder(
+                    &settings,
+                    &app_root,
+                    mods_dir.as_deref(),
+                ) else {
                     emit_state(
                         &download_app,
                         2,
-                        "Файл скачивается",
-                        "Дождитесь окончания загрузки — менеджер заберёт файл сам.",
-                        None,
+                        "Не удалось начать загрузку",
+                        "Не нашли папку, куда сохранить архив.",
+                        Some("Проверьте доступ к папке загрузки.".to_string()),
                     );
+                    return false;
+                };
+                crate::commands::downloads::expect_folder(&downloads);
+                let path = unique_path(&downloads, &name);
+                if std::fs::create_dir_all(&downloads).is_err() {
+                    emit_state(
+                        &download_app,
+                        2,
+                        "Не удалось начать загрузку",
+                        "Не получилось создать папку загрузки.",
+                        Some("Проверьте доступ к папке данных программы.".to_string()),
+                    );
+                    return false;
                 }
-                DownloadEvent::Finished { path, success, .. } => {
-                    let intercepted = path.as_deref().is_some_and(take_intercepted);
-                    if success
+                crate::commands::downloads::note_caught(&path);
+                mark_intercepted(&path);
+                *destination = path;
+                emit_state(
+                    &download_app,
+                    2,
+                    "Файл скачивается",
+                    "Дождитесь окончания загрузки — менеджер заберёт файл сам.",
+                    None,
+                );
+            }
+            DownloadEvent::Finished { path, success, .. } => {
+                let intercepted = path.as_deref().is_some_and(take_intercepted);
+                if success
+                    && intercepted
+                    && let Some(path) = path.as_deref()
+                {
+                    crate::commands::downloads::note_finished(path);
+                }
+                if success {
+                    if let Some(path) = path
                         && intercepted
-                        && let Some(path) = path.as_deref()
+                        && is_archive_name(&path)
                     {
-                        crate::commands::downloads::note_finished(path);
-                    }
-                    if success {
-                        if let Some(path) = path
-                            && intercepted
-                            && is_archive_name(&path)
-                        {
-                            let path_text = path.display().to_string();
-                            *READY.lock().unwrap_or_else(|error| error.into_inner()) =
-                                Some(path_text.clone());
-                            emit_state(
-                                &download_app,
-                                3,
-                                "Проверяем архив",
-                                "Смотрим структуру, опасные пути и подозрительные файлы.",
-                                None,
-                            );
-                            let _ = download_app.emit_to(
-                                PANEL_LABEL,
-                                "download://ready",
-                                serde_json::json!({ "path": path_text }),
-                            );
-                        }
-                    } else {
-                        clear_ready();
+                        let path_text = path.display().to_string();
+                        *READY.lock().unwrap_or_else(|error| error.into_inner()) =
+                            Some(path_text.clone());
                         emit_state(
                             &download_app,
-                            2,
-                            "Загрузка не удалась",
-                            "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
-                            Some("Сайт не отдал файл.".to_string()),
+                            3,
+                            "Проверяем архив",
+                            "Смотрим структуру, опасные пути и подозрительные файлы.",
+                            None,
+                        );
+                        let _ = download_app.emit_to(
+                            PANEL_LABEL,
+                            "download://ready",
+                            serde_json::json!({ "path": path_text }),
                         );
                     }
-                }
-                _ => {}
-            }
-            true
-        })
-        .on_new_window({
-            let app = app.clone();
-            move |url, _features| {
-                if is_download_url(&url) {
-                    let same_site = app
-                        .get_webview(SITE_LABEL)
-                        .and_then(|site| site.url().ok())
-                        .and_then(|current| current.host_str().map(str::to_string))
-                        .is_some_and(|host| {
-                            url.host_str()
-                                .is_some_and(|next| next.eq_ignore_ascii_case(&host))
-                        });
-                    let file_host = bmm_domain::hosts::host_matches(
-                        &url,
-                        bmm_domain::hosts::KNOWN_FILE_HOSTS,
+                } else {
+                    clear_ready();
+                    emit_state(
+                        &download_app,
+                        2,
+                        "Загрузка не удалась",
+                        "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
+                        Some("Сайт не отдал файл.".to_string()),
                     );
-                    if (same_site || file_host)
-                        && let Some(site) = app.get_webview(SITE_LABEL)
-                    {
-                        let _ = site.navigate(url);
-                    }
                 }
-                NewWindowResponse::Deny
             }
-        });
+            _ => {}
+        }
+        true
+    })
+    .on_new_window({
+        let app = app.clone();
+        move |url, _features| {
+            if is_download_url(&url) {
+                let same_site = app
+                    .get_webview(SITE_LABEL)
+                    .and_then(|site| site.url().ok())
+                    .and_then(|current| current.host_str().map(str::to_string))
+                    .is_some_and(|host| {
+                        url.host_str()
+                            .is_some_and(|next| next.eq_ignore_ascii_case(&host))
+                    });
+                let file_host =
+                    bmm_domain::hosts::host_matches(&url, bmm_domain::hosts::KNOWN_FILE_HOSTS);
+                if (same_site || file_host)
+                    && let Some(site) = app.get_webview(SITE_LABEL)
+                {
+                    let _ = site.navigate(url);
+                }
+            }
+            NewWindowResponse::Deny
+        }
+    });
     let site_width = (window_width - side_space(window_width)).max(320.0);
     let site_height = (window_height - SITE_VERTICAL_SPACE).max(300.0);
     let site = match window.add_child(

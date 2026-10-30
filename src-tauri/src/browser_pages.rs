@@ -72,22 +72,23 @@ impl BrowserPages {
             *held = Some(existing.clone());
             return Ok(existing);
         }
-        let blank: Url = "about:blank"
-            .parse()
-            .expect("статический адрес about:blank");
-        let created = WebviewWindowBuilder::new(&app, self.label, WebviewUrl::External(blank))
-            .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
-            .title("Страницы сайтов")
-            .position(-32000.0, -32000.0)
-            .inner_size(1024.0, 900.0)
-            .decorations(false)
-            .skip_taskbar(true)
-            .focused(false)
-            // Окно не должно мешать: страницы грузятся и без показа, а проверку
-            // «вы человек?» человек проходит в отдельном видимом окне.
-            .visible(false)
-            .build()
-            .map_err(|_| FetchError::Network)?;
+        let created = crate::with_browser_args!(WebviewWindowBuilder::new(
+            &app,
+            self.label,
+            WebviewUrl::External(blank_url())
+        ))
+        .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
+        .title("Страницы сайтов")
+        .position(-32000.0, -32000.0)
+        .inner_size(1024.0, 900.0)
+        .decorations(false)
+        .skip_taskbar(true)
+        .focused(false)
+        // Окно не должно мешать: страницы грузятся и без показа, а проверку
+        // «вы человек?» человек проходит в отдельном видимом окне.
+        .visible(false)
+        .build()
+        .map_err(|_| FetchError::Network)?;
         *held = Some(created.clone());
         Ok(created)
     }
@@ -132,6 +133,12 @@ impl BrowserPages {
         }
         Ok(token)
     }
+}
+
+fn blank_url() -> Url {
+    "about:blank"
+        .parse()
+        .expect("статический адрес about:blank")
 }
 
 /// Журнал не растёт бесконечно: дорос до предела — начинается заново.
@@ -182,7 +189,11 @@ impl PageFetcher for BrowserPages {
         let one = self.guard_cancelled(cancel);
         let queued = asked.elapsed();
         let started = Instant::now();
-        let result = one.and_then(|_one| self.load_page(url, cancel));
+        let result = one.and_then(|_one| {
+            let result = self.load_page(url, cancel);
+            self.unload();
+            result
+        });
         let challenge = result
             .as_ref()
             .is_ok_and(|response| is_challenge_page(&response.text));
@@ -209,7 +220,11 @@ impl PageFetcher for BrowserPages {
         let one = self.guard_cancelled(cancel);
         let queued = asked.elapsed();
         let started = Instant::now();
-        let result = one.and_then(|_one| self.load_bytes(url, cancel));
+        let result = one.and_then(|_one| {
+            let result = self.load_bytes(url, cancel);
+            self.unload();
+            result
+        });
         let challenge = result.as_ref().is_ok_and(Option::is_none);
         self.note(
             "картинка",
@@ -223,6 +238,16 @@ impl PageFetcher for BrowserPages {
 }
 
 impl BrowserPages {
+    /// Прочитанную страницу сразу закрываем пустой: иначе её реклама и скрипты
+    /// работают в скрытом окне до следующей загрузки. За долгий поиск страниц это
+    /// сотни страниц Modland и ModHub — память WebView росла до гигабайтов.
+    fn unload(&self) {
+        let window = self.window.lock().ok().and_then(|held| held.clone());
+        if let Some(window) = window {
+            let _ = window.navigate(blank_url());
+        }
+    }
+
     fn load_page(&self, url: &Url, cancel: &AtomicBool) -> Result<RawResponse, FetchError> {
         let window = self.window()?;
         let token = self.begin(&window, url)?;
@@ -444,6 +469,19 @@ fn looks_like_error_page(html: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_page_is_replaced_by_blank_one() {
+        // Пустая страница — та же, с которой окно создаётся: навигацию на неё окно
+        // пропускает (схема about), а прежняя страница с рекламой выгружается.
+        let blank = blank_url();
+        assert_eq!(blank.as_str(), "about:blank");
+        assert_eq!(blank.scheme(), "about");
+        assert!(
+            !is_web_url(&blank),
+            "пустую страницу не принимаем за страницу сайта"
+        );
+    }
 
     #[test]
     fn image_from_script_decodes_base64() {
