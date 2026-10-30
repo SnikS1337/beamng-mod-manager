@@ -195,7 +195,7 @@ fn newer_is_strictly_greater() {
 #[test]
 fn notes_are_truncated_and_bad_date_is_ignored() {
     let zip = release_zip(true, true, EXE_NAME);
-    let notes = "я".repeat(600);
+    let notes = "я".repeat(9000);
     let json = format!(
         r#"{{"version":"0.1.30","url":"{ZIP_URL}","size":{},"sha256":"{}","notes":"{notes}","published":"не дата"}}"#,
         zip.len(),
@@ -204,9 +204,29 @@ fn notes_are_truncated_and_bad_date_is_ignored() {
     let manifest = UpdateManifest::parse(&json).unwrap();
     assert_eq!(
         manifest.notes.as_deref().map(|notes| notes.chars().count()),
-        Some(500)
+        Some(8000)
     );
     assert!(manifest.published.is_none());
+}
+
+#[test]
+fn long_notes_are_kept_whole_lines() {
+    // Было: заметки обрезались на 500 знаках, и «Что нового в версии 1.2»
+    // заканчивалось на «Имя файла п».
+    let zip = release_zip(true, true, EXE_NAME);
+    let line = format!("- {}", "строка изменений ".repeat(10).trim_end());
+    let lines: Vec<String> = (0..60).map(|_| line.clone()).collect();
+    let notes = lines.join("\\n");
+    let json = format!(
+        r#"{{"version":"0.1.30","url":"{ZIP_URL}","size":{},"sha256":"{}","notes":"{notes}"}}"#,
+        zip.len(),
+        sha_hex(&zip)
+    );
+    let manifest = UpdateManifest::parse(&json).unwrap();
+    let kept = manifest.notes.unwrap();
+    assert!(kept.chars().count() <= 8000);
+    assert!(kept.lines().all(|kept| kept == line), "строки целые");
+    assert!(kept.lines().count() > 3);
 }
 
 // ---------------------------------------------------------------------------
