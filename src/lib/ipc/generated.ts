@@ -32,6 +32,20 @@ export type DownloadRequest = { modName: string, installedVersion: string | null
 
 export type DownloadPanelEvent = { step: number, title: string, detail: string, error: string | null, };
 
+export type DownloadProgress = { 
+/**
+ * Скачано байт.
+ */
+received: number, 
+/**
+ * Размер файла, если сайт его сообщил.
+ */
+total: number | null, 
+/**
+ * Байт в секунду за последние секунды; `None`, пока считать не из чего.
+ */
+speed: number | null, };
+
 export type DownloadReady = { path: string, };
 
 export type AppUpdateManifest = { version: string, url: string, size: number, sha256: string, notes: string | null, published: string | null, };

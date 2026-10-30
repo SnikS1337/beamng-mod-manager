@@ -36,6 +36,9 @@ tempfile.workspace = true
 zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# Ход загрузки в окне скачивания: те же версии, что у wry, — новых сборок не добавляют.
+webview2-com = "0.39.1"
+windows-core = "0.62.2"
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Security",

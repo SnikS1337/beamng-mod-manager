@@ -32,10 +32,13 @@
     downloadPanelState,
     downloadReady,
     listenDownloadContext,
+    listenDownloadProgress,
     listenDownloadReady,
     listenDownloadState,
+    type DownloadProgress,
     type DownloadRequest,
   } from "#lib/ipc/download.js";
+  import { progressView } from "#lib/features/download/progress.js";
 
   let context = $state<DownloadRequest | null>(null);
   let step = $state(1);
@@ -48,6 +51,19 @@
   let installing = $state(false);
   let installError = $state<string | null>(null);
   let handledPath = "";
+  let progress = $state<DownloadProgress | null>(null);
+  let changedAt = $state(0);
+  let now = $state(Date.now());
+
+  // Ход видно, пока файл качается; после него — проверка и установка.
+  const loading = $derived(
+    step === 2 && !error && progress !== null ? progressView(progress, changedAt, now) : null,
+  );
+
+  function onProgress(value: DownloadProgress): void {
+    if (!progress || value.received !== progress.received) changedAt = Date.now();
+    progress = value;
+  }
 
   const steps = [
     {
@@ -300,8 +316,22 @@
         if (!disposed && value) context = value;
       })
       .catch(() => {});
+    // Раз в секунду: заметить, что загрузка встала, даже если событий больше нет.
+    const ticker = setInterval(() => {
+      if (progress) now = Date.now();
+    }, 1000);
+    stops.push(() => clearInterval(ticker));
+    void listenDownloadProgress((value) => {
+      if (!disposed) onProgress(value);
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
+      })
+      .catch(() => {});
     void listenDownloadContext((value) => {
       context = value;
+      progress = null;
       handledPath = "";
       resetArchive();
       step = 1;
@@ -315,6 +345,9 @@
       })
       .catch(() => {});
     void listenDownloadState((value) => {
+      // Новая загрузка начинается с нуля: прошлый ход не должен мелькнуть.
+      if (value.step !== 2 || value.error) progress = null;
+      if (value.step === 2 && step !== 2) progress = null;
       step = value.step;
       status = value.title;
       detail = value.detail;
@@ -405,7 +438,26 @@
     {/each}
     <div class="status" class:error={!!error}>
       <b>{error ?? status}</b>
-      {#if !error && detail}<span>{detail}</span>{/if}
+      {#if !error && detail && !loading}<span>{detail}</span>{/if}
+      {#if loading}
+        <div
+          class="bar"
+          class:indeterminate={loading.percent === null}
+          role="progressbar"
+          aria-label="Ход загрузки"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={loading.percent ?? undefined}
+        >
+          <span style={`width:${loading.percent ?? 100}%`}></span>
+        </div>
+        <span class="mono progress-line">{loading.line}</span>
+        {#if loading.stallText}
+          <span class="stall">
+            {loading.stallText}. Если сайт показал проверку или ошибку — посмотрите страницу.
+          </span>
+        {/if}
+      {/if}
     </div>
 
     {#if inspecting}
@@ -743,6 +795,47 @@
 
   .status span {
     color: var(--muted-foreground);
+  }
+
+  .bar {
+    position: relative;
+    height: 6px;
+    margin-top: 6px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: var(--surface-3);
+  }
+
+  .bar span {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: inherit;
+    background: var(--accent-brand);
+    transition: width 250ms linear;
+  }
+
+  /* Размер неизвестен: полоса бежит, показывая, что загрузка идёт. */
+  .bar.indeterminate span {
+    width: 35% !important;
+    animation: bar-run 1.4s var(--ease-in-out) infinite;
+  }
+
+  @keyframes bar-run {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(290%);
+    }
+  }
+
+  .status .progress-line {
+    color: var(--foreground);
+    font-size: 11.5px;
+  }
+
+  .status .stall {
+    color: var(--warning);
   }
 
   .status.error {
