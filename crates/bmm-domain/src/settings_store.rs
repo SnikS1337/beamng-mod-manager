@@ -9,6 +9,8 @@ use crate::clock::{Clock, system_clock};
 use crate::settings::{AppSettings, BackgroundStyle, BackgroundTheme, UiMode};
 
 const MAX_BYTES: u64 = 1024 * 1024;
+/// Схема файла настроек, которую пишет эта версия.
+const CURRENT_SCHEMA: i32 = 2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsLoadResult {
@@ -96,7 +98,7 @@ impl SettingsStore {
         }
 
         let settings = AppSettings {
-            schema_version: 2,
+            schema_version: CURRENT_SCHEMA,
             allow_downloads: bool_field(
                 root,
                 "AllowDownloads",
@@ -198,10 +200,18 @@ impl SettingsStore {
         }
         .normalize();
 
+        // Файл записан более новой версией программы: читаем что знаем, но не
+        // перезаписываем — иначе схема 2 стёрла бы поля, о которых мы не знаем.
+        let newer = schema_version > CURRENT_SCHEMA;
+        if newer {
+            warnings.push(format!(
+                "настройки записаны более новой версией программы (схема {schema_version}): изменения не сохраняются"
+            ));
+        }
         SettingsLoadResult {
             settings,
             warnings,
-            save_blocked: false,
+            save_blocked: newer,
         }
     }
 
@@ -399,6 +409,19 @@ mod tests {
         let result = store.load();
         assert!(!result.warnings.is_empty());
         assert_eq!(result.settings, AppSettings::default());
+    }
+
+    #[test]
+    fn newer_schema_is_read_but_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with(
+            dir.path(),
+            r#"{ "SchemaVersion": 3, "AllowDownloads": true, "FutureField": 1 }"#,
+        );
+        let result = store.load();
+        assert!(result.settings.allow_downloads, "известное прочитано");
+        assert!(result.save_blocked, "файл новой версии не затираем");
+        assert!(result.warnings.iter().any(|warning| warning.contains("схема 3")));
     }
 
     #[test]
