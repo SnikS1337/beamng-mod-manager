@@ -4,6 +4,9 @@
 //! (`ICoreWebView2DownloadOperation`), поэтому на Windows подписываемся на него
 //! напрямую. Расчёт скорости и частоты сообщений — общий и проверяется тестами.
 
+// Счётчик нужен только на Windows: на других системах окна загрузки WebView2 нет.
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
