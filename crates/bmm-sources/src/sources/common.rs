@@ -25,10 +25,11 @@ static SITE_TAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\s+-\s+[\p{L}\p{Nd}-]+\.(?:ru|net|org|com|io|de)\b.*$").unwrap()
 });
 /// Служебные части перед адресом сайта: раздел («BeamNG Машины»), «Моды».
-static SECTION_TAIL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\s+-\s+(?:моды|mods|beamng(?:\s+[\p{L}]+)?)\s*$").unwrap());
+static SECTION_TAIL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\s+-\s+(?:моды|mods|beamng(?:\s+[\p{L}]+){0,2})\s*$").unwrap()
+});
 static BEAMNG_SUFFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\s+-\s+BeamNG\.drive$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)\s+(?:-|для|for)\s+BeamNG\.drive$").unwrap());
 
 pub fn load(
     fetcher: &PoliteFetcher,
@@ -251,6 +252,15 @@ mod tests {
         assert!(!title.to_lowercase().contains("modsgaming"), "{title}");
         assert!(!title.contains("Моды"), "{title}");
         assert!(title.starts_with("BMW M2 G87"), "{title}");
+    }
+
+    #[test]
+    fn page_title_drops_two_word_section_and_for_beamng() {
+        // Раздел «BeamNG Другие моды» и «для BeamNG.drive» попадали в название мода.
+        let html = "<title>МОД Rain Weather Mod v1.0 (0.40.x) ДЛЯ BEAMNG.DRIVE - BeamNG Другие моды - Моды - MODSGAMING.RU</title>";
+        assert_eq!(page_title(html), "Rain Weather Mod v1.0 (0.40.x)");
+        let english = "<h1>Rain Weather Mod for BeamNG.drive</h1>";
+        assert_eq!(page_title(english), "Rain Weather Mod");
     }
 
     #[test]
