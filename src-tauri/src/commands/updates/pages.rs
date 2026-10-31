@@ -66,7 +66,7 @@ pub async fn updates_find_pages(
 pub async fn updates_find_page(
     state: tauri::State<'_, Arc<AppState>>,
     mod_id: String,
-) -> Result<UpdatesSnapshotDto, AppError> {
+) -> Result<FindPageResultDto, AppError> {
     let state = state.inner().clone();
     if state
         .library
@@ -90,6 +90,11 @@ pub async fn updates_find_page(
         let _guard = guard;
         // Снимаем 14-дневную паузу только у выбранного мода.
         state_for_task.library.set_page_search(&mod_id, None);
+        // Нажали ещё раз — ищем заново, а не отдаём ответы сайтов из кэша: иначе
+        // повторное нажатие мгновенно повторяло прежнее «не нашли».
+        if let Some(search) = &state_for_task.search {
+            search.fetcher.clear_cache();
+        }
         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
             run_single_page_search(&state_for_task, &mod_id, &cancel)
         }))
@@ -98,7 +103,10 @@ pub async fn updates_find_page(
             let _batch = state_for_task.library.batch();
             let _ = runtime.coordinator.check(false, None);
         }
-        build_snapshot(&state_for_task)
+        FindPageResultDto {
+            snapshot: build_snapshot(&state_for_task),
+            skipped_sites: report.skipped_sites,
+        }
     })
     .await
     .map_err(|error| AppError::new("task", error.to_string()))

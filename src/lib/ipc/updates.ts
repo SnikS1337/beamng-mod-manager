@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  FindPageResult,
   PageSuggestion,
   PageVerification,
   UpdateFinding,
@@ -11,6 +12,7 @@ import type {
 } from "./generated.js";
 
 export type {
+  FindPageResult,
   LostPage,
   PageMatch,
   PageSuggestion,
@@ -281,9 +283,9 @@ export async function updatesFindPages(requestId: number): Promise<void> {
 }
 
 /** Найти страницу одного мода, не дожидаясь 14-дневной паузы. */
-export async function updatesFindPage(modId: string): Promise<UpdatesSnapshot> {
-  if (isTauri()) return invoke<UpdatesSnapshot>("updates_find_page", { modId });
-  return clone(mockSnapshot);
+export async function updatesFindPage(modId: string): Promise<FindPageResult> {
+  if (isTauri()) return invoke<FindPageResult>("updates_find_page", { modId });
+  return { snapshot: clone(mockSnapshot), skippedSites: ["Modland"] };
 }
 
 /** Открыть страницу и поискать её же на других сайтах — без привязки. */

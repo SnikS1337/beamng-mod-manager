@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { findPageText } from "./findPageText";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
   import { groupMembers, isShown, visibleCards } from "./duplicates";
@@ -394,17 +395,18 @@
     if (!card || findingPage) return;
     findingPage = true;
     try {
-      const next = await updatesFindPage(card.id);
+      const result = await updatesFindPage(card.id);
       updatesBadge.refresh();
       await load(true);
       await refreshDetails(card.id);
-      if (next.suggestions.some((item) => item.modId === card.id)) {
-        showToast("Есть похожая страница — подтвердите её в «Обновлениях»");
-      } else if (details?.binding) {
-        showToast(`Нашли страницу «${trimName(card.name)}»`);
-      } else {
-        showToast("Страницу найти не удалось");
-      }
+      showToast(
+        findPageText({
+          suggested: result.snapshot.suggestions.some((item) => item.modId === card.id),
+          followed: Boolean(details?.binding),
+          name: trimName(card.name),
+          skippedSites: result.skippedSites,
+        }),
+      );
     } catch (reason) {
       showToast(errorText(reason));
     } finally {
