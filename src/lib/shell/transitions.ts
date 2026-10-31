@@ -10,6 +10,7 @@ export interface PopOptions {
   scale?: number;
   /** Как элемент центрирован базовым CSS: `translate(-50%, -50%)`, `translateX(-50%)` или без сдвига. */
   centered?: Centering;
+  delay?: number;
 }
 
 function centerOf(centered: Centering): string {
@@ -26,6 +27,7 @@ export function pop(_node: Element, options: PopOptions = {}): TransitionConfig 
   const center = centerOf(options.centered ?? "none");
   return {
     duration,
+    delay: duration === 0 ? 0 : (options.delay ?? 0),
     css: (t) => {
       const eased = cubicOut(t);
       const offset = (1 - eased) * y;

@@ -1115,6 +1115,15 @@
     animation: bar-run 1.4s var(--ease-in-out) infinite;
   }
 
+  /* «Быстро» обрывает анимацию на последнем кадре — полоса уезжала за край, и шла
+     ли работа, было не видно. Без движения полоса стоит во всю ширину, бледнее. */
+  :global(.no-motion) .bar.indeterminate span {
+    width: 100% !important;
+    animation: none;
+    transform: none;
+    opacity: 0.45;
+  }
+
   @keyframes bar-run {
     from {
       transform: translateX(-100%);
