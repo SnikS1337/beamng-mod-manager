@@ -15,7 +15,7 @@ use bmm_domain::text::TitleNormalizer;
 use bmm_sources::search::SearchService;
 
 use crate::bindings::gate;
-use crate::page_guesser::{CERTAIN_SIZE_RATIO, MIN_NAME, PageGuesser};
+use crate::page_guesser::{CERTAIN_SIZE_RATIO, MIN_NAME, PageGuess, PageGuesser};
 use crate::runner::UpdateProgress;
 
 /// Подбор страниц не должен затягивать проверку: сеть вежливая, а модов много.
@@ -454,6 +454,8 @@ fn search_pages_of(
                         author.as_deref(),
                         &enriched,
                     );
+                    // Прочитанную страницу второй раз не открываем.
+                    listings = enriched;
                 }
                 None => {
                     // Страницу открыть не удалось — подтверждения размера и автора нет.
@@ -463,6 +465,13 @@ fn search_pages_of(
                     }
                 }
             }
+        }
+
+        // Названия разные, а файл тот же: «acm percheron addon GR» на ModsGaming —
+        // «Cherrier Percheron Addon», 775,58 КБ байт в байт. По названию такое не
+        // взять, а по размеру — можно предложить.
+        if guess.is_none() {
+            guess = size_matched_suggestion(search, installed, title.as_deref(), &listings, cancel);
         }
 
         let _gate = gate();
@@ -820,6 +829,80 @@ pub fn find_extra_pages(
 
 /// Запись со страницы мода поверх записи из поиска: размер, автор и версия, которых
 /// в выдаче поиска обычно нет. `None` — страницу не открыть.
+/// Сколько страниц с похожим названием открыть ради размера. Каждая — запрос к
+/// сайту, а Modland и ModHub грузятся медленно.
+const SIZE_PROBES: usize = 2;
+/// Размер должен совпасть почти до байта: при слабом названии это и есть довод.
+const SAME_FILE_RATIO: f64 = 0.995;
+/// Маленькие файлы одного размера бывают у разных модов.
+const SAME_FILE_MIN_BYTES: i64 = 100 * 1024;
+
+/// Страница, у которой с модом общие слова названия (от двух) и тот же размер файла.
+/// Только предложение: следить без вопроса по такому совпадению нельзя.
+fn size_matched_suggestion(
+    search: &SearchService,
+    installed: &InstalledMod,
+    title: Option<&str>,
+    listings: &[Listing],
+    cancel: &AtomicBool,
+) -> Option<PageGuess> {
+    let size = installed
+        .size_bytes
+        .filter(|size| *size >= SAME_FILE_MIN_BYTES)?;
+    let guessed = bmm_domain::filename::from_file_name(&installed.file_name).name;
+    let names: Vec<Vec<String>> = [title, Some(installed.name.as_str()), Some(guessed.as_str())]
+        .into_iter()
+        .flatten()
+        .map(TitleNormalizer::split_tokens)
+        .filter(|tokens| tokens.len() >= 2)
+        .collect();
+    let shared = |listing: &Listing| -> usize {
+        let theirs = TitleNormalizer::split_tokens(&listing.title);
+        names
+            .iter()
+            .map(|mine| {
+                let common = theirs.iter().filter(|token| mine.contains(token)).count();
+                // Общих слов не меньше двух и не меньше половины заголовка страницы.
+                if common >= 2 && common * 2 >= theirs.len() {
+                    common
+                } else {
+                    0
+                }
+            })
+            .max()
+            .unwrap_or(0)
+    };
+    let mut candidates: Vec<(usize, &Listing)> = listings
+        .iter()
+        .filter(|listing| listing.price != bmm_domain::models::PriceStatus::Paid)
+        .map(|listing| (shared(listing), listing))
+        .filter(|(common, _)| *common > 0)
+        .collect();
+    candidates.sort_by_key(|(common, _)| std::cmp::Reverse(*common));
+    let same = |theirs: i64| {
+        theirs > 0 && size.min(theirs) as f64 / size.max(theirs) as f64 >= SAME_FILE_RATIO
+    };
+    for (_, listing) in candidates.into_iter().take(SIZE_PROBES) {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        let detail = match listing.size_bytes {
+            Some(_) => Some(listing.clone()),
+            None => page_details(search, listing, cancel),
+        };
+        if let Some(detail) = detail
+            && detail.size_bytes.is_some_and(same)
+        {
+            return Some(PageGuess {
+                listing: detail,
+                score: 0.0,
+                certain: false,
+            });
+        }
+    }
+    None
+}
+
 fn page_details(search: &SearchService, found: &Listing, cancel: &AtomicBool) -> Option<Listing> {
     let source = search
         .sources()
@@ -1336,6 +1419,79 @@ mod tests {
         ) -> Result<Option<Listing>, SourceError> {
             Ok(self.page.clone())
         }
+    }
+
+    #[test]
+    fn same_file_under_another_name_is_offered() {
+        // «acm percheron addon GR» на ModsGaming — «Cherrier Percheron Addon»: по
+        // названию не совпадает, а файл тот же, 794 193 байта.
+        let store = InMemoryLibraryStore::new();
+        let mut mine = installed("p", "acm_percheron_addon_GR_v1-0.zip");
+        mine.name = "acm percheron addon GR".to_string();
+        mine.size_bytes = Some(794_193);
+        store.upsert_mod(mine.clone());
+        let found = Listing::new(
+            "modsgaming",
+            Url::parse("https://modsgaming.test/160667").unwrap(),
+            "160667",
+            "Cherrier Percheron Addon v1.0",
+        );
+        let mut page = found.clone();
+        page.size_bytes = Some(794_194);
+        let search = sites(vec![VerifySite::new(
+            "modsgaming",
+            Some(page),
+            vec![found.clone()],
+        )]);
+        find_pages(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        let binding = store
+            .bindings()
+            .into_iter()
+            .find(|binding| binding.mod_id == "p")
+            .expect("предложена страница того же файла");
+        assert_eq!(binding.source_id, "160667");
+        assert!(!binding.confirmed, "только предложение");
+
+        // Другой размер — другой мод, даже с общими словами.
+        let mut other = found.clone();
+        other.size_bytes = Some(2_400_000);
+        let search = sites(vec![VerifySite::new(
+            "modsgaming",
+            Some(other),
+            vec![found.clone()],
+        )]);
+        assert!(
+            size_matched_suggestion(
+                &search,
+                &mine,
+                None,
+                std::slice::from_ref(&found),
+                &AtomicBool::new(false)
+            )
+            .is_none()
+        );
+        // Одно общее слово — не довод, страницу даже не открываем.
+        let lone = Listing::new(
+            "modsgaming",
+            Url::parse("https://modsgaming.test/1").unwrap(),
+            "1",
+            "Percheron Tanker Trailer Skins Pack",
+        );
+        let mut same_size = lone.clone();
+        same_size.size_bytes = Some(794_193);
+        let search = sites(vec![VerifySite::new("modsgaming", Some(same_size), vec![])]);
+        assert!(
+            size_matched_suggestion(&search, &mine, None, &[lone], &AtomicBool::new(false))
+                .is_none()
+        );
     }
 
     fn on_site(source: &'static str, id: &str, title: &str) -> Listing {

@@ -87,7 +87,21 @@ impl ModSource for StModsSource {
             return false;
         }
         let parts = common::segments(url);
-        parts.len() >= 3 && parts[0].eq_ignore_ascii_case("beamng_drive")
+        // Новости («Патч 0.26: список изменений»), статьи и справка лежат рядом с
+        // модами и попадали в поиск как моды.
+        const NOT_MODS: &[&str] = &[
+            "news",
+            "articles",
+            "kak_ustanovit_mod",
+            "stol_zakazov_modov",
+            "download_beamng",
+            "material_add",
+        ];
+        parts.len() >= 3
+            && parts[0].eq_ignore_ascii_case("beamng_drive")
+            && !NOT_MODS
+                .iter()
+                .any(|section| parts[1].eq_ignore_ascii_case(section))
     }
 
     fn feed_covers(&self, _url: &Url) -> bool {
