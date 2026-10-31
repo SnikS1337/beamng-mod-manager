@@ -25,6 +25,7 @@ struct Patterns {
     word_version: Regex,
     version_with_v: Regex,
     trailing_bare_version: Regex,
+    trailing_game_version: Regex,
     mods_only: Regex,
     whitespace: Regex,
     square: Regex,
@@ -76,7 +77,12 @@ impl Patterns {
                 r"(?<![\p{L}\p{Nd}])v(\d+(?:\.\d+)+[a-z]?)(?![\p{L}\p{Nd}.])",
                 true,
             ),
-            trailing_bare_version: compile(r"\s(\d{1,2}(?:\.\d+)+)\s*$", true),
+            trailing_bare_version: compile(
+                r"\s(\d{1,2}(?:\.\d+)+(?:-?(?:beta|alpha|rc)\d*)?)\s*$",
+                true,
+            ),
+            // «Universal Monster Frame v4.1.96 0.40.x»: версия игры без скобок.
+            trailing_game_version: compile(r"\s(\d+\.\d+\.x)\s*$", true),
             mods_only: compile(r"^моды?$", true),
             whitespace: compile(r"\s+", false),
             square: compile(r"\[[^\]]*\]", true),
@@ -189,7 +195,8 @@ impl TitleParser {
         text = replace_all(&p.paid_bracketed, &text, " ");
         text = replace_all(&p.paid_upper, &text, " ");
 
-        let game_version = take_capture(&p.game_version, &mut text);
+        let game_version = take_capture(&p.game_version, &mut text)
+            .or_else(|| take_capture(&p.trailing_game_version, &mut text));
 
         let leading_end = match p.leading_game.find(&text) {
             Ok(Some(found)) if found.start() == 0 => Some(found.end()),
@@ -398,6 +405,17 @@ fn usable(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bare_game_version_and_beta_version_leave_the_name() {
+        let frame = TitleParser::parse("Universal Monster Frame v4.1.96 0.40.x");
+        assert_eq!(frame.name, "Universal Monster Frame");
+        assert_eq!(frame.mod_version.as_deref(), Some("4.1.96"));
+        assert_eq!(frame.game_version.as_deref(), Some("0.40.x"));
+        let beta = TitleParser::parse("ACNG - Tire Heat 0.3.1-beta");
+        assert_eq!(beta.name, "ACNG - Tire Heat");
+        assert_eq!(beta.mod_version.as_deref(), Some("0.3.1-beta"));
+    }
 
     #[test]
     fn latin_diacritics_do_not_split_titles_but_cyrillic_letters_stay() {
