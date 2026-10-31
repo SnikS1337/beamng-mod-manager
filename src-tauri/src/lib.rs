@@ -336,6 +336,7 @@ pub fn run() {
             commands::versions::mod_restore_deleted,
             commands::versions::mod_versions,
             commands::versions::mod_restore_version,
+            commands::versions::mod_delete_version,
             commands::incoming::incoming_inspect,
             commands::incoming::incoming_install,
             commands::incoming::incoming_undo,

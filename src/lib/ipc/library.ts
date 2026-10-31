@@ -335,6 +335,11 @@ export async function modRestoreVersion(id: string, backupId: string): Promise<v
   if (isTauri()) await invoke("mod_restore_version", { id, backupId });
 }
 
+/** Стереть прошлую копию мода насовсем. */
+export async function modDeleteVersion(id: string, backupId: string): Promise<void> {
+  if (isTauri()) await invoke("mod_delete_version", { id, backupId });
+}
+
 /** Дочитаны названия модов из их архивов: карточки стоит перерисовать. */
 export async function listenLibraryTitles(handler: () => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};

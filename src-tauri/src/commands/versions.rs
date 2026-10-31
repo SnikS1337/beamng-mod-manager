@@ -82,6 +82,42 @@ pub async fn mod_restore_version(
         .map_err(|error| AppError::new("task", error.to_string()))?
 }
 
+/// «Удалить» у прошлой версии: копия стирается насовсем.
+#[tauri::command]
+pub async fn mod_delete_version(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+    backup_id: String,
+) -> Result<(), AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_version(&state, &id, &backup_id))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+fn delete_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), AppError> {
+    let _guard = state
+        .load_lock
+        .lock()
+        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let installed = state
+        .library
+        .get_mod(id)
+        .ok_or_else(|| AppError::new("not_found", "Мод не найден."))?;
+    let installer = installer_for(state)?;
+    // Удаляем только то, что показано у этого мода в «Прошлых версиях».
+    let version = versions::versions_for(&installer, state.library.as_ref(), &installed)
+        .into_iter()
+        .find(|version| version.backup.id == backup_id)
+        .ok_or_else(|| AppError::new("not_found", "Такой копии нет."))?;
+    let result = installer.delete_backup(&version.backup.file_name, &version.backup.id);
+    if result.success {
+        Ok(())
+    } else {
+        Err(AppError::new("delete", result.message))
+    }
+}
+
 pub(crate) fn installer_for(state: &AppState) -> Result<ModInstaller, AppError> {
     let settings = state.settings.load().settings;
     let (mods_dir, error) = resolve_folder(&settings);
@@ -511,5 +547,38 @@ mod tests {
         let mods_dir = installer_for(&state).unwrap().layout().mods_dir.clone();
         assert!(mods_dir.join("acm_v1-0.zip").is_file());
         assert!(mods_dir.join("acm_v1-0 (1).zip").is_file());
+    }
+
+    #[test]
+    fn past_copy_is_deleted_for_good() {
+        let (temp, state) = setup();
+        let source = temp.path().join("source.zip");
+        make_zip(&source);
+        install_direct(&state, &source, "fx.zip");
+        install_direct(&state, &source, "fx (1).zip");
+        let snapshot = load_snapshot(&state).unwrap();
+        let id_of = |file: &str| {
+            state
+                .library
+                .mods()
+                .into_iter()
+                .find(|item| item.file_name == file)
+                .unwrap()
+                .id
+        };
+        let _ = snapshot;
+        let copy = id_of("fx (1).zip");
+        delete_mod(&state, &copy).unwrap();
+        forget_deleted(&state, &copy).unwrap();
+        load_snapshot(&state).unwrap();
+        let main = id_of("fx.zip");
+        let rows = versions_of(&state, &main).unwrap();
+        assert_eq!(rows.len(), 1, "удалённая копия видна как прошлая");
+        delete_version(&state, &main, &rows[0].backup_id).unwrap();
+        assert!(versions_of(&state, &main).unwrap().is_empty());
+        assert!(
+            delete_version(&state, &main, "чужая").is_err(),
+            "удаляем только показанное у мода"
+        );
     }
 }

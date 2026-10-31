@@ -452,6 +452,26 @@ impl ModInstaller {
         }
     }
 
+    /// Стереть одну копию насовсем (кнопка «Удалить» в «Прошлых версиях»).
+    pub fn delete_backup(&self, file_name: &str, backup_id: &str) -> OpResult {
+        let Some(name) = safe_file_name(Some(file_name)) else {
+            return OpResult::fail("Недопустимое имя файла.");
+        };
+        let _guard = self.gate.lock().unwrap();
+        let Some(path) = self.find_backup(&name, backup_id) else {
+            return OpResult::fail("Такой копии нет.");
+        };
+        if let Err(error) = fs::remove_file(&path) {
+            return OpResult::fail(io_message(&error));
+        }
+        let _ = fs::remove_file(disabled_marker(&path));
+        // Пустая папка копий этого файла не нужна.
+        if let Some(dir) = path.parent() {
+            let _ = fs::remove_dir(dir);
+        }
+        OpResult::ok("Копия удалена.", None)
+    }
+
     /// Мод был выключен, когда его удалили (см. [`Self::remove`]).
     pub fn backup_was_disabled(&self, file_name: &str, backup_id: &str) -> bool {
         let Some(name) = safe_file_name(Some(file_name)) else {
@@ -1013,6 +1033,56 @@ mod tests {
         assert_eq!(io_failure(&other).1, "сбой");
     }
     use super::*;
+
+    #[test]
+    fn removal_is_all_or_nothing() {
+        let paths = vec![PathBuf::from("mods/a.zip"), PathBuf::from("disabled/a.zip")];
+        let restored = std::cell::RefCell::new(Vec::new());
+        let result = move_all(
+            &paths,
+            |path| {
+                if path.starts_with("disabled") {
+                    Err(io::Error::other("занят"))
+                } else {
+                    Ok(PathBuf::from("backups/a.zip"))
+                }
+            },
+            |saved, original| {
+                restored
+                    .borrow_mut()
+                    .push((saved.to_path_buf(), original.to_path_buf()))
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            restored.into_inner(),
+            vec![(PathBuf::from("backups/a.zip"), PathBuf::from("mods/a.zip"))],
+            "уже убранная копия вернулась"
+        );
+        let all = move_all(&paths, |path| Ok(path.with_extension("bak")), |_, _| {}).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn backup_is_deleted_for_good() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let mods = installer.layout().mods_dir.clone();
+        fs::create_dir_all(&mods).unwrap();
+        fs::write(mods.join("a.zip"), b"zip").unwrap();
+        assert!(installer.remove("a.zip").success);
+        let id = installer.list_backups("a.zip")[0].id.clone();
+        assert!(installer.delete_backup("a.zip", &id).success);
+        assert!(installer.list_backups("a.zip").is_empty());
+        assert!(
+            !installer.layout().backup_dir.join("a.zip").exists(),
+            "пустая папка убрана"
+        );
+        assert!(
+            !installer.delete_backup("a.zip", &id).success,
+            "второй раз — нечего"
+        );
+    }
     use crate::scan::ModLayout;
     use std::io::Write;
 
