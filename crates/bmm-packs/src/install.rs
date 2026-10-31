@@ -607,6 +607,8 @@ impl ModInstaller {
             self.restore_moved(&moved, &dir.join(&current));
             return OpResult::fail(io_message(&error));
         }
+        // Пометка «был выключен» принадлежала вернувшейся копии: без неё она — мусор.
+        let _ = fs::remove_file(disabled_marker(&source));
         self.rotate(&current);
         self.rotate(&old);
         OpResult::ok("Возвращено.", Some(target))
@@ -767,6 +769,7 @@ impl ModInstaller {
             self.restore_moved(&moved, &target);
             return OpResult::fail(io_message(&error));
         }
+        let _ = fs::remove_file(disabled_marker(source));
         self.rotate(name);
         OpResult::ok("Возвращено.", Some(target))
     }
@@ -1061,6 +1064,23 @@ mod tests {
         );
         let all = move_all(&paths, |path| Ok(path.with_extension("bak")), |_, _| {}).unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn returned_copy_takes_its_disabled_mark_along() {
+        // Пометка «был выключен» оставалась в папке копий после «Вернуть» — мусор,
+        // который копился с каждым возвратом выключенного мода.
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let off = installer.layout().disabled_dir.clone();
+        fs::create_dir_all(&off).unwrap();
+        fs::write(off.join("a.zip"), b"zip").unwrap();
+        assert!(installer.remove("a.zip").success);
+        let backup = installer.backups("a.zip")[0].clone();
+        assert!(disabled_marker(&backup).exists(), "удалён выключенным");
+        let id = installer.list_backups("a.zip")[0].id.clone();
+        assert!(installer.restore_backup("a.zip", &id).success);
+        assert!(!disabled_marker(&backup).exists());
     }
 
     #[test]

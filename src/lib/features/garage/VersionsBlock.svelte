@@ -78,7 +78,10 @@
               <span>{formatDateTime(version.savedAt)} · {formatSize(version.sizeBytes)}</span>
             </div>
             <div class="actions">
-              <Button variant="outline" size="sm" onclick={() => onRestore(version)}>Вернуть</Button>
+              <!-- Пока копию стирают, «Вернуть» её же — гонка: файла уже может не быть. -->
+              <Button variant="outline" size="sm" disabled={deleting} onclick={() => onRestore(version)}
+                >Вернуть</Button
+              >
               <button
                 class="delete"
                 class:confirm={confirming === version.backupId}

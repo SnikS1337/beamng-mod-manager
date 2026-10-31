@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { passButton } from "#lib/shell/siteCheck.js";
+  import { needsPassButton, passButton } from "#lib/shell/siteCheck.js";
   import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
@@ -449,6 +449,9 @@
           passing = null;
           await check();
         }
+      } else {
+        // Как в поиске: без ответа человек не понимает, почему кнопка осталась.
+        toasts.show("Проверка не завершена. Пройдите её в окне и попробуйте снова");
       }
     } catch (reason) {
       error = errorText(reason);
@@ -934,9 +937,7 @@
               {/if}
             </span>
           </div>
-          <!-- Сайт за Cloudflare без единого мода иначе никогда не спросит проверку: без неё он
-               не отвечает и поиску страниц, и мод на нём так и не найдётся. -->
-          {#if site.id in CHECK_SITES && (site.tone === "warn" || site.text === "ни одного мода")}
+          {#if needsPassButton(site, site.id in CHECK_SITES)}
             <!-- Окно проверки одно: пока идёт проверка одного сайта, кнопка другого
                  недоступна, но «Проходим проверку…» пишет только та, что нажата. -->
             {@const pass = passButton(passing, site.id, CHECK_SITES[site.id] ?? site.name)}

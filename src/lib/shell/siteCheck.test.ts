@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { passButton } from "./siteCheck";
+import { needsPassButton, passButton } from "./siteCheck";
 
 describe("кнопка «Пройти проверку»", () => {
   it("«Проходим проверку…» — только у нажатого сайта", () => {
@@ -15,5 +15,17 @@ describe("кнопка «Пройти проверку»", () => {
       text: "Пройти проверку ModHub",
       disabled: false,
     });
+  });
+});
+
+describe("needsPassButton", () => {
+  it("сайт без модов, который пускает, кнопку не показывает", () => {
+    // Было: «ни одного мода» всегда с кнопкой — окно открывалось и сразу закрывалось.
+    expect(needsPassButton({ tone: "off" }, true)).toBe(false);
+    expect(needsPassButton({ tone: "ok" }, true)).toBe(false);
+  });
+  it("кнопка — когда сайт просит проверку и её можно пройти", () => {
+    expect(needsPassButton({ tone: "warn" }, true)).toBe(true);
+    expect(needsPassButton({ tone: "warn" }, false)).toBe(false);
   });
 });

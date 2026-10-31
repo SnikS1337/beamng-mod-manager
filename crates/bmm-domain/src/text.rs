@@ -37,6 +37,8 @@ struct Patterns {
     short_version: Regex,
     non_word: Regex,
     bracket_version: Regex,
+    version_before_note: Regex,
+    number_after_year: Regex,
 }
 
 fn compile(pattern: &str, case_insensitive: bool) -> Regex {
@@ -100,6 +102,8 @@ impl Patterns {
             short_version: compile(r"\bv\d+\b", true),
             non_word: compile(r"[^\p{L}\p{Nd}]+", true),
             bracket_version: compile(r"\s*[\[(]\s*v?\d+(?:\.\d+)+[a-z]?\s*[\])]\s*$", true),
+            version_before_note: compile(r"\s+v?\d{1,2}(?:\.\d+)+\s+(\([^()]*\))\s*$", true),
+            number_after_year: compile(r"(\b(?:19|20)\d{2})\s+\d{1,2}\s*$", true),
         }
     }
 }
@@ -255,6 +259,22 @@ fn replace_all(regex: &Regex, text: &str, replacement: &str) -> String {
     }
     result.push_str(&text[last..]);
     result
+}
+
+/// Заменяет совпадение на его первую группу (с приставкой `prefix`).
+fn keep_group(regex: &Regex, text: &str, prefix: &str) -> String {
+    let Ok(Some(captures)) = regex.captures(text) else {
+        return text.to_string();
+    };
+    let (Some(whole), Some(group)) = (captures.get(0), captures.get(1)) else {
+        return text.to_string();
+    };
+    format!(
+        "{}{prefix}{}{}",
+        &text[..whole.start()],
+        group.as_str(),
+        &text[whole.end()..]
+    )
 }
 
 fn take_capture(regex: &Regex, text: &mut String) -> Option<String> {
@@ -423,9 +443,21 @@ impl ModTitles {
             return None;
         }
         let parsed = TitleParser::parse(raw);
-        let name = replace_all(&patterns().bracket_version, &parsed.name, "")
-            .trim()
-            .to_string();
+        let p = patterns();
+        let name = replace_all(&p.bracket_version, &parsed.name, "");
+        // «Premium 1.0 (Replace/Add-On)»: версия перед пометкой в скобках.
+        let name = keep_group(&p.version_before_note, &name, " ");
+        // «Toyota Sienna 2017 1»: номер версии без точки после года.
+        let name = keep_group(&p.number_after_year, &name, "");
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        // «Карта «Приозерск»»: рубрику убрали, кавычки вокруг всего названия — лишние.
+        let name = name
+            .strip_prefix('«')
+            .and_then(|rest| rest.strip_suffix('»'))
+            .filter(|inner| !inner.contains(['«', '»']))
+            .map(str::to_string)
+            .unwrap_or(name);
+        let name = name.trim().to_string();
         if name.is_empty() { None } else { Some(name) }
     }
 }
@@ -442,6 +474,30 @@ fn usable(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn site_names_drop_leftover_versions_and_quotes() {
+        let site = |raw: &str| ModTitles::site(Some(raw));
+        assert_eq!(
+            site("Карта «Приозерск» версия 0.1").as_deref(),
+            Some("Приозерск")
+        );
+        assert_eq!(
+            site("Toyota Sienna 2017 1").as_deref(),
+            Some("Toyota Sienna 2017")
+        );
+        assert_eq!(
+            site("2017 Toyota Sienna XLE Premium 1.0 (Replace/Add-On)").as_deref(),
+            Some("2017 Toyota Sienna XLE Premium (Replace/Add-On)")
+        );
+        // Не трогаем то, что версией не является.
+        assert_eq!(site("Porsche 911").as_deref(), Some("Porsche 911"));
+        assert_eq!(
+            site("Seat Leon MK2 (2005)").as_deref(),
+            Some("Seat Leon MK2 (2005)")
+        );
+        assert_eq!(site("«A» и «B»").as_deref(), Some("«A» и «B»"));
+    }
 
     #[test]
     fn glued_words_match_the_spaced_title() {
