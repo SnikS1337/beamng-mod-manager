@@ -1,6 +1,6 @@
 {
   "name": "beamng-mod-manager",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "ModManager BeamNG: Rust + Tauri 2 + SvelteKit 3 + Svelte 5",
   "private": true,
   "type": "module",
