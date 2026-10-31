@@ -592,7 +592,7 @@ pub(crate) async fn open_site_check(
         let _ = window.eval("location.reload()");
     } else {
         window
-            .navigate(url)
+            .navigate(url.clone())
             .map_err(|error| AppError::new("window", error.to_string()))?;
     }
     let _ = window.set_title(&format!("Проверка {}", site.name));
@@ -610,7 +610,7 @@ pub(crate) async fn open_site_check(
     // поэтому доступ подтверждаем тем же скрытым браузером, которым работает поиск.
     let closed = app.get_webview_window(CHECK_LABEL).is_none();
     let confirmed = if passed || closed {
-        access_confirmed(&state, site).await
+        access_confirmed(&state, site, url.clone()).await
     } else {
         false
     };
@@ -625,16 +625,13 @@ pub(crate) async fn open_site_check(
 
 /// Проверка настоящим запросом программы: видимая страница могла пустить,
 /// а скрытый браузер всё ещё видеть заглушку. Тогда поиск запускать рано.
-async fn access_confirmed(state: &Arc<AppState>, site: CheckSite) -> bool {
+async fn access_confirmed(state: &Arc<AppState>, site: CheckSite, url: url::Url) -> bool {
     let Some(search) = state.search.clone() else {
         return false;
     };
-    let Ok(home) = site.home.parse::<url::Url>() else {
-        return false;
-    };
     tauri::async_runtime::spawn_blocking(move || {
-        search.fetcher.reset_source(site.id, &home);
-        search.fetcher.get(site.id, &home).status == SourceStatus::Ok
+        search.fetcher.reset_source(site.id, &url);
+        search.fetcher.get(site.id, &url).status == SourceStatus::Ok
     })
     .await
     .unwrap_or(false)
@@ -703,6 +700,20 @@ fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str, site: Ch
     }
 }
 
+/// Проверку проходим там, где сайт её показал: Cloudflare может закрывать только
+/// поиск, а главная открывается сразу. Тогда окно на главной закрывалось «пройдено»,
+/// а следующий поиск снова упирался в проверку — и так по кругу.
+fn check_url(site: CheckSite, home: url::Url, challenged: Option<url::Url>) -> url::Url {
+    challenged
+        .filter(|url| {
+            url.host_str().is_some_and(|host| {
+                let host = host.to_ascii_lowercase();
+                host == site.host || host.ends_with(&format!(".{}", site.host))
+            })
+        })
+        .unwrap_or(home)
+}
+
 fn same_page(current: Option<&url::Url>, target: &url::Url) -> bool {
     current.is_some_and(|current| current == target)
 }
@@ -739,11 +750,16 @@ pub async fn updates_open_check(
     source: String,
 ) -> Result<bool, AppError> {
     let site = check_site(&source)?;
-    let url: url::Url = site
+    let home: url::Url = site
         .home
         .parse()
         .map_err(|_| AppError::new("url", "Некорректный адрес сайта."))?;
     let state = state.inner().clone();
+    let challenged = state
+        .search
+        .as_ref()
+        .and_then(|search| search.fetcher.challenged_url(site.id));
+    let url = check_url(site, home, challenged);
     open_site_check(app, state, site, url).await
 }
 
@@ -1174,6 +1190,20 @@ mod tests {
             stopped_by_time: false,
             reused: false,
         }
+    }
+
+    #[test]
+    fn check_opens_where_the_site_asked_for_it() {
+        let site = CHECK_SITES[0];
+        let home: url::Url = site.home.parse().unwrap();
+        let search: url::Url = "https://www.modland.net/search/traffic".parse().unwrap();
+        assert_eq!(check_url(site, home.clone(), Some(search.clone())), search);
+        assert_eq!(check_url(site, home.clone(), None), home);
+        // Чужой адрес в окно проверки сайта не открываем.
+        let other: url::Url = "https://www.modhub.us/search/x".parse().unwrap();
+        assert_eq!(check_url(site, home.clone(), Some(other)), home);
+        let lookalike: url::Url = "https://evilmodland.net/".parse().unwrap();
+        assert_eq!(check_url(site, home.clone(), Some(lookalike)), home);
     }
 
     #[test]

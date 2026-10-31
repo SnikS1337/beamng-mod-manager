@@ -22,6 +22,8 @@ pub fn variants(query: &str) -> Vec<String> {
         return Vec::new();
     }
     let mut out = vec![query.to_string()];
+    // «TrafficReborn» сайт не находит, а «Traffic Reborn» — да.
+    push_unique(&mut out, bmm_domain::text::split_camel(query));
     let lower = query.to_lowercase();
     if has_cyrillic(&lower) {
         push_unique(&mut out, transliterate_ru(&lower));
@@ -172,5 +174,9 @@ mod tests {
     #[test]
     fn no_variants_for_plain_query() {
         assert_eq!(variants("Porsche 911"), vec!["Porsche 911"]);
+        assert_eq!(
+            variants("TrafficReborn")[..2],
+            ["TrafficReborn".to_string(), "Traffic Reborn".to_string()]
+        );
     }
 }
