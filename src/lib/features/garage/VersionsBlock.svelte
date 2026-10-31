@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from "#lib/components/ui/button/index.js";
-  import { modVersions, type VersionRow } from "#lib/ipc/library.js";
+  import { modDeleteVersion, modVersions, type VersionRow } from "#lib/ipc/library.js";
+  import { toasts } from "#lib/shell/toasts.svelte.js";
   import { formatDateTime, formatSize } from "./format";
 
   let {
@@ -17,6 +18,33 @@
   let versions = $state<VersionRow[]>([]);
   let loading = $state(true);
   let token = 0;
+  /** Копия, у которой «Удалить» уже нажали один раз: второе нажатие стирает её. */
+  let confirming = $state<string | null>(null);
+  let deleting = $state(false);
+
+  // Копия стирается насовсем, поэтому — второе нажатие «Точно удалить».
+  async function remove(version: VersionRow) {
+    if (deleting) return;
+    if (confirming !== version.backupId) {
+      confirming = version.backupId;
+      return;
+    }
+    deleting = true;
+    try {
+      await modDeleteVersion(modId, version.backupId);
+      versions = versions.filter((row) => row.backupId !== version.backupId);
+      toasts.show("Копия удалена");
+    } catch (reason) {
+      toasts.show(
+        reason && typeof reason === "object" && "message" in reason
+          ? String((reason as { message: unknown }).message)
+          : "Копию удалить не удалось",
+      );
+    } finally {
+      confirming = null;
+      deleting = false;
+    }
+  }
 
   $effect(() => {
     const id = modId;
@@ -49,7 +77,21 @@
               <b>{version.version ? `Версия ${version.version}` : "Прошлая копия"}</b>
               <span>{formatDateTime(version.savedAt)} · {formatSize(version.sizeBytes)}</span>
             </div>
-            <Button variant="outline" size="sm" onclick={() => onRestore(version)}>Вернуть</Button>
+            <div class="actions">
+              <Button variant="outline" size="sm" onclick={() => onRestore(version)}>Вернуть</Button>
+              <button
+                class="delete"
+                class:confirm={confirming === version.backupId}
+                type="button"
+                disabled={deleting}
+                onclick={() => void remove(version)}
+                onblur={() => {
+                  if (confirming === version.backupId) confirming = null;
+                }}
+              >
+                {confirming === version.backupId ? "Точно удалить" : "Удалить"}
+              </button>
+            </div>
           </div>
         {/each}
       </div>
@@ -103,6 +145,33 @@
   .text span {
     color: var(--muted-foreground);
     font-size: 11.5px;
+  }
+
+  .actions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .delete {
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .delete:hover,
+  .delete.confirm {
+    color: var(--danger);
+  }
+
+  .delete.confirm {
+    background: var(--danger-soft);
+    font-weight: 600;
   }
 
   .muted {

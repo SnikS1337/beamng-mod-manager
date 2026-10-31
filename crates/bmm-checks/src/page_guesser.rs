@@ -38,6 +38,9 @@ pub const MIN_NAME_SAME_AUTHOR: f64 = 0.5;
 pub const NAME_IN_ADDRESS: f64 = 0.9;
 /// Минимальное отношение размеров установленного мода и страницы.
 pub const SIZE_MIN_RATIO: f64 = 0.85;
+/// Сколько лишних слов может быть в заголовке сайта, чтобы короткое название, целиком
+/// вошедшее в него, ещё считалось кандидатом (только предложением).
+pub const CONTAINED_EXTRA_WORDS: usize = 4;
 /// Название, с которым следить можно без вопроса (при одном подтверждающем признаке).
 pub const CERTAIN_NAME: f64 = 0.9;
 /// Размеры архива и страницы, которые считаются «тем же файлом».
@@ -259,6 +262,26 @@ impl PageGuesser {
             } else {
                 MIN_NAME
             };
+            // Короткое название целиком внутри более длинного заголовка сайта: «weather
+            // fx» и «Weather FX — dynamic rain and fog». По доле общих слов это ниже
+            // порога, и мод оставался без страницы, хотя она есть. Берём такую страницу
+            // только предложением: следить без вопроса по одному вхождению нельзя.
+            let mut contained = false;
+            if similarity < min_name {
+                let listing_tokens = TitleNormalizer::tokens(&listing.title);
+                contained = names.iter().any(|name| {
+                    let name_tokens = TitleNormalizer::tokens(name);
+                    name_tokens.len() >= 2
+                        && listing_tokens.len() <= name_tokens.len() + CONTAINED_EXTRA_WORDS
+                        && name_tokens
+                            .iter()
+                            .all(|token| listing_tokens.contains(token))
+                });
+                if contained {
+                    similarity = min_name;
+                    tokens = tokens.max(2);
+                }
+            }
             if similarity < min_name || (tokens < 2 && similarity < 1.0) {
                 continue;
             }
@@ -332,6 +355,7 @@ impl PageGuesser {
                     && tokens >= 2
                     && !other_author
                     && order != VersionOrder::Unknown);
+            let certain = certain && !contained;
             fits.push(PageGuess {
                 listing: listing.clone(),
                 score,
@@ -476,6 +500,46 @@ mod tests {
 
     fn l(source: &str, id: &str, title: &str) -> Listing {
         listing(source, id, title, None, None, PriceStatus::Unknown)
+    }
+
+    #[test]
+    fn short_name_inside_a_longer_site_title_is_offered() {
+        // «weather fx» и «Weather FX — dynamic rain and fog»: общих слов меньше порога,
+        // и мод оставался без страницы, хотя она есть на сайтах.
+        let mine = installed("w", "weather_fx.zip", None, Some(714_132));
+        let guess = PageGuesser::pick_with_author(
+            &mine,
+            Some("weather fx"),
+            None,
+            &[l("modland", "1", "Weather FX - Dynamic Rain and Fog")],
+        )
+        .expect("предложение");
+        assert!(!guess.certain, "по одному вхождению — только предложение");
+
+        // Слишком длинный заголовок — уже другой мод с похожими словами.
+        assert!(
+            PageGuesser::pick_with_author(
+                &mine,
+                Some("weather fx"),
+                None,
+                &[l(
+                    "modland",
+                    "2",
+                    "Realistic Weather FX Sounds Pack for Rain Snow Thunder and Wind"
+                )],
+            )
+            .is_none()
+        );
+        // Одно слово не считается.
+        assert!(
+            PageGuesser::pick_with_author(
+                &installed("p", "police.zip", None, None),
+                Some("police"),
+                None,
+                &[l("modland", "3", "Police Lights Pack")],
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -1064,15 +1128,24 @@ mod tests {
             same.score
         );
 
-        let one_word_too_short = installed("b", "german_cars_pack.zip", None, None);
+        // 0.75 < 0.8 по доле общих слов, но название целиком внутри заголовка сайта:
+        // такую страницу предлагаем, а не следим за ней молча.
+        let contained = installed("b", "german_cars_pack.zip", None, None);
+        let offered = PageGuesser::pick(
+            &contained,
+            None,
+            &[l("stmods", "2", "German Cars Pack Deluxe")],
+        )
+        .expect("предложение");
+        assert!(!offered.certain);
+        // А частичное совпадение без вхождения целиком — по-прежнему мимо.
         assert!(
             PageGuesser::pick(
-                &one_word_too_short,
+                &contained,
                 None,
-                &[l("stmods", "2", "German Cars Pack Deluxe")]
+                &[l("stmods", "3", "German Trucks Pack Deluxe")]
             )
-            .is_none(),
-            "0.75 < 0.8"
+            .is_none()
         );
     }
 
