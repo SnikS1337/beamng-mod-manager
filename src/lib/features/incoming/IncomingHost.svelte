@@ -951,6 +951,15 @@
   }
 
 
+  /* «Быстро» обрывает анимацию на последнем кадре — полоса уезжала за край, и шла
+     ли работа, было не видно. Без движения полоса стоит во всю ширину, бледнее. */
+  :global(.no-motion) .busy-bar span {
+    width: 100%;
+    animation: none;
+    transform: none;
+    opacity: 0.45;
+  }
+
   @keyframes sheen {
     from {
       transform: translateX(-120%);

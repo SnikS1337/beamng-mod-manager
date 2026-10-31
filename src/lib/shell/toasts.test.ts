@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { toasts } from "./toasts.svelte";
+import { readingTime, toasts } from "./toasts.svelte";
 
 describe("тосты", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -82,5 +82,55 @@ describe("тосты", () => {
     expect(toasts.current).not.toBeNull();
     vi.advanceTimersByTime(1000);
     expect(toasts.current).toBeNull();
+  });
+
+  it("длинный текст висит дольше короткого — успеть прочитать", () => {
+    // Было: 3 или 5 секунд на всё, итог проверки в 150 знаков пропадал недочитанным.
+    const long =
+      "Новых версий нет. Modland, ModHub: нужно пройти проверку на сайте. У 9 модов нет страницы — их не проверяли";
+    expect(readingTime("Готово")).toBe(3000);
+    expect(readingTime(long)).toBeGreaterThan(8000);
+    expect(readingTime("x".repeat(1000))).toBe(15000);
+    toasts.show(long);
+    vi.advanceTimersByTime(5000);
+    expect(toasts.current?.message).toBe(long);
+    vi.advanceTimersByTime(readingTime(long));
+    expect(toasts.current).toBeNull();
+  });
+
+  it("под курсором тост не исчезает", () => {
+    toasts.show("Готово");
+    vi.advanceTimersByTime(2000);
+    toasts.pause();
+    vi.advanceTimersByTime(20000);
+    expect(toasts.current?.message).toBe("Готово");
+    toasts.resume();
+    vi.advanceTimersByTime(1400);
+    expect(toasts.current?.message).toBe("Готово");
+    vi.advanceTimersByTime(200);
+    expect(toasts.current).toBeNull();
+  });
+
+  it("повтор того же сообщения не встаёт в очередь", () => {
+    toasts.show("Мод удалён", { undo: vi.fn() });
+    toasts.show("Копия удалена");
+    toasts.show("Копия удалена");
+    toasts.show("Копия удалена");
+    vi.advanceTimersByTime(6000);
+    expect(toasts.current?.message).toBe("Копия удалена");
+    vi.advanceTimersByTime(3000);
+    expect(toasts.current).toBeNull();
+  });
+
+  it("при длинной очереди сообщения короче, но не меньше 3 секунд", () => {
+    const long = "x".repeat(120);
+    toasts.show("Мод удалён", { undo: vi.fn() });
+    toasts.show(long);
+    toasts.show("второе");
+    toasts.show("третье");
+    vi.advanceTimersByTime(6000);
+    expect(toasts.current?.message).toBe(long);
+    vi.advanceTimersByTime(Math.round(readingTime(long) * 0.6));
+    expect(toasts.current?.message).toBe("второе");
   });
 });

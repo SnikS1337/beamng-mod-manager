@@ -1,22 +1,35 @@
 <script lang="ts">
   import { toasts } from "./toasts.svelte";
   import { pop, softFade } from "./transitions";
+
+  const OUT = 140;
+
+  /** Следующий тост ждёт, пока прошлый погаснет: иначе два текста секунду лежали друг на друге. */
+  function enterDelay(): number {
+    return Math.max(0, OUT - (Date.now() - toasts.hiddenAt));
+  }
 </script>
 
-{#each toasts.current ? [toasts.current] : [] as toast (toast)}
+<!-- Ключ — сообщение, а не объект: пауза под курсором пересоздаёт объект, и тост
+     заново «выпрыгивал». -->
+{#each toasts.current ? [toasts.current] : [] as toast (toast.message + (toast.undo ? "↶" : ""))}
   <div
     class="toast"
     role="status"
     aria-live="polite"
-    in:pop={{ duration: 240, y: 10, centered: "x" }}
-    out:softFade={{ duration: 140 }}
+    in:pop={{ duration: 240, y: 10, centered: "x", delay: enterDelay() }}
+    out:softFade={{ duration: OUT }}
+    onpointerenter={() => toasts.pause()}
+    onpointerleave={() => toasts.resume()}
+    onfocusin={() => toasts.pause()}
+    onfocusout={() => toasts.resume()}
   >
     <span>{toast.message}</span>
     {#if toast.undo}
       <button
         type="button"
         onclick={() => {
-          if (toasts.current === toast) void toasts.undo();
+          if (toasts.current?.message === toast.message) void toasts.undo();
         }}
       >Отменить</button>
     {/if}
