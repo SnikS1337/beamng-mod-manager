@@ -530,6 +530,10 @@ mod tests {
             "https://stmods.org/beamng_drive/mods/",
             "https://stmods.org/search.php?search_request=x",
             "https://stmods.org/x/",
+            // Новости и статьи STMods лежат рядом с модами — в поиск попадал
+            // «Патч 0.26 для BeamNG Drive: список изменений».
+            "https://stmods.org/beamng_drive/news/patch_0_26_dlya_beamng_drive_spisok_izmeneniy_cheyndzhlog_2022_09_20_by_swordself14/",
+            "https://stmods.org/beamng_drive/articles/x/",
             "https://modsgaming.ru/",
             "https://modsgaming.ru/load/beamng_drive/mashiny/38",
             "https://modsgaming.ru/load/beamng_drive/mashiny/38-2",
