@@ -19,6 +19,10 @@ static TITLE_TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(?<t>.*?)</title>").unwrap());
 static LEADING_MOD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(?:Скачать\s+)?мод\s+").unwrap());
+/// Метка статуса в заголовке репозитория BeamNG («Beta», «Alpha»): не часть названия.
+static STATUS_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)<span[^>]*class="[^"]*\bprefix\b[^"]*"[^>]*>.*?</span>"#).unwrap()
+});
 static HTML_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<!--.*?-->").unwrap());
 /// Хвост `<title>` с адресом сайта: « - MODSGAMING.RU - Моды для …».
 static SITE_TAIL: LazyLock<Regex> = LazyLock::new(|| {
@@ -129,7 +133,8 @@ pub fn page_title(html: &str) -> String {
         .and_then(|captures| captures.name("t"))
         .map(|value| value.as_str())
         .unwrap_or("");
-    let text = clean(raw);
+    let raw = STATUS_PREFIX.replace_all(raw, " ");
+    let text = clean(&raw);
     let text = HTML_COMMENT.replace_all(&text, " ");
     let mut text = SITE_TAIL.replace(&text, "").into_owned();
     loop {
@@ -252,6 +257,46 @@ mod tests {
         assert!(!title.to_lowercase().contains("modsgaming"), "{title}");
         assert!(!title.contains("Моды"), "{title}");
         assert!(title.starts_with("BMW M2 G87"), "{title}");
+    }
+
+    #[test]
+    fn real_mod_pages_of_every_site_give_clean_names() {
+        // Название в карточке — то, что останется после разбора заголовка страницы.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let cases = [
+            ("beamng/mod-906-real.html", "Crash Test Dummy"),
+            ("beamng/mod-real.html", "ACNG - Tire Heat, Pressure & Wear"),
+            ("modhub/mod-bmw-m8-real.html", "BMW M8 CS"),
+            (
+                "modhub/mod-monster-frame-real.html",
+                "Universal Monster Frame",
+            ),
+            (
+                "modhub/mod-percheron-addon-real.html",
+                "Cherrier Percheron Addon",
+            ),
+            ("modland/mod-free.html", "Ibishu Miramar Dirt Race"),
+            (
+                "modland/mod-paid-real.html",
+                "Duskport - Realistic City Map",
+            ),
+            (
+                "modland/pack-wheels-boosty-real.html",
+                "Biggest Stylish Wheelpack",
+            ),
+            ("modsgaming/mod-real.html", "BMW M2 G87"),
+            ("stmods/mod-real.html", "BMW E34"),
+        ];
+        for (file, expected) in cases {
+            let html = std::fs::read_to_string(root.join(file)).unwrap();
+            let name = bmm_domain::text::ModTitles::site(Some(&page_title(&html)));
+            assert_eq!(name.as_deref(), Some(expected), "{file}");
+        }
+        let rain = "<title>МОД Rain Weather Mod v1.0 (0.40.x) ДЛЯ BEAMNG.DRIVE - BeamNG Другие моды - Моды - MODSGAMING.RU</title>";
+        assert_eq!(
+            bmm_domain::text::ModTitles::site(Some(&page_title(rain))).as_deref(),
+            Some("Rain Weather Mod")
+        );
     }
 
     #[test]
