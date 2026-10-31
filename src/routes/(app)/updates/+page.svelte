@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { passButton } from "#lib/shell/siteCheck.js";
   import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
@@ -58,7 +59,8 @@
   });
   let sources = $state<UpdateSource[]>([]);
   let loading = $state(true);
-  let passing = $state(false);
+  /** Сайт, проверку которого сейчас проходят; `null` — окна проверки нет. */
+  let passing = $state<string | null>(null);
   let filter = $state<Filter>("available");
   let verifying = $state<string | null>(null);
   let verifications = $state<Record<string, PageVerification | null>>({});
@@ -422,12 +424,15 @@
   let passedSites = $state<string[]>([]);
 
   async function openCheck(source: string) {
-    if (passing) return;
-    passing = true;
+    if (passing !== null) return;
+    passing = source;
     try {
       const passed = await updatesOpenCheck(source);
       if (passed) {
         passedSites = [...passedSites.filter((id) => id !== source), source];
+        // Панель сайтов — сразу из сохранённого состояния: «просит проверку» уходит
+        // не после проверки, а как только сайт пустил.
+        void refreshSites();
         sources = sources.map((item) =>
           item.id === source ? { ...item, status: "ok", note: null } : item,
         );
@@ -437,18 +442,18 @@
         // страницы модов на нём теперь можно найти.
         if (tracked === 0) {
           toasts.show(`${name} пускает программу — ищем на нём страницы модов`);
-          passing = false;
+          passing = null;
           await findPages();
         } else {
           toasts.show(`${name} пускает программу — проверяем снова`);
-          passing = false;
+          passing = null;
           await check();
         }
       }
     } catch (reason) {
       error = errorText(reason);
     } finally {
-      passing = false;
+      passing = null;
     }
   }
 
@@ -932,8 +937,11 @@
           <!-- Сайт за Cloudflare без единого мода иначе никогда не спросит проверку: без неё он
                не отвечает и поиску страниц, и мод на нём так и не найдётся. -->
           {#if site.id in CHECK_SITES && (site.tone === "warn" || site.text === "ни одного мода")}
-            <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openCheck(site.id)}>
-              {passing ? "Проходим проверку…" : `Пройти проверку ${CHECK_SITES[site.id]}`}
+            <!-- Окно проверки одно: пока идёт проверка одного сайта, кнопка другого
+                 недоступна, но «Проходим проверку…» пишет только та, что нажата. -->
+            {@const pass = passButton(passing, site.id, CHECK_SITES[site.id] ?? site.name)}
+            <button class="btn-glass pass" type="button" disabled={pass.disabled} onclick={() => void openCheck(site.id)}>
+              {pass.text}
             </button>
           {/if}
         {/each}

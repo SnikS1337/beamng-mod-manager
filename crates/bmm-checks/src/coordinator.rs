@@ -76,11 +76,16 @@ struct State {
     waiters: usize,
     /// Идёт проверка одного мода ([`UpdateCoordinator::hold`]): полная ждёт её конца.
     held: bool,
+    /// Сколько раз человек прошёл проверку «вы человек?». Проверка, начатая до
+    /// этого, сайт пропустила: присоединяться к ней после прохождения нельзя.
+    resolutions: u64,
 }
 
 struct Running {
     id: u64,
     cancel: Arc<AtomicBool>,
+    /// [`State::resolutions`] на момент старта.
+    resolutions: u64,
 }
 
 /// Проверка одного мода заняла координатор; отпускается при выходе из области.
@@ -168,6 +173,7 @@ impl UpdateCoordinator {
         progress: Option<&mut dyn FnMut(&UpdateProgress)>,
     ) -> UpdateRunReport {
         let mut waited: Option<u64> = None;
+        let mut waited_resolutions = 0u64;
         loop {
             let mut state = self.lock();
             while state.held {
@@ -179,6 +185,7 @@ impl UpdateCoordinator {
             if let Some(running) = &state.running {
                 let id = running.id;
                 waited = Some(id);
+                waited_resolutions = running.resolutions;
                 // Дожидаемся конца идущей; после пробуждения решаем, отдавать её
                 // отчёт или (если её отменили) запускать свежую.
                 state.waiters += 1;
@@ -192,9 +199,12 @@ impl UpdateCoordinator {
                 continue;
             }
 
+            // Пока шла чужая проверка, человек прошёл проверку сайта: та проверка сайт
+            // пропустила, поэтому её отчёт не отдаём — «Проверяем снова» значит снова.
             if let Some(id) = waited
                 && state.last_completed_run == Some(id)
                 && state.last_cancelled_run != Some(id)
+                && state.resolutions == waited_resolutions
             {
                 // Присоединяться к прерванной (или упавшей) бессмысленно:
                 // запускаем свежую ниже.
@@ -222,6 +232,7 @@ impl UpdateCoordinator {
             state.running = Some(Running {
                 id,
                 cancel: Arc::clone(&cancel),
+                resolutions: state.resolutions,
             });
             drop(state);
 
@@ -251,6 +262,7 @@ impl UpdateCoordinator {
         {
             let mut state = self.lock();
             state.retry_after.remove(source);
+            state.resolutions += 1;
         }
         if let Some(callback) = &self.reset_source {
             callback(source);
@@ -1160,6 +1172,51 @@ mod tests {
         let _ = checked;
         assert_eq!(site.card_calls(), 4);
         assert_eq!(report.requests, 6, "две ленты и четыре карточки");
+    }
+
+    #[test]
+    fn waiting_without_passing_a_site_still_joins_the_running_check() {
+        let (site, gate, started) = Site::gated();
+        let coordinator = Arc::new(coordinator(
+            store(1),
+            Arc::clone(&site),
+            clock_of(&clock_at(t0())),
+            UpdateCoordinatorOptions::default(),
+        ));
+        let first = spawn_check(Arc::clone(&coordinator), false);
+        wait_started(&started);
+        let second = spawn_check(Arc::clone(&coordinator), false);
+        thread::sleep(Duration::from_millis(100));
+        gate.open();
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(coordinator.lock().next_run_id, 1, "одна проверка на двоих");
+    }
+
+    #[test]
+    fn check_after_passing_a_site_does_not_reuse_the_running_one() {
+        // «Modland пускает программу — проверяем снова» присоединялось к проверке при
+        // запуске, которая Modland пропустила, и сайт так и оставался «просит проверку».
+        let (site, gate, started) = Site::gated();
+        let coordinator = Arc::new(coordinator(
+            store(1),
+            Arc::clone(&site),
+            clock_of(&clock_at(t0())),
+            UpdateCoordinatorOptions::default(),
+        ));
+        let first = spawn_check(Arc::clone(&coordinator), false);
+        wait_started(&started);
+        coordinator.resolve_human_check("x");
+        let second = spawn_check(Arc::clone(&coordinator), false);
+        thread::sleep(Duration::from_millis(100));
+        gate.open();
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(
+            coordinator.lock().next_run_id,
+            2,
+            "после прохождения проверки — своя, новая проверка, а не отчёт старой"
+        );
     }
 
     #[test]

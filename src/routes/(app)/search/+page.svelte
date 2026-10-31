@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { passButton } from "#lib/shell/siteCheck.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
   import { onDestroy, onMount } from "svelte";
@@ -41,7 +42,8 @@
   let query = $state("");
   let submitted = $state("");
   let searching = $state(false);
-  let passing = $state(false);
+  /** Сайт, проверку которого сейчас проходят; `null` — окна проверки нет. */
+  let passing = $state<string | null>(null);
   let searched = $state(false);
   let cards = $state<SearchCard[]>([]);
   let sources = $state<SearchSource[]>([]);
@@ -409,8 +411,8 @@
   }
 
   async function openCheck(source: string, name: string) {
-    if (passing) return;
-    passing = true;
+    if (passing !== null) return;
+    passing = source;
     try {
       const passed = await searchOpenCheck(source, submitted || query);
       if (passed) {
@@ -425,7 +427,7 @@
     } catch (reason) {
       error = errorText(reason);
     } finally {
-      passing = false;
+      passing = null;
     }
   }
 
@@ -1215,8 +1217,9 @@
             <p class="site-note">{source.note}</p>
           {/if}
           {#if (source.id === "modland" || source.id === "modhub") && source.status === "needsHumanCheck"}
-            <button class="btn-glass pass" type="button" disabled={passing} onclick={() => void openCheck(source.id, source.displayName)}>
-              {passing ? "Проходим проверку…" : `Пройти проверку ${source.displayName}`}
+            {@const pass = passButton(passing, source.id, source.displayName)}
+            <button class="btn-glass pass" type="button" disabled={pass.disabled} onclick={() => void openCheck(source.id, source.displayName)}>
+              {pass.text}
             </button>
           {/if}
         {/each}
