@@ -110,12 +110,31 @@ fn delete_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), App
         .into_iter()
         .find(|version| version.backup.id == backup_id)
         .ok_or_else(|| AppError::new("not_found", "Такой копии нет."))?;
+    undo_needs(state, backup_id)?;
     let result = installer.delete_backup(&version.backup.file_name, &version.backup.id);
     if result.success {
         Ok(())
     } else {
         Err(AppError::new("delete", result.message))
     }
+}
+
+/// Копия только что удалённого мода нужна кнопке «Отменить»: пока тост не ушёл, её
+/// нельзя ни стереть, ни вернуть под другим именем — иначе «Отменить» сломается.
+fn undo_needs(state: &AppState, backup_id: &str) -> Result<(), AppError> {
+    let held = state
+        .deleted
+        .lock()
+        .unwrap()
+        .values()
+        .any(|ticket| ticket.backup_id == backup_id);
+    if held {
+        return Err(AppError::new(
+            "busy",
+            "Эта копия ещё нужна для «Отменить». Попробуйте через несколько секунд.",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn installer_for(state: &AppState) -> Result<ModInstaller, AppError> {
@@ -326,6 +345,7 @@ fn restore_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), Ap
         .into_iter()
         .find(|version| version.backup.id == backup_id)
         .ok_or_else(|| AppError::new("not_found", "Такой копии нет."))?;
+    undo_needs(state, backup_id)?;
     let result = versions::restore_version(
         &installer,
         state.library.as_ref(),
@@ -579,6 +599,41 @@ mod tests {
         assert!(
             delete_version(&state, &main, "чужая").is_err(),
             "удаляем только показанное у мода"
+        );
+    }
+
+    #[test]
+    fn copy_held_by_undo_is_neither_deleted_nor_returned() {
+        // Пока висит «Отменить», копия удалённого мода видна в его же «Прошлых версиях»:
+        // стёртая или возвращённая до конца тоста, она ломала бы «Отменить».
+        let (temp, state) = setup();
+        let source = temp.path().join("source.zip");
+        make_zip(&source);
+        install_direct(&state, &source, "fx.zip");
+        install_direct(&state, &source, "fx (1).zip");
+        load_snapshot(&state).unwrap();
+        let id_of = |file: &str| {
+            state
+                .library
+                .mods()
+                .into_iter()
+                .find(|item| item.file_name == file)
+                .unwrap()
+                .id
+        };
+        let copy = id_of("fx (1).zip");
+        let ticket = delete_mod(&state, &copy).unwrap();
+        let rows = versions_of(&state, &copy).unwrap();
+        assert!(rows.iter().any(|row| row.backup_id == ticket.backup_id));
+        assert!(delete_version(&state, &copy, &ticket.backup_id).is_err());
+        assert!(restore_version(&state, &copy, &ticket.backup_id).is_err());
+        undelete_mod(&state, &copy).unwrap();
+        assert!(
+            state
+                .library
+                .mods()
+                .iter()
+                .any(|item| item.file_name == "fx (1).zip")
         );
     }
 }

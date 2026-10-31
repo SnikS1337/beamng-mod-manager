@@ -604,6 +604,15 @@ fn note_human_checks(store: &dyn LibraryStore, sources: &[bmm_sources::search::S
                 &report.source_id,
                 bmm_domain::library::SourceStatus::NeedsHumanCheck,
             );
+        } else if report.status == bmm_sources::sources::SourceStatus::Ok
+            && report.note.is_none()
+            && !report.pending
+            && store.source_status(&report.source_id)
+                == bmm_domain::library::SourceStatus::NeedsHumanCheck
+        {
+            // Сайт ответил на поиск — пускает. Старая отметка иначе держала кнопку
+            // «Пройти проверку» и закрывала сайт для проверки обновлений.
+            store.set_source_status(&report.source_id, bmm_domain::library::SourceStatus::Ok);
         }
     }
 }
@@ -668,14 +677,13 @@ pub fn find_extra_pages(
         .collect();
 
     let deadline = Instant::now() + PAGE_SEARCH_BUDGET;
-    // Сайты, которые уже просят проверку, в этот раз не спрашиваем вовсе.
-    let mut skipped: std::collections::HashSet<&'static str> = sites
-        .iter()
-        .copied()
-        .filter(|site| {
-            store.source_status(site) == bmm_domain::library::SourceStatus::NeedsHumanCheck
-        })
-        .collect();
+    // Сайт, который просит проверку, отвечает отказом сразу, без запроса: заглушку
+    // помнит сам загрузчик, и только до конца паузы. Старую отметку в библиотеке здесь
+    // не слушаем: сайт мог давно начать пускать, а поиск обходил его до тех пор, пока
+    // человек не нажмёт «Пройти проверку», — которую ему и показывать-то было не за что.
+    let mut skipped: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+    let mut answered_sites: std::collections::HashSet<&'static str> =
+        std::collections::HashSet::new();
     for (index, (installed, missing)) in due.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
@@ -709,6 +717,13 @@ pub fn find_extra_pages(
                 Ok(found) => {
                     answered = true;
                     listings.extend(found);
+                    // Ответил — значит, пускает: снимаем старую отметку «просит проверку».
+                    if answered_sites.insert(site)
+                        && store.source_status(site)
+                            == bmm_domain::library::SourceStatus::NeedsHumanCheck
+                    {
+                        store.set_source_status(site, bmm_domain::library::SourceStatus::Ok);
+                    }
                 }
                 Err(error) => {
                     // Сайт просит проверку или не отвечает — до конца поиска его не трогаем,
@@ -1444,6 +1459,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn page_search_clears_the_mark_when_the_site_answers() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "toyota_sienna.zip"));
+        store.set_source_status(
+            "modsgaming",
+            bmm_domain::library::SourceStatus::NeedsHumanCheck,
+        );
+        let search = search(Site::new(|_| Ok(Vec::new())));
+        find_pages(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(
+            store.source_status("modsgaming"),
+            bmm_domain::library::SourceStatus::Ok
+        );
+    }
+
     fn many_mods(store: &InMemoryLibraryStore, count: usize) {
         for index in 0..count {
             store.upsert_mod(installed(
@@ -1772,6 +1811,47 @@ mod tests {
         assert_eq!(
             store.source_status("modsgaming"),
             bmm_domain::library::SourceStatus::NeedsHumanCheck
+        );
+    }
+
+    #[test]
+    fn stale_human_check_mark_does_not_hide_a_site_that_answers() {
+        // Отметка «просит проверку» из прошлого запуска закрывала сайт для поиска
+        // страниц навсегда, хотя он давно пускал, — до нажатия «Пройти проверку».
+        let store = InMemoryLibraryStore::new();
+        let mut item = installed("a", "a_car.zip");
+        item.name = "Maserati GranTurismo".to_string();
+        store.upsert_mod(item);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "a".to_string(),
+                source: "stmods".to_string(),
+                source_id: "a".to_string(),
+                url: Url::parse("https://stmods.test/a").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        store.set_source_status(
+            "modsgaming",
+            bmm_domain::library::SourceStatus::NeedsHumanCheck,
+        );
+        let open = Site::new(|_| Ok(Vec::new()));
+        let search = search(Arc::clone(&open));
+        find_extra_pages(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(open.calls.load(Ordering::SeqCst), 1, "сайт спросили");
+        assert_eq!(
+            store.source_status("modsgaming"),
+            bmm_domain::library::SourceStatus::Ok,
+            "ответил — отметка снята"
         );
     }
 
