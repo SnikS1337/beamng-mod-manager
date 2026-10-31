@@ -681,6 +681,10 @@ impl Default for HostInner {
 struct HostEntry {
     gate: Mutex<()>,
     inner: Mutex<HostInner>,
+    /// Растёт, когда человек прошёл проверку сайта ([`PoliteFetcher::reset_source`]).
+    /// Запрос, начатый раньше, мог принести заглушку «вы человек?» уже после
+    /// прохождения: такой ответ не должен снова закрывать сайт.
+    passes: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -808,6 +812,7 @@ impl PoliteFetcher {
                 Arc::new(HostEntry {
                     gate: Mutex::new(()),
                     inner: Mutex::new(HostInner::default()),
+                    passes: std::sync::atomic::AtomicU64::new(0),
                 })
             })
             .clone()
@@ -913,6 +918,8 @@ impl PoliteFetcher {
         if let Some(response) = self.cached(&key) {
             return FetchResult::ok(response);
         }
+        let passes_at_start = entry.passes.load(Ordering::SeqCst);
+        let mut retried_after_pass = false;
         let conditional = form
             .is_none()
             .then(|| self.cache_validators(&key))
@@ -922,7 +929,10 @@ impl PoliteFetcher {
         }
 
         let mut last_message = "Сайт не ответил.".to_string();
-        for attempt in 0..=self.options.retries {
+        let mut next_attempt = 0;
+        while next_attempt <= self.options.retries {
+            let attempt = next_attempt;
+            next_attempt += 1;
             if cancel.load(Ordering::Relaxed) {
                 return cancelled();
             }
@@ -968,6 +978,16 @@ impl PoliteFetcher {
                         last_message =
                             "Сайт ответил «не изменилось» без сохранённой страницы.".to_string();
                         break;
+                    }
+                    if is_challenge_page(&response.text)
+                        && !retried_after_pass
+                        && entry.passes.load(Ordering::SeqCst) != passes_at_start
+                    {
+                        // Заглушку принёс запрос, начатый до того, как человек прошёл
+                        // проверку: пробуем ещё раз уже с пропуском.
+                        retried_after_pass = true;
+                        next_attempt = attempt; // повтор не считается попыткой
+                        continue;
                     }
                     if is_challenge_page(&response.text) {
                         let message = "Сайт просит подтвердить, что вы человек.".to_string();
@@ -1282,6 +1302,7 @@ impl PoliteFetcher {
             if let Some(entry) = hosts.get(&host.to_lowercase()) {
                 let mut inner = lock(&entry.inner);
                 *inner = HostInner::default();
+                entry.passes.fetch_add(1, Ordering::SeqCst);
             }
         }
         lock(&self.sources).insert(source.to_string(), SourceState::default());
@@ -2206,6 +2227,68 @@ mod tests {
         let second = polite.get("site", &url("https://example.org/other"));
         assert_eq!(second.status, SourceStatus::NeedsHumanCheck);
         assert_eq!(fake.calls.lock().unwrap().len(), 1);
+    }
+
+    /// Первый ответ — заглушка «вы человек?», но приходит только после сигнала:
+    /// за это время человек успевает пройти проверку. Второй — настоящая страница.
+    struct PassedMidRequest {
+        calls: std::sync::atomic::AtomicUsize,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+        started: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    }
+
+    impl PageFetcher for PassedMidRequest {
+        fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let text = if call == 0 {
+                let _ = self.started.lock().unwrap().send(());
+                let _ = self.release.lock().unwrap().recv();
+                "<html><head><title>Just a moment...</title></head></html>"
+            } else {
+                "<html>ok</html>"
+            };
+            Ok(response_at(url, text))
+        }
+    }
+
+    fn response_at(url: &Url, text: &str) -> RawResponse {
+        RawResponse {
+            status: 200,
+            text: text.to_string(),
+            final_url: url.clone(),
+            retry_after: None,
+            etag: None,
+            last_modified: None,
+        }
+    }
+
+    #[test]
+    fn challenge_from_before_the_pass_does_not_close_the_site_again() {
+        // Человек прошёл проверку, пока скрытое окно ещё стояло на заглушке: её ответ
+        // снова закрывал сайт на 10 минут — «прошёл, а пишет: пройдите».
+        let (release, wait) = std::sync::mpsc::channel();
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let fake = Arc::new(PassedMidRequest {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            release: std::sync::Mutex::new(wait),
+            started: std::sync::Mutex::new(started_tx),
+        });
+        let mut opts = options();
+        opts.retries = 0;
+        let polite = Arc::new(PoliteFetcher::new(fake.clone(), opts));
+        let page = url("https://example.org/mod");
+        let request = {
+            let polite = polite.clone();
+            let page = page.clone();
+            std::thread::spawn(move || polite.get("site", &page))
+        };
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        polite.reset_source("site", &page);
+        release.send(()).unwrap();
+        let result = request.join().unwrap();
+        assert_eq!(result.status, SourceStatus::Ok, "{:?}", result.message);
+        assert_eq!(polite.status_of("site"), SourceStatus::Ok);
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
