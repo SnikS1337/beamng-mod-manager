@@ -113,6 +113,16 @@ pub struct UpdateProgressDto {
     pub total: usize,
 }
 
+/// «Найти на сайтах» у одного мода: новый снимок и сайты, на которых не искали.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "FindPageResult")]
+pub struct FindPageResultDto {
+    pub snapshot: UpdatesSnapshotDto,
+    /// Названия сайтов, которые не ответили (просят проверку, недоступны).
+    pub skipped_sites: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "UpdatesSnapshot")]

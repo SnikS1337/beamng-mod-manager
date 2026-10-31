@@ -290,6 +290,25 @@ fn replace_round(text: &str) -> String {
 }
 
 use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::char::is_combining_mark;
+
+/// Латинские буквы без диакритики: «Haleakalā» → «Haleakala», «Café» → «Cafe».
+/// Кириллицу не трогаем: «й» и «ё» — отдельные буквы, а не «и» и «е» со значком.
+pub fn fold_latin(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut base_is_latin = false;
+    for ch in text.nfd() {
+        if is_combining_mark(ch) {
+            if !base_is_latin {
+                result.push(ch);
+            }
+            continue;
+        }
+        base_is_latin = ch.is_ascii_alphabetic();
+        result.push(ch);
+    }
+    result.nfc().collect()
+}
 
 pub struct TitleNormalizer;
 
@@ -300,7 +319,8 @@ impl TitleNormalizer {
         }
         // Имена из zip, собранных на macOS, приходят в NFD; с сайта — в NFC.
         // Без приведения «é» из двух символов и один символ — разные токены.
-        let normalized: String = title.nfc().collect();
+        // Сайты пишут то «Haleakalā», то «Haleakala»: латиница сравнивается без значков.
+        let normalized: String = fold_latin(title);
 
         let p = patterns();
         let mut text = replace_all(&p.square, &normalized, " ");
@@ -378,6 +398,17 @@ fn usable(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latin_diacritics_do_not_split_titles_but_cyrillic_letters_stay() {
+        assert_eq!(fold_latin("Haleakalā (Maui)"), "Haleakala (Maui)");
+        assert_eq!(fold_latin("Škoda Café"), "Skoda Cafe");
+        assert_eq!(fold_latin("Жигули ёлка йогурт"), "Жигули ёлка йогурт");
+        assert_eq!(
+            TitleNormalizer::similarity("Haleakalā, Maui", "Haleakala Maui"),
+            1.0
+        );
+    }
 
     #[test]
     fn unicode_forms_are_the_same_title() {

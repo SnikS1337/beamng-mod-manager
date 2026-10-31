@@ -229,6 +229,12 @@ lost: Array<LostPage>,
  */
 coverage: CoverageDto, };
 
+export type FindPageResult = { snapshot: UpdatesSnapshot, 
+/**
+ * Названия сайтов, которые не ответили (просят проверку, недоступны).
+ */
+skippedSites: Array<string>, };
+
 export type UpdatesEvent = { requestId: number, phase: UpdatesPhase, progress: UpdateProgress | null, findings: Array<UpdateFinding>, hidden: Array<UpdateFinding>, suggestions: Array<PageSuggestion>, sources: Array<UpdateSource>, newCount: number, upToDate: number, requests: number, cancelled: boolean, stoppedByTime: boolean, error: string | null, 
 /**
  * Сколько модов программа проверяет — для честного итога.

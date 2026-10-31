@@ -22,7 +22,7 @@ use crate::runner::UpdateProgress;
 const PAGE_SEARCH_BUDGET: Duration = Duration::from_secs(3 * 60);
 
 /// Итог подбора страниц.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PageSearchReport {
     /// Сколько модов получили предложенную страницу.
     pub found: usize,
@@ -31,6 +31,9 @@ pub struct PageSearchReport {
     /// Сколько модов реально искали (хотя бы один сайт ответил).
     pub searched: usize,
     pub cancelled: bool,
+    /// Сайты, которые так и не ответили (просят проверку, недоступны): на них не
+    /// искали. «Страницу найти не удалось» без этого звучало как «искали везде».
+    pub skipped_sites: Vec<String>,
 }
 
 impl PageSearchReport {
@@ -276,6 +279,8 @@ fn search_pages_of(
     due: Vec<InstalledMod>,
 ) -> PageSearchReport {
     let mut result = PageSearchReport::default();
+    let mut answered_sites: std::collections::BTreeSet<String> = Default::default();
+    let mut silent_sites: std::collections::BTreeSet<String> = Default::default();
     if due.is_empty() {
         return result;
     }
@@ -356,6 +361,13 @@ fn search_pages_of(
             }
             let response = search.search(query, cancel, None);
             note_human_checks(store, &response.sources);
+            for source in &response.sources {
+                if source.status == bmm_sources::sources::SourceStatus::Ok {
+                    answered_sites.insert(source.display_name.clone());
+                } else {
+                    silent_sites.insert(source.display_name.clone());
+                }
+            }
             if response
                 .sources
                 .iter()
@@ -512,6 +524,7 @@ fn search_pages_of(
             total: due.len(),
         });
     }
+    result.skipped_sites = silent_sites.difference(&answered_sites).cloned().collect();
     result
 }
 
@@ -1526,6 +1539,42 @@ mod tests {
         assert_eq!(report.searched, 1);
         assert!(store.get_page_search("m7").is_some());
         assert_eq!(PageGuesser::due_all(&store, now(), true, false).len(), 29);
+    }
+
+    #[test]
+    fn single_mod_search_names_sites_that_did_not_answer() {
+        // «Страницу найти не удалось», когда Modland и ModHub просят проверку, звучало
+        // как «искали везде». Теперь видно, где не искали.
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("a", "toyota_sienna.zip"));
+        let blocked = Site::new(|_| {
+            Err(SourceError {
+                status: SourceStatus::NeedsHumanCheck,
+                message: "Cloudflare".to_string(),
+            })
+        });
+        let report = find_page_of(
+            &store,
+            &search(blocked),
+            now(),
+            &AtomicBool::new(false),
+            "a",
+            &|_| None,
+            &|_| None,
+        );
+        assert_eq!(report.skipped_sites, vec!["ModsGaming".to_string()]);
+
+        let open = Site::new(|_| Ok(Vec::new()));
+        let report = find_page_of(
+            &store,
+            &search(open),
+            now(),
+            &AtomicBool::new(false),
+            "a",
+            &|_| None,
+            &|_| None,
+        );
+        assert!(report.skipped_sites.is_empty());
     }
 
     #[test]
