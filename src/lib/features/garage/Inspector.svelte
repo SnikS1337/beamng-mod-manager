@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { ModPreview } from "./modPreview.svelte";
+  import { untrack } from "svelte";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { sourceName } from "#lib/ipc/search.js";
@@ -98,7 +100,6 @@
     onClose: () => void;
   } = $props();
 
-  let preview = $state<string | null>(null);
   let binding = $state(false);
   let pageUrl = $state("");
   let bindError = $state<AppError | null>(null);
@@ -185,15 +186,16 @@
       "Внутри нет ничего, что загружает игра: это может быть установщик, архив в архиве или картинки. Распакуйте и поставьте мод через «Из архива».",
   };
 
+  // Картинку решаем только по данным мода: `untrack` не даёт эффекту зависеть от
+  // самой картинки (иначе ответ запускал новый запрос — бесконечно, см. ModPreview).
+  const heroPreview = new ModPreview(modPreview);
   $effect(() => {
-    const id = details?.id;
-    preview = addon ? null : (details?.previewUrl ?? null);
-    if (!id || preview || addon) return;
-    void modPreview(id)
-      .then((url) => {
-        if (details?.id === id) preview = url;
-      })
-      .catch(() => {});
+    const source = {
+      id: details?.id ?? null,
+      known: details?.previewUrl ?? null,
+      skip: addon,
+    };
+    untrack(() => void heroPreview.update(source));
   });
 
   const hasUpdate = $derived(update !== "none" && !!details?.binding);
@@ -230,8 +232,8 @@
   {:else if details}
     {#key details.id}
       <div class="hero" class:addon>
-        {#if preview}
-          <img src={preview} alt="" />
+        {#if heroPreview.url}
+          <img src={heroPreview.url} alt="" />
         {:else}
           <span class="hero-icon"><Car size={56} weight="thin" /></span>
         {/if}
