@@ -47,6 +47,27 @@ pub const CERTAIN_NAME: f64 = 0.9;
 pub const CERTAIN_SIZE_RATIO: f64 = 0.97;
 /// Сайт назван в имени файла («…_modland.zip»): архив скачан оттуда.
 pub const SITE_HINT_BONUS: f64 = 0.05;
+/// Урезанное издание («[Free Edition]», «Lite», «Demo»), когда у человека полное — или
+/// наоборот. Не отбрасываем: бывает, что на сайте есть только такое издание.
+pub const OTHER_EDITION_PENALTY: f64 = 0.08;
+
+/// Метка урезанного издания в названии или имени файла.
+fn is_reduced_edition(text: &str) -> bool {
+    let words: Vec<String> = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect();
+    words.iter().enumerate().any(|(index, word)| {
+        matches!(word.as_str(), "lite" | "demo" | "trial")
+            || (word == "free"
+                && words
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(next.as_str(), "edition" | "version" | "ver")))
+            || (word == "free" && index + 1 == words.len())
+    })
+}
 
 /// С какого сайта, судя по имени файла, скачан архив: сайты дописывают своё имя
 /// («porsche_992_gt3rs_v2.0_modland.zip»).
@@ -206,6 +227,13 @@ impl PageGuesser {
         }
 
         let installed_version = installed.version.clone().or_else(|| guess.version.clone());
+        let mine_reduced = names.iter().any(|name| is_reduced_edition(name))
+            || is_reduced_edition(
+                installed
+                    .file_name
+                    .rsplit_once('.')
+                    .map_or(installed.file_name.as_str(), |(stem, _)| stem),
+            );
         let hint = site_hint(&installed.file_name);
         let author = author_key(guess.author.as_deref());
         let file_key = author_key(Some(&installed.file_name));
@@ -331,6 +359,11 @@ impl PageGuesser {
             // авторов иначе спорили бы друг с другом, и мод остался бы без страницы.
             if same_author {
                 score += AUTHOR_IN_FILE_BONUS;
+            }
+            // «Traffic Reborn» и «Traffic Reborn [Free Edition]» на одном сайте спорили
+            // на равных, и мод оставался без страницы. Издание как у человека — выше.
+            if is_reduced_edition(&listing.title) != mine_reduced {
+                score -= OTHER_EDITION_PENALTY;
             }
             let hinted = hint == Some(listing.source.as_str());
             if hinted {
@@ -503,6 +536,39 @@ mod tests {
 
     fn l(source: &str, id: &str, title: &str) -> Listing {
         listing(source, id, title, None, None, PriceStatus::Unknown)
+    }
+
+    #[test]
+    fn full_edition_beats_free_edition_but_free_alone_is_found() {
+        let full = installed("t", "TrafficReborn.zip", None, None);
+        let both = [
+            l("modland", "free", "Traffic Reborn [Free Edition] 1.4"),
+            l("modland", "full", "Traffic Reborn 1.2"),
+        ];
+        let guess = PageGuesser::pick_with_author(&full, Some("Traffic Reborn"), None, &both)
+            .expect("две страницы больше не спорят");
+        assert_eq!(guess.listing.source_id, "full");
+        // На сайте только бесплатное издание — берём его.
+        let guess = PageGuesser::pick_with_author(&full, Some("Traffic Reborn"), None, &both[..1])
+            .expect("единственная страница");
+        assert_eq!(guess.listing.source_id, "free");
+        // У человека бесплатное издание — ему нужна его страница.
+        let free = installed("f", "TrafficReborn_Free.zip", None, None);
+        let guess = PageGuesser::pick_with_author(&free, Some("Traffic Reborn"), None, &both)
+            .expect("страница бесплатного");
+        assert_eq!(guess.listing.source_id, "free");
+    }
+
+    #[test]
+    fn reduced_edition_markers() {
+        assert!(is_reduced_edition("Traffic Reborn [Free Edition] 1.4"));
+        assert!(is_reduced_edition("Some Map Lite"));
+        assert!(is_reduced_edition(
+            "TrafficReborn_Free.zip".trim_end_matches(".zip")
+        ));
+        assert!(!is_reduced_edition("Freeway Map"));
+        assert!(!is_reduced_edition("Free Roam Pack v2"));
+        assert!(!is_reduced_edition("Traffic Reborn 1.2"));
     }
 
     #[test]
