@@ -240,7 +240,10 @@ impl PageGuesser {
                 let candidate = TitleNormalizer::similarity(name, &listing.title);
                 if similarity == 0.0 || candidate > similarity {
                     similarity = candidate;
-                    tokens = TitleNormalizer::tokens(name).len();
+                    // «TrafficReborn» — одно слово, но совпало как два: «Traffic Reborn».
+                    tokens = TitleNormalizer::tokens(name)
+                        .len()
+                        .max(TitleNormalizer::split_tokens(name).len());
                 }
             }
             if glued.chars().count() >= 12
@@ -268,9 +271,9 @@ impl PageGuesser {
             // только предложением: следить без вопроса по одному вхождению нельзя.
             let mut contained = false;
             if similarity < min_name {
-                let listing_tokens = TitleNormalizer::tokens(&listing.title);
+                let listing_tokens = TitleNormalizer::split_tokens(&listing.title);
                 contained = names.iter().any(|name| {
-                    let name_tokens = TitleNormalizer::tokens(name);
+                    let name_tokens = TitleNormalizer::split_tokens(name);
                     name_tokens.len() >= 2
                         && listing_tokens.len() <= name_tokens.len() + CONTAINED_EXTRA_WORDS
                         && name_tokens
@@ -500,6 +503,23 @@ mod tests {
 
     fn l(source: &str, id: &str, title: &str) -> Listing {
         listing(source, id, title, None, None, PriceStatus::Unknown)
+    }
+
+    #[test]
+    fn glued_name_finds_the_spaced_site_title() {
+        // Файл и info.json пишут «TrafficReborn», сайты — «Traffic Reborn».
+        let mine = installed("t", "TrafficReborn.zip", None, None);
+        let guess = PageGuesser::pick_with_author(
+            &mine,
+            Some("TrafficReborn"),
+            None,
+            &[
+                l("modland", "1", "Traffic Reborn [Free Edition] 1.4"),
+                l("modland", "2", "Traffic Lights Pack"),
+            ],
+        )
+        .expect("страница Traffic Reborn");
+        assert_eq!(guess.listing.source_id, "1");
     }
 
     #[test]

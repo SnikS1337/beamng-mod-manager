@@ -317,6 +317,27 @@ pub fn fold_latin(text: &str) -> String {
     result.nfc().collect()
 }
 
+/// Слова, склеенные заглавными буквами, через пробел: «TrafficReborn» → «Traffic Reborn».
+/// Режем только там, где заглавная начинает слово (за ней строчная): «BeamNG» и «GTI»
+/// остаются целыми.
+pub fn split_camel(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut result = String::with_capacity(text.len() + 4);
+    for (index, &ch) in chars.iter().enumerate() {
+        if index > 0
+            && ch.is_ascii_uppercase()
+            && chars[index - 1].is_ascii_lowercase()
+            && chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_lowercase())
+        {
+            result.push(' ');
+        }
+        result.push(ch);
+    }
+    result
+}
+
 pub struct TitleNormalizer;
 
 impl TitleNormalizer {
@@ -351,7 +372,23 @@ impl TitleNormalizer {
         Self::tokens(title).join(" ")
     }
 
+    /// Доля общих слов. Склейку «TrafficReborn» сравниваем и как «Traffic Reborn»:
+    /// сайты пишут название то слитно, то раздельно.
     pub fn similarity(a: &str, b: &str) -> f64 {
+        let plain = Self::plain_similarity(a, b);
+        let (split_a, split_b) = (split_camel(a), split_camel(b));
+        if split_a == a && split_b == b {
+            return plain;
+        }
+        plain.max(Self::plain_similarity(&split_a, &split_b))
+    }
+
+    /// Слова названия, если склейки разрезать: «TrafficReborn» → traffic, reborn.
+    pub fn split_tokens(title: &str) -> Vec<String> {
+        Self::tokens(&split_camel(title))
+    }
+
+    fn plain_similarity(a: &str, b: &str) -> f64 {
         let left: HashSet<String> = Self::tokens(a).into_iter().collect();
         let right: HashSet<String> = Self::tokens(b).into_iter().collect();
         if left.is_empty() || right.is_empty() {
@@ -405,6 +442,28 @@ fn usable(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glued_words_match_the_spaced_title() {
+        assert_eq!(split_camel("TrafficReborn"), "Traffic Reborn");
+        assert_eq!(split_camel("BeamNG GTI"), "BeamNG GTI");
+        assert_eq!(
+            TitleNormalizer::similarity("TrafficReborn", "Traffic Reborn [Free Edition] 1.4"),
+            1.0
+        );
+        assert_eq!(
+            TitleNormalizer::similarity("McLaren 720S", "McLaren 720S"),
+            1.0
+        );
+        assert_eq!(
+            TitleNormalizer::similarity("Mclaren 720S", "McLaren 720S"),
+            1.0
+        );
+        assert_eq!(
+            TitleNormalizer::split_tokens("TrafficReborn"),
+            vec!["traffic", "reborn"]
+        );
+    }
 
     #[test]
     fn bare_game_version_and_beta_version_leave_the_name() {

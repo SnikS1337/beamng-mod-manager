@@ -702,6 +702,9 @@ struct SourceState {
     /// До какого момента источник отключён после серии сбоев. `None` — пауза уже не действует:
     /// одиночный сбой не должен закрывать сайт до перезапуска программы.
     cooldown_until: Option<Instant>,
+    /// Какая страница показала «вы человек?». Сайт может проверять не главную, а
+    /// поиск: проходить проверку нужно там, где она стоит, иначе пропуск не выдадут.
+    challenged_url: Option<Url>,
 }
 
 impl Default for SourceState {
@@ -710,6 +713,7 @@ impl Default for SourceState {
             status: SourceStatus::Ok,
             message: None,
             cooldown_until: None,
+            challenged_url: None,
         }
     }
 }
@@ -1002,6 +1006,11 @@ impl PoliteFetcher {
                             Some(message.clone()),
                             Some(until),
                         );
+                        if form.is_none()
+                            && let Some(state) = lock(&self.sources).get_mut(source)
+                        {
+                            state.challenged_url = Some(url.clone());
+                        }
                         return FetchResult {
                             status: SourceStatus::NeedsHumanCheck,
                             response: Some(response),
@@ -1205,14 +1214,34 @@ impl PoliteFetcher {
         message: Option<String>,
         cooldown_until: Option<Instant>,
     ) {
-        lock(&self.sources).insert(
+        let mut sources = lock(&self.sources);
+        // Сайт всё ещё просит проверку: страница, где её показали, остаётся прежней.
+        let challenged_url = if status == SourceStatus::NeedsHumanCheck {
+            sources
+                .get(source)
+                .and_then(|state| state.challenged_url.clone())
+        } else {
+            None
+        };
+        sources.insert(
             source.to_string(),
             SourceState {
                 status,
                 message,
                 cooldown_until,
+                challenged_url,
             },
         );
+    }
+
+    /// Страница, на которой сайт показал проверку «вы человек?», если это обычный GET.
+    pub fn challenged_url(&self, source: &str) -> Option<Url> {
+        let mut sources = lock(&self.sources);
+        let state = sources.get_mut(source)?;
+        refresh_source(state);
+        (state.status == SourceStatus::NeedsHumanCheck)
+            .then(|| state.challenged_url.clone())
+            .flatten()
     }
 
     fn cached(&self, key: &str) -> Option<RawResponse> {
@@ -2193,6 +2222,38 @@ mod tests {
             3,
             "непустая страница кэшируется"
         );
+    }
+
+    #[test]
+    fn page_that_asked_for_the_check_is_remembered_until_passed() {
+        // Cloudflare может проверять только поиск: проходить надо там, а не на главной.
+        let challenge = "<html><head><title>Just a moment...</title></head></html>";
+        let fake = FakeFetcher::new(vec![
+            Ok(response(
+                200,
+                "<html>home page of the site, long enough</html>",
+            )),
+            Ok(response(200, challenge)),
+        ]);
+        let polite = PoliteFetcher::new(fake.clone(), options());
+        let home = url("https://example.org/");
+        let search = url("https://example.org/search/traffic");
+        assert_eq!(polite.get("site", &home).status, SourceStatus::Ok);
+        assert_eq!(polite.challenged_url("site"), None);
+        assert_eq!(
+            polite.get("site", &search).status,
+            SourceStatus::NeedsHumanCheck
+        );
+        assert_eq!(polite.challenged_url("site"), Some(search.clone()));
+        // Следующий запрос упирается в ту же проверку, но страница остаётся прежней.
+        let other = url("https://example.org/mod/1");
+        assert_eq!(
+            polite.get("site", &other).status,
+            SourceStatus::NeedsHumanCheck
+        );
+        assert_eq!(polite.challenged_url("site"), Some(search.clone()));
+        polite.reset_source("site", &search);
+        assert_eq!(polite.challenged_url("site"), None);
     }
 
     #[test]
