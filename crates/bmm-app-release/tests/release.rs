@@ -936,6 +936,16 @@ fn write_in_place_replaces_same_file_and_restores_backup() {
         "вернули"
     );
     assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
+    // Возврат идёт через копию рядом и переименование: временный файл не остаётся.
+    let names: Vec<String> = fs::read_dir(rig.exe.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        names.iter().all(|name| !name.ends_with(".restore")),
+        "{names:?}"
+    );
     assert!(!bmm_app_release::restore_in_place(
         &backup.with_file_name("нет.exe"),
         &rig.exe

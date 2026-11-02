@@ -3,6 +3,7 @@
   import { isTauri } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { enterOverlay, takeEscape } from "#lib/shell/overlays.js";
   import {
     archiveBaseName,
     incomingDiscard,
@@ -216,11 +217,20 @@
     void pump();
   }
 
+  let overlay = $state<symbol | null>(null);
+  $effect(() => {
+    if (!dialogOpen) return;
+    const entered = enterOverlay();
+    overlay = entered.id;
+    return () => {
+      entered.leave();
+      overlay = null;
+    };
+  });
+
   function onkeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && dialogOpen) {
-      event.preventDefault();
-      close();
-    }
+    // Закрытие убирает и рабочую папку архива: только если окно сверху.
+    if (dialogOpen && takeEscape(event, overlay)) close();
   }
 
   async function install(): Promise<void> {

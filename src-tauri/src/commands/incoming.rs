@@ -538,16 +538,46 @@ fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppE
         Arc::new(move || keep),
     );
     if let Some(replaced) = &ticket.replaces {
+        // Новый файл убираем первым и проверяем, что убрался: иначе «Отменить»
+        // говорило «готово», а в папке лежали обе версии мода.
+        let mut new_copy: Option<(String, bool)> = None;
         if !ticket.same_name {
-            let _ = installer.remove(&ticket.file_name);
+            let layout = installer.layout();
+            let enabled = layout.mods_dir.join(&ticket.file_name).is_file();
+            let disabled = layout.disabled_dir.join(&ticket.file_name).is_file();
+            if enabled || disabled {
+                let removed = installer.remove(&ticket.file_name);
+                if !removed.success {
+                    return Err(AppError::new("undo", removed.message));
+                }
+                new_copy = removed
+                    .path
+                    .as_ref()
+                    .and_then(|path| path.file_name())
+                    .map(|name| (name.to_string_lossy().into_owned(), disabled && !enabled));
+            }
         }
         if let Some(backup_id) = &ticket.backup_id {
             let result = installer.restore_backup(replaced, backup_id);
             if !result.success {
+                // Старую версию вернуть не вышло — кладём новую обратно, чтобы мод
+                // не пропал совсем.
+                if let Some((id, into_disabled)) = &new_copy {
+                    let _ = installer.unremove(&ticket.file_name, id, *into_disabled);
+                }
                 return Err(AppError::new("undo", result.message));
             }
+            // Выключить не вышло — библиотеку всё равно приводим к вернувшемуся
+            // файлу, а об ошибке говорим в конце.
+            let mut disable_error = None;
             if ticket.was_disabled {
-                let _ = installer.disable(replaced);
+                let disabled = installer.disable(replaced);
+                if !disabled.success {
+                    disable_error = Some(format!(
+                        "Прежняя версия возвращена, но выключить её не удалось: {}",
+                        disabled.message
+                    ));
+                }
             }
             // Запись библиотеки возвращается на прежний файл вместе со страницей мода.
             if !ticket.same_name {
@@ -568,6 +598,9 @@ fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppE
                         "Файл восстановлен, но запись библиотеки не обновилась — перечитайте список.",
                     ));
                 }
+            }
+            if let Some(message) = disable_error {
+                return Err(AppError::new("undo", message));
             }
         }
         Ok(())
@@ -773,6 +806,47 @@ mod tests {
         assert!(installer.layout().disabled_dir.join("car_v1.zip").is_file());
         assert!(!installer.layout().mods_dir.join("car_v1.zip").exists());
         assert!(!installer.layout().disabled_dir.join("car_v2.zip").exists());
+    }
+
+    #[test]
+    fn failed_undo_of_update_keeps_the_new_version() {
+        // Старую версию вернуть не вышло — новая не должна пропасть вместе с ней:
+        // раньше в папке не оставалось ни одной версии мода.
+        let (temp, state) = setup();
+        let v1 = temp.path().join("v1.zip");
+        let v2 = temp.path().join("v2.zip");
+        make_zip(&v1, b"one");
+        make_zip(&v2, b"two");
+        let installer = installer_for_test(&state);
+        assert!(
+            installer
+                .install_from_path(&v1, "car_v1.zip", InstallOptions::default())
+                .success
+        );
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: v2.display().to_string(),
+                file_name: "car_v2.zip".to_string(),
+                replaces: Some("car_v1.zip".to_string()),
+                allow_warnings: true,
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success);
+        let error = undo_install(
+            &state,
+            &IncomingTicketDto {
+                file_name: "car_v2.zip".to_string(),
+                replaces: Some("car_v1.zip".to_string()),
+                backup_id: Some("пропавшая-копия".to_string()),
+                was_disabled: false,
+                same_name: false,
+            },
+        );
+        assert!(error.is_err(), "неудача — это ошибка, а не «готово»");
+        assert!(installer.layout().mods_dir.join("car_v2.zip").is_file());
+        assert!(!installer.layout().mods_dir.join("car_v1.zip").exists());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toggleLabel } from "./a11y";
   import type { ClickKeys } from "./selection";
   import Car from "phosphor-svelte/lib/Car";
   import Check from "phosphor-svelte/lib/Check";
@@ -166,7 +167,7 @@
                 checked={mod.enabled}
                 onCheckedChange={() => ontoggle(mod)}
                 onclick={(event: MouseEvent) => event.stopPropagation()}
-                aria-label={mod.enabled ? "Выключить мод" : "Включить мод"}
+                aria-label={toggleLabel(mod.enabled, mod.name)}
               />
             {/if}
           </span>

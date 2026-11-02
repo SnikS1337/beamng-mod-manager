@@ -1,7 +1,7 @@
 //! Окно загрузки обновления: слева страница мода/файлообменника,
 //! справа — панель с этапами. Оба вида — child webview одного нативного окна.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -53,24 +53,41 @@ static CONTEXT: Mutex<Option<DownloadRequest>> = Mutex::new(None);
 static READY: Mutex<Option<String>> = Mutex::new(None);
 /// Обновление пачкой: страницы модов по очереди, установка — одна, в конце.
 static BATCH: Mutex<Vec<DownloadRequest>> = Mutex::new(Vec::new());
-static INTERCEPTED: LazyLock<Mutex<HashSet<PathBuf>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+/// Перехваченные загрузки окна и страница мода, ради которой каждая началась.
+static INTERCEPTED: LazyLock<Mutex<HashMap<PathBuf, Option<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn mark_intercepted(path: &Path) {
+fn mark_intercepted(path: &Path, page_url: Option<String>) {
     let mut paths = INTERCEPTED
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if paths.len() >= 128 {
         paths.clear();
     }
-    paths.insert(path.to_path_buf());
+    paths.insert(path.to_path_buf(), page_url);
 }
 
-fn take_intercepted(path: &Path) -> bool {
+/// `None` — загрузка не наша; `Some(страница)` — наша, начатая для этой страницы мода.
+fn take_intercepted(path: &Path) -> Option<Option<String>> {
     INTERCEPTED
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .remove(path)
+}
+
+fn current_page() -> Option<String> {
+    CONTEXT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+        .map(|request| request.page_url.clone())
+}
+
+/// Архив докачался для того мода, что сейчас открыт в окне. Загрузка прошлого мода,
+/// закончившаяся после перехода к следующему, попала бы в его панель и в пачке
+/// встала бы вместо него.
+fn for_current_mod(started_for: Option<&str>, current: Option<&str>) -> bool {
+    started_for == current
 }
 
 #[tauri::command]
@@ -306,7 +323,9 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
                     return false;
                 }
                 crate::commands::downloads::note_caught(&path);
-                mark_intercepted(&path);
+                mark_intercepted(&path, current_page());
+                // Причина обрыва прошлой загрузки не должна достаться этой.
+                let _ = crate::commands::download_progress::take_stop_reason();
                 *destination = path;
                 emit_state(
                     &download_app,
@@ -317,7 +336,20 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
                 );
             }
             DownloadEvent::Finished { path, success, .. } => {
-                let intercepted = path.as_deref().is_some_and(take_intercepted);
+                let owner = path.as_deref().and_then(take_intercepted);
+                let intercepted = owner.is_some();
+                let current = current_page();
+                let stale = owner
+                    .as_ref()
+                    .is_some_and(|owner| !for_current_mod(owner.as_deref(), current.as_deref()));
+                if success && stale {
+                    // Архив прошлого мода: панели уже не до него. Отпускаем его сторожу
+                    // «Загрузок» — там его можно поставить как обычный скачанный архив.
+                    if let Some(path) = path.as_deref() {
+                        crate::commands::downloads::release_caught(path);
+                    }
+                    return true;
+                }
                 if success
                     && intercepted
                     && let Some(path) = path.as_deref()
@@ -347,13 +379,23 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
                     }
                 } else {
                     clear_ready();
-                    emit_state(
-                        &download_app,
-                        2,
-                        "Загрузка не удалась",
-                        "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
-                        Some("Сайт не отдал файл.".to_string()),
-                    );
+                    // Недокачанный файл в папке загрузок не нужен.
+                    if intercepted && let Some(path) = path.as_deref() {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    let (title, detail, error) =
+                        match crate::commands::download_progress::take_stop_reason() {
+                            Some(reason) => {
+                                let (title, detail) = reason.texts();
+                                (title, detail, title.to_string())
+                            }
+                            None => (
+                                "Загрузка не удалась",
+                                "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
+                                "Сайт не отдал файл.".to_string(),
+                            ),
+                        };
+                    emit_state(&download_app, 2, title, detail, Some(error));
                 }
             }
             _ => {}
@@ -460,9 +502,16 @@ fn is_download_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "blob" | "data")
 }
 
-/// Скачивать из окна можно только архив мода по обычной ссылке браузера.
+/// Скачивать из окна можно только архив мода по обычной ссылке браузера. Адрес —
+/// под тем же запретом, что и переходы: ссылка «Скачать» на странице мода не должна
+/// дёргать localhost или устройство в домашней сети. `blob:` и `data:` собирает сама
+/// страница — сети за ними нет.
 fn accepts_download(url: &Url, name: &str) -> bool {
-    is_download_url(url) && is_archive_name(Path::new(name))
+    let address_ok = match url.scheme() {
+        "http" | "https" => bmm_sources::net::redirect_allowed(url),
+        _ => true,
+    };
+    is_download_url(url) && address_ok && is_archive_name(Path::new(name))
 }
 
 /// Страницу мода открываем только во внешнем браузере WebView2: localhost,
@@ -708,6 +757,46 @@ mod tests {
         }
         let local = Url::parse("file:///C:/mods/mod.zip").unwrap();
         assert!(!accepts_download(&local, "mod.zip"));
+    }
+
+    #[test]
+    fn archive_of_a_previous_mod_is_not_handed_to_the_current_one() {
+        let a = Some("https://stmods.org/beamng_drive/mods/a/");
+        let b = Some("https://stmods.org/beamng_drive/mods/b/");
+        assert!(for_current_mod(a, a));
+        assert!(
+            !for_current_mod(a, b),
+            "докачался после перехода к другому моду"
+        );
+        assert!(!for_current_mod(a, None), "окно уже без мода");
+        assert!(for_current_mod(None, None));
+    }
+
+    #[test]
+    fn archive_link_into_the_home_network_is_not_downloaded() {
+        // Ссылка «Скачать» на странице мода вела бы на роутер или localhost.
+        for raw in [
+            "http://localhost/mod.zip",
+            "http://localhost./mod.zip",
+            "http://127.0.0.1:8080/mod.zip",
+            "http://2130706433/mod.zip",
+            "http://0.0.0.0/mod.zip",
+            "http://192.168.1.1/mod.zip",
+            "http://10.0.0.5/mod.zip",
+            "http://172.16.0.1/mod.zip",
+            "http://169.254.1.1/mod.zip",
+            "http://[::1]/mod.zip",
+            "http://[fe80::1]/mod.zip",
+            "http://[fd00::1]/mod.zip",
+            "http://[::ffff:127.0.0.1]/mod.zip",
+            "http://mods.localhost/mod.zip",
+        ] {
+            let url = Url::parse(raw).unwrap();
+            assert!(!accepts_download(&url, "mod.zip"), "{raw}");
+        }
+        // Архив, собранный самой страницей, сети не трогает.
+        let blob = Url::parse("blob:https://modsfire.com/1b2c").unwrap();
+        assert!(accepts_download(&blob, "mod.zip"));
     }
 
     #[test]

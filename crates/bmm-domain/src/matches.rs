@@ -312,8 +312,15 @@ fn load(
     }
 
     if skipped > 0 {
+        // Как у библиотеки: исходник — в копию до первой перезаписи.
+        if atomic::keep_copy(path, (now)()).is_none() {
+            warnings.push(format!(
+                "решений по дублям пропущено из-за неверной записи: {skipped}; копию сохранить не удалось, изменения не пишутся до перезапуска программы"
+            ));
+            return (items, true);
+        }
         warnings.push(format!(
-            "решений по дублям пропущено из-за неверной записи: {skipped}"
+            "решений по дублям пропущено из-за неверной записи: {skipped}; исходный файл сохранён рядом"
         ));
     }
 
@@ -468,6 +475,13 @@ mod tests {
         );
         assert_eq!(store.all().len(), 1);
         assert_eq!(store.all()[0].decision, ManualMatch::Different);
+        // Исходник с пропущенными записями сохранён до первой перезаписи.
+        let copies = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
+            .count();
+        assert_eq!(copies, 1);
     }
 
     #[test]

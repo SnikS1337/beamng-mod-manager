@@ -391,7 +391,6 @@ dependencies = [
  "bmm-domain",
  "chrono",
  "fancy-regex",
- "json5",
  "serde_json",
  "sysinfo",
  "tempfile",

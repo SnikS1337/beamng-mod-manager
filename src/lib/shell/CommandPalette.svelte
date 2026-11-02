@@ -14,12 +14,25 @@
   import { paletteItems, type PaletteItem } from "./paletteItems";
   import { trapFocus } from "./focus";
   import { pop, softFade } from "./transitions";
+  import { enterOverlay, takeEscape } from "./overlays";
 
   let query = $state("");
   let active = $state(0);
   let input = $state<HTMLInputElement | null>(null);
   let list = $state<HTMLDivElement | null>(null);
   let loadingMods = false;
+  let overlay = $state<symbol | null>(null);
+
+  // Пока палитра открыта, она — окно в стопке: Escape достаётся только верхнему.
+  $effect(() => {
+    if (!palette.open) return;
+    const entered = enterOverlay();
+    overlay = entered.id;
+    return () => {
+      entered.leave();
+      overlay = null;
+    };
+  });
 
   const items = $derived(paletteItems(query, palette.mods));
   const groups = $derived(
@@ -60,16 +73,12 @@
       palette.toggle();
       return;
     }
-    if (palette.open && event.key === "Escape") {
-      event.preventDefault();
-      palette.hide();
-    }
+    if (palette.open && takeEscape(event, overlay)) palette.hide();
   }
 
   function onkeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
-      event.preventDefault();
-      palette.hide();
+      if (takeEscape(event, overlay)) palette.hide();
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
       move(1);

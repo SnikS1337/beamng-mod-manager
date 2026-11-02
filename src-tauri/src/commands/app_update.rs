@@ -491,12 +491,58 @@ fn is_our_program(path: &std::path::Path) -> bool {
 
 /// Код выхода новой версии, которая сама вернула прежнюю: откатывать второй раз не нужно.
 const ROLLED_BACK_EXIT_CODE: i32 = 3;
-/// Сколько ждать, пока новая версия покажет окно.
-const START_WAIT: Duration = Duration::from_secs(60);
+/// Сколько ждать, пока новая версия покажет окно. С запасом: первый запуск WebView2
+/// на медленном диске бывает долгим, а ложный откат хуже лишней минуты ожидания.
+const START_WAIT: Duration = Duration::from_secs(120);
 
-/// Новая версия вышла, не показав окна. 0 — закрыли обычным образом, 3 — уже откатилась сама.
+/// Новая версия вышла, не показав окна. Код 3 — она уже откатилась сама. Любой другой,
+/// включая 0, — окна не было, значит, версия не запустилась: раньше 0 считался
+/// «закрыли обычным образом», хотя закрыть окно, которого нет, нельзя.
 fn start_failed(exit_code: Option<i32>) -> bool {
-    !matches!(exit_code, Some(0) | Some(ROLLED_BACK_EXIT_CODE))
+    exit_code != Some(ROLLED_BACK_EXIT_CODE)
+}
+
+/// Что делать, пока ждём окна новой версии.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Watch {
+    /// Окно показано — обновление удалось.
+    Started,
+    Wait,
+    RollBack,
+    /// Процесс живой, но окна нет: завис. Останавливаем и откатываем.
+    KillAndRollBack,
+}
+
+/// `exited`: `None` — процесс ещё идёт; `Some(Err)` — узнать о нём не удалось.
+/// `sees_window`: сигнал «окно показано» вообще может прийти. Если его создать не
+/// вышло, об окне ничего не известно — тогда без «завис» и без отката на коде 0:
+/// иначе здоровую новую версию через две минуты убили бы и откатили.
+fn watch_step(
+    started: bool,
+    exited: Option<Result<Option<i32>, ()>>,
+    timed_out: bool,
+    sees_window: bool,
+) -> Watch {
+    if started {
+        return Watch::Started;
+    }
+    if !sees_window {
+        return match exited {
+            Some(Ok(Some(0))) | Some(Ok(Some(ROLLED_BACK_EXIT_CODE))) => Watch::Started,
+            Some(Ok(_)) => Watch::RollBack,
+            Some(Err(())) => Watch::Started,
+            None if timed_out => Watch::Started,
+            None => Watch::Wait,
+        };
+    }
+    match exited {
+        Some(Ok(code)) if start_failed(code) => Watch::RollBack,
+        Some(Ok(_)) => Watch::Started,
+        // Не видим, что с процессом, — окна от него тоже нет: откатываем.
+        Some(Err(())) => Watch::KillAndRollBack,
+        None if timed_out => Watch::KillAndRollBack,
+        None => Watch::Wait,
+    }
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -544,19 +590,31 @@ pub fn run_installer(arguments: InstallerArgs) {
         }
     };
     let begin = Instant::now();
-    while begin.elapsed() < START_WAIT {
-        if started.wait(Duration::from_millis(250)) {
-            return;
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if start_failed(status.code()) {
-                    roll_back(&arguments.target, &backup);
-                }
+    loop {
+        let signalled = started.wait(Duration::from_millis(250));
+        let exited = match child.try_wait() {
+            Ok(Some(status)) => Some(Ok(status.code())),
+            Ok(None) => None,
+            Err(_) => Some(Err(())),
+        };
+        match watch_step(
+            signalled,
+            exited,
+            begin.elapsed() >= START_WAIT,
+            started.usable(),
+        ) {
+            Watch::Started => return,
+            Watch::Wait => {}
+            Watch::RollBack => {
+                roll_back(&arguments.target, &backup);
                 return;
             }
-            Ok(None) => {}
-            Err(_) => return,
+            Watch::KillAndRollBack => {
+                let _ = child.kill();
+                let _ = child.wait();
+                roll_back(&arguments.target, &backup);
+                return;
+            }
         }
     }
 }
@@ -679,6 +737,11 @@ impl StartedSignal {
         Self(unsafe { CreateEventW(std::ptr::null(), 1, 0, name.as_ptr()) })
     }
 
+    /// Сигнал создан — окно новой версии сможет о себе сказать.
+    fn usable(&self) -> bool {
+        !self.0.is_null()
+    }
+
     fn wait(&self, timeout: Duration) -> bool {
         use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
         use windows_sys::Win32::System::Threading::WaitForSingleObject;
@@ -721,6 +784,10 @@ struct StartedSignal;
 impl StartedSignal {
     fn create(_installer_pid: u32) -> Self {
         Self
+    }
+
+    fn usable(&self) -> bool {
+        false
     }
 
     fn wait(&self, timeout: Duration) -> bool {
@@ -1166,11 +1233,65 @@ mod tests {
 
     #[test]
     fn crash_before_window_means_rollback() {
-        assert!(!start_failed(Some(0)));
         assert!(!start_failed(Some(ROLLED_BACK_EXIT_CODE)));
+        assert!(
+            start_failed(Some(0)),
+            "вышла без окна — тоже не запустилась"
+        );
         assert!(start_failed(Some(101)));
         assert!(start_failed(Some(1)));
         assert!(start_failed(None));
+    }
+
+    #[test]
+    fn new_version_without_window_is_rolled_back_in_every_way() {
+        // Было: зависшая версия через минуту просто оставалась, ошибка наблюдения и
+        // выход с кодом 0 до окна тоже не откатывали.
+        assert_eq!(watch_step(true, None, false, true), Watch::Started);
+        assert_eq!(
+            watch_step(true, Some(Ok(Some(1))), true, true),
+            Watch::Started
+        );
+        assert_eq!(watch_step(false, None, false, true), Watch::Wait);
+        assert_eq!(watch_step(false, None, true, true), Watch::KillAndRollBack);
+        assert_eq!(
+            watch_step(false, Some(Ok(Some(0))), false, true),
+            Watch::RollBack
+        );
+        assert_eq!(
+            watch_step(false, Some(Ok(None)), false, true),
+            Watch::RollBack
+        );
+        assert_eq!(
+            watch_step(false, Some(Err(())), false, true),
+            Watch::KillAndRollBack
+        );
+        assert_eq!(
+            watch_step(false, Some(Ok(Some(ROLLED_BACK_EXIT_CODE))), false, true),
+            Watch::Started,
+            "сама откатилась — второй откат не нужен"
+        );
+    }
+
+    #[test]
+    fn without_a_window_signal_a_healthy_version_is_not_killed() {
+        // Сигнал «окно показано» создать не вышло: здоровую версию нельзя ни убить
+        // по таймауту, ни откатить за обычный выход.
+        assert_eq!(watch_step(false, None, true, false), Watch::Started);
+        assert_eq!(
+            watch_step(false, Some(Ok(Some(0))), false, false),
+            Watch::Started
+        );
+        assert_eq!(
+            watch_step(false, Some(Err(())), false, false),
+            Watch::Started
+        );
+        assert_eq!(watch_step(false, None, false, false), Watch::Wait);
+        assert_eq!(
+            watch_step(false, Some(Ok(Some(101))), false, false),
+            Watch::RollBack,
+            "упала — откат и так"
+        );
     }
 
     #[test]

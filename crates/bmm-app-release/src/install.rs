@@ -482,12 +482,28 @@ pub fn write_in_place_with(
 }
 
 /// Вернуть прежнюю версию в файл программы из копии.
+/// Сначала копия рядом и подмена одним переименованием: оборвись запись посреди —
+/// файл программы остался бы недописанным, и не запустилась бы ни одна версия.
+/// Переименовать не дали (файл держат) — пишем поверх, как раньше.
 pub fn restore_in_place(backup: &Path, target: &Path) -> bool {
     if !backup.is_file() {
         return false;
     }
-    if retry(|| overwrite_file(backup, target), COPY_ATTEMPTS).is_err() {
-        return false;
+    let staged = with_suffix(target, ".restore");
+    let swapped = retry(
+        || {
+            let _ = fs::remove_file(&staged);
+            fs::copy(backup, &staged)?;
+            File::open(&staged)?.sync_all()?;
+            fs::rename(&staged, target)
+        },
+        COPY_ATTEMPTS,
+    );
+    if swapped.is_err() {
+        let _ = fs::remove_file(&staged);
+        if retry(|| overwrite_file(backup, target), COPY_ATTEMPTS).is_err() {
+            return false;
+        }
     }
     forget_download_mark(target);
     true

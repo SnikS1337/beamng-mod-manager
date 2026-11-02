@@ -477,6 +477,7 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
     }
     let installer = ModInstaller::new(layout.clone(), system_clock(), Arc::new(|| 3));
     let disk = scan::scan_mods(layout).mods;
+    let mut failed: Vec<String> = Vec::new();
     for (file_name, enabled) in &pending {
         let Some(item) = disk
             .iter()
@@ -487,14 +488,22 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
         if item.sub_folder.is_some() {
             continue;
         }
-        if *enabled && !item.enabled {
-            let _ = installer.enable(&item.file_name);
+        let moved = if *enabled && !item.enabled {
+            installer.enable(&item.file_name).success
         } else if !*enabled && item.enabled {
-            let _ = installer.disable(&item.file_name);
+            installer.disable(&item.file_name).success
+        } else {
+            true
+        };
+        // Файл не переместился (занят, такое имя уже есть) — запрос остаётся в
+        // очереди: раньше он стирался, и мод молча оставался в прежнем состоянии.
+        if !moved {
+            failed.push(file_name.clone());
         }
     }
     let changes: Vec<(&str, bool)> = pending
         .iter()
+        .filter(|(file, _)| !failed.contains(file))
         .map(|(file, enabled)| (file.as_str(), *enabled))
         .collect();
     let outcome = db.set_active(&changes, process::is_running);
@@ -504,7 +513,15 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
             SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb
         )
     {
-        state.pending.lock().unwrap().clear();
+        let mut queue = state.pending.lock().unwrap();
+        // Чистим только то, что применили: запрос, пришедший за это время, и
+        // неудавшиеся остаются.
+        for (file, enabled) in &pending {
+            if !failed.contains(file) && queue.get(file) == Some(enabled) {
+                queue.remove(file);
+            }
+        }
+        drop(queue);
         let _ = state.save_pending();
     }
 }
@@ -1725,6 +1742,32 @@ mod tests {
         assert!(mods.join("mod.zip").is_file());
         assert!(!layout.disabled_dir.join("mod.zip").exists());
         assert!(state.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn failed_move_stays_in_the_pending_queue() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        let state = test_state(&temp, &mods);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        std::fs::create_dir_all(&layout.disabled_dir).unwrap();
+        std::fs::write(layout.disabled_dir.join("mod.zip"), b"zip").unwrap();
+        // Включить нельзя: на месте файла папка с тем же именем.
+        std::fs::create_dir_all(mods.join("mod.zip")).unwrap();
+        std::fs::write(layout.disabled_dir.join("ok.zip"), b"zip").unwrap();
+        {
+            let mut queue = state.pending.lock().unwrap();
+            queue.insert("mod.zip".to_string(), true);
+            queue.insert("ok.zip".to_string(), true);
+        }
+
+        apply_pending(&state, &GameModDb::new(&mods), &layout);
+
+        assert!(mods.join("ok.zip").is_file());
+        let queue = state.pending.lock().unwrap();
+        assert_eq!(queue.get("mod.zip"), Some(&true), "неудавшийся остаётся");
+        assert!(!queue.contains_key("ok.zip"), "удавшийся ушёл");
     }
 
     #[test]

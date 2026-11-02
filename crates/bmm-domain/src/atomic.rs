@@ -124,6 +124,62 @@ pub fn quarantine_file(path: &Path, now: DateTime<FixedOffset>) -> Option<PathBu
     None
 }
 
+/// Копия файла рядом, под тем же видом имени, что у [`quarantine_file`]; сам файл
+/// остаётся на месте. Нужна, когда файл читается, но не весь: следующее сохранение
+/// перезапишет его без нечитаемых записей, а копия их сохранит.
+pub fn keep_copy(path: &Path, now: DateTime<FixedOffset>) -> Option<PathBuf> {
+    // Тот же файл уже сохранён (программу открыли снова, ничего не меняя) — вторая
+    // копия не нужна: иначе они копились бы с каждым запуском.
+    if let Some(existing) = same_copy(path) {
+        return Some(existing);
+    }
+    for _ in 0..1024 {
+        let serial = QUARANTINE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut name = path.as_os_str().to_owned();
+        name.push(format!(
+            ".bad-{}-{:03}-{}-{serial}",
+            now.format("%Y%m%d-%H%M%S"),
+            now.timestamp_subsec_millis(),
+            std::process::id()
+        ));
+        let target = PathBuf::from(name);
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        };
+        let copied = fs::File::open(path)
+            .and_then(|mut source| io::copy(&mut source, &mut file))
+            .and_then(|_| file.sync_all());
+        if copied.is_err() {
+            drop(file);
+            let _ = fs::remove_file(&target);
+            return None;
+        }
+        return Some(target);
+    }
+    None
+}
+
+fn same_copy(path: &Path) -> Option<PathBuf> {
+    let bytes = fs::read(path).ok()?;
+    let dir = path.parent()?;
+    let prefix = format!("{}.bad-", path.file_name()?.to_string_lossy());
+    fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+        .map(|entry| entry.path())
+        .find(|candidate| {
+            fs::metadata(candidate).is_ok_and(|meta| meta.len() == bytes.len() as u64)
+                && fs::read(candidate).is_ok_and(|other| other == bytes)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

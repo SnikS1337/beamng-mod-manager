@@ -23,3 +23,14 @@ export function passButton(
 export function needsPassButton(site: { tone: string }, checkable: boolean): boolean {
   return checkable && site.tone === "warn";
 }
+
+/**
+ * Что повторить, когда сайт пустил: поиск по тексту или раздел («Машины», «Карты»).
+ * Раньше повторялся только поиск по тексту — в разделе после проверки ничего не
+ * происходило, и сайт так и оставался пустым до ручного обновления.
+ */
+export function rerunAfterPass(submitted: string, browsing: string | null): "search" | "browse" | null {
+  if (submitted) return "search";
+  if (browsing) return "browse";
+  return null;
+}

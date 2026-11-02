@@ -703,7 +703,7 @@ fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str, site: Ch
 /// Проверку проходим там, где сайт её показал: Cloudflare может закрывать только
 /// поиск, а главная открывается сразу. Тогда окно на главной закрывалось «пройдено»,
 /// а следующий поиск снова упирался в проверку — и так по кругу.
-fn check_url(site: CheckSite, home: url::Url, challenged: Option<url::Url>) -> url::Url {
+pub(crate) fn check_url(site: CheckSite, home: url::Url, challenged: Option<url::Url>) -> url::Url {
     challenged
         .filter(|url| {
             url.host_str().is_some_and(|host| {
