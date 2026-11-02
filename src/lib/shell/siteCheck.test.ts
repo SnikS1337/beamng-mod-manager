@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { needsPassButton, passButton } from "./siteCheck";
+import { needsPassButton, passButton, rerunAfterPass } from "./siteCheck";
 
 describe("кнопка «Пройти проверку»", () => {
   it("«Проходим проверку…» — только у нажатого сайта", () => {
@@ -27,5 +27,18 @@ describe("needsPassButton", () => {
   it("кнопка — когда сайт просит проверку и её можно пройти", () => {
     expect(needsPassButton({ tone: "warn" }, true)).toBe(true);
     expect(needsPassButton({ tone: "warn" }, false)).toBe(false);
+  });
+});
+
+describe("rerunAfterPass", () => {
+  it("в разделе после проверки раздел грузится заново", () => {
+    expect(rerunAfterPass("", "vehicle")).toBe("browse");
+  });
+  it("поиск по тексту повторяется поиском", () => {
+    expect(rerunAfterPass("bmw", null)).toBe("search");
+    expect(rerunAfterPass("bmw", "vehicle")).toBe("search");
+  });
+  it("ни поиска, ни раздела — повторять нечего", () => {
+    expect(rerunAfterPass("", null)).toBeNull();
   });
 });

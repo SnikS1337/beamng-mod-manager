@@ -4,14 +4,23 @@
   import Search from "phosphor-svelte/lib/MagnifyingGlass";
   import Sparkles from "phosphor-svelte/lib/Sparkle";
   import { trapFocus } from "./focus";
+  import { enterOverlay, takeEscape } from "./overlays";
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
+  let overlay = $state<symbol | null>(null);
+  $effect(() => {
+    if (!open) return;
+    const entered = enterOverlay();
+    overlay = entered.id;
+    return () => {
+      entered.leave();
+      overlay = null;
+    };
+  });
+
   function onkeydown(event: KeyboardEvent) {
-    if (open && event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-    }
+    if (open && takeEscape(event, overlay)) onClose();
   }
 
   const points = [
@@ -73,12 +82,16 @@
 {/if}
 
 <style>
+  /* При масштабе Windows 200–400 % окно выше экрана: без прокрутки кнопка «Начать»
+     оказывалась за нижним краем, и первый запуск было не пройти. */
   .backdrop {
     position: fixed;
     inset: 0;
     z-index: 80;
     display: grid;
     place-items: center;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 24px;
     background: var(--overlay);
     animation: fade-in var(--dur-2) var(--ease-out) both;
@@ -86,6 +99,8 @@
 
   .tour {
     width: min(580px, calc(100vw - 48px));
+    max-height: calc(100dvh - 48px);
+    overflow-y: auto;
     padding: 28px 30px 24px;
     border-radius: 14px;
     animation: welcome-in var(--dur-3) var(--ease-out) both;

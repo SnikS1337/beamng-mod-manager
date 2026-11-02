@@ -573,9 +573,25 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
         .and_then(|value| serde_json::from_value(value.clone()).ok());
 
     if skipped > 0 {
-        warnings.push(format!(
-            "записей библиотеки пропущено из-за неверных данных: {skipped}"
-        ));
+        // Следующее сохранение перепишет файл без этих записей. Копию исходника
+        // кладём рядом заранее; не вышло — не пишем вовсе, чтобы ничего не потерять.
+        match atomic::keep_copy(path, (now)()) {
+            Some(copy) => {
+                let name = copy
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                warnings.push(format!(
+                    "записей библиотеки пропущено из-за неверных данных: {skipped}; исходный файл сохранён как {name}"
+                ));
+            }
+            None => {
+                warnings.push(format!(
+                    "записей библиотеки пропущено из-за неверных данных: {skipped}; копию сохранить не удалось, изменения не пишутся до перезапуска программы"
+                ));
+                return (inner, warnings, true);
+            }
+        }
     }
 
     (inner, warnings, false)
@@ -845,6 +861,44 @@ mod tests {
         assert!(!path.exists());
         store.upsert_mod(installed("a", "A", "1.0"));
         assert!(path.exists());
+    }
+
+    #[test]
+    fn partly_broken_library_keeps_a_copy_before_rewriting() {
+        // Битые записи пропускаются, и следующее сохранение писало файл уже без них —
+        // данные терялись насовсем. Теперь исходник остаётся рядом.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let original = r#"{"Schema":1,"Mods":[{"Id":"a","Name":"A","FileName":"a.zip","InstalledAtUtc":"2026-10-01T00:00:00+00:00","Enabled":true},{"Id":42}]}"#;
+        fs::write(&path, original).unwrap();
+        let store = JsonLibraryStore::new(&path, fixed_clock());
+        assert!(
+            store
+                .load_warnings()
+                .iter()
+                .any(|warning| warning.contains("сохранён как")),
+            "{:?}",
+            store.load_warnings()
+        );
+        store.upsert_mod(installed("b", "B", "1.0"));
+        assert!(store.flush());
+        let copies: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect();
+        assert_eq!(copies, vec![original.to_string()]);
+
+        // Тот же битый файл при следующем запуске не плодит копий.
+        fs::write(&path, original).unwrap();
+        let _again = JsonLibraryStore::new(&path, fixed_clock());
+        let count = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".bad-"))
+            .count();
+        assert_eq!(count, 1);
     }
 
     #[test]

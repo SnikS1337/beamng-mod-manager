@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { anyOverlay } from "#lib/shell/overlays.js";
   import { findPageText } from "./findPageText";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
@@ -741,7 +742,7 @@
 
   function onkeydown(event: KeyboardEvent) {
     // Под модалкой горячие клавиши гаража не должны менять моды за ней.
-    if (modalOpen()) return;
+    if (modalOpen() || anyOverlay() || event.defaultPrevented) return;
     if (isShortcut(event, "f")) {
       event.preventDefault();
       searchEl?.focus();

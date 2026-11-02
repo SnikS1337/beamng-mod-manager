@@ -22,7 +22,23 @@ class UpdatesRun {
    * при следующем входе раздел показал бы старый итог и тост ещё раз.
    */
   attached = false;
+  /** Свою проверку с этим номером раздел уже показал: второй раз её итог не нужен. */
+  handledDone = 0;
   private started = false;
+
+  /**
+   * Раздел подписался на события сам. До этого момента итог ловит этот объект —
+   * раньше `attached` ставился раньше подписки раздела, и «проверка закончилась»,
+   * пришедшее в этот промежуток, не доставалось никому: полоса крутилась вечно.
+   * Возвращает итог, который раздел ещё не видел.
+   */
+  attach(): UpdatesEvent | null {
+    this.attached = true;
+    const pending = this.pending;
+    this.pending = null;
+    if (!pending || pending.requestId === this.handledDone) return null;
+    return pending;
+  }
 
   start(): void {
     if (this.started) return;

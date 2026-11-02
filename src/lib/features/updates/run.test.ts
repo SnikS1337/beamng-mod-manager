@@ -55,4 +55,30 @@ describe("идущая проверка", () => {
       updatesRun.attached = false;
     }
   });
+
+  it("итог, пришедший до подписки раздела, раздел получает при подключении", () => {
+    const id = updatesRun.begin();
+    // Раздел ещё не подписался: событие ловит общий слушатель.
+    updatesRun.onEvent(event(id, "done"));
+    expect(updatesRun.checking).toBe(false);
+    const handed = updatesRun.attach();
+    try {
+      expect(handed?.requestId).toBe(id);
+      expect(updatesRun.pending).toBeNull();
+    } finally {
+      updatesRun.attached = false;
+    }
+  });
+
+  it("итог, который раздел уже показал сам, второй раз не отдаётся", () => {
+    const id = updatesRun.begin();
+    updatesRun.onEvent(event(id, "done"));
+    // Подписка раздела успела раньше и показала этот же итог.
+    updatesRun.handledDone = id;
+    try {
+      expect(updatesRun.attach()).toBeNull();
+    } finally {
+      updatesRun.attached = false;
+    }
+  });
 });

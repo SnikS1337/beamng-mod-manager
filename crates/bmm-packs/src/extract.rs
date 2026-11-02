@@ -162,8 +162,17 @@ fn extract_with_tar(
             "В этой Windows нет распаковщика RAR и 7z. Перепакуйте архив в zip".to_string(),
         )
     })?;
+    extract_with_tar_at(&tar, archive, destination, budget, cancel)
+}
 
-    check_tar_entries(&tar, archive, cancel)?;
+fn extract_with_tar_at(
+    tar: &Path,
+    archive: &Path,
+    destination: &Path,
+    budget: &mut ExtractBudget,
+    cancel: &AtomicBool,
+) -> Result<(), ExtractError> {
+    check_tar_entries(tar, archive, cancel)?;
 
     let mut child = Command::new(tar)
         .args(tar_args(archive, destination))
@@ -276,10 +285,13 @@ fn extract_with_tar(
 /// как нам нужно, и «файл:поток» или «CON» может попасть на диск раньше, чем
 /// послераспаковочная проверка увидит ссылку.
 fn check_tar_entries(tar: &Path, archive: &Path, cancel: &AtomicBool) -> Result<(), ExtractError> {
-    // Если список получить не удалось (пароль, старый RAR, повреждение), распаковка
-    // сама выдаст понятную причину — проверять нечего.
+    // Список не получили (пароль, старый RAR, повреждение) — дальше не идём.
+    // Раньше распаковка шла вслепую, и имена записей проверялись только после того,
+    // как файлы уже легли на диск.
     let Some(listing) = list_tar_entries(tar, archive, cancel)? else {
-        return Ok(());
+        return Err(ExtractError::Message(
+            UNREADABLE_LISTING_MESSAGE.to_string(),
+        ));
     };
     check_listing(&listing)
 }
@@ -308,6 +320,9 @@ fn check_listing(listing: &TarListing) -> Result<(), ExtractError> {
     }
     Ok(())
 }
+
+const UNREADABLE_LISTING_MESSAGE: &str =
+    "Не удалось прочитать список файлов архива: он повреждён, защищён паролем или в старом формате";
 
 #[derive(Debug, Default)]
 struct TarListing {
@@ -731,6 +746,43 @@ mod tests {
             names: text.as_bytes().to_vec(),
             ..TarListing::default()
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_whose_listing_fails_is_not_extracted() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("extracted");
+        // Поддельный распаковщик: список отдать не может, а распаковка оставила бы след.
+        let tar = temp.path().join("tar");
+        fs::write(
+            &tar,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"-tf\" ]; then exit 1; fi\ntouch '{}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&tar, fs::Permissions::from_mode(0o755)).unwrap();
+        let archive = temp.path().join("mod.rar");
+        fs::write(&archive, b"Rar!").unwrap();
+        let out = temp.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        let result = extract_with_tar_at(
+            &tar,
+            &archive,
+            &out,
+            &mut ExtractBudget::new(1 << 30),
+            &AtomicBool::new(false),
+        );
+        match result {
+            Err(ExtractError::Message(message)) => {
+                assert_eq!(message, UNREADABLE_LISTING_MESSAGE)
+            }
+            other => panic!("ждали отказ, а не {other:?}"),
+        }
+        assert!(!marker.exists(), "распаковка не запускалась");
     }
 
     #[test]

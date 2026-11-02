@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { passButton } from "#lib/shell/siteCheck.js";
+  import { passButton, rerunAfterPass } from "#lib/shell/siteCheck.js";
+  import { anyOverlay } from "#lib/shell/overlays.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
   import { onDestroy, onMount } from "svelte";
@@ -414,12 +415,16 @@
     if (passing !== null) return;
     passing = source;
     try {
-      const passed = await searchOpenCheck(source, submitted || query);
+      // В разделе текста нет: окно откроет страницу, где сайт показал проверку.
+      const passed = await searchOpenCheck(source, browseKind ? "" : submitted || query);
       if (passed) {
         toasts.show(`${name} пускает программу — ищем снова`);
-        if (submitted) {
+        const rerun = rerunAfterPass(submitted, browseKind);
+        if (rerun === "search") {
           query = submitted;
           await runSearch();
+        } else if (rerun === "browse" && browseKind) {
+          await openBrowse(browseKind);
         }
       } else {
         toasts.show("Проверка не завершена. Пройдите её в окне и попробуйте снова");
@@ -753,6 +758,8 @@
       input?.select();
       return;
     }
+    // Escape поверх окна (палитра, проверка архива) — его, а не поиска.
+    if (event.key === "Escape" && (event.defaultPrevented || anyOverlay())) return;
     if (event.key === "Escape") {
       if (suggestionsOpen) {
         closeSuggestions();

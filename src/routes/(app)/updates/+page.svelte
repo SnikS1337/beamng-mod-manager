@@ -105,14 +105,9 @@
 
   onMount(() => {
     run.start();
-    run.attached = true;
-    void load().then(() => {
-      // Проверка закончилась, пока раздел был закрыт: показываем её итог.
-      const pending = run.pending;
-      run.pending = null;
-      if (pending) onEvent(pending);
-    });
-    void listenUpdates(onEvent)
+    // Раздел берёт события на себя, только когда и список прочитан, и своя подписка
+    // готова: до этого итог ловит общий слушатель и отдаёт здесь.
+    const listening = listenUpdates(onEvent)
       .then((stop) => {
         if (disposed) {
           stop();
@@ -121,6 +116,11 @@
         unlisten = stop;
       })
       .catch(() => {});
+    void Promise.all([load(), listening]).then(() => {
+      if (disposed) return;
+      const pending = run.attach();
+      if (pending) onEvent(pending);
+    });
     // Обновление поставили (из «Загрузок» или вручную) — пункт должен исчезнуть сразу.
     const onLibraryChanged = () => void refresh();
     window.addEventListener("bmm:library-changed", onLibraryChanged);
@@ -198,7 +198,10 @@
       return;
     }
     if (event.requestId !== run.requestId) return;
-    if (event.phase !== "progress") run.pending = null;
+    if (event.phase !== "progress") {
+      run.pending = null;
+      run.handledDone = event.requestId;
+    }
     if (event.phase === "progress") {
       stopFinishing();
       run.progress = event.progress;

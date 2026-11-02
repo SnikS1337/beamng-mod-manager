@@ -32,6 +32,22 @@ static CAUGHT: LazyLock<Mutex<HashMap<PathBuf, bool>>> =
 /// Скачанные окном файлы после его закрытия: панель уже предложила их установить,
 /// сторожу остаётся только запомнить их как виденные.
 static HANDLED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+/// Окно отдало файл обратно: он докачался для мода, от которого уже ушли. Сторож
+/// забывает, что видел его, и предлагает как обычный скачанный архив.
+static RELEASED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Файл больше не ведёт окно загрузки — пусть его заметит сторож «Загрузок».
+pub(crate) fn release_caught(path: &Path) {
+    CAUGHT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(path);
+    let mut released = RELEASED.lock().unwrap_or_else(|error| error.into_inner());
+    if released.len() >= 128 {
+        released.clear();
+    }
+    released.insert(path.to_path_buf());
+}
 
 pub(crate) fn note_caught(path: &Path) {
     let mut caught = CAUGHT.lock().unwrap_or_else(|error| error.into_inner());
@@ -160,6 +176,11 @@ impl Scanner {
 
     fn scan(&mut self, folders: &[PathBuf], now: Instant) -> Vec<PathBuf> {
         let mut ready = Vec::new();
+        let released =
+            std::mem::take(&mut *RELEASED.lock().unwrap_or_else(|error| error.into_inner()));
+        if !released.is_empty() {
+            self.seen.retain(|file| !released.contains(&file.path));
+        }
         for folder in folders {
             if self.watched.insert(folder.clone()) {
                 self.remember_existing(folder);
@@ -433,6 +454,38 @@ mod tests {
 
     /// Метки перехвата — общие на процесс; тесты, которые их трогают, идут по очереди.
     static CAUGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn archive_released_by_the_download_window_is_offered_after_all() {
+        // Архив прошлого мода докачался, когда окно уже перешло к следующему: окно
+        // его не берёт, и сторож должен предложить его как обычную загрузку.
+        let _lock = CAUGHT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let folder = [temp.path().to_path_buf()];
+        let path = temp.path().join("old_mod.zip");
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        scanner.scan(&folder, start);
+        note_caught(&path);
+        std::fs::write(&path, b"zip").unwrap();
+        assert!(
+            scanner
+                .scan(&folder, start + Duration::from_millis(10))
+                .is_empty()
+        );
+        release_caught(&path);
+        assert!(
+            scanner
+                .scan(&folder, start + Duration::from_millis(20))
+                .is_empty()
+        );
+        assert_eq!(
+            scanner.scan(&folder, start + Duration::from_millis(30)),
+            vec![path.clone()]
+        );
+    }
 
     #[test]
     fn reports_only_stable_new_archives() {

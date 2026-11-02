@@ -572,9 +572,23 @@ pub async fn search_open_check(
     query: String,
 ) -> Result<bool, AppError> {
     let site = crate::commands::updates::check_site(&source)?;
-    let url = check_search_url(site.id, &query)
-        .ok_or_else(|| AppError::new("url", "Некорректный адрес сайта."))?;
     let state = state.inner().clone();
+    // Без текста (раздел «Машины», «Карты») — туда, где сайт показал проверку, иначе
+    // на главную. Раньше открывался поиск по пустой строке.
+    let url = if query.trim().is_empty() {
+        let home: Url = site
+            .home
+            .parse()
+            .map_err(|_| AppError::new("url", "Некорректный адрес сайта."))?;
+        let challenged = state
+            .search
+            .as_ref()
+            .and_then(|search| search.fetcher.challenged_url(site.id));
+        crate::commands::updates::check_url(site, home, challenged)
+    } else {
+        check_search_url(site.id, &query)
+            .ok_or_else(|| AppError::new("url", "Некорректный адрес сайта."))?
+    };
     crate::commands::updates::open_site_check(app, state, site, url).await
 }
 

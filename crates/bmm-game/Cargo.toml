@@ -10,7 +10,6 @@ serde_json.workspace = true
 chrono.workspace = true
 fancy-regex.workspace = true
 sysinfo.workspace = true
-json5.workspace = true
 zip.workspace = true
 
 [dev-dependencies]

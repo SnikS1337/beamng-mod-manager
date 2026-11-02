@@ -383,12 +383,16 @@
 
     {#if binding}
       <form class="bind" onsubmit={bindPage}>
-        <span>Ссылка на страницу мода</span>
+        <!-- Подпись и ошибка связаны с полем: диктор читает, что вводить и что не так. -->
+        <label for="bind-url">Ссылка на страницу мода</label>
         <!-- svelte-ignore a11y_autofocus -->
         <input
+          id="bind-url"
           type="text"
           inputmode="url"
           spellcheck="false"
+          aria-invalid={bindError ? "true" : undefined}
+          aria-describedby={bindError ? "bind-error" : undefined}
           bind:value={pageUrl}
           placeholder="https://stmods.org/beamng_drive/mods/…"
           autofocus
@@ -396,7 +400,7 @@
           onkeydown={cancelBinding}
         />
         {#if bindError}
-          <p class="bind-error">{bindError.message}</p>
+          <p class="bind-error" id="bind-error" role="alert">{bindError.message}</p>
           {#if needsCheck && onPassCheck}
             <button class="btn-glass" type="button" onclick={() => void passCheck()} disabled={bindBusy}>
               Пройти проверку сайта
@@ -788,7 +792,7 @@
     background: var(--surface-2);
   }
 
-  .bind span {
+  .bind label {
     color: var(--muted-foreground);
     font-size: 12.5px;
   }

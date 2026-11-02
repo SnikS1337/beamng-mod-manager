@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { StaleGuard } from "#lib/features/download/staleGuard.js";
   import { isTauri } from "@tauri-apps/api/core";
   import { emit } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -157,12 +158,12 @@
     installError = null;
   }
 
-  let prepareToken = 0;
+  const checks = new StaleGuard();
 
   async function prepare(path: string): Promise<void> {
     if (!path || path === handledPath || installing) return;
     handledPath = path;
-    const token = ++prepareToken;
+    const token = checks.begin();
     resetArchive();
     inspecting = true;
     installError = null;
@@ -171,7 +172,7 @@
     detail = "Смотрим структуру, опасные пути и подозрительные файлы.";
     try {
       const [found] = await incomingInspect([path]);
-      if (token !== prepareToken) {
+      if (!checks.isCurrent(token)) {
         if (found) void incomingDiscard(found.workDir).catch(() => {});
         return;
       }
@@ -194,14 +195,14 @@
         detail = "Можно установить — прошлая версия останется в копиях.";
       }
     } catch (reason) {
-      if (token === prepareToken) {
+      if (checks.isCurrent(token)) {
         handledPath = "";
         installError = errorText(reason);
         status = "Не удалось проверить архив";
         detail = installError;
       }
     } finally {
-      if (token === prepareToken) inspecting = false;
+      if (checks.isCurrent(token)) inspecting = false;
     }
   }
 
@@ -506,6 +507,9 @@
       })
       .catch(() => {});
     void listenDownloadContext((value) => {
+      // Идущая проверка — про прошлый мод: её ответ отбрасываем.
+      checks.invalidate();
+      inspecting = false;
       context = value;
       progress = null;
       handledPath = "";
@@ -564,9 +568,9 @@
       {#if context?.previewUrl && context?.role !== "addon"}
         <img src={context.previewUrl} alt="" />
       {:else if context?.role === "addon"}
-        <PuzzlePiece size={26} weight="thin" />
+        <PuzzlePiece size={26} weight="thin" aria-hidden="true" />
       {:else}
-        <Package size={26} weight="thin" />
+        <Package size={26} weight="thin" aria-hidden="true" />
       {/if}
     </div>
     <div class="title">
@@ -575,19 +579,20 @@
     </div>
     <button class="close" type="button" aria-label="Закрыть" onclick={() => void close()}>
       <span>Закрыть</span>
-      <X size={16} />
+      <X size={16} aria-hidden="true" />
     </button>
   </header>
 
-  <div class="urlbar">
-    <Lock size={13} />
+  <!-- Адрес страницы — отдельная область с именем: иначе он висел вне разметки. -->
+  <div class="urlbar" role="region" aria-label="Адрес страницы">
+    <Lock size={13} aria-hidden="true" />
     <span>{address}</span>
   </div>
 
   <div class="site-hole" aria-hidden="true">
     {#if !isTauri()}
       <div class="fake-site">
-        <Package size={44} weight="thin" />
+        <Package size={44} weight="thin" aria-hidden="true" />
         <b>Страница мода</b>
         <small>Здесь откроется настоящая страница. Кнопку Download нажимаете вы.</small>
       </div>
@@ -619,7 +624,7 @@
       <div class="step {state}">
         <span class="marker">
           {#if state === "done"}
-            <Check size={13} weight="bold" />
+            <Check size={13} weight="bold" aria-hidden="true" />
           {:else}
             <span class="dot"></span>
           {/if}

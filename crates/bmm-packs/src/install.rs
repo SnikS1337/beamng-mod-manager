@@ -417,7 +417,9 @@ impl ModInstaller {
         if removed == 0 {
             return OpResult::fail("Файл не найден.");
         }
-        self.rotate(&name);
+        // Мод лежал и во включённых, и в выключенных — копий две. При пределе в одну
+        // копию ротация стирала первую, а на неё ссылается «Отменить».
+        self.rotate_keeping(&name, removed);
         OpResult::ok("Удалён, копия сохранена.", backup)
     }
 
@@ -786,7 +788,13 @@ impl ModInstaller {
     }
 
     fn rotate(&self, name: &str) {
-        let keep = (self.keep_backups)().max(1);
+        self.rotate_keeping(name, 1);
+    }
+
+    /// Как [`Self::rotate`], но оставляет не меньше `fresh` самых новых копий:
+    /// только что сделанные копии одной операции ротация не трогает.
+    fn rotate_keeping(&self, name: &str, fresh: usize) {
+        let keep = (self.keep_backups)().max(1).max(fresh);
         let all = self.backups(name);
         if all.len() <= keep {
             return;
@@ -1064,6 +1072,27 @@ mod tests {
         );
         let all = move_all(&paths, |path| Ok(path.with_extension("bak")), |_, _| {}).unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn removing_a_doubled_mod_keeps_the_undo_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer_with(&temp, Arc::new(|| Utc::now().fixed_offset()), 1);
+        let layout = installer.layout().clone();
+        fs::create_dir_all(&layout.mods_dir).unwrap();
+        fs::create_dir_all(&layout.disabled_dir).unwrap();
+        fs::write(layout.mods_dir.join("a.zip"), b"on").unwrap();
+        fs::write(layout.disabled_dir.join("a.zip"), b"off").unwrap();
+        let removed = installer.remove("a.zip");
+        assert!(removed.success);
+        let ticket = removed.path.expect("копия для «Отменить»");
+        assert!(
+            ticket.exists(),
+            "копия, на которую ссылается «Отменить», цела"
+        );
+        let id = ticket.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(installer.unremove("a.zip", &id, false).success);
+        assert_eq!(fs::read(layout.mods_dir.join("a.zip")).unwrap(), b"on");
     }
 
     #[test]
