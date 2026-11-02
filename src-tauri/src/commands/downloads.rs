@@ -176,10 +176,15 @@ impl Scanner {
 
     fn scan(&mut self, folders: &[PathBuf], now: Instant) -> Vec<PathBuf> {
         let mut ready = Vec::new();
-        let released =
-            std::mem::take(&mut *RELEASED.lock().unwrap_or_else(|error| error.into_inner()));
-        if !released.is_empty() {
-            self.seen.retain(|file| !released.contains(&file.path));
+        // Отпущенные окном файлы забываем, пока не предложим их сами. Список не
+        // «забираем» целиком: сторож не обязан быть один (в тестах их много), и
+        // чужой обход не должен съесть то, что относится к нашей папке.
+        {
+            let mut released = RELEASED.lock().unwrap_or_else(|error| error.into_inner());
+            released.retain(|path| path.is_file());
+            if !released.is_empty() {
+                self.seen.retain(|file| !released.contains(&file.path));
+            }
         }
         for folder in folders {
             if self.watched.insert(folder.clone()) {
@@ -216,6 +221,10 @@ impl Scanner {
                         if now.duration_since(*since) >= self.stable_after {
                             self.pending.remove(&path);
                             self.seen.insert(signature);
+                            RELEASED
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .remove(&path);
                             ready.push(path);
                         }
                     }
