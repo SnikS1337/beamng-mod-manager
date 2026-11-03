@@ -475,6 +475,7 @@
       pageUrl: finding.url,
       previewUrl: finding.previewUrl ?? null,
       role: finding.role ?? null,
+      modId: finding.modId,
     };
   }
 

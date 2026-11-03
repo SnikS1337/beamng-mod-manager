@@ -61,6 +61,7 @@ function mockInitial(): UpdatesSnapshot {
         installedSize: 142 * 1024 * 1024,
         latestSize: 151 * 1024 * 1024,
         noticedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+        authorVersion: null,
       },
       {
         modId: "mock-2",
@@ -76,6 +77,7 @@ function mockInitial(): UpdatesSnapshot {
         installedSize: 410 * 1024 * 1024,
         latestSize: 438 * 1024 * 1024,
         noticedAt: new Date(Date.now() - 21 * 86400000).toISOString(),
+        authorVersion: null,
       },
       {
         modId: "mock-3",
@@ -91,6 +93,7 @@ function mockInitial(): UpdatesSnapshot {
         installedSize: null,
         latestSize: null,
         noticedAt: null,
+        authorVersion: null,
       },
     ],
     hidden: [
@@ -108,6 +111,7 @@ function mockInitial(): UpdatesSnapshot {
         installedSize: null,
         latestSize: null,
         noticedAt: null,
+        authorVersion: null,
       },
     ],
     suggestions: [

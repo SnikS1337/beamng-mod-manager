@@ -12,6 +12,9 @@ const PRERELEASE = /(alpha|beta|rc)/i;
 /** Почему программа считает, что мод обновился. Только то, что знает наверняка. */
 export function reason(finding: UpdateFinding): string {
   const size = sizeChange(finding);
+  if (finding.authorVersion) {
+    return `Сайт пишет ${finding.latestVersion ?? "версию новее"}, но у автора на BeamNG последняя — ${finding.authorVersion}, как у вас. Похоже, перезалив подписан неверно.`;
+  }
   if (finding.status === "likely") {
     return finding.installedVersion ? "На сайте вышла новая версия." : "На сайте вышла версия новее вашего файла.";
   }

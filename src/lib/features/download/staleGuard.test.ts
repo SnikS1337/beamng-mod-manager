@@ -49,3 +49,20 @@ describe("окно скачивания для экранного диктора
     expect(page).toMatch(/class="urlbar" role="region" aria-label="Адрес страницы"/);
   });
 });
+
+describe("окно скачивания знает, какой мод обновляет", () => {
+  it("«Обновления» передают мод, а окно умеет спрятать ту же версию", () => {
+    const updates: string = readFileSync(
+      new URL("../../../routes/(app)/updates/+page.svelte", import.meta.url),
+      "utf8",
+    );
+    expect(updates).toContain("modId: finding.modId");
+    const page: string = readFileSync(
+      new URL("../../../routes/download/+page.svelte", import.meta.url),
+      "utf8",
+    );
+    expect(page).toContain("sameAsInstalled(found)");
+    expect(page).toContain("updatesDismiss(request.modId)");
+    expect(page).toContain('emit("download://dismissed"');
+  });
+});

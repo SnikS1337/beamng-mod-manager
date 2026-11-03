@@ -28,7 +28,12 @@ export type AppError = { code: string, message: string, };
 
 export type SettingsDto = { allowDownloads: boolean, modsFolder: string | null, userFolder: string | null, downloadsFolder: string | null, deleteDownloadsAfterInstall: boolean, checkTtlHours: number, autoCheckOnStart: boolean, checkAppUpdates: boolean, autoCheckEveryHours: number, checkDisabledMods: boolean, disabledSources: Array<string>, keepBackups: number, maxCardChecksPerSource: number, liquidGlass: boolean, mode: UiMode, theme: BackgroundTheme, background: BackgroundStyle, uiAnimations: boolean, animatedBackground: boolean, fireflies: boolean, backgroundTilt: boolean, activeModsWarnAbove: number, firstRunDone: boolean, watchFolders: Array<string>, };
 
-export type DownloadRequest = { modName: string, installedVersion: string | null, latestVersion: string | null, pageUrl: string, previewUrl: string | null, role: ModRole | null, };
+export type DownloadRequest = { modName: string, installedVersion: string | null, latestVersion: string | null, pageUrl: string, previewUrl: string | null, role: ModRole | null, 
+/**
+ * Какой мод обновляем. Скачался тот же файл, что уже стоит, — панель предложит
+ * больше не показывать эту версию для этого мода.
+ */
+modId?: string, };
 
 export type DownloadPanelEvent = { step: number, title: string, detail: string, error: string | null, };
 
@@ -165,7 +170,12 @@ role: ModRole | null, installedSize: number | null, latestSize: number | null,
 /**
  * Когда программа заметила изменение на сайте (RFC 3339).
  */
-noticedAt: string | null, };
+noticedAt: string | null, 
+/**
+ * Версия у автора на BeamNG, если она как у вас, а этот сайт пишет номер выше:
+ * скорее неверная подпись перезалива, чем новая версия.
+ */
+authorVersion: string | null, };
 
 export type UpdateSite = { id: string, displayName: string, 
 /**

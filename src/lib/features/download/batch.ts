@@ -79,3 +79,16 @@ export function batchLine(position: number, total: number, collected: number): s
   const where = position >= 0 ? `Мод ${position + 1} из ${total}` : `${modsLabel(total)} в очереди`;
   return collected > 0 ? `${where} · скачано ${collected}` : where;
 }
+
+/**
+ * Скачался тот же файл, что уже стоит: всё в архиве — «уже установлен». Так бывает,
+ * когда сайт подписал прежнюю версию новым номером (Smoke Dust FX «1.14.1» на
+ * ModsGaming при 0.14.1 у автора): обновление качали снова и снова.
+ */
+export function sameAsInstalled(archive: IncomingArchiveDto): boolean {
+  return (
+    !archive.problem &&
+    archive.items.length > 0 &&
+    archive.items.every((item) => item.kind === "alreadyInstalled")
+  );
+}
