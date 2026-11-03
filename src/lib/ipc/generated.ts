@@ -66,7 +66,13 @@ similarTo: SimilarModDto | null, };
 
 export type IncomingArchiveDto = { source: string, problem: string | null, workDir: string, items: Array<IncomingItemDto>, };
 
-export type IncomingInstallRequest = { zipPath: string, fileName: string, replaces: string | null, allowWarnings: boolean, };
+export type IncomingInstallRequest = { zipPath: string, fileName: string, replaces: string | null, allowWarnings: boolean, 
+/**
+ * Версия со страницы, с которой человек поставил обновление. В имени файла и в
+ * самом архиве её может не быть (или там версия игры, «v.0.20.2»): без неё мод
+ * после обновления так и висел в «Обновлениях».
+ */
+version?: string, };
 
 export type IncomingInstallResult = { success: boolean, message: string | null, 
 /**

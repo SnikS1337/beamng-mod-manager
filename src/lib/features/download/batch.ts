@@ -1,5 +1,6 @@
 import type { DownloadRequest } from "#lib/ipc/download.js";
 import type { IncomingArchiveDto, IncomingItemDto } from "#lib/ipc/incoming.js";
+import type { IncomingInstallRequest } from "#lib/ipc/generated.js";
 import { installable, preselected } from "#lib/features/incoming/selection.js";
 import { plural } from "#lib/features/garage/format.js";
 
@@ -42,6 +43,31 @@ export function pickedItems(collected: Collected[]): IncomingItemDto[] {
           (item, index) => entry.selected[index] && installable(item),
         ),
   );
+}
+
+/**
+ * Запросы установки для архивов, скачанных со страниц модов. Версию страницы
+ * передаём, только когда в архиве ровно одно обновление: к какому моду она относится,
+ * тогда понятно. В имени файла её часто нет или там версия игры («Dummy v.0.20.2»).
+ */
+export function installRequests(
+  entries: { request: DownloadRequest | null; archive: IncomingArchiveDto; selected: boolean[] }[],
+): IncomingInstallRequest[] {
+  return entries.flatMap((entry) => {
+    if (entry.archive.problem) return [];
+    const picked = entry.archive.items.filter(
+      (item, index) => entry.selected[index] && installable(item),
+    );
+    const updates = picked.filter((item) => item.replaces !== null);
+    const version = entry.request?.latestVersion?.trim() || null;
+    return picked.map((item) => ({
+      zipPath: item.zipPath,
+      fileName: item.fileName,
+      replaces: item.replaces,
+      allowWarnings: true,
+      ...(version && updates.length === 1 && item.replaces !== null ? { version } : {}),
+    }));
+  });
 }
 
 export function modsLabel(count: number): string {
