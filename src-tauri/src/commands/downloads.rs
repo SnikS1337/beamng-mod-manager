@@ -477,6 +477,22 @@ mod tests {
     /// Метки перехвата — общие на процесс; тесты, которые их трогают, идут по очереди.
     static CAUGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    /// Своё время изменения для файла теста. На Windows время идёт шагами около 15 мс:
+    /// файлы параллельных тестов одного размера получали одно время, и сторож
+    /// принимал файл одного теста за переименованный файл другого.
+    fn unique_stamp(path: &Path) -> SystemTime {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let step = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let stamp = SystemTime::UNIX_EPOCH + Duration::from_secs(1_500_000_000 + step * 97);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        stamp
+    }
+
     #[test]
     fn renamed_archive_is_not_offered_again() {
         // Было: человек переименовал предложенный архив в «Загрузках» — сторож видел
@@ -489,6 +505,7 @@ mod tests {
         let at = |ms: u64| start + Duration::from_millis(ms);
         scanner.scan(&folder, start);
         std::fs::write(&path, b"archive").unwrap();
+        unique_stamp(&path);
         scanner.scan(&folder, at(10));
         assert_eq!(scanner.scan(&folder, at(20)), vec![path.clone()]);
 
@@ -523,6 +540,7 @@ mod tests {
         let at = |ms: u64| start + Duration::from_millis(ms);
         scanner.scan(&folder, start);
         std::fs::write(&path, b"archive").unwrap();
+        unique_stamp(&path);
         scanner.scan(&folder, at(10));
         assert_eq!(scanner.scan(&folder, at(20)), vec![path.clone()]);
         // Копия в Проводнике сохраняет время изменения.
@@ -551,18 +569,12 @@ mod tests {
         let at = |ms: u64| start + Duration::from_millis(ms);
         scanner.scan(&folder, start);
         std::fs::write(&first, b"same size 1").unwrap();
+        unique_stamp(&first);
         scanner.scan(&folder, at(10));
         assert_eq!(scanner.scan(&folder, at(20)), vec![first.clone()]);
         let second = temp.path().join("b.zip");
         std::fs::write(&second, b"same size 2").unwrap();
-        let older =
-            std::fs::metadata(&first).unwrap().modified().unwrap() - Duration::from_secs(60);
-        std::fs::File::options()
-            .write(true)
-            .open(&second)
-            .unwrap()
-            .set_modified(older)
-            .unwrap();
+        unique_stamp(&second);
         scanner.scan(&folder, at(30));
         assert_eq!(scanner.scan(&folder, at(40)), vec![second]);
     }
@@ -583,13 +595,7 @@ mod tests {
         let path = temp.path().join("from_window.zip");
         note_caught(&path);
         std::fs::write(&path, b"downloaded by the window, unique body").unwrap();
-        let unique = std::time::SystemTime::now() + Duration::from_secs(7 * 24 * 3600);
-        std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_modified(unique)
-            .unwrap();
+        unique_stamp(&path);
         note_finished(&path);
         std::fs::rename(&path, temp.path().join("renamed.zip")).unwrap();
         for ms in [10, 20, 1000] {
@@ -845,6 +851,7 @@ mod tests {
                 .is_empty()
         );
         std::fs::write(&path, b"part and more, whole archive").unwrap();
+        unique_stamp(&path);
         note_finished(&path);
         for ms in [30, 40, 1000] {
             assert!(
@@ -882,6 +889,7 @@ mod tests {
         let path = folder.join("car.zip");
         note_caught(&path);
         std::fs::write(&path, b"from window").unwrap();
+        unique_stamp(&path);
         note_finished(&path);
         forget_caught();
         assert!(
