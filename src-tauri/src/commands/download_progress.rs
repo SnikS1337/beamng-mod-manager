@@ -340,12 +340,11 @@ mod platform {
                                     };
                                     let mut state = Default::default();
                                     let mut reason = Default::default();
-                                    // SAFETY: оба вызова пишут одно значение по указателю.
-                                    let interrupted = unsafe {
-                                        operation.State(&mut state).is_ok()
-                                            && state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED
-                                            && operation.InterruptReason(&mut reason).is_ok()
-                                    };
+                                    // Уже внутри unsafe-блока подписки. Оба вызова пишут
+                                    // одно значение по переданному указателю.
+                                    let interrupted = operation.State(&mut state).is_ok()
+                                        && state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED
+                                        && operation.InterruptReason(&mut reason).is_ok();
                                     if interrupted
                                         && let Some(reason) = StopReason::from_interrupt(reason.0)
                                     {
