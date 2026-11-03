@@ -272,7 +272,7 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
         SITE_LABEL,
         WebviewUrl::External(url)
     ))
-    .initialization_script(SITE_HELPERS)
+    .initialization_script(site_helpers())
     // Первый адрес проверен выше; каждый следующий переход и редирект тоже
     // не должен уводить в localhost/частную сеть.
     .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
@@ -533,38 +533,14 @@ fn is_archive_name(path: &Path) -> bool {
 
 /// Ссылки «скачать» на страницах модов часто открываются в новой вкладке. Встроенному
 /// окну нужна та же вкладка, иначе WebView2 теряет загрузку; рекламу и чужие popup не трогаем.
-const SITE_HELPERS: &str = r#"
-(() => {
-  const downloadPath = /\/download_file\.php|\/download(?:[/?]|$)|\/d\/[a-z0-9]+/i;
-  document.addEventListener("click", (event) => {
-    const anchor = event.target && event.target.closest
-      ? event.target.closest("a[target=_blank]")
-      : null;
-    if (!anchor) return;
-    let next;
-    try { next = new URL(anchor.href, location.href); } catch { return; }
-    if (next.host !== location.host) return;
-    if (!downloadPath.test(next.pathname + next.search)) return;
-    event.preventDefault();
-    location.href = next.href;
-  }, true);
-  // Кнопка-зеркало ModHub — форма POST с target=_blank. Новое окно открыло бы адрес
-  // без данных формы, поэтому такие формы своего сайта отправляем в это же окно.
-  document.addEventListener("click", (event) => {
-    const button = event.target && event.target.closest
-      ? event.target.closest("button, input[type=submit]")
-      : null;
-    const form = button && button.form;
-    if (!form) return;
-    let action;
-    try { action = new URL(form.getAttribute("action") || location.href, location.href); } catch { return; }
-    if (action.host !== location.host) return;
-    if (!downloadPath.test(action.pathname + action.search)) return;
-    if (button.getAttribute("formtarget") === "_blank") button.setAttribute("formtarget", "_self");
-    if (form.getAttribute("target") === "_blank") form.setAttribute("target", "_self");
-  }, true);
-})();
-"#;
+/// Скрипт для страницы мода: переходы «в новое окно» к файлу — в этом же окне.
+const SITE_HELPERS: &str = include_str!("site_helpers.js");
+
+fn site_helpers() -> String {
+    let hosts = serde_json::to_string(bmm_domain::hosts::KNOWN_FILE_HOSTS)
+        .unwrap_or_else(|_| "[]".to_string());
+    SITE_HELPERS.replace("__FILE_HOSTS__", &hosts)
+}
 
 fn emit_state(app: &AppHandle, step: u8, title: &str, detail: &str, error: Option<String>) {
     let _ = app.emit_to(
@@ -757,6 +733,13 @@ mod tests {
         }
         let local = Url::parse("file:///C:/mods/mod.zip").unwrap();
         assert!(!accepts_download(&local, "mod.zip"));
+    }
+
+    #[test]
+    fn page_script_knows_the_file_hosts() {
+        let script = site_helpers();
+        assert!(!script.contains("__FILE_HOSTS__"));
+        assert!(script.contains("\"modsfire.com\""));
     }
 
     #[test]

@@ -211,7 +211,8 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 .get(&installed.file_name.to_lowercase())
                 .copied();
             let entry = db_read.find(&installed.file_name);
-            let repo = entry.and_then(|entry| entry.repo.as_ref());
+            let repo =
+                entry.and_then(|entry| entry.repo_for_size(disk.map(|disk| disk.size_bytes)));
             let binding = bindings_by_mod.get(&installed.id).copied();
             let check = binding.and_then(|binding| {
                 checks_by_key.get(&(installed.id.clone(), binding.source.clone()))

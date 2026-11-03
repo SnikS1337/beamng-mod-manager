@@ -542,8 +542,11 @@ fn apply_repo_info(
         let from_db = if db.unreadable {
             None
         } else {
+            let disk_size = disks_by_file
+                .get(&installed.file_name.to_lowercase())
+                .map(|disk| disk.size_bytes);
             db.find(&installed.file_name)
-                .and_then(|entry| entry.repo.clone())
+                .and_then(|entry| entry.repo_for_size(disk_size).cloned())
         };
         let from_archive = || {
             let disk = disks_by_file.get(&installed.file_name.to_lowercase())?;
@@ -1038,7 +1041,11 @@ fn details(state: &AppState, id: &str) -> Result<ModDetails, AppError> {
     let entry = db_read
         .as_ref()
         .and_then(|read| read.find(&installed.file_name));
-    let repo = entry.and_then(|entry| entry.repo.as_ref());
+    let disk_size = target
+        .as_ref()
+        .and_then(|target| std::fs::metadata(&target.path).ok())
+        .and_then(|meta| i64::try_from(meta.len()).ok());
+    let repo = entry.and_then(|entry| entry.repo_for_size(disk_size));
     let binding = state
         .library
         .bindings()
@@ -1797,9 +1804,10 @@ mod tests {
         let mods = temp.path().join("mods");
         std::fs::create_dir_all(&mods).unwrap();
         std::fs::write(mods.join("mudstone_valley.zip"), b"zip").unwrap();
+        // Запись игры — про этот же файл: размер в db.json совпадает с файлом на диске.
         std::fs::write(
             mods.join("db.json"),
-            include_str!("../../../fixtures/game/db-5mods-0.39.4.json"),
+            include_str!("../../../fixtures/game/db-5mods-0.39.4.json").replace("448295268", "3"),
         )
         .unwrap();
         let state = test_state(&temp, &mods);
@@ -1839,6 +1847,53 @@ mod tests {
         let after = state.library.get_mod(&id).unwrap();
         assert_eq!(after.name, "Моя трасса");
         assert_eq!(after.version, None);
+    }
+
+    #[test]
+    fn mod_updated_before_the_game_rescans_shows_the_new_version() {
+        // Мод обновили программой, игру не запускали: в db.json — прошлая версия 4.0.0
+        // с прошлым размером, в архиве — 4.0.2. Версия бралась из db.json, и обновление
+        // в «Обновлениях» так и висело.
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_zip(
+            &mods.join("dragparts.zip"),
+            &[(
+                "mod_info/MEO/info.json",
+                br#"{"resource_id":10968,"version_string":"4.0.2","title":"Meo's Drag Parts Pack"}"#,
+            )],
+        );
+        std::fs::write(
+            mods.join("db.json"),
+            r#"{"header":{"version":1.1},"mods":{"meo":{"filename":"dragparts.zip","fullpath":"/mods/dragparts.zip","active":true,"modType":"vehicle","modID":"MEO","modData":{"resource_id":10968,"version_string":"4.0.0","title":"Meo's Drag Parts Pack"},"stat":{"filesize":65202500}}}}"#,
+        )
+        .unwrap();
+        let state = test_state(&temp, &mods);
+        let first = load_snapshot(&state).unwrap();
+        let card = first
+            .mods
+            .iter()
+            .find(|item| item.file_name == "dragparts.zip")
+            .unwrap();
+        assert_ne!(
+            card.version.as_deref(),
+            Some("4.0.0"),
+            "старой записи игры не верим"
+        );
+        // Архив прочитан — версия из него.
+        fill_titles(&state);
+        let snapshot = load_snapshot(&state).unwrap();
+        let card = snapshot
+            .mods
+            .iter()
+            .find(|item| item.file_name == "dragparts.zip")
+            .unwrap();
+        assert_eq!(card.version.as_deref(), Some("4.0.2"));
+        assert_eq!(
+            state.library.get_mod(&card.id).unwrap().version.as_deref(),
+            Some("4.0.2")
+        );
     }
 
     #[test]

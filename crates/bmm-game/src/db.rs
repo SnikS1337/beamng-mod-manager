@@ -32,9 +32,8 @@ impl RepoInfo {
             keys.iter().find_map(|key| {
                 data.get(*key)
                     .and_then(Value::as_str)
-                    .map(str::trim)
+                    .map(without_invisible)
                     .filter(|value| !value.is_empty())
-                    .map(str::to_string)
             })
         };
         RepoInfo {
@@ -75,7 +74,42 @@ pub struct GameModEntry {
     pub repo: Option<RepoInfo>,
 }
 
+/// Невидимые знаки-заполнители, которыми авторы дописывают версию («2.9.1ㅤ» —
+/// хангыльский заполнитель U+3164): в окне они выглядели как «2.9.1�».
+fn without_invisible(text: &str) -> String {
+    text.chars()
+        .filter(|ch| {
+            !matches!(
+                ch,
+                '\u{3164}'
+                    | '\u{115F}'
+                    | '\u{1160}'
+                    | '\u{FFA0}'
+                    | '\u{200B}'..='\u{200F}'
+                    | '\u{2060}'..='\u{2064}'
+                    | '\u{FEFF}'
+                    | '\u{00AD}'
+            )
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 impl GameModEntry {
+    /// Сведения репозитория из db.json — только если запись про этот же файл. Игра
+    /// обновляет db.json при запуске; мод, обновлённый программой, до этого лежит с
+    /// записью о прошлой версии. Тогда в «Обновлениях» висела старая версия (4.0.0
+    /// вместо поставленной 4.0.2), и счётчик не уменьшался. Размер — признак:
+    /// записи с другим размером не верим.
+    pub fn repo_for_size(&self, disk_size: Option<i64>) -> Option<&RepoInfo> {
+        let same_file = match (self.file_size, disk_size) {
+            (Some(recorded), Some(disk)) => recorded == disk,
+            _ => true,
+        };
+        if same_file { self.repo.as_ref() } else { None }
+    }
+
     pub fn in_mods_root(&self) -> bool {
         self.full_path.as_deref().is_none_or(|path| {
             normalize_full_path(path) == format!("mods/{}", normalize_full_path(&self.file_name))
@@ -746,5 +780,44 @@ mod tests {
         let read = db.read();
         // Фикстура содержит dateAdded; проверяем, что дата не теряется.
         assert!(read.mods.iter().any(|entry| entry.date_added.is_some()));
+    }
+
+    #[test]
+    fn stale_game_record_of_an_updated_file_is_not_trusted() {
+        // Мод обновили программой, игру ещё не запускали: db.json описывает прошлую
+        // версию (4.0.0) с прошлым размером, а в архиве уже 4.0.2.
+        let entry = GameModEntry {
+            key: "meo".to_string(),
+            file_name: "dragpartswheelsnitrous.zip".to_string(),
+            full_path: None,
+            active: true,
+            mod_type: "vehicle".to_string(),
+            date_added: None,
+            file_size: Some(65_202_500),
+            repo: Some(RepoInfo::from_mod_data(
+                "meo",
+                &serde_json::json!({ "version_string": "4.0.0", "resource_id": 10968 }),
+            )),
+        };
+        assert!(entry.repo_for_size(Some(68_607_830)).is_none());
+        assert!(entry.repo_for_size(Some(65_202_500)).is_some());
+        assert!(
+            entry.repo_for_size(None).is_some(),
+            "размер неизвестен — не спорим"
+        );
+    }
+
+    #[test]
+    fn invisible_filler_is_dropped_from_version() {
+        // Автор дописал к версии «ㅤ» (U+3164): в окне было «2.9.1�».
+        let info = RepoInfo::from_mod_data(
+            "cam",
+            &serde_json::json!({ "version_string": "2.9.1\u{3164}", "title": "\u{200B}Camera " }),
+        );
+        assert_eq!(info.version.as_deref(), Some("2.9.1"));
+        assert_eq!(info.title.as_deref(), Some("Camera"));
+        let blank =
+            RepoInfo::from_mod_data("x", &serde_json::json!({ "version_string": "\u{3164}" }));
+        assert_eq!(blank.version, None);
     }
 }
