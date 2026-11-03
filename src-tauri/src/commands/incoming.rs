@@ -72,6 +72,12 @@ pub struct IncomingInstallRequest {
     pub file_name: String,
     pub replaces: Option<String>,
     pub allow_warnings: bool,
+    /// Версия со страницы, с которой человек поставил обновление. В имени файла и в
+    /// самом архиве её может не быть (или там версия игры, «v.0.20.2»): без неё мод
+    /// после обновления так и висел в «Обновлениях».
+    #[serde(default)]
+    #[ts(optional)]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -483,6 +489,12 @@ fn install_items(
                     );
                 }
             }
+            if update.install.success
+                && let Some(version) = request.version.as_deref()
+                && let Some(path) = update.install.path.as_ref()
+            {
+                remember_installed_version(state, &request.file_name, version, path);
+            }
             let backup_id = if update.install.success {
                 installer
                     .list_backups(replaced)
@@ -516,6 +528,32 @@ fn install_items(
         }
     }
     Ok(results)
+}
+
+/// Версия, которую человек поставил со страницы, — в запись библиотеки вместе с
+/// размером файла: так сверка с папкой не примет обновление за внешнюю замену и не
+/// перепишет версию из имени файла.
+fn remember_installed_version(state: &AppState, file_name: &str, version: &str, path: &Path) {
+    let version = version.trim();
+    if version.is_empty() {
+        return;
+    }
+    let Some(mut installed) = state
+        .library
+        .mods()
+        .into_iter()
+        .find(|item| item.file_name.eq_ignore_ascii_case(file_name))
+    else {
+        return;
+    };
+    installed.version = Some(version.to_string());
+    if let Some(size) = fs::metadata(path)
+        .ok()
+        .and_then(|meta| i64::try_from(meta.len()).ok())
+    {
+        installed.size_bytes = Some(size);
+    }
+    state.library.upsert_mod(installed);
 }
 
 fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppError> {
@@ -784,6 +822,7 @@ mod tests {
                 file_name: "car_v2.zip".to_string(),
                 replaces: Some("car_v1.zip".to_string()),
                 allow_warnings: true,
+                version: None,
             }],
         )
         .unwrap();
@@ -809,6 +848,53 @@ mod tests {
     }
 
     #[test]
+    fn update_remembers_the_version_of_its_page() {
+        // Обновили «Манекен» со STMods до 1.2: файл «Dummy v.0.20.2.zip», внутри
+        // архива версии нет. Версия — со страницы, а не 0.20.2 из имени.
+        let (temp, state) = setup();
+        let v1 = temp.path().join("v1.zip");
+        let v2 = temp.path().join("v2.zip");
+        make_zip(&v1, b"one");
+        make_zip(&v2, b"two, longer");
+        let installer = installer_for_test(&state);
+        assert!(
+            installer
+                .install_from_path(&v1, "dummy.zip", InstallOptions::default())
+                .success
+        );
+        state.library.upsert_mod(bmm_domain::library::InstalledMod {
+            id: "dummy.zip".to_string(),
+            name: "Crash Test Dummy".to_string(),
+            file_name: "dummy.zip".to_string(),
+            version: Some("1.1".to_string()),
+            size_bytes: Some(fs::metadata(&v1).unwrap().len() as i64),
+            installed_at_utc: system_clock()(),
+            enabled: true,
+        });
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: v2.display().to_string(),
+                file_name: "Dummy v.0.20.2.zip".to_string(),
+                replaces: Some("dummy.zip".to_string()),
+                allow_warnings: true,
+                version: Some("1.2".to_string()),
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+        let after = state.library.get_mod("dummy.zip").unwrap();
+        assert_eq!(after.file_name, "Dummy v.0.20.2.zip");
+        assert_eq!(after.version.as_deref(), Some("1.2"));
+        // Сверка с папкой версию не перепишет: размер в записи — от нового файла.
+        let on_disk = installer.layout().mods_dir.join("Dummy v.0.20.2.zip");
+        assert_eq!(
+            after.size_bytes,
+            Some(fs::metadata(on_disk).unwrap().len() as i64)
+        );
+    }
+
+    #[test]
     fn failed_undo_of_update_keeps_the_new_version() {
         // Старую версию вернуть не вышло — новая не должна пропасть вместе с ней:
         // раньше в папке не оставалось ни одной версии мода.
@@ -830,6 +916,7 @@ mod tests {
                 file_name: "car_v2.zip".to_string(),
                 replaces: Some("car_v1.zip".to_string()),
                 allow_warnings: true,
+                version: None,
             }],
         )
         .unwrap();
@@ -951,6 +1038,7 @@ mod tests {
                 file_name: "new_mod.zip".to_string(),
                 replaces: None,
                 allow_warnings: true,
+                version: None,
             }],
         )
         .unwrap();
@@ -1018,6 +1106,7 @@ mod tests {
                 file_name: "GMC_Acadia_GMT968.zip".to_string(),
                 replaces: Some("acadia.zip".to_string()),
                 allow_warnings: true,
+                version: None,
             }],
         )
         .unwrap();

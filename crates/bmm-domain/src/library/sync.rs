@@ -181,9 +181,9 @@ fn version_after_external_change(
     installed: &InstalledMod,
     disk: &DiskMod,
 ) -> Option<String> {
-    if let Some(version) = filename::from_file_name(&disk.file_name).version {
-        return Some(version);
-    }
+    // Страница мода, за которой следим, и размер её файла совпал — это её версия.
+    // Она важнее номера в имени файла: в имени бывает версия игры («Dummy v.0.20.2»
+    // — BeamNG 0.20), и мод навсегда выглядел старее страницы.
     for binding in store.bindings() {
         if binding.mod_id != installed.id || !binding.confirmed {
             continue;
@@ -200,7 +200,7 @@ fn version_after_external_change(
             return Some(version);
         }
     }
-    None
+    filename::from_file_name(&disk.file_name).version
 }
 
 fn migrate_mod(store: &dyn LibraryStore, old: &InstalledMod, new: &DiskMod) {
@@ -492,6 +492,39 @@ mod tests {
         let updated = store.mods().into_iter().next().unwrap();
         assert_eq!(updated.version.as_deref(), Some("1.5"));
         assert_eq!(updated.installed_at_utc, original.installed_at_utc);
+    }
+
+    #[test]
+    fn page_version_beats_a_game_version_in_the_file_name() {
+        // STMods отдаёт «Dummy v.0.20.2.zip»: 0.20.2 — версия игры, а у страницы — 1.2.
+        let store = InMemoryLibraryStore::new();
+        let old = installed("dummy", "dummy.zip", "Crash Test Dummy", 3_509_667);
+        store.upsert_mod(old.clone());
+        bind(&store, &old, "1.2", 3_576_892);
+        assert!(rename_file(
+            &store,
+            "dummy.zip",
+            "Dummy v.0.20.2.zip",
+            3_576_892
+        ));
+        assert_eq!(
+            store.get_mod("dummy").unwrap().version.as_deref(),
+            Some("1.2")
+        );
+        // Размер не совпал со страницей — тогда остаётся то, что в имени.
+        let other = installed("other", "other.zip", "Other", 1_000_000);
+        store.upsert_mod(other.clone());
+        bind(&store, &other, "3.0", 9_000_000);
+        assert!(rename_file(
+            &store,
+            "other.zip",
+            "other_v2.1.zip",
+            5_000_000
+        ));
+        assert_eq!(
+            store.get_mod("other").unwrap().version.as_deref(),
+            Some("2.1")
+        );
     }
 
     #[test]

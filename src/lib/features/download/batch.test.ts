@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DownloadRequest } from "#lib/ipc/download.js";
 import type { IncomingArchiveDto, IncomingItemDto } from "#lib/ipc/incoming.js";
-import { batchLine, collect, nextPosition, pickedItems, positionOf } from "./batch";
+import { batchLine, collect, installRequests, nextPosition, pickedItems, positionOf } from "./batch";
 
 function request(name: string): DownloadRequest {
   return {
@@ -60,5 +60,50 @@ describe("обновление пачкой", () => {
   it("пишет, где мы в очереди", () => {
     expect(batchLine(1, 5, 0)).toBe("Мод 2 из 5");
     expect(batchLine(1, 5, 1)).toBe("Мод 2 из 5 · скачано 1");
+  });
+});
+
+describe("версия страницы при установке", () => {
+  it("одно обновление в архиве получает версию страницы", () => {
+    // «Манекен» со STMods: файл «Dummy v.0.20.2.zip», страница — 1.2.
+    const requests = installRequests([
+      { request: { ...request("dummy"), latestVersion: "1.2" }, archive: archive([item("Dummy v.0.20.2.zip", { replaces: "dummy.zip" })]), selected: [true] },
+    ]);
+    expect(requests).toEqual([
+      {
+        zipPath: "C:/work/Dummy v.0.20.2.zip",
+        fileName: "Dummy v.0.20.2.zip",
+        replaces: "dummy.zip",
+        allowWarnings: true,
+        version: "1.2",
+      },
+    ]);
+  });
+
+  it("в наборе из нескольких обновлений версию не угадываем", () => {
+    const requests = installRequests([
+      { request: request("pack"), archive: archive([item("a.zip"), item("b.zip")]), selected: [true, true] },
+    ]);
+    expect(requests.every((entry) => !("version" in entry))).toBe(true);
+  });
+
+  it("новый мод из архива версию страницы не получает, порядок — как у pickedItems", () => {
+    const entries = [
+      collect(request("a"), archive([item("a.zip"), item("new.zip", { kind: "new", replaces: null })])),
+      collect(request("b"), archive([item("b.zip")], "битый")),
+      collect({ ...request("c"), latestVersion: " " }, archive([item("c.zip")])),
+    ];
+    const requests = installRequests(entries);
+    expect(requests.map((entry) => entry.fileName)).toEqual(
+      pickedItems(entries).map((entry) => entry.fileName),
+    );
+    expect(requests.find((entry) => entry.fileName === "a.zip")?.version).toBe("2.0");
+    expect(requests.find((entry) => entry.fileName === "new.zip")).not.toHaveProperty("version");
+    expect(requests.find((entry) => entry.fileName === "c.zip")).not.toHaveProperty("version");
+  });
+
+  it("без страницы (архив брошен на окно) — без версии", () => {
+    const requests = installRequests([{ request: null, archive: archive([item("x.zip")]), selected: [true] }]);
+    expect(requests[0]).not.toHaveProperty("version");
   });
 });

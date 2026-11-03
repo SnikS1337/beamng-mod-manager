@@ -47,6 +47,7 @@
   import {
     batchLine,
     collect,
+    installRequests,
     modsLabel,
     nextPosition,
     pickedItems,
@@ -274,14 +275,8 @@
     status = "Устанавливаем";
     detail = `${modsLabel(items.length)}: заменяем архивы, прошлые версии сохраняем.`;
     try {
-      const results = await incomingInstall(
-        items.map((item) => ({
-          zipPath: item.zipPath,
-          fileName: item.fileName,
-          replaces: item.replaces,
-          allowWarnings: true,
-        })),
-      );
+      // Тот же порядок, что у batchPicked: результаты сверяются с ним по индексу.
+      const results = await incomingInstall(installRequests(collected));
       const tickets: IncomingTicket[] = [];
       const failures: string[] = [];
       let warning: string | null = null;
@@ -383,12 +378,7 @@
     detail = "Заменяем архив и сохраняем прошлую версию.";
     try {
       const results = await incomingInstall(
-        picked.map((item) => ({
-          zipPath: item.zipPath,
-          fileName: item.fileName,
-          replaces: item.replaces,
-          allowWarnings: true,
-        })),
+        installRequests([{ request: context, archive, selected }]),
       );
       const tickets: IncomingTicket[] = [];
       const failures: { title: string; message: string }[] = [];
