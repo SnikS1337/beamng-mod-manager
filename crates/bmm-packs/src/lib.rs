@@ -3,6 +3,7 @@
 pub mod cache;
 pub mod duplicates;
 pub mod extract;
+pub mod fingerprint;
 pub mod incoming;
 pub mod inspect;
 pub mod install;

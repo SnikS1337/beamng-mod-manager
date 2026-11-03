@@ -40,8 +40,33 @@ pub(crate) fn note_caught(path: &Path) {
     caught.insert(path.to_path_buf(), false);
 }
 
+/// Размер и время докачанных окном файлов: если человек переименует или перенесёт
+/// такой файл в папке, сторож узнает его и не предложит второй раз.
+static FINISHED_STAMPS: Mutex<Vec<(u64, SystemTime)>> = Mutex::new(Vec::new());
+
+fn finished_stamp(len: u64, modified: Option<SystemTime>) -> bool {
+    let Some(modified) = modified else {
+        return false;
+    };
+    FINISHED_STAMPS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .contains(&(len, modified))
+}
+
 /// Окно загрузки докачало файл и передало его своей панели.
 pub(crate) fn note_finished(path: &Path) {
+    if let Ok(metadata) = std::fs::metadata(path)
+        && let Ok(modified) = metadata.modified()
+    {
+        let mut stamps = FINISHED_STAMPS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if stamps.len() >= 128 {
+            stamps.remove(0);
+        }
+        stamps.push((metadata.len(), modified));
+    }
     if let Some(finished) = CAUGHT
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -188,6 +213,14 @@ impl Scanner {
                     self.seen.insert(signature);
                     continue;
                 }
+                // После меток окна: иначе метка его файла осталась бы висеть.
+                if self.known_elsewhere(&signature) {
+                    // Тот же файл под другим именем: человек переименовал, перенёс или
+                    // скопировал уже предложенный архив. Второй раз не предлагаем.
+                    self.pending.remove(&path);
+                    self.seen.insert(signature);
+                    continue;
+                }
                 let size = metadata.len();
                 match self.pending.get(&path) {
                     Some((previous, since)) if *previous == size => {
@@ -207,6 +240,17 @@ impl Scanner {
         self.pending.retain(|path, _| path.is_file());
         self.seen.retain(|file| file.path.is_file());
         ready
+    }
+
+    /// Уже виденный или докачанный окном файл с тем же размером и временем, но под
+    /// другим путём. Время изменения при переименовании и переносе не меняется.
+    fn known_elsewhere(&self, file: &SeenFile) -> bool {
+        let Some(modified) = file.modified else {
+            return false;
+        };
+        self.seen.iter().any(|known| {
+            known.path != file.path && known.len == file.len && known.modified == Some(modified)
+        }) || finished_stamp(file.len, file.modified)
     }
 
     fn remember_existing(&mut self, folder: &Path) {
@@ -432,6 +476,126 @@ mod tests {
 
     /// Метки перехвата — общие на процесс; тесты, которые их трогают, идут по очереди.
     static CAUGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn renamed_archive_is_not_offered_again() {
+        // Было: человек переименовал предложенный архив в «Загрузках» — сторож видел
+        // «новый» файл и предлагал установить его второй раз.
+        let temp = tempfile::tempdir().unwrap();
+        let folder = [temp.path().to_path_buf()];
+        let path = temp.path().join("car.zip");
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        scanner.scan(&folder, start);
+        std::fs::write(&path, b"archive").unwrap();
+        scanner.scan(&folder, at(10));
+        assert_eq!(scanner.scan(&folder, at(20)), vec![path.clone()]);
+
+        let renamed = temp.path().join("car_v2.zip");
+        std::fs::rename(&path, &renamed).unwrap();
+        for ms in [30, 40, 1000] {
+            assert!(
+                scanner.scan(&folder, at(ms)).is_empty(),
+                "переименованный — тот же"
+            );
+        }
+        // Перенесли в другую наблюдаемую папку — тоже тот же.
+        let other = tempfile::tempdir().unwrap();
+        let both = [temp.path().to_path_buf(), other.path().to_path_buf()];
+        scanner.scan(&both, at(1100));
+        std::fs::rename(&renamed, other.path().join("car_v2.zip")).unwrap();
+        for ms in [1200, 1300, 2000] {
+            assert!(
+                scanner.scan(&both, at(ms)).is_empty(),
+                "перенесённый — тот же"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_of_an_offered_archive_is_not_offered_again() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = [temp.path().to_path_buf()];
+        let path = temp.path().join("car.zip");
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        scanner.scan(&folder, start);
+        std::fs::write(&path, b"archive").unwrap();
+        scanner.scan(&folder, at(10));
+        assert_eq!(scanner.scan(&folder, at(20)), vec![path.clone()]);
+        // Копия в Проводнике сохраняет время изменения.
+        let copy = temp.path().join("car - copy.zip");
+        std::fs::copy(&path, &copy).unwrap();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&copy)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        for ms in [30, 40, 1000] {
+            assert!(scanner.scan(&folder, at(ms)).is_empty());
+        }
+    }
+
+    #[test]
+    fn other_archive_of_the_same_size_is_still_offered() {
+        // Совпал только размер, время другое — это другой архив.
+        let temp = tempfile::tempdir().unwrap();
+        let folder = [temp.path().to_path_buf()];
+        let first = temp.path().join("a.zip");
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        scanner.scan(&folder, start);
+        std::fs::write(&first, b"same size 1").unwrap();
+        scanner.scan(&folder, at(10));
+        assert_eq!(scanner.scan(&folder, at(20)), vec![first.clone()]);
+        let second = temp.path().join("b.zip");
+        std::fs::write(&second, b"same size 2").unwrap();
+        let older =
+            std::fs::metadata(&first).unwrap().modified().unwrap() - Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&second)
+            .unwrap()
+            .set_modified(older)
+            .unwrap();
+        scanner.scan(&folder, at(30));
+        assert_eq!(scanner.scan(&folder, at(40)), vec![second]);
+    }
+
+    #[test]
+    fn window_archive_renamed_before_the_watcher_saw_it_is_not_offered() {
+        // Окно докачало файл, а человек сразу его переименовал — раньше, чем сторож
+        // успел заглянуть в папку. Панель окна архив уже взяла.
+        let _guard = CAUGHT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let folder = [temp.path().to_path_buf()];
+        let mut scanner = Scanner::new(Duration::from_millis(5));
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        scanner.scan(&folder, start);
+        let path = temp.path().join("from_window.zip");
+        note_caught(&path);
+        std::fs::write(&path, b"downloaded by the window, unique body").unwrap();
+        let unique = std::time::SystemTime::now() + Duration::from_secs(7 * 24 * 3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(unique)
+            .unwrap();
+        note_finished(&path);
+        std::fs::rename(&path, temp.path().join("renamed.zip")).unwrap();
+        for ms in [10, 20, 1000] {
+            assert!(scanner.scan(&folder, at(ms)).is_empty());
+        }
+    }
 
     #[test]
     fn reports_only_stable_new_archives() {

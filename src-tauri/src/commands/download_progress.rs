@@ -28,6 +28,16 @@ pub(crate) const STALL_LIMIT: Duration = Duration::from_secs(5 * 60);
 pub(crate) enum StopReason {
     TooBig,
     Stalled,
+    /// Файл загрузки пропал или стал недоступен: его удалили, переименовали,
+    /// перенесли или заняли другой программой, пока он качался.
+    FileGone,
+    NoSpace,
+    NameTooLong,
+    /// Антивирус или политика Windows не пропустили файл.
+    Blocked,
+    Network,
+    Server,
+    Crashed,
 }
 
 impl StopReason {
@@ -41,6 +51,47 @@ impl StopReason {
                 "Загрузка зависла",
                 "Пять минут не пришло ни байта — загрузку остановили. Попробуйте ещё раз.",
             ),
+            StopReason::FileGone => (
+                "Файл загрузки пропал",
+                "Пока архив качался, его файл удалили, переименовали, перенесли или открыли в другой программе. Скачайте ещё раз и не трогайте файл до конца загрузки.",
+            ),
+            StopReason::NoSpace => (
+                "Не хватило места на диске",
+                "Освободите место в папке загрузок и скачайте ещё раз.",
+            ),
+            StopReason::NameTooLong => (
+                "Слишком длинный путь к файлу",
+                "Выберите в настройках папку загрузок с путём покороче.",
+            ),
+            StopReason::Blocked => (
+                "Windows не пропустила файл",
+                "Антивирус или политика Windows заблокировали архив. Проверьте карантин антивируса.",
+            ),
+            StopReason::Network => ("Связь оборвалась", "Проверьте интернет и скачайте ещё раз."),
+            StopReason::Server => (
+                "Сайт оборвал загрузку",
+                "Сайт перестал отдавать файл. Попробуйте ещё раз или откройте страницу в браузере.",
+            ),
+            StopReason::Crashed => (
+                "Загрузчик упал",
+                "Встроенный браузер оборвал загрузку. Попробуйте ещё раз.",
+            ),
+        }
+    }
+
+    /// Причина обрыва по коду WebView2 (`COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON`).
+    /// `None` — оборвали сами (отмена, выход) или причины нет.
+    pub fn from_interrupt(code: i32) -> Option<Self> {
+        match code {
+            1 | 2 | 7 | 10 | 11 => Some(StopReason::FileGone),
+            3 | 5 => Some(StopReason::NoSpace),
+            4 => Some(StopReason::NameTooLong),
+            6 | 8 | 9 => Some(StopReason::Blocked),
+            12..=16 => Some(StopReason::Network),
+            17..=25 => Some(StopReason::Server),
+            29 => Some(StopReason::Crashed),
+            // 0 — нет причины; 26–28 — отмена, выход, пауза: это решил человек.
+            _ => None,
         }
     }
 }
@@ -57,6 +108,17 @@ pub(crate) fn take_stop_reason(path: &std::path::Path) -> Option<StopReason> {
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .remove(path)
+}
+
+/// Причина от WebView2 — если программа сама уже не назвала свою (зависла, велик):
+/// её отмена тоже приходит как обрыв.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn note_interrupt(path: std::path::PathBuf, reason: StopReason) {
+    let mut stopped = STOPPED.lock().unwrap_or_else(|error| error.into_inner());
+    if stopped.len() >= 64 {
+        stopped.clear();
+    }
+    stopped.entry(path).or_insert(reason);
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -173,12 +235,15 @@ mod platform {
     use std::time::{Duration, Instant};
 
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, ICoreWebView2_4, ICoreWebView2DownloadOperation,
+        COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED,
+        ICoreWebView2_4, ICoreWebView2DownloadOperation,
     };
-    use webview2_com::{BytesReceivedChangedEventHandler, DownloadStartingEventHandler};
+    use webview2_com::{
+        BytesReceivedChangedEventHandler, DownloadStartingEventHandler, StateChangedEventHandler,
+    };
     use windows_core::Interface;
 
-    use super::{ProgressMeter, StopReason, note_stop};
+    use super::{ProgressMeter, StopReason, note_interrupt, note_stop};
 
     type Active = Vec<(ICoreWebView2DownloadOperation, Arc<Mutex<ProgressMeter>>)>;
     thread_local! {
@@ -265,6 +330,31 @@ mod platform {
                                     .borrow_mut()
                                     .push((operation.clone(), Arc::clone(&meter)))
                             });
+                            // Обрыв: запоминаем причину от WebView2, чтобы панель сказала
+                            // правду, а не «сайт не отдал файл».
+                            let mut state_token = Default::default();
+                            operation.add_StateChanged(
+                                &StateChangedEventHandler::create(Box::new(|operation, _| {
+                                    let Some(operation) = operation else {
+                                        return Ok(());
+                                    };
+                                    let mut state = Default::default();
+                                    let mut reason = Default::default();
+                                    // SAFETY: оба вызова пишут одно значение по указателю.
+                                    let interrupted = unsafe {
+                                        operation.State(&mut state).is_ok()
+                                            && state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED
+                                            && operation.InterruptReason(&mut reason).is_ok()
+                                    };
+                                    if interrupted
+                                        && let Some(reason) = StopReason::from_interrupt(reason.0)
+                                    {
+                                        note_interrupt(PathBuf::from(file_of(&operation)), reason);
+                                    }
+                                    Ok(())
+                                })),
+                                &mut state_token,
+                            )?;
                             let app = app.clone();
                             let mut token = Default::default();
                             operation.add_BytesReceivedChanged(
@@ -441,6 +531,73 @@ mod tests {
         );
         // Вообще ни одного байта с начала — тоже зависла.
         assert!(ProgressMeter::started(start).stalled(at(start, 300_000)));
+    }
+
+    #[test]
+    fn webview_interrupt_codes_get_honest_reasons() {
+        // Было: что бы ни случилось, панель писала «Сайт не отдал файл» — даже когда
+        // файл удалили из «Загрузок» посреди загрузки.
+        assert_eq!(StopReason::from_interrupt(1), Some(StopReason::FileGone));
+        assert_eq!(StopReason::from_interrupt(2), Some(StopReason::FileGone));
+        assert_eq!(StopReason::from_interrupt(3), Some(StopReason::NoSpace));
+        assert_eq!(StopReason::from_interrupt(4), Some(StopReason::NameTooLong));
+        assert_eq!(StopReason::from_interrupt(6), Some(StopReason::Blocked));
+        assert_eq!(StopReason::from_interrupt(14), Some(StopReason::Network));
+        assert_eq!(StopReason::from_interrupt(22), Some(StopReason::Server));
+        assert_eq!(StopReason::from_interrupt(29), Some(StopReason::Crashed));
+        for own in [0, 26, 27, 28, 30, -1] {
+            assert_eq!(StopReason::from_interrupt(own), None, "{own}");
+        }
+        for code in 1..=29 {
+            if let Some(reason) = StopReason::from_interrupt(code) {
+                let (title, detail) = reason.texts();
+                assert!(!title.is_empty() && !detail.is_empty(), "{code}");
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupt_codes_match_webview2() {
+        use webview2_com::Microsoft::Web::WebView2::Win32::*;
+        assert_eq!(COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_FILE_FAILED.0, 1);
+        assert_eq!(COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE.0, 3);
+        assert_eq!(
+            COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG.0,
+            4
+        );
+        assert_eq!(COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_FILE_MALICIOUS.0, 6);
+        assert_eq!(
+            COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH.0,
+            11
+        );
+        assert_eq!(COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED.0, 12);
+        assert_eq!(
+            COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST.0,
+            16
+        );
+        assert_eq!(COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED.0, 17);
+        assert_eq!(
+            COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_SERVER_CROSS_ORIGIN_REDIRECT.0,
+            25
+        );
+        assert_eq!(COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED.0, 26);
+        assert_eq!(
+            COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_DOWNLOAD_PROCESS_CRASHED.0,
+            29
+        );
+    }
+
+    #[test]
+    fn own_reason_is_not_overwritten_by_the_webview() {
+        // Программа сама оборвала зависшую загрузку; WebView2 потом сообщает обрыв
+        // по-своему — причина остаётся нашей.
+        let path = std::path::PathBuf::from("own-reason.zip");
+        note_stop(path.clone(), StopReason::Stalled);
+        note_interrupt(path.clone(), StopReason::Network);
+        assert_eq!(take_stop_reason(&path), Some(StopReason::Stalled));
+        note_interrupt(path.clone(), StopReason::FileGone);
+        assert_eq!(take_stop_reason(&path), Some(StopReason::FileGone));
     }
 
     #[test]
