@@ -2,7 +2,7 @@
   import { SaveQueue } from "#lib/features/settings/saveQueue.js";
   import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount } from "svelte";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { beforeClose } from "#lib/shell/closeGuard.js";
   import { open } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import Check from "phosphor-svelte/lib/Check";
@@ -149,22 +149,14 @@
   onMount(() => {
     void boot();
     void loadAppUpdate();
-    if (isTauri()) {
-      // Окно закрывается без onDestroy: несохранённую правку дописываем до выхода.
-      void getCurrentWindow()
-        .onCloseRequested(async () => {
-          if (saveTimer) clearTimeout(saveTimer);
-          // Сначала дожидаемся идущего сохранения: правка, сделанная во время него,
-          // иначе терялась — окно закрывалось раньше, чем её успевали записать.
-          await saves.idle().catch(() => {});
-          if (dirty) await save(true).catch(() => {});
-        })
-        .then((stop) => {
-          if (disposed) stop();
-          else unlistenClose = stop;
-        })
-        .catch(() => {});
-    }
+    // Окно закрывается без onDestroy: несохранённую правку дописываем до выхода.
+    unlistenClose = beforeClose(async () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      // Сначала дожидаемся идущего сохранения: правка, сделанная во время него,
+      // иначе терялась — окно закрывалось раньше, чем её успевали записать.
+      await saves.idle().catch(() => {});
+      if (dirty) await save(true).catch(() => {});
+    });
     void listenAppUpdateProgress((value) => {
       updateProgress = value;
     }).then((stop) => {

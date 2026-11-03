@@ -25,15 +25,38 @@ describe("проверка архива и смена мода", () => {
 });
 
 describe("окно скачивания", () => {
-  it("смена мода отбрасывает идущую проверку архива", () => {
-    const page: string = readFileSync(
-      new URL("../../../routes/download/+page.svelte", import.meta.url),
-      "utf8",
-    );
+  const page: string = readFileSync(
+    new URL("../../../routes/download/+page.svelte", import.meta.url),
+    "utf8",
+  );
+
+  it("смена мода не трогает загрузку и проверку прошлого", () => {
+    // Было: «Обновить» у второго мода сбрасывал проверку и ход первого, архив
+    // первого терялся, а окно закрывалось после установки второго.
     const handler = page.slice(page.indexOf("listenDownloadContext((value) =>"));
-    const body = handler.slice(0, handler.indexOf("context = value"));
-    expect(body).toContain("checks.invalidate()");
-    expect(page).not.toMatch(/prepareToken/);
+    const body = handler.slice(0, handler.indexOf("})"));
+    expect(body).not.toContain("checks.invalidate()");
+    expect(body).not.toContain("resetArchive");
+  });
+
+  it("архив ставится для своего мода, ход — по своему файлу", () => {
+    expect(page).toContain("installRequests([{ request: reviewed, archive, selected }])");
+    expect(page).toContain("const owner = job.request ?? context;");
+    expect(page).toContain("tracked = track(tracked, value, Date.now())");
+  });
+
+  it("после установки окно закрывается, только если больше ничего не качается", () => {
+    const install = page.slice(page.indexOf("async function install()"));
+    expect(install.slice(0, install.indexOf("} catch"))).toContain("await finishReview(false)");
+    const finish = page.slice(page.indexOf("async function finishReview("));
+    const body = finish.slice(0, finish.indexOf("\n  }\n"));
+    expect(body.indexOf("downloading(jobs).length > 0")).toBeLessThan(body.indexOf("await close()"));
+  });
+
+  it("закрытие при идущей загрузке сначала спрашивает", () => {
+    const close = page.slice(page.indexOf("async function close()"));
+    expect(close.slice(0, close.indexOf("await closeNow()"))).toContain("closeQuestion(jobs, queue)");
+    expect(page).toContain("listenDownloadCloseAsked(");
   });
 });
 

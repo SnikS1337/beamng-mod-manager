@@ -378,6 +378,9 @@ pub fn run() {
             commands::download_window::download_panel_state,
             commands::download_window::download_ready,
             commands::download_window::download_close,
+            commands::download_window::download_jobs,
+            commands::download_window::download_cancel_all,
+            commands::download_window::download_focus,
             commands::updates::updates_open_check,
             commands::settings::settings_load,
             commands::settings::settings_save,
@@ -402,6 +405,11 @@ pub fn run() {
                 // В app.windows() входит и окно загрузки: оно создано обычным
                 // Window с дочерними webview и в webview_windows() не попадает.
                 let open: Vec<String> = app.windows().into_keys().collect();
+                if label == MAIN_WINDOW {
+                    // Программа закрывается: загрузки окна скачивания обрываем, а не
+                    // оставляем полуфайлы.
+                    commands::download_window::cancel_downloads(app);
+                }
                 for other in windows_to_close(&label, &open) {
                     if let Some(window) = app.get_webview_window(&other) {
                         let _ = window.destroy();

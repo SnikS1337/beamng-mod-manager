@@ -6,7 +6,7 @@ const MB = 1024 * 1024;
 describe("ход загрузки", () => {
   it("показывает проценты, объём и скорость", () => {
     const view = progressView(
-      { received: 78.4 * MB, total: 187 * MB, speed: 3.2 * MB },
+      { path: "mod.zip", received: 78.4 * MB, total: 187 * MB, speed: 3.2 * MB },
       1000,
       1500,
     );
@@ -16,19 +16,19 @@ describe("ход загрузки", () => {
   });
 
   it("без размера файла — только сколько скачано", () => {
-    const view = progressView({ received: 5 * MB, total: null, speed: 512 * 1024 }, 0, 0);
+    const view = progressView({ path: "mod.zip", received: 5 * MB, total: null, speed: 512 * 1024 }, 0, 0);
     expect(view.percent).toBeNull();
     expect(view.line).toBe("5,00 МБ скачано · 512 КБ/с");
   });
 
   it("пока скорости нет, её не выдумывает", () => {
-    const view = progressView({ received: MB, total: 10 * MB, speed: null }, 0, 0);
+    const view = progressView({ path: "mod.zip", received: MB, total: 10 * MB, speed: null }, 0, 0);
     expect(view.line).toBe("10 % · 1,00 МБ из 10,0 МБ");
   });
 
   it("замечает, что загрузка стоит", () => {
     const view = progressView(
-      { received: 20 * MB, total: 100 * MB, speed: 2 * MB },
+      { path: "mod.zip", received: 20 * MB, total: 100 * MB, speed: 2 * MB },
       0,
       STALL_AFTER_MS + 5000,
     );
@@ -38,7 +38,7 @@ describe("ход загрузки", () => {
   });
 
   it("докачанный файл не считается застрявшим", () => {
-    const view = progressView({ received: 100, total: 100, speed: 0 }, 0, 60_000);
+    const view = progressView({ path: "mod.zip", received: 100, total: 100, speed: 0 }, 0, 60_000);
     expect(view.stalled).toBe(false);
     expect(view.percent).toBe(100);
   });

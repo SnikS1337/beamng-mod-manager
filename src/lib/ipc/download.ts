@@ -2,16 +2,17 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  DownloadJob,
   DownloadPanelEvent,
   DownloadProgress,
-  DownloadReady,
   DownloadRequest,
 } from "./generated.js";
 
 export type {
+  DownloadJob,
+  DownloadJobState,
   DownloadPanelEvent,
   DownloadProgress,
-  DownloadReady,
   DownloadRequest,
 } from "./generated.js";
 
@@ -38,17 +39,54 @@ export async function downloadPanelState(): Promise<DownloadRequest | null> {
   return invoke<DownloadRequest | null>("download_panel_state");
 }
 
-/** Готовый архив, если событие пришло раньше, чем панель успела подписаться. */
-export async function downloadReady(): Promise<string | null> {
-  if (!isTauri()) return null;
-  return invoke<string | null>("download_ready");
+/** Докачанные архивы, если события пришли раньше, чем панель успела подписаться. */
+export async function downloadReady(): Promise<DownloadJob[]> {
+  if (!isTauri()) return [];
+  return invoke<DownloadJob[]>("download_ready");
+}
+
+/** Все загрузки окна скачивания: идущие, докачанные и оборванные. */
+export async function downloadJobs(): Promise<DownloadJob[]> {
+  if (!isTauri()) return [];
+  return invoke<DownloadJob[]>("download_jobs");
+}
+
+/** Оборвать идущие загрузки: человек решил выйти из программы. */
+export async function downloadCancelAll(): Promise<void> {
+  if (isTauri()) await invoke("download_cancel_all");
+}
+
+/** Показать окно скачивания поверх остальных. */
+export async function downloadFocus(): Promise<void> {
+  if (isTauri()) await invoke("download_focus");
 }
 
 export async function listenDownloadReady(
-  handler: (ready: DownloadReady) => void,
+  handler: (job: DownloadJob) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadReady>("download://ready", (event) => handler(event.payload));
+  return listen<DownloadJob>("download://ready", (event) => handler(event.payload));
+}
+
+export async function listenDownloadJobs(
+  handler: (jobs: DownloadJob[]) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DownloadJob[]>("download://jobs", (event) => handler(event.payload));
+}
+
+/** Окно закрывают (Alt+F4), а файл ещё качается: панель должна спросить. */
+export async function listenDownloadCloseAsked(handler: () => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen("download://close-asked", () => handler());
+}
+
+/** Во время пачки нажали «Обновить» у другого мода: он встал в конец очереди. */
+export async function listenDownloadBatchAdded(
+  handler: (request: DownloadRequest) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DownloadRequest>("download://batch-added", (event) => handler(event.payload));
 }
 
 export async function listenDownloadContext(

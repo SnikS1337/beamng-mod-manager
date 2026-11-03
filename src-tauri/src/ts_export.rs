@@ -40,7 +40,9 @@ import type {
 fn declarations(cfg: &Config) -> Vec<String> {
     use crate::commands::app_update::{AppUpdateDto, AppUpdateManifestDto, AppUpdateStateDto};
     use crate::commands::download_progress::DownloadProgress;
-    use crate::commands::download_window::{DownloadPanelEvent, DownloadRequest};
+    use crate::commands::download_window::{
+        DownloadJob, DownloadJobState, DownloadPanelEvent, DownloadRequest,
+    };
     use crate::commands::downloads::DownloadReady;
     use crate::commands::incoming::{
         IncomingArchiveDto, IncomingFindingDto, IncomingInstallRequest, IncomingInstallResult,
@@ -67,6 +69,8 @@ fn declarations(cfg: &Config) -> Vec<String> {
         DownloadRequest::decl(cfg),
         DownloadPanelEvent::decl(cfg),
         DownloadProgress::decl(cfg),
+        DownloadJobState::decl(cfg),
+        DownloadJob::decl(cfg),
         DownloadReady::decl(cfg),
         AppUpdateManifestDto::decl(cfg),
         AppUpdateStateDto::decl(cfg),

@@ -34,17 +34,31 @@
     downloadBatch,
     downloadBatchGoto,
     downloadClose,
+    downloadJobs,
     downloadPanelState,
     downloadReady,
     listenDownloadBatch,
+    listenDownloadBatchAdded,
+    listenDownloadCloseAsked,
     listenDownloadContext,
+    listenDownloadJobs,
     listenDownloadProgress,
     listenDownloadReady,
     listenDownloadState,
-    type DownloadProgress,
+    type DownloadJob,
     type DownloadRequest,
   } from "#lib/ipc/download.js";
-  import { progressView } from "#lib/features/download/progress.js";
+  import {
+    closeQuestion,
+    downloading,
+    jobForPage,
+    jobName,
+    jobRows,
+    restarted,
+    track,
+    viewOf,
+    type Tracked,
+  } from "#lib/features/download/jobs.js";
   import {
     batchLine,
     collect,
@@ -67,8 +81,18 @@
   let inspecting = $state(false);
   let installing = $state(false);
   let installError = $state<string | null>(null);
-  let handledPath = "";
-  let progress = $state<DownloadProgress | null>(null);
+  // Загрузок бывает несколько сразу: у каждой свой мод и свой ход. Докачанные архивы
+  // проверяются по одному, остальные ждут в очереди.
+  let jobs = $state<DownloadJob[]>([]);
+  let tracked = $state<Record<string, Tracked>>({});
+  let queue = $state<DownloadJob[]>([]);
+  /** Загрузка, чей архив сейчас проверяем или показываем к установке. */
+  let reviewing = $state<DownloadJob | null>(null);
+  /** Архивы, уже взятые в проверку: второй раз одно и то же не показываем. */
+  const taken = new Set<string>();
+  /** Оборванные загрузки, о которых уже сказано в шагах. */
+  let seenFailures = $state(new Set<string>());
+  let closeAsk = $state<string | null>(null);
   // Обновление пачкой: страницы по очереди, архивы копятся, установка — одна в конце.
   let batch = $state<DownloadRequest[]>([]);
   let collected = $state<Collected[]>([]);
@@ -76,18 +100,24 @@
   const inBatch = $derived(batch.length > 1);
   const position = $derived(positionOf(batch, context));
   const batchPicked = $derived(pickedItems(collected));
-  let changedAt = $state(0);
   let now = $state(Date.now());
 
-  // Ход видно, пока файл качается; после него — проверка и установка.
+  /** Мод, к которому относится показанный архив: страница могла уже смениться. */
+  const reviewed = $derived(reviewing?.request ?? context);
+  const pageJob = $derived(jobForPage(jobs, context?.pageUrl));
+  // Ход видно, пока файл открытой страницы качается; после него — проверка и установка.
   const loading = $derived(
-    step === 2 && !error && progress !== null ? progressView(progress, changedAt, now) : null,
+    step === 2 && !error && pageJob && !reviewing ? viewOf(pageJob, tracked, now) : null,
   );
-
-  function onProgress(value: DownloadProgress): void {
-    if (!progress || value.received !== progress.received) changedAt = Date.now();
-    progress = value;
-  }
+  const rows = $derived(
+    jobRows(jobs, {
+      currentPage: context?.pageUrl,
+      reviewing: reviewing?.path ?? null,
+      queued: queue.map((job) => job.path),
+      seen: seenFailures,
+    }),
+  );
+  const busy = $derived(!!reviewing || inspecting || installing);
 
   const steps = [
     {
@@ -163,9 +193,60 @@
 
   const checks = new StaleGuard();
 
-  async function prepare(path: string): Promise<void> {
-    if (!path || path === handledPath || installing) return;
-    handledPath = path;
+  /** Докачался архив: в очередь на проверку. */
+  function onReady(job: DownloadJob): void {
+    if (!job.path || taken.has(job.path)) return;
+    taken.add(job.path);
+    queue = [...queue, job];
+    pump();
+  }
+
+  /** Следующий архив из очереди — если сейчас ничего не проверяем. */
+  function pump(): void {
+    if (reviewing || inspecting || installing) return;
+    const [next, ...rest] = queue;
+    if (!next) return;
+    queue = rest;
+    void prepare(next);
+  }
+
+  /** Шаги открытой страницы: качается её файл или ещё нет. */
+  function showPage(): void {
+    error = null;
+    const others = downloading(jobs).filter((job) => job.path !== pageJob?.path);
+    const also = others.length > 0 ? ` Ещё качается: ${others.map((job) => `«${jobName(job)}»`).join(", ")}.` : "";
+    if (pageJob) {
+      step = 2;
+      status = "Файл скачивается";
+      detail = `Дождитесь окончания загрузки — менеджер заберёт файл сам.${also}`;
+    } else {
+      step = 1;
+      status = "Нажмите Download на странице";
+      detail = `Скачайте архив на странице — остальное программа сделает сама.${also}`;
+    }
+  }
+
+  /**
+   * С архивом закончили (установили, отменили, поставить нечего): следующий архив,
+   * иначе — снова страница, пока что-то качается, иначе окно закрывается.
+   */
+  async function finishReview(discard = true): Promise<void> {
+    resetArchive(discard);
+    reviewing = null;
+    if (queue.length > 0) {
+      pump();
+      return;
+    }
+    if (downloading(jobs).length > 0) {
+      showPage();
+      return;
+    }
+    await close();
+  }
+
+  async function prepare(job: DownloadJob): Promise<void> {
+    const path = job.path;
+    reviewing = job;
     const token = checks.begin();
     resetArchive();
     inspecting = true;
@@ -180,8 +261,12 @@
         return;
       }
       if (!found) throw new Error("Не удалось проверить архив.");
-      if (inBatch && context) {
-        keepForBatch(context, found);
+      const owner = job.request ?? context;
+      if (inBatch && owner) {
+        reviewing = null;
+        keepForBatch(owner, found);
+        // После finally: пока флаг проверки поднят, очередь не сдвинется.
+        queueMicrotask(pump);
         return;
       }
       archive = found;
@@ -203,10 +288,12 @@
       }
     } catch (reason) {
       if (checks.isCurrent(token)) {
-        handledPath = "";
         installError = errorText(reason);
         status = "Не удалось проверить архив";
-        detail = installError;
+        detail = `${job.request?.modName ? `«${job.request.modName}»: ` : ""}${installError}`;
+        // Очередь не должна встать: следующий архив проверяется дальше.
+        reviewing = null;
+        if (queue.length > 0) queueMicrotask(pump);
       }
     } finally {
       if (checks.isCurrent(token)) inspecting = false;
@@ -280,7 +367,6 @@
 
   function skipMod(): void {
     if (installing || inspecting) return;
-    handledPath = "";
     advance(`«${context?.modName ?? "Мод"}» пропущен`);
   }
 
@@ -405,7 +491,7 @@
   }
 
   function successText(count: number): string {
-    const name = context?.modName ?? "мод";
+    const name = reviewed?.modName ?? "мод";
     if (count === 1) {
       return picked[0]?.kind === "update" ? `Обновлён «${name}»` : `Установлен «${name}»`;
     }
@@ -421,7 +507,7 @@
     detail = "Заменяем архив и сохраняем прошлую версию.";
     try {
       const results = await incomingInstall(
-        installRequests([{ request: context, archive, selected }]),
+        installRequests([{ request: reviewed, archive, selected }]),
       );
       const tickets: IncomingTicket[] = [];
       const failures: { title: string; message: string }[] = [];
@@ -468,7 +554,8 @@
       detail = warning ?? "Библиотека обновлена, прошлая версия осталась в копиях.";
       await new Promise((resolve) => setTimeout(resolve, 700));
       installing = false;
-      await close();
+      // Окно закрывается, только если больше ничего не качается и не ждёт проверки.
+      await finishReview(false);
     } catch (reason) {
       installError = errorText(reason);
       status = "Установка не удалась";
@@ -477,12 +564,26 @@
     }
   }
 
+  /** Закрыть окно. Если что-то ещё качается или ждёт установки — сначала спросить. */
   async function close(): Promise<void> {
     if (installing) return;
+    const question = closeQuestion(jobs, queue);
+    if (question) {
+      closeAsk = question;
+      return;
+    }
+    await closeNow();
+  }
+
+  /** «Прервать и закрыть»: загрузки обрываются, недокачанные файлы удаляются. */
+  async function closeNow(): Promise<void> {
+    if (installing) return;
+    closeAsk = null;
     const work = archive?.workDir;
     archive = null;
     selected = [];
-    handledPath = "";
+    reviewing = null;
+    queue = [];
     if (work) void incomingDiscard(work).catch(() => {});
     discardCollected();
     batch = [];
@@ -512,11 +613,11 @@
       .catch(() => {});
     // Раз в секунду: заметить, что загрузка встала, даже если событий больше нет.
     const ticker = setInterval(() => {
-      if (progress) now = Date.now();
+      if (downloading(jobs).length > 0) now = Date.now();
     }, 1000);
     stops.push(() => clearInterval(ticker));
     void listenDownloadProgress((value) => {
-      if (!disposed) onProgress(value);
+      if (!disposed) tracked = track(tracked, value, Date.now());
     })
       .then((stop) => {
         if (disposed) stop();
@@ -541,17 +642,10 @@
       })
       .catch(() => {});
     void listenDownloadContext((value) => {
-      // Идущая проверка — про прошлый мод: её ответ отбрасываем.
-      checks.invalidate();
-      inspecting = false;
+      // Открыли другой мод. Загрузки и проверка прошлого идут дальше: архив
+      // проверяется для своего мода, а не для того, что сейчас на странице.
       context = value;
-      progress = null;
-      handledPath = "";
-      resetArchive();
-      step = 1;
-      status = "Нажмите Download на странице";
-      detail = "Скачайте архив на странице — остальное программа сделает сама.";
-      error = null;
+      if (!busy) showPage();
     })
       .then((stop) => {
         if (disposed) stop();
@@ -559,9 +653,8 @@
       })
       .catch(() => {});
     void listenDownloadState((value) => {
-      // Новая загрузка начинается с нуля: прошлый ход не должен мелькнуть.
-      if (value.step !== 2 || value.error) progress = null;
-      if (value.step === 2 && step !== 2) progress = null;
+      // Пока на экране архив, шаги — про него; загрузка страницы видна в списке.
+      if (busy) return;
       step = value.step;
       status = value.title;
       detail = value.detail;
@@ -572,17 +665,72 @@
         else stops.push(stop);
       })
       .catch(() => {});
-    void listenDownloadReady((ready) => {
-      if (!disposed) void prepare(ready.path);
+    void listenDownloadReady((job) => {
+      if (!disposed) onReady(job);
     })
       .then((stop) => {
         if (disposed) stop();
         else stops.push(stop);
       })
       .catch(() => {});
+    void listenDownloadJobs((value) => {
+      if (disposed) return;
+      // Файл под прежним именем качается заново: прошлые отметки к нему не относятся.
+      const fresh = restarted(jobs, value);
+      if (fresh.length > 0) {
+        for (const path of fresh) taken.delete(path);
+        const left = { ...tracked };
+        for (const path of fresh) delete left[path];
+        tracked = left;
+        seenFailures = new Set([...seenFailures].filter((path) => !fresh.includes(path)));
+      }
+      jobs = value;
+      // Обрыв загрузки открытой страницы показан в шагах — если на экране не архив.
+      if (!busy) {
+        const here = value.filter(
+          (job) => job.state === "failed" && job.request?.pageUrl === context?.pageUrl,
+        );
+        if (here.some((job) => !seenFailures.has(job.path))) {
+          seenFailures = new Set([...seenFailures, ...here.map((job) => job.path)]);
+        }
+      }
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
+      })
+      .catch(() => {});
+    void downloadJobs()
+      .then((value) => {
+        if (!disposed && jobs.length === 0) jobs = value;
+      })
+      .catch(() => {});
     void downloadReady()
-      .then((path) => {
-        if (!disposed && path) void prepare(path);
+      .then((ready) => {
+        if (!disposed) for (const job of ready) onReady(job);
+      })
+      .catch(() => {});
+    void listenDownloadCloseAsked(() => {
+      if (!disposed) void close();
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
+      })
+      .catch(() => {});
+    void listenDownloadBatchAdded((request) => {
+      if (disposed) return;
+      if (!batch.some((queued) => queued.pageUrl === request.pageUrl)) {
+        batch = [...batch, request];
+      }
+      if (batchDone) {
+        batchDone = false;
+        advance(`«${request.modName}» добавлен в очередь`);
+      }
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stops.push(stop);
       })
       .catch(() => {});
     return () => {
@@ -634,6 +782,16 @@
   </div>
 
   <aside class="steps" aria-label="Этапы загрузки">
+    {#if closeAsk}
+      <div class="close-ask" role="alertdialog" aria-label="Закрыть окно?" tabindex="-1">
+        <b>Закрыть окно?</b>
+        <span>{closeAsk}</span>
+        <div class="batch-actions">
+          <button class="danger" type="button" onclick={() => void closeNow()}>Прервать и закрыть</button>
+          <button class="ghost" type="button" onclick={() => (closeAsk = null)}>Не закрывать</button>
+        </div>
+      </div>
+    {/if}
     {#if inBatch}
       <section class="batch" aria-label="Обновление пачкой">
         <b>{batchDone ? `Скачано ${collected.length} из ${batch.length}` : batchLine(position, batch.length, collected.length)}</b>
@@ -706,6 +864,34 @@
       {/if}
     </div>
 
+    {#if rows.length > 0}
+      <section class="jobs" aria-label="Загрузки">
+        <div class="steps-title">ЗАГРУЗКИ</div>
+        {#each rows as row (row.job.path)}
+          {@const view = row.job.state === "downloading" ? viewOf(row.job, tracked, now) : null}
+          <div class="job" class:failed={row.job.state === "failed"}>
+            <b>{jobName(row.job)}</b>
+            {#if view}
+              <div
+                class="bar"
+                class:indeterminate={view.percent === null}
+                role="progressbar"
+                aria-label={`Ход загрузки «${jobName(row.job)}»`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={view.percent ?? undefined}
+              >
+                <span style={`width:${view.percent ?? 100}%`}></span>
+              </div>
+              <small class="mono">{view.line}</small>
+            {:else}
+              <small>{row.text}</small>
+            {/if}
+          </div>
+        {/each}
+      </section>
+    {/if}
+
     {#if inspecting}
       <div class="ready-state">Проверяем архив…</div>
     {:else if inBatch && batchDone}
@@ -765,25 +951,25 @@
         </div>
         {#if archive.problem}
           <p class="problem">{archive.problem}</p>
-          <button class="primary" type="button" onclick={() => void close()}>Понятно</button>
+          <button class="primary" type="button" onclick={() => void finishReview()}>Понятно</button>
         {:else if sameAsInstalled(archive)}
           <p class="problem">Это та же версия, что уже стоит, — ставить нечего.</p>
           <div class="ready-actions">
-            {#if context?.modId && !sameVersionDismissed}
+            {#if reviewed?.modId && !sameVersionDismissed}
               <button
                 class="primary"
                 type="button"
                 disabled={dismissing}
-                onclick={() => context && void dismissSame([context])}
+                onclick={() => reviewed && void dismissSame([reviewed])}
               >
                 Больше не предлагать эту версию
               </button>
             {/if}
-            <button class="ghost" type="button" onclick={() => void close()}>Закрыть</button>
+            <button class="ghost" type="button" onclick={() => void finishReview()}>Закрыть</button>
           </div>
         {:else if !items.some(installable)}
           <p class="problem">В архиве нет модов, которые можно установить.</p>
-          <button class="primary" type="button" onclick={() => void close()}>Понятно</button>
+          <button class="primary" type="button" onclick={() => void finishReview()}>Понятно</button>
         {:else}
           <div class="ready-items">
             {#each items as item, index (item.zipPath + index)}
@@ -824,7 +1010,7 @@
             >
               {installing ? "Устанавливаем…" : installLabel}
             </button>
-            <button class="ghost" type="button" disabled={installing} onclick={() => void close()}>
+            <button class="ghost" type="button" disabled={installing} onclick={() => void finishReview()}>
               Отмена
             </button>
           </div>
@@ -1132,6 +1318,74 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-top: 4px;
+  }
+
+  /* Закрыть окно, пока что-то качается: сначала спросить. */
+  .close-ask {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--danger);
+    border-radius: 9px;
+    background: var(--danger-soft);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .close-ask b {
+    font-size: 13px;
+  }
+
+  .close-ask button {
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--foreground);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .close-ask .danger {
+    border-color: var(--danger);
+    background: var(--danger);
+    color: #fff;
+  }
+
+  /* Загрузки других модов: каждая со своим ходом. */
+  .jobs {
+    display: grid;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .job {
+    display: grid;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-2);
+    font-size: 12px;
+  }
+
+  .job b {
+    overflow: hidden;
+    font-size: 12.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .job small {
+    color: var(--muted-foreground);
+  }
+
+  .job.failed small {
+    color: var(--danger);
   }
 
   .ready-check-row {
