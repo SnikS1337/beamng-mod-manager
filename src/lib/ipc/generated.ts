@@ -39,6 +39,11 @@ export type DownloadPanelEvent = { step: number, title: string, detail: string, 
 
 export type DownloadProgress = { 
 /**
+ * Какой файл качается: загрузок бывает несколько сразу, и ход одной не должен
+ * попасть в полоску другой.
+ */
+path: string, 
+/**
  * Скачано байт.
  */
 received: number, 
@@ -50,6 +55,10 @@ total: number | null,
  * Байт в секунду за последние секунды; `None`, пока считать не из чего.
  */
 speed: number | null, };
+
+export type DownloadJobState = "downloading" | "done" | "failed";
+
+export type DownloadJob = { path: string, fileName: string, request: DownloadRequest | null, state: DownloadJobState, error: string | null, };
 
 export type DownloadReady = { path: string, };
 

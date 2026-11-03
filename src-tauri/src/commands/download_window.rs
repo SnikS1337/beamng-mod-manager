@@ -1,7 +1,6 @@
 //! Окно загрузки обновления: слева страница мода/файлообменника,
 //! справа — панель с этапами. Оба вида — child webview одного нативного окна.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -55,88 +54,230 @@ pub(crate) struct DownloadPanelEvent {
 }
 
 static CONTEXT: Mutex<Option<DownloadRequest>> = Mutex::new(None);
-static READY: Mutex<Option<String>> = Mutex::new(None);
 /// Обновление пачкой: страницы модов по очереди, установка — одна, в конце.
 static BATCH: Mutex<Vec<DownloadRequest>> = Mutex::new(Vec::new());
-/// Перехваченные загрузки окна и страница мода, ради которой каждая началась.
-static INTERCEPTED: LazyLock<Mutex<HashMap<PathBuf, Option<String>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Загрузки окна: их бывает несколько сразу — человек может открыть следующий мод,
+/// пока качается прошлый. У каждой свой мод, свой ход и свой итог.
+static JOBS: LazyLock<Mutex<Jobs>> = LazyLock::new(|| Mutex::new(Jobs::default()));
 
-fn mark_intercepted(path: &Path, page_url: Option<String>) {
-    let mut paths = INTERCEPTED
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if paths.len() >= 128 {
-        paths.clear();
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum DownloadJobState {
+    Downloading,
+    Done,
+    Failed,
+}
+
+/// Загрузка окна: файл, мод, ради которого она началась, и чем кончилась.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadJob {
+    pub path: String,
+    pub file_name: String,
+    pub request: Option<DownloadRequest>,
+    pub state: DownloadJobState,
+    pub error: Option<String>,
+}
+
+/// Сколько закончившихся загрузок помнить: панели хватает, память не растёт.
+const JOBS_KEEP: usize = 64;
+
+#[derive(Debug, Default)]
+pub(crate) struct Jobs {
+    items: Vec<DownloadJob>,
+}
+
+impl Jobs {
+    /// Окно начало качать файл для этого мода. Тот же путь — новая загрузка.
+    fn start(&mut self, path: &Path, request: Option<DownloadRequest>) {
+        let key = path.display().to_string();
+        self.items.retain(|job| job.path != key);
+        while self.items.len() >= JOBS_KEEP {
+            match self
+                .items
+                .iter()
+                .position(|job| job.state != DownloadJobState::Downloading)
+            {
+                Some(index) => {
+                    self.items.remove(index);
+                }
+                None => break,
+            }
+        }
+        self.items.push(DownloadJob {
+            file_name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: key,
+            request,
+            state: DownloadJobState::Downloading,
+            error: None,
+        });
     }
-    paths.insert(path.to_path_buf(), page_url);
+
+    /// Загрузка кончилась. `None` — файл не наш или его итог уже записан: второй
+    /// раз один архив панели не отдаём.
+    fn finish(&mut self, path: &Path, outcome: Result<(), String>) -> Option<DownloadJob> {
+        let key = path.display().to_string();
+        let job = self
+            .items
+            .iter_mut()
+            .find(|job| job.path == key && job.state == DownloadJobState::Downloading)?;
+        match outcome {
+            Ok(()) => job.state = DownloadJobState::Done,
+            Err(error) => {
+                job.state = DownloadJobState::Failed;
+                job.error = Some(error);
+            }
+        }
+        Some(job.clone())
+    }
+
+    /// Файлы, которые ещё качаются.
+    fn downloading(&self) -> Vec<PathBuf> {
+        self.items
+            .iter()
+            .filter(|job| job.state == DownloadJobState::Downloading)
+            .map(|job| PathBuf::from(&job.path))
+            .collect()
+    }
+
+    fn ready(&self) -> Vec<DownloadJob> {
+        self.items
+            .iter()
+            .filter(|job| job.state == DownloadJobState::Done)
+            .cloned()
+            .collect()
+    }
+
+    fn snapshot(&self) -> Vec<DownloadJob> {
+        self.items.clone()
+    }
 }
 
-/// `None` — загрузка не наша; `Some(страница)` — наша, начатая для этой страницы мода.
-fn take_intercepted(path: &Path) -> Option<Option<String>> {
-    INTERCEPTED
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(path)
+fn jobs() -> std::sync::MutexGuard<'static, Jobs> {
+    JOBS.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-fn current_page() -> Option<String> {
+/// Список загрузок — панели окна и главному окну: там видно, что что-то качается.
+fn emit_jobs(app: &AppHandle) {
+    let list = jobs().snapshot();
+    let _ = app.emit_to(PANEL_LABEL, "download://jobs", list.clone());
+    let _ = app.emit_to(MAIN_LABEL, "download://jobs", list);
+}
+
+/// Ход загрузки — туда же: в окно и в главное окно. Байты по ходу отдаёт только
+/// WebView2 на Windows.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn emit_progress(
+    app: &AppHandle,
+    progress: crate::commands::download_progress::DownloadProgress,
+) {
+    let _ = app.emit_to(PANEL_LABEL, "download://progress", progress.clone());
+    let _ = app.emit_to(MAIN_LABEL, "download://progress", progress);
+}
+
+const MAIN_LABEL: &str = "main";
+
+fn current_request() -> Option<DownloadRequest> {
     CONTEXT
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .as_ref()
-        .map(|request| request.page_url.clone())
+        .clone()
 }
 
-/// Архив докачался для того мода, что сейчас открыт в окне. Загрузка прошлого мода,
-/// закончившаяся после перехода к следующему, попала бы в его панель и в пачке
-/// встала бы вместо него.
+/// Загрузка начата на той странице, что сейчас открыта в окне. Сообщения об ошибке
+/// прошлого мода не должны лечь в шаги текущего.
 fn for_current_mod(started_for: Option<&str>, current: Option<&str>) -> bool {
     started_for == current
 }
 
+fn page_of(request: Option<&DownloadRequest>) -> Option<&str> {
+    request.map(|request| request.page_url.as_str())
+}
+
 #[tauri::command]
 pub fn download_panel_state() -> Option<DownloadRequest> {
-    CONTEXT
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone()
+    current_request()
 }
 
-/// Готовый архив для панели: на случай, если событие пришло до её загрузки.
+/// Докачанные архивы для панели: на случай, если события пришли до её загрузки.
 #[tauri::command]
-pub fn download_ready() -> Option<String> {
-    READY
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone()
+pub fn download_ready() -> Vec<DownloadJob> {
+    jobs().ready()
 }
 
-fn clear_ready() {
-    *READY.lock().unwrap_or_else(|error| error.into_inner()) = None;
+/// Все загрузки окна: панели и главному окну после перезагрузки страницы.
+#[tauri::command]
+pub fn download_jobs() -> Vec<DownloadJob> {
+    jobs().snapshot()
 }
 
-/// Сессия окна закончилась: панель, контекст и метки перехвата больше не нужны.
+/// Сессия окна закончилась: панель, контекст и загрузки больше не нужны.
 /// Незаконченная загрузка после этого снова видна сторожу «Загрузок».
 fn clear_session() {
-    clear_ready();
     BATCH
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .clear();
     *CONTEXT.lock().unwrap_or_else(|error| error.into_inner()) = None;
-    INTERCEPTED
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
+    *jobs() = Jobs::default();
     crate::commands::downloads::forget_caught();
+}
+
+/// Оборвать загрузки, которые ещё идут, и убрать недокачанные файлы. Человек сам
+/// решил закрыть окно или программу — иначе файл качался бы дальше без хозяина
+/// и пропадал при выходе.
+pub(crate) fn cancel_downloads(app: &AppHandle) {
+    let unfinished = jobs().downloading();
+    if unfinished.is_empty() {
+        return;
+    }
+    if let Some(site) = app.get_webview(SITE_LABEL) {
+        crate::commands::download_progress::cancel_all(&site);
+    }
+    // WebView2 обычно сам удаляет оборванный файл; если он ещё держит его, пробуем
+    // ещё несколько раз.
+    std::thread::spawn(move || {
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(700));
+            let mut left = false;
+            for path in &unfinished {
+                if path.exists() && std::fs::remove_file(path).is_err() {
+                    left = true;
+                }
+            }
+            if !left {
+                break;
+            }
+        }
+    });
 }
 
 #[tauri::command]
 pub fn download_close(app: AppHandle) {
+    cancel_downloads(&app);
     clear_session();
+    emit_jobs(&app);
     if let Some(window) = app.get_window(WINDOW_LABEL) {
         let _ = window.close();
+    }
+}
+
+/// Главное окно: «прервать загрузки и выйти».
+#[tauri::command]
+pub fn download_cancel_all(app: AppHandle) {
+    cancel_downloads(&app);
+}
+
+/// Главное окно: показать окно загрузки.
+#[tauri::command]
+pub fn download_focus(app: AppHandle) {
+    if let Some(window) = app.get_window(WINDOW_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
@@ -149,18 +290,48 @@ pub fn download_batch() -> Vec<DownloadRequest> {
         .clone()
 }
 
+/// Окно ведёт пачку: новый мод встаёт в её конец, а не уводит окно со страницы,
+/// которую человек сейчас качает. `false` — пачки нет, мод открывается как обычно.
+fn add_to_batch(batch: &mut Vec<DownloadRequest>, request: &DownloadRequest) -> bool {
+    if batch.is_empty() {
+        return false;
+    }
+    if !batch
+        .iter()
+        .any(|queued| queued.page_url == request.page_url)
+    {
+        batch.push(request.clone());
+    }
+    true
+}
+
 #[tauri::command]
 pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(), AppError> {
-    BATCH
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
-    // Окно могло вести пачку: панель должна узнать, что очередь кончилась.
-    let _ = app.emit_to(
-        PANEL_LABEL,
-        "download://batch",
-        Vec::<DownloadRequest>::new(),
-    );
+    let queued = {
+        let url = Url::parse(&request.page_url)
+            .map_err(|_| AppError::new("url", "Некорректный адрес страницы мода."))?;
+        if !page_url_allowed(&url) {
+            return Err(AppError::new(
+                "url",
+                "Открывать можно только внешние страницы http и https.",
+            ));
+        }
+        let mut batch = BATCH.lock().unwrap_or_else(|error| error.into_inner());
+        add_to_batch(&mut batch, &request)
+    };
+    if queued && app.get_window(WINDOW_LABEL).is_some() {
+        let _ = app.emit_to(PANEL_LABEL, "download://batch-added", request);
+        download_focus(app);
+        return Ok(());
+    }
+    if queued {
+        // Окна нет, а очередь осталась: сессия кончилась нечисто — начинаем заново.
+        BATCH
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+    }
+    // Загрузки прошлых модов идут дальше: окно только открывает новую страницу.
     open_request(app, request).await
 }
 
@@ -211,7 +382,6 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
         ));
     }
     *CONTEXT.lock().unwrap_or_else(|error| error.into_inner()) = Some(request.clone());
-    clear_ready();
     let settings = app
         .state::<std::sync::Arc<crate::state::AppState>>()
         .settings
@@ -252,10 +422,19 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
         .map_err(|error| AppError::new("window", error.to_string()))?;
     // Окно могли закрыть не кнопкой панели (Alt+F4, выход из программы):
     // метки перехвата не должны пережить сессию окна.
-    window.on_window_event(|event| {
-        if matches!(event, tauri::WindowEvent::Destroyed) {
-            clear_session();
+    let close_app = app.clone();
+    window.on_window_event(move |event| match event {
+        // Alt+F4 при идущей загрузке: сначала спросить в панели, иначе файл
+        // качался бы дальше без окна и пропадал при выходе из программы.
+        tauri::WindowEvent::CloseRequested { api, .. } if !jobs().downloading().is_empty() => {
+            api.prevent_close();
+            let _ = close_app.emit_to(PANEL_LABEL, "download://close-asked", ());
         }
+        tauri::WindowEvent::Destroyed => {
+            clear_session();
+            emit_jobs(&close_app);
+        }
+        _ => {}
     });
 
     let panel = match window.add_child(
@@ -328,9 +507,11 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
                     return false;
                 }
                 crate::commands::downloads::note_caught(&path);
-                mark_intercepted(&path, current_page());
-                // Причина обрыва прошлой загрузки не должна достаться этой.
-                let _ = crate::commands::download_progress::take_stop_reason();
+                // Причина обрыва прошлой загрузки в этот файл не должна достаться этой.
+                let _ = crate::commands::download_progress::take_stop_reason(&path);
+                let owner = current_request();
+                jobs().start(&path, owner);
+                emit_jobs(&download_app);
                 *destination = path;
                 emit_state(
                     &download_app,
@@ -341,66 +522,49 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
                 );
             }
             DownloadEvent::Finished { path, success, .. } => {
-                let owner = path.as_deref().and_then(take_intercepted);
-                let intercepted = owner.is_some();
-                let current = current_page();
-                let stale = owner
-                    .as_ref()
-                    .is_some_and(|owner| !for_current_mod(owner.as_deref(), current.as_deref()));
-                if success && stale {
-                    // Архив прошлого мода: панели уже не до него. Отпускаем его сторожу
-                    // «Загрузок» — там его можно поставить как обычный скачанный архив.
-                    if let Some(path) = path.as_deref() {
-                        crate::commands::downloads::release_caught(path);
+                let reason = path
+                    .as_deref()
+                    .and_then(crate::commands::download_progress::take_stop_reason);
+                let (title, detail, error) = match reason {
+                    Some(reason) => {
+                        let (title, detail) = reason.texts();
+                        (title, detail, title.to_string())
+                    }
+                    None => (
+                        "Загрузка не удалась",
+                        "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
+                        "Сайт не отдал файл.".to_string(),
+                    ),
+                };
+                let job = path.as_deref().and_then(|path| {
+                    jobs().finish(path, if success { Ok(()) } else { Err(error.clone()) })
+                });
+                let Some(job) = job else {
+                    // Не наша загрузка: о неудаче скажем, только если пути нет вовсе.
+                    if !success && path.is_none() {
+                        emit_state(&download_app, 2, title, detail, Some(error));
                     }
                     return true;
-                }
-                if success
-                    && intercepted
-                    && let Some(path) = path.as_deref()
-                {
-                    crate::commands::downloads::note_finished(path);
-                }
+                };
+                emit_jobs(&download_app);
+                let current = current_request();
+                let here =
+                    for_current_mod(page_of(job.request.as_ref()), page_of(current.as_ref()));
                 if success {
-                    if let Some(path) = path
-                        && intercepted
-                        && is_archive_name(&path)
-                    {
-                        let path_text = path.display().to_string();
-                        *READY.lock().unwrap_or_else(|error| error.into_inner()) =
-                            Some(path_text.clone());
-                        emit_state(
-                            &download_app,
-                            3,
-                            "Проверяем архив",
-                            "Смотрим структуру, опасные пути и подозрительные файлы.",
-                            None,
-                        );
-                        let _ = download_app.emit_to(
-                            PANEL_LABEL,
-                            "download://ready",
-                            serde_json::json!({ "path": path_text }),
-                        );
+                    if let Some(path) = path.as_deref() {
+                        crate::commands::downloads::note_finished(path);
+                    }
+                    if is_archive_name(Path::new(&job.path)) {
+                        let _ = download_app.emit_to(PANEL_LABEL, "download://ready", job);
                     }
                 } else {
-                    clear_ready();
                     // Недокачанный файл в папке загрузок не нужен.
-                    if intercepted && let Some(path) = path.as_deref() {
+                    if let Some(path) = path.as_deref() {
                         let _ = std::fs::remove_file(path);
                     }
-                    let (title, detail, error) =
-                        match crate::commands::download_progress::take_stop_reason() {
-                            Some(reason) => {
-                                let (title, detail) = reason.texts();
-                                (title, detail, title.to_string())
-                            }
-                            None => (
-                                "Загрузка не удалась",
-                                "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
-                                "Сайт не отдал файл.".to_string(),
-                            ),
-                        };
-                    emit_state(&download_app, 2, title, detail, Some(error));
+                    if here {
+                        emit_state(&download_app, 2, title, detail, Some(error));
+                    }
                 }
             }
             _ => {}
@@ -748,16 +912,108 @@ mod tests {
     }
 
     #[test]
-    fn archive_of_a_previous_mod_is_not_handed_to_the_current_one() {
+    fn error_of_a_previous_mod_does_not_land_in_the_current_steps() {
         let a = Some("https://stmods.org/beamng_drive/mods/a/");
         let b = Some("https://stmods.org/beamng_drive/mods/b/");
         assert!(for_current_mod(a, a));
         assert!(
             !for_current_mod(a, b),
-            "докачался после перехода к другому моду"
+            "оборвалась после перехода к другому моду"
         );
         assert!(!for_current_mod(a, None), "окно уже без мода");
         assert!(for_current_mod(None, None));
+    }
+
+    fn request(page: &str) -> DownloadRequest {
+        DownloadRequest {
+            mod_name: page.to_string(),
+            installed_version: None,
+            latest_version: None,
+            page_url: format!("https://stmods.org/beamng_drive/mods/{page}/"),
+            preview_url: None,
+            role: None,
+            mod_id: None,
+        }
+    }
+
+    #[test]
+    fn two_downloads_at_once_keep_their_own_mods() {
+        // Было: второй мод уводил окно, архив первого считался «чужим» и терялся,
+        // а ход обоих шёл в одну полоску.
+        let mut jobs = Jobs::default();
+        let first = PathBuf::from("first.zip");
+        let second = PathBuf::from("second.zip");
+        jobs.start(&first, Some(request("a")));
+        jobs.start(&second, Some(request("b")));
+        assert_eq!(jobs.downloading(), vec![first.clone(), second.clone()]);
+
+        let done = jobs.finish(&second, Ok(())).expect("наша загрузка");
+        assert_eq!(done.request.unwrap().mod_name, "b");
+        assert_eq!(done.state, DownloadJobState::Done);
+        assert_eq!(
+            jobs.downloading(),
+            vec![first.clone()],
+            "первая ещё качается"
+        );
+
+        let late = jobs.finish(&first, Ok(())).expect("первая тоже наша");
+        assert_eq!(late.request.unwrap().mod_name, "a", "архив — своему моду");
+        assert_eq!(jobs.ready().len(), 2);
+        assert!(jobs.downloading().is_empty());
+    }
+
+    #[test]
+    fn finished_download_is_handed_over_once() {
+        let mut jobs = Jobs::default();
+        let path = PathBuf::from("mod.zip");
+        assert!(jobs.finish(&path, Ok(())).is_none(), "не наша загрузка");
+        jobs.start(&path, None);
+        assert!(jobs.finish(&path, Ok(())).is_some());
+        assert!(jobs.finish(&path, Ok(())).is_none(), "второй раз не отдаём");
+    }
+
+    #[test]
+    fn failed_download_keeps_its_reason() {
+        let mut jobs = Jobs::default();
+        let path = PathBuf::from("mod.zip");
+        jobs.start(&path, Some(request("a")));
+        let failed = jobs
+            .finish(&path, Err("Загрузка зависла".to_string()))
+            .unwrap();
+        assert_eq!(failed.state, DownloadJobState::Failed);
+        assert_eq!(failed.error.as_deref(), Some("Загрузка зависла"));
+        assert!(jobs.ready().is_empty(), "оборванный архив ставить нечего");
+        // Тот же файл скачали заново — это новая загрузка.
+        jobs.start(&path, Some(request("a")));
+        assert_eq!(jobs.downloading(), vec![path]);
+        assert_eq!(jobs.snapshot().len(), 1);
+    }
+
+    #[test]
+    fn many_finished_downloads_do_not_push_out_running_ones() {
+        let mut jobs = Jobs::default();
+        let running = PathBuf::from("running.zip");
+        jobs.start(&running, None);
+        for index in 0..(JOBS_KEEP * 2) {
+            let path = PathBuf::from(format!("done-{index}.zip"));
+            jobs.start(&path, None);
+            jobs.finish(&path, Ok(()));
+        }
+        assert!(jobs.snapshot().len() <= JOBS_KEEP);
+        assert_eq!(jobs.downloading(), vec![running]);
+    }
+
+    #[test]
+    fn new_mod_during_a_batch_joins_its_queue() {
+        let mut batch = Vec::new();
+        assert!(!add_to_batch(&mut batch, &request("a")), "пачки нет");
+        assert!(batch.is_empty());
+
+        let mut batch = vec![request("a"), request("b")];
+        assert!(add_to_batch(&mut batch, &request("c")));
+        assert_eq!(batch.len(), 3);
+        assert!(add_to_batch(&mut batch, &request("b")), "уже в очереди");
+        assert_eq!(batch.len(), 3, "второй раз не добавляем");
     }
 
     #[test]

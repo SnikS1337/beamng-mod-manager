@@ -45,24 +45,35 @@ impl StopReason {
     }
 }
 
-static STOPPED: std::sync::Mutex<Option<StopReason>> = std::sync::Mutex::new(None);
+/// Почему программа сама оборвала загрузку — по файлу: загрузок может быть несколько
+/// сразу, и причина одной не должна достаться другой.
+static STOPPED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, StopReason>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-/// Причина, по которой программа сама оборвала последнюю загрузку (одноразово).
-pub(crate) fn take_stop_reason() -> Option<StopReason> {
+/// Причина, по которой программа сама оборвала загрузку этого файла (одноразово).
+pub(crate) fn take_stop_reason(path: &std::path::Path) -> Option<StopReason> {
     STOPPED
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .take()
+        .remove(path)
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
-fn note_stop(reason: StopReason) {
-    *STOPPED.lock().unwrap_or_else(|error| error.into_inner()) = Some(reason);
+fn note_stop(path: std::path::PathBuf, reason: StopReason) {
+    let mut stopped = STOPPED.lock().unwrap_or_else(|error| error.into_inner());
+    if stopped.len() >= 64 {
+        stopped.clear();
+    }
+    stopped.insert(path, reason);
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DownloadProgress {
+    /// Какой файл качается: загрузок бывает несколько сразу, и ход одной не должен
+    /// попасть в полоску другой.
+    pub path: String,
     /// Скачано байт.
     pub received: u64,
     /// Размер файла, если сайт его сообщил.
@@ -105,7 +116,8 @@ impl ProgressMeter {
         now.saturating_duration_since(self.moved_at) >= STALL_LIMIT
     }
 
-    /// Новое значение счётчика байт. Возвращает сообщение для панели, если пора.
+    /// Новое значение счётчика байт. Возвращает сообщение для панели, если пора;
+    /// файл в нём заполняет вызывающий.
     pub fn update(
         &mut self,
         received: u64,
@@ -129,6 +141,7 @@ impl ProgressMeter {
         }
         self.last_sent = Some(now);
         Some(DownloadProgress {
+            path: String::new(),
             received,
             total: total.filter(|total| *total > 0),
             speed: self.speed(),
@@ -150,20 +163,26 @@ impl ProgressMeter {
 /// Подписка на байты загрузок сайта в окне скачивания: ход для панели, обрыв
 /// слишком большого файла и зависшей загрузки.
 #[cfg(windows)]
-pub(crate) fn attach(site: &tauri::Webview, app: tauri::AppHandle) {
-    use std::cell::RefCell;
-    use std::sync::{Arc, Mutex};
+pub(crate) use platform::{attach, cancel_all};
 
-    use tauri::Emitter;
+#[cfg(windows)]
+mod platform {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, ICoreWebView2_4, ICoreWebView2DownloadOperation,
     };
     use webview2_com::{BytesReceivedChangedEventHandler, DownloadStartingEventHandler};
     use windows_core::Interface;
 
+    use super::{ProgressMeter, StopReason, note_stop};
+
     type Active = Vec<(ICoreWebView2DownloadOperation, Arc<Mutex<ProgressMeter>>)>;
     thread_local! {
-        // COM-объекты загрузок живут на потоке webview: сторож заходит к ним туда же.
+        // COM-объекты загрузок живут на потоке webview: сторож и отмена заходят туда же.
         static ACTIVE: RefCell<Active> = const { RefCell::new(Vec::new()) };
     }
 
@@ -181,6 +200,18 @@ pub(crate) fn attach(site: &tauri::Webview, app: tauri::AppHandle) {
         ))
     }
 
+    /// Куда пишется файл: по нему панель отличает одну загрузку от другой.
+    fn file_of(operation: &ICoreWebView2DownloadOperation) -> String {
+        let mut raw = windows_core::PWSTR::null();
+        // SAFETY: строку выделяет WebView2, `take_pwstr` её освобождает.
+        unsafe {
+            if operation.ResultFilePath(&mut raw).is_err() {
+                return String::new();
+            }
+        }
+        webview2_com::take_pwstr(raw)
+    }
+
     fn in_progress(operation: &ICoreWebView2DownloadOperation) -> bool {
         let mut state = Default::default();
         // SAFETY: State пишет одно значение по переданному указателю.
@@ -189,111 +220,133 @@ pub(crate) fn attach(site: &tauri::Webview, app: tauri::AppHandle) {
         }
     }
 
-    fn stop(operation: &ICoreWebView2DownloadOperation, reason: StopReason) {
-        note_stop(reason);
+    fn stop(operation: &ICoreWebView2DownloadOperation, reason: Option<StopReason>) {
+        if let Some(reason) = reason {
+            note_stop(PathBuf::from(file_of(operation)), reason);
+        }
         // SAFETY: обычный вызов COM на потоке webview.
         let _ = unsafe { operation.Cancel() };
     }
 
-    let _ = site.with_webview(move |platform| {
-        // SAFETY: вызовы COM на потоке webview, куда нас и вызывает Tauri.
-        let attached = (|| -> windows_core::Result<()> {
-            let webview = unsafe { platform.controller().CoreWebView2()? };
-            let webview: ICoreWebView2_4 = webview.cast()?;
-            let mut token = Default::default();
-            unsafe {
-                webview.add_DownloadStarting(
-                    &DownloadStartingEventHandler::create(Box::new(move |_, args| {
-                        let Some(args) = args else { return Ok(()) };
-                        let operation = args.DownloadOperation()?;
-                        let meter = Arc::new(Mutex::new(ProgressMeter::new()));
-                        if let Some((received, total)) = read(&operation)
-                            && ProgressMeter::too_big(received, total)
-                        {
-                            stop(&operation, StopReason::TooBig);
-                            return Ok(());
-                        }
-                        ACTIVE.with(|active| {
-                            active
-                                .borrow_mut()
-                                .push((operation.clone(), Arc::clone(&meter)))
-                        });
-                        let app = app.clone();
-                        let mut token = Default::default();
-                        operation.add_BytesReceivedChanged(
-                            &BytesReceivedChangedEventHandler::create(Box::new(
-                                move |operation, _| {
-                                    let Some(operation) = operation else {
-                                        return Ok(());
-                                    };
-                                    let Some((received, total)) = read(&operation) else {
-                                        return Ok(());
-                                    };
-                                    if ProgressMeter::too_big(received, total) {
-                                        stop(&operation, StopReason::TooBig);
-                                        return Ok(());
-                                    }
-                                    let message = meter
-                                        .lock()
-                                        .unwrap_or_else(|error| error.into_inner())
-                                        .update(received, total, Instant::now());
-                                    if let Some(message) = message {
-                                        let _ = app.emit_to(
-                                            super::download_window::PANEL_LABEL,
-                                            "download://progress",
-                                            message,
-                                        );
-                                    }
-                                    Ok(())
-                                },
-                            )),
-                            &mut token,
-                        )?;
-                        Ok(())
-                    })),
-                    &mut token,
-                )?;
-            }
-            Ok(())
-        })();
-        // Без хода загрузки окно всё равно работает: панель покажет «Файл скачивается».
-        let _ = attached;
-    });
+    /// Оборвать все идущие загрузки окна: человек сам решил закрыть его или программу.
+    pub(crate) fn cancel_all(site: &tauri::Webview) {
+        let _ = site.with_webview(|_| {
+            ACTIVE.with(|active| {
+                for (operation, _) in active.borrow_mut().drain(..) {
+                    if in_progress(&operation) {
+                        stop(&operation, None);
+                    }
+                }
+            });
+        });
+    }
 
-    // Сторож зависших загрузок: раз в полминуты заходит на поток webview и обрывает
-    // загрузки, по которым давно не было байт. Окно закрыли — сторож уходит.
-    let site = site.clone();
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_secs(30));
-            let checked = site.with_webview(|_| {
-                ACTIVE.with(|active| {
-                    let now = Instant::now();
-                    active.borrow_mut().retain(|(operation, meter)| {
-                        if !in_progress(operation) {
-                            return false;
-                        }
-                        let stalled = meter
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner())
-                            .stalled(now);
-                        if stalled {
-                            stop(operation, StopReason::Stalled);
-                            return false;
-                        }
-                        true
+    pub(crate) fn attach(site: &tauri::Webview, app: tauri::AppHandle) {
+        let _ = site.with_webview(move |platform| {
+            // SAFETY: вызовы COM на потоке webview, куда нас и вызывает Tauri.
+            let attached = (|| -> windows_core::Result<()> {
+                let webview = unsafe { platform.controller().CoreWebView2()? };
+                let webview: ICoreWebView2_4 = webview.cast()?;
+                let mut token = Default::default();
+                unsafe {
+                    webview.add_DownloadStarting(
+                        &DownloadStartingEventHandler::create(Box::new(move |_, args| {
+                            let Some(args) = args else { return Ok(()) };
+                            let operation = args.DownloadOperation()?;
+                            let meter = Arc::new(Mutex::new(ProgressMeter::new()));
+                            if let Some((received, total)) = read(&operation)
+                                && ProgressMeter::too_big(received, total)
+                            {
+                                stop(&operation, Some(StopReason::TooBig));
+                                return Ok(());
+                            }
+                            ACTIVE.with(|active| {
+                                active
+                                    .borrow_mut()
+                                    .push((operation.clone(), Arc::clone(&meter)))
+                            });
+                            let app = app.clone();
+                            let mut token = Default::default();
+                            operation.add_BytesReceivedChanged(
+                                &BytesReceivedChangedEventHandler::create(Box::new(
+                                    move |operation, _| {
+                                        let Some(operation) = operation else {
+                                            return Ok(());
+                                        };
+                                        let Some((received, total)) = read(&operation) else {
+                                            return Ok(());
+                                        };
+                                        if ProgressMeter::too_big(received, total) {
+                                            stop(&operation, Some(StopReason::TooBig));
+                                            return Ok(());
+                                        }
+                                        let message = meter
+                                            .lock()
+                                            .unwrap_or_else(|error| error.into_inner())
+                                            .update(received, total, Instant::now());
+                                        if let Some(message) = message {
+                                            let message = super::DownloadProgress {
+                                                path: file_of(&operation),
+                                                ..message
+                                            };
+                                            crate::commands::download_window::emit_progress(
+                                                &app, message,
+                                            );
+                                        }
+                                        Ok(())
+                                    },
+                                )),
+                                &mut token,
+                            )?;
+                            Ok(())
+                        })),
+                        &mut token,
+                    )?;
+                }
+                Ok(())
+            })();
+            // Без хода загрузки окно всё равно работает: панель покажет «Файл скачивается».
+            let _ = attached;
+        });
+
+        // Сторож зависших загрузок: раз в полминуты заходит на поток webview и обрывает
+        // загрузки, по которым давно не было байт. Окно закрыли — сторож уходит.
+        let site = site.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(30));
+                let checked = site.with_webview(|_| {
+                    ACTIVE.with(|active| {
+                        let now = Instant::now();
+                        active.borrow_mut().retain(|(operation, meter)| {
+                            if !in_progress(operation) {
+                                return false;
+                            }
+                            let stalled = meter
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .stalled(now);
+                            if stalled {
+                                stop(operation, Some(StopReason::Stalled));
+                                return false;
+                            }
+                            true
+                        });
                     });
                 });
-            });
-            if checked.is_err() {
-                break;
+                if checked.is_err() {
+                    break;
+                }
             }
-        }
-    });
+        });
+    }
 }
 
 #[cfg(not(windows))]
 pub(crate) fn attach(_site: &tauri::Webview, _app: tauri::AppHandle) {}
+
+#[cfg(not(windows))]
+pub(crate) fn cancel_all(_site: &tauri::Webview) {}
 
 #[cfg(test)]
 mod tests {
@@ -391,9 +444,13 @@ mod tests {
     }
 
     #[test]
-    fn stop_reason_is_taken_once() {
-        note_stop(StopReason::Stalled);
-        assert_eq!(take_stop_reason(), Some(StopReason::Stalled));
-        assert_eq!(take_stop_reason(), None);
+    fn stop_reason_is_taken_once_and_only_for_its_file() {
+        // Две загрузки сразу: причина обрыва одной не должна достаться другой.
+        let first = std::path::PathBuf::from("first-stopped.zip");
+        let second = std::path::PathBuf::from("second-running.zip");
+        note_stop(first.clone(), StopReason::Stalled);
+        assert_eq!(take_stop_reason(&second), None);
+        assert_eq!(take_stop_reason(&first), Some(StopReason::Stalled));
+        assert_eq!(take_stop_reason(&first), None);
     }
 }
