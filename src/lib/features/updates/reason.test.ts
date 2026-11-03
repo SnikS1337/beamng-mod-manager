@@ -19,6 +19,7 @@ function finding(patch: Partial<UpdateFinding>): UpdateFinding {
     installedSize: null,
     latestSize: null,
     noticedAt: null,
+    authorVersion: null,
     ...patch,
   };
 }
@@ -51,5 +52,14 @@ describe("причина находки", () => {
     expect(reason(finding({ status: "likely", installedVersion: null, latestVersion: "0.1" }))).toBe(
       "На сайте вышла версия новее вашего файла.",
     );
+  });
+
+  it("номер перезалива выше, чем у автора, — так и говорим", () => {
+    // Smoke Dust FX: ModsGaming «1.14.1», у автора на BeamNG 0.14.1.
+    const text = reason(
+      finding({ source: "modsgaming", installedVersion: "0.14.1", latestVersion: "1.14.1", authorVersion: "0.14.1" }),
+    );
+    expect(text).toContain("у автора на BeamNG последняя — 0.14.1");
+    expect(text).toContain("1.14.1");
   });
 });

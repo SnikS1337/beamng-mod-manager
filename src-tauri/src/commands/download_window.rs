@@ -38,6 +38,11 @@ pub struct DownloadRequest {
     #[serde(default)]
     #[ts(type = "ModRole | null")]
     pub role: Option<String>,
+    /// Какой мод обновляем. Скачался тот же файл, что уже стоит, — панель предложит
+    /// больше не показывать эту версию для этого мода.
+    #[serde(default)]
+    #[ts(optional)]
+    pub mod_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

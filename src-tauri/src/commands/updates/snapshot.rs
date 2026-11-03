@@ -250,6 +250,7 @@ pub(crate) fn finding_dto(
         installed_size: None,
         latest_size: None,
         noticed_at: None,
+        author_version: finding.author_version,
     }
 }
 

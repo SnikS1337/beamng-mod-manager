@@ -112,6 +112,7 @@
     let unlisten: (() => void) | undefined;
     let unlistenDownload: (() => void) | undefined;
     let unlistenPanel: (() => void) | undefined;
+    let unlistenDismissed: (() => void) | undefined;
     let disposed = false;
     void listen<{ path: string }>("incoming://download", (event) => {
       const path = event.payload.path;
@@ -128,6 +129,15 @@
       .then((stop) => {
         if (disposed) stop();
         else unlistenPanel = stop;
+      })
+      .catch(() => {});
+    // В окне скачивания попросили больше не предлагать версию — «Обновления» перечитать.
+    void listen("download://dismissed", () => {
+      if (!disposed) window.dispatchEvent(new CustomEvent("bmm:library-changed"));
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlistenDismissed = stop;
       })
       .catch(() => {});
     void getCurrentWebview()
@@ -154,6 +164,7 @@
       unlisten?.();
       unlistenDownload?.();
       unlistenPanel?.();
+      unlistenDismissed?.();
     };
   });
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { updatesDismiss } from "#lib/ipc/updates.js";
   import { StaleGuard } from "#lib/features/download/staleGuard.js";
   import { isTauri } from "@tauri-apps/api/core";
   import { emit } from "@tauri-apps/api/event";
@@ -49,6 +50,7 @@
     collect,
     installRequests,
     modsLabel,
+    sameAsInstalled,
     nextPosition,
     pickedItems,
     positionOf,
@@ -184,7 +186,11 @@
       }
       archive = found;
       selected = found.items.map(preselected);
-      if (found.problem) {
+      sameVersionDismissed = false;
+      if (sameAsInstalled(found)) {
+        status = "Это та же версия, что уже стоит";
+        detail = "Архив совпадает с установленным модом. Похоже, сайт подписал прежнюю версию новым номером.";
+      } else if (found.problem) {
         status = "Архив не подошёл";
         detail = found.problem;
       } else if (!found.items.some(installable)) {
@@ -207,8 +213,45 @@
     }
   }
 
+  /** Моды пачки, у которых скачался тот же файл, что уже стоит. */
+  let sameInBatch = $state<DownloadRequest[]>([]);
+  let sameVersionDismissed = $state(false);
+  let dismissing = $state(false);
+
+  /** «Больше не предлагать эту версию»: обновление этого мода прячется до следующей версии. */
+  async function dismissSame(requests: DownloadRequest[]): Promise<void> {
+    if (dismissing) return;
+    dismissing = true;
+    try {
+      for (const request of requests) {
+        if (request.modId) await updatesDismiss(request.modId);
+      }
+      sameVersionDismissed = true;
+      sameInBatch = [];
+      // Главное окно перечитает «Обновления» — пункт уходит сразу.
+      await emit("download://dismissed", {}).catch(() => {});
+      status = requests.length > 1 ? "Эти версии больше не предлагаются" : "Эта версия больше не предлагается";
+      detail = "Если на сайте выйдет другая версия, обновление покажется снова.";
+    } catch (reason) {
+      error = errorText(reason);
+    } finally {
+      dismissing = false;
+    }
+  }
+
   /** Архив пачки проверен: откладываем к общей установке и открываем следующий мод. */
   function keepForBatch(request: DownloadRequest, found: IncomingArchiveDto): void {
+    // Тот же файл, что стоит: ставить нечего — запоминаем, чтобы в конце предложить
+    // больше не показывать эту версию, и идём дальше.
+    if (sameAsInstalled(found)) {
+      void incomingDiscard(found.workDir).catch(() => {});
+      sameInBatch = [
+        ...sameInBatch.filter((entry) => entry.pageUrl !== request.pageUrl),
+        request,
+      ];
+      advance(`«${request.modName}»: это та же версия, что уже стоит`);
+      return;
+    }
     const old = collected.find((entry) => entry.request.pageUrl === request.pageUrl);
     if (old && old.archive.workDir !== found.workDir) {
       void incomingDiscard(old.archive.workDir).catch(() => {});
@@ -488,6 +531,7 @@
     void listenDownloadBatch((value) => {
       if (disposed) return;
       discardCollected();
+      sameInBatch = [];
       batchDone = false;
       batch = value;
     })
@@ -593,6 +637,19 @@
     {#if inBatch}
       <section class="batch" aria-label="Обновление пачкой">
         <b>{batchDone ? `Скачано ${collected.length} из ${batch.length}` : batchLine(position, batch.length, collected.length)}</b>
+        {#if sameInBatch.length > 0}
+          <span>
+            Та же версия, что уже стоит:
+            {sameInBatch.map((request) => `«${request.modName}»`).join(", ")}.
+          </span>
+          {#if sameInBatch.some((request) => request.modId)}
+            <div class="batch-actions">
+              <button class="ghost" type="button" disabled={dismissing} onclick={() => void dismissSame(sameInBatch)}>
+                Больше не предлагать {sameInBatch.length > 1 ? "эти версии" : "эту версию"}
+              </button>
+            </div>
+          {/if}
+        {/if}
         {#if !batchDone}
           <span>Скачайте архив — окно само откроет следующий мод. Установка — одна, в конце.</span>
           <div class="batch-actions">
@@ -709,6 +766,21 @@
         {#if archive.problem}
           <p class="problem">{archive.problem}</p>
           <button class="primary" type="button" onclick={() => void close()}>Понятно</button>
+        {:else if sameAsInstalled(archive)}
+          <p class="problem">Это та же версия, что уже стоит, — ставить нечего.</p>
+          <div class="ready-actions">
+            {#if context?.modId && !sameVersionDismissed}
+              <button
+                class="primary"
+                type="button"
+                disabled={dismissing}
+                onclick={() => context && void dismissSame([context])}
+              >
+                Больше не предлагать эту версию
+              </button>
+            {/if}
+            <button class="ghost" type="button" onclick={() => void close()}>Закрыть</button>
+          </div>
         {:else if !items.some(installable)}
           <p class="problem">В архиве нет модов, которые можно установить.</p>
           <button class="primary" type="button" onclick={() => void close()}>Понятно</button>

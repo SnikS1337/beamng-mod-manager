@@ -27,6 +27,9 @@ pub struct UpdateFindingDto {
     pub latest_size: Option<i64>,
     /// Когда программа заметила изменение на сайте (RFC 3339).
     pub noticed_at: Option<String>,
+    /// Версия у автора на BeamNG, если она как у вас, а этот сайт пишет номер выше:
+    /// скорее неверная подпись перезалива, чем новая версия.
+    pub author_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

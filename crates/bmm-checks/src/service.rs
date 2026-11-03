@@ -11,7 +11,9 @@ use url::Url;
 use bmm_domain::library::{
     CheckState, LibraryStore, ModBinding, SourceStatus as StoreSourceStatus,
 };
-use bmm_domain::versioning::{SizeComparer, UpdateDecider, UpdateStatus, VersionSnapshot};
+use bmm_domain::versioning::{
+    SizeComparer, UpdateDecider, UpdateStatus, VersionComparer, VersionOrder, VersionSnapshot,
+};
 
 use crate::options::UpdateCheckOptions;
 use crate::planner::{FeedEntry, FeedPlan, SourceStatus, TrackedBinding, UpdateCheckPlanner};
@@ -31,7 +33,14 @@ pub struct UpdateFinding {
     pub dismiss_key: String,
     /// Пользователь пропустил это обновление (показывается только в списке «скрытые»).
     pub is_dismissed: bool,
+    /// Версия на странице автора в репозитории BeamNG, если она старее, чем пишет этот
+    /// сайт, а у вас — как у автора. Тогда это скорее перезалив с неверной подписью
+    /// («1.14.1» вместо «0.14.1»), и обновление показывается только как возможное.
+    pub author_version: Option<String>,
 }
+
+/// Сайт, на котором мод выкладывает сам автор.
+const AUTHOR_SOURCE: &str = "beamng";
 
 /// Склеивает хранилище, планировщик и решение «есть обновление».
 pub struct UpdateCheckService;
@@ -236,17 +245,42 @@ impl UpdateCheckService {
         let mut result = Vec::new();
         for installed in store.mods() {
             let dismissed = store.get_dismissed_update(&installed.id);
+            // У автора та же версия, что у вас (или старее): более высокий номер на
+            // сайте-перезаливщике — скорее неверная подпись, чем новая версия.
+            let author_version = by_mod
+                .get(&installed.id)
+                .into_iter()
+                .flatten()
+                .find(|binding| binding.source == AUTHOR_SOURCE)
+                .and_then(|binding| store.get_check(&installed.id, &binding.source))
+                .and_then(|check| check.last_version)
+                .filter(|author| {
+                    matches!(
+                        VersionComparer::compare(installed.version.as_deref(), Some(author)),
+                        VersionOrder::Same | VersionOrder::Older
+                    )
+                });
             let mut best: Option<UpdateFinding> = None;
             for binding in by_mod.get(&installed.id).into_iter().flatten() {
                 let Some(check) = store.get_check(&installed.id, &binding.source) else {
                     continue;
                 };
-                let status = UpdateDecider::decide(
+                let mut status = UpdateDecider::decide(
                     &VersionSnapshot::new(installed.version.as_deref(), installed.size_bytes, None),
                     &VersionSnapshot::new(check.last_version.as_deref(), check.last_size, None),
                 );
                 if status == UpdateStatus::None {
                     continue;
+                }
+                let mut against_author = None;
+                if binding.source != AUTHOR_SOURCE
+                    && status == UpdateStatus::Likely
+                    && let Some(author) = author_version.as_deref()
+                    && VersionComparer::compare(Some(author), check.last_version.as_deref())
+                        == VersionOrder::Newer
+                {
+                    status = UpdateStatus::Possible;
+                    against_author = Some(author.to_string());
                 }
                 let key = check
                     .last_version
@@ -271,6 +305,7 @@ impl UpdateCheckService {
                     url: binding.url.clone(),
                     dismiss_key: key,
                     is_dismissed,
+                    author_version: against_author,
                 };
                 // Среди не скрытых берём более уверенное; скрытое не вытесняет нескрытое.
                 let replace = match &best {
@@ -278,7 +313,13 @@ impl UpdateCheckService {
                     Some(best) => {
                         (best.is_dismissed && !finding.is_dismissed)
                             || (best.is_dismissed == finding.is_dismissed
-                                && status_rank(finding.status) > status_rank(best.status))
+                                && (status_rank(finding.status) > status_rank(best.status)
+                                    // При равной уверенности — страница автора: качать
+                                    // лучше оттуда, а не с перезаливщика.
+                                    || (status_rank(finding.status)
+                                        == status_rank(best.status)
+                                        && finding.source == AUTHOR_SOURCE
+                                        && best.source != AUTHOR_SOURCE)))
                     }
                 };
                 if replace {
@@ -332,8 +373,9 @@ impl UpdateCheckService {
 fn status_rank(status: UpdateStatus) -> i32 {
     match status {
         UpdateStatus::None => 0,
-        UpdateStatus::Likely => 1,
-        UpdateStatus::Possible => 2,
+        // «Обновление» увереннее, чем «возможно»: выбирать между сайтами надо его.
+        UpdateStatus::Possible => 1,
+        UpdateStatus::Likely => 2,
     }
 }
 
@@ -466,8 +508,10 @@ mod tests {
     }
 
     #[test]
-    fn possible_update_is_chosen_over_likely_as_more_confident() {
-        // Порядок вариантов: Possible > Likely.
+    fn new_version_is_chosen_over_a_size_change() {
+        // «Обновление» (новая версия на STMods) увереннее, чем «возможно» (на Modland
+        // та же версия, но другой размер). Раньше выигрывало «возможно», и мод показывал
+        // то один сайт, то другой.
         let store = InMemoryLibraryStore::new();
         add(
             &store,
@@ -505,8 +549,79 @@ mod tests {
         });
         let pending = UpdateCheckService::pending(&store, false);
         assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].status, UpdateStatus::Likely);
+        assert_eq!(pending[0].source, "stmods");
+    }
+
+    fn check(store: &InMemoryLibraryStore, id: &str, source: &str, version: &str, size: i64) {
+        store
+            .upsert_binding(ModBinding {
+                mod_id: id.to_string(),
+                source: source.to_string(),
+                source_id: id.to_string(),
+                url: Url::parse(&format!("https://{source}.test/{id}")).unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        store.save_check(CheckState {
+            mod_id: id.to_string(),
+            source: source.to_string(),
+            last_checked_utc: now(),
+            last_changed_utc: Some(now()),
+            last_version: Some(version.to_string()),
+            last_size: Some(size),
+            miss_count: 0,
+            last_game_version: None,
+            last_title: None,
+        });
+    }
+
+    #[test]
+    fn rehost_version_above_the_author_is_only_possible() {
+        // Smoke Dust FX: у автора на BeamNG 0.14.1 (стоит она), на ModsGaming тот же
+        // файл подписан «1.14.1». Это не «Обновление», а в лучшем случае «возможно».
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(InstalledMod {
+            id: "smoke".to_string(),
+            name: "Smoke Dust FX".to_string(),
+            file_name: "smokeDustFX_mihaits.zip".to_string(),
+            version: Some("0.14.1".to_string()),
+            size_bytes: Some(20_457_482),
+            installed_at_utc: now(),
+            enabled: true,
+        });
+        check(&store, "smoke", "beamng", "0.14.1", 20_447_232);
+        check(&store, "smoke", "modsgaming", "1.14.1", 20_457_717);
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].status, UpdateStatus::Possible);
-        assert_eq!(pending[0].source, "modland");
+        assert_eq!(pending[0].source, "modsgaming");
+        assert_eq!(pending[0].author_version.as_deref(), Some("0.14.1"));
+
+        // Автор сам выпустил новую версию — это обновление, без оговорок.
+        check(&store, "smoke", "beamng", "0.15.0", 21_000_000);
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending[0].status, UpdateStatus::Likely);
+        assert_eq!(pending[0].source, "beamng");
+        assert_eq!(pending[0].author_version, None);
+    }
+
+    #[test]
+    fn without_an_author_page_rehost_versions_count_as_before() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(InstalledMod {
+            id: "meo".to_string(),
+            name: "Meo".to_string(),
+            file_name: "meo.zip".to_string(),
+            version: Some("4.0.0".to_string()),
+            size_bytes: Some(65_000_000),
+            installed_at_utc: now(),
+            enabled: true,
+        });
+        check(&store, "meo", "modland", "4.0.2", 68_000_000);
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending[0].status, UpdateStatus::Likely);
+        assert_eq!(pending[0].author_version, None);
     }
 
     #[test]

@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { DownloadRequest } from "#lib/ipc/download.js";
 import type { IncomingArchiveDto, IncomingItemDto } from "#lib/ipc/incoming.js";
-import { batchLine, collect, installRequests, nextPosition, pickedItems, positionOf } from "./batch";
+import {
+  batchLine,
+  collect,
+  installRequests,
+  nextPosition,
+  pickedItems,
+  positionOf,
+  sameAsInstalled,
+} from "./batch";
 
 function request(name: string): DownloadRequest {
   return {
@@ -105,5 +113,20 @@ describe("версия страницы при установке", () => {
   it("без страницы (архив брошен на окно) — без версии", () => {
     const requests = installRequests([{ request: null, archive: archive([item("x.zip")]), selected: [true] }]);
     expect(requests[0]).not.toHaveProperty("version");
+  });
+});
+
+describe("скачался тот же файл", () => {
+  it("всё в архиве уже стоит — это та же версия", () => {
+    // Smoke Dust FX: ModsGaming подписал 0.14.1 как «1.14.1», скачивали дважды.
+    expect(
+      sameAsInstalled(archive([item("smokeDustFX_mihaits.zip", { kind: "alreadyInstalled" })])),
+    ).toBe(true);
+  });
+
+  it("есть что ставить, пусто или архив битый — не «та же версия»", () => {
+    expect(sameAsInstalled(archive([item("a.zip"), item("b.zip", { kind: "alreadyInstalled" })]))).toBe(false);
+    expect(sameAsInstalled(archive([]))).toBe(false);
+    expect(sameAsInstalled(archive([item("a.zip", { kind: "alreadyInstalled" })], "битый"))).toBe(false);
   });
 });
