@@ -72,6 +72,10 @@ pub enum DownloadJobState {
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadJob {
+    /// Номер загрузки: путь бывает тот же у новой загрузки после старой.
+    #[serde(skip)]
+    #[ts(skip)]
+    id: u64,
     pub path: String,
     pub file_name: String,
     pub request: Option<DownloadRequest>,
@@ -85,6 +89,7 @@ const JOBS_KEEP: usize = 64;
 #[derive(Debug, Default)]
 pub(crate) struct Jobs {
     items: Vec<DownloadJob>,
+    next_id: u64,
 }
 
 impl Jobs {
@@ -104,7 +109,9 @@ impl Jobs {
                 None => break,
             }
         }
+        self.next_id += 1;
         self.items.push(DownloadJob {
+            id: self.next_id,
             file_name: path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -131,6 +138,17 @@ impl Jobs {
                 job.error = Some(error);
             }
         }
+        Some(job.clone())
+    }
+
+    /// Уточнить причину обрыва — только у той самой загрузки, а не у новой под тем же
+    /// именем, начатой за это время.
+    fn explain(&mut self, id: u64, error: String) -> Option<DownloadJob> {
+        let job = self
+            .items
+            .iter_mut()
+            .find(|job| job.id == id && job.state == DownloadJobState::Failed)?;
+        job.error = Some(error);
         Some(job.clone())
     }
 
@@ -522,49 +540,10 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
                 );
             }
             DownloadEvent::Finished { path, success, .. } => {
-                let reason = path
-                    .as_deref()
-                    .and_then(crate::commands::download_progress::take_stop_reason);
-                let (title, detail, error) = match reason {
-                    Some(reason) => {
-                        let (title, detail) = reason.texts();
-                        (title, detail, title.to_string())
-                    }
-                    None => (
-                        "Загрузка не удалась",
-                        "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
-                        "Сайт не отдал файл.".to_string(),
-                    ),
-                };
-                let job = path.as_deref().and_then(|path| {
-                    jobs().finish(path, if success { Ok(()) } else { Err(error.clone()) })
-                });
-                let Some(job) = job else {
-                    // Не наша загрузка: о неудаче скажем, только если пути нет вовсе.
-                    if !success && path.is_none() {
-                        emit_state(&download_app, 2, title, detail, Some(error));
-                    }
-                    return true;
-                };
-                emit_jobs(&download_app);
-                let current = current_request();
-                let here =
-                    for_current_mod(page_of(job.request.as_ref()), page_of(current.as_ref()));
                 if success {
-                    if let Some(path) = path.as_deref() {
-                        crate::commands::downloads::note_finished(path);
-                    }
-                    if is_archive_name(Path::new(&job.path)) {
-                        let _ = download_app.emit_to(PANEL_LABEL, "download://ready", job);
-                    }
+                    finished_ok(&download_app, path.as_deref());
                 } else {
-                    // Недокачанный файл в папке загрузок не нужен.
-                    if let Some(path) = path.as_deref() {
-                        let _ = std::fs::remove_file(path);
-                    }
-                    if here {
-                        emit_state(&download_app, 2, title, detail, Some(error));
-                    }
+                    finished_failed(&download_app, path);
                 }
             }
             _ => {}
@@ -619,6 +598,68 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
     }
     let _ = panel;
     Ok(())
+}
+
+/// Сколько ждать причину обрыва после сообщения о неудаче.
+const FAILURE_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+
+fn finished_ok(app: &AppHandle, path: Option<&Path>) {
+    let Some(path) = path else { return };
+    let Some(job) = jobs().finish(path, Ok(())) else {
+        return; // не наша загрузка
+    };
+    emit_jobs(app);
+    crate::commands::downloads::note_finished(path);
+    if is_archive_name(Path::new(&job.path)) {
+        let _ = app.emit_to(PANEL_LABEL, "download://ready", job);
+    }
+}
+
+/// Тексты обрыва: своя причина, причина WebView2 или общая.
+fn failure_texts(
+    reason: Option<crate::commands::download_progress::StopReason>,
+) -> (&'static str, &'static str, String) {
+    match reason {
+        Some(reason) => {
+            let (title, detail) = reason.texts();
+            (title, detail, title.to_string())
+        }
+        None => (
+            "Загрузка не удалась",
+            "Файл не скачался. Попробуйте ещё раз или откройте страницу в браузере.",
+            "Сайт не отдал файл.".to_string(),
+        ),
+    }
+}
+
+fn finished_failed(app: &AppHandle, path: Option<PathBuf>) {
+    let Some(path) = path else {
+        let (title, detail, error) = failure_texts(None);
+        emit_state(app, 2, title, detail, Some(error));
+        return;
+    };
+    // Итог — сразу: панель не должна ждать, а новая загрузка под тем же именем —
+    // получить чужой обрыв.
+    let (_, _, placeholder) = failure_texts(None);
+    let Some(job) = jobs().finish(&path, Err(placeholder)) else {
+        return; // не наша загрузка или окно уже закрыли
+    };
+    // Недокачанный файл в папке загрузок не нужен.
+    let _ = std::fs::remove_file(&path);
+    // Причину WebView2 сообщает своим событием, и оно может прийти чуть позже: без
+    // неё панель писала бы «сайт не отдал файл» при удалённом из «Загрузок» файле.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(FAILURE_GRACE);
+        let reason = crate::commands::download_progress::take_stop_reason(&path);
+        let (title, detail, error) = failure_texts(reason);
+        let job = jobs().explain(job.id, error.clone()).unwrap_or(job);
+        emit_jobs(&app);
+        let current = current_request();
+        if for_current_mod(page_of(job.request.as_ref()), page_of(current.as_ref())) {
+            emit_state(&app, 2, title, detail, Some(error));
+        }
+    });
 }
 
 /// Окно не должно вылезать за рабочую область даже на маленьком экране.
@@ -987,6 +1028,45 @@ mod tests {
         jobs.start(&path, Some(request("a")));
         assert_eq!(jobs.downloading(), vec![path]);
         assert_eq!(jobs.snapshot().len(), 1);
+    }
+
+    #[test]
+    fn late_reason_goes_to_its_own_download_only() {
+        // Обрыв уточняется чуть позже; за это время под тем же именем могла начаться
+        // новая загрузка — её помечать нельзя.
+        let mut jobs = Jobs::default();
+        let path = PathBuf::from("mod.zip");
+        jobs.start(&path, Some(request("a")));
+        let failed = jobs
+            .finish(&path, Err("Сайт не отдал файл.".to_string()))
+            .unwrap();
+        jobs.start(&path, Some(request("a")));
+        assert!(
+            jobs.explain(failed.id, "Файл загрузки пропал".to_string())
+                .is_none()
+        );
+        assert_eq!(jobs.downloading(), vec![path.clone()], "новая идёт дальше");
+
+        let mut jobs = Jobs::default();
+        jobs.start(&path, None);
+        let failed = jobs
+            .finish(&path, Err("Сайт не отдал файл.".to_string()))
+            .unwrap();
+        let explained = jobs
+            .explain(failed.id, "Файл загрузки пропал".to_string())
+            .unwrap();
+        assert_eq!(explained.error.as_deref(), Some("Файл загрузки пропал"));
+    }
+
+    #[test]
+    fn failure_says_what_happened() {
+        use crate::commands::download_progress::StopReason;
+        let (title, _, error) = failure_texts(Some(StopReason::FileGone));
+        assert_eq!(title, "Файл загрузки пропал");
+        assert_eq!(error, title, "в строке загрузки — та же причина");
+        let (title, _, error) = failure_texts(None);
+        assert_eq!(title, "Загрузка не удалась");
+        assert_eq!(error, "Сайт не отдал файл.");
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use bmm_domain::library::LibraryStore;
+use bmm_packs::fingerprint::{self, Fingerprint};
 use bmm_packs::incoming::{
     self, IncomingAnalysis, IncomingItem, IncomingKind, IncomingOptions, InstalledArchive,
 };
@@ -160,11 +162,22 @@ fn remove_download_source(state: &AppState, path: &str) -> Result<bool, AppError
     if !is_download_source(&path, &settings, state.paths.root()) {
         return Ok(false);
     }
+    // На месте поставленного архива уже другой файл (подменили, скачали заново под
+    // тем же именем) — его не трогаем.
+    if !may_remove_source(&path) {
+        return Ok(false);
+    }
+    forget_checked(&path);
     match fs::remove_file(&path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(AppError::new("io", error.to_string())),
     }
+}
+
+fn may_remove_source(path: &Path) -> bool {
+    let known = checked().get(path).cloned();
+    fingerprint::verdict(known.as_ref(), path) == fingerprint::Verdict::Same
 }
 
 fn is_download_source(
@@ -247,16 +260,76 @@ fn inspect_paths(state: &AppState, paths: &[String]) -> Result<Vec<IncomingArchi
     for raw in paths {
         let source = PathBuf::from(raw);
         let work = root.join(format!("{}-{}", std::process::id(), unique_suffix()));
-        let analysis = incoming::analyze(
+        // Отпечаток до и после разбора: менялся файл посередине — проверка не о нём.
+        let before = Fingerprint::of(&source).ok();
+        let mut analysis = incoming::analyze(
             &source,
             &installed,
             &work,
             IncomingOptions::default(),
             &cancel,
         );
+        let after = Fingerprint::of(&source).ok();
+        match checked_print(before, after) {
+            Ok(print) => remember_checked(&source, print),
+            Err(problem) => {
+                forget_checked(&source);
+                if analysis.problem.is_none() {
+                    analysis.problem = Some(problem.to_string());
+                }
+            }
+        }
         result.push(to_dto(analysis));
     }
     Ok(result)
+}
+
+/// Архивы, проверенные в этом запуске: путь → отпечаток на момент проверки. Ставить
+/// и удалять после установки можно только тот же самый файл.
+static CHECKED: std::sync::LazyLock<std::sync::Mutex<HashMap<PathBuf, Fingerprint>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+/// Столько проверенных архивов помнить. Больше за один запуск не бывает.
+const CHECKED_KEEP: usize = 512;
+
+fn checked() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Fingerprint>> {
+    CHECKED.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+fn remember_checked(path: &Path, print: Fingerprint) {
+    let mut known = checked();
+    if known.len() >= CHECKED_KEEP && !known.contains_key(path) {
+        known.clear();
+    }
+    known.insert(path.to_path_buf(), print);
+}
+
+fn forget_checked(path: &Path) {
+    checked().remove(path);
+}
+
+/// Что запомнить после разбора: отпечаток, если файл не менялся, пока его читали.
+fn checked_print(
+    before: Option<Fingerprint>,
+    after: Option<Fingerprint>,
+) -> Result<Fingerprint, &'static str> {
+    match (before, after) {
+        (Some(before), Some(after)) if before == after => Ok(before),
+        (Some(_), Some(_)) => Err(
+            "Архив менялся, пока его проверяли, — например, ещё докачивался. Откройте его ещё раз.",
+        ),
+        // Файла нет или он не читается — разбор и так скажет, что не так.
+        _ => Err("Файл не найден."),
+    }
+}
+
+/// Можно ли ставить этот файл. Наши копии во временной папке (перепакованные,
+/// вложенные архивы) человек не трогает — их не сверяем.
+fn install_verdict(source: &Path, work_root: &Path) -> fingerprint::Verdict {
+    if source.starts_with(work_root) {
+        return fingerprint::Verdict::Same;
+    }
+    let known = checked().get(source).cloned();
+    fingerprint::verdict(known.as_ref(), source)
 }
 
 fn installed_archives(
@@ -424,8 +497,24 @@ fn install_items(
         Arc::new(move || settings.keep_backups.max(1) as usize),
     );
     let mut results = Vec::new();
+    let work_root = incoming_root();
     for request in requests {
         let source = PathBuf::from(&request.zip_path);
+        // Между проверкой и установкой архив могли удалить, переименовать или подменить:
+        // ставим только тот файл, который проверили.
+        if let Some(message) = install_verdict(&source, &work_root).message() {
+            results.push(IncomingInstallResult {
+                success: false,
+                message: Some(message.to_string()),
+                warning: None,
+                file_name: request.file_name.clone(),
+                replaces: request.replaces.clone(),
+                backup_id: None,
+                was_disabled: false,
+                same_name: false,
+            });
+            continue;
+        }
         let options = bmm_packs::install::InstallOptions {
             allow_warnings: request.allow_warnings,
             ..bmm_packs::install::InstallOptions::default()
@@ -673,6 +762,11 @@ fn unique_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Архив прошёл проверку окна: только такой можно ставить.
+    fn checked_source(path: &Path) {
+        remember_checked(path, Fingerprint::of(path).unwrap());
+    }
     use std::collections::HashMap;
     use std::io::Write;
     use std::sync::Mutex;
@@ -815,6 +909,7 @@ mod tests {
         );
         assert!(installer.disable("car_v1.zip").success);
 
+        checked_source(&v2);
         let results = install_items(
             &state,
             &[IncomingInstallRequest {
@@ -871,6 +966,7 @@ mod tests {
             installed_at_utc: system_clock()(),
             enabled: true,
         });
+        checked_source(&v2);
         let results = install_items(
             &state,
             &[IncomingInstallRequest {
@@ -909,6 +1005,7 @@ mod tests {
                 .install_from_path(&v1, "car_v1.zip", InstallOptions::default())
                 .success
         );
+        checked_source(&v2);
         let results = install_items(
             &state,
             &[IncomingInstallRequest {
@@ -964,6 +1061,7 @@ mod tests {
             "allowWarnings": true,
         }))
         .unwrap();
+        checked_source(&source);
         let results = install_items(&state, &[request]).unwrap();
         let result = serde_json::to_value(&results[0]).unwrap();
 
@@ -1022,8 +1120,160 @@ mod tests {
 
         settings.delete_downloads_after_install = true;
         state.settings.save(&settings).unwrap();
+        checked_source(&path);
         assert!(remove_download_source(&state, &path.display().to_string()).unwrap());
         assert!(!path.exists(), "включённая настройка удаляет архив");
+    }
+
+    fn new_mod_request(source: &Path) -> IncomingInstallRequest {
+        IncomingInstallRequest {
+            zip_path: source.display().to_string(),
+            file_name: "new_mod.zip".to_string(),
+            replaces: None,
+            allow_warnings: true,
+            version: None,
+        }
+    }
+
+    fn installed_new_mod(state: &AppState) -> bool {
+        installer_for_test(state)
+            .layout()
+            .mods_dir
+            .join("new_mod.zip")
+            .exists()
+    }
+
+    #[test]
+    fn archive_checked_by_the_window_installs() {
+        // Настоящий путь: окно проверяет архив, потом ставит то, что проверило.
+        let (temp, state) = setup();
+        let source = temp.path().join("new.zip");
+        make_zip(&source, b"body");
+        let found = inspect_paths(&state, &[source.display().to_string()]).unwrap();
+        assert!(found[0].problem.is_none(), "{:?}", found[0].problem);
+        let item = &found[0].items[0];
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: item.zip_path.clone(),
+                file_name: "new_mod.zip".to_string(),
+                replaces: None,
+                allow_warnings: true,
+                version: None,
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+    }
+
+    #[test]
+    fn archive_swapped_after_the_check_is_not_installed() {
+        // Было: после «Архив проверен» файл в «Загрузках» подменили другим с тем же
+        // именем — ставился непроверенный архив.
+        let (temp, state) = setup();
+        let source = temp.path().join("new.zip");
+        make_zip(&source, b"checked body");
+        checked_source(&source);
+        make_zip(&source, b"another, unchecked body");
+        let results = install_items(&state, &[new_mod_request(&source)]).unwrap();
+        assert!(!results[0].success);
+        assert!(
+            results[0].message.as_deref().unwrap().contains("изменился"),
+            "{:?}",
+            results[0].message
+        );
+        assert!(!installed_new_mod(&state));
+    }
+
+    #[test]
+    fn archive_removed_after_the_check_says_so() {
+        let (temp, state) = setup();
+        let source = temp.path().join("new.zip");
+        make_zip(&source, b"body");
+        checked_source(&source);
+        std::fs::rename(&source, temp.path().join("renamed.zip")).unwrap();
+        let results = install_items(&state, &[new_mod_request(&source)]).unwrap();
+        assert!(!results[0].success);
+        assert!(
+            results[0].message.as_deref().unwrap().contains("пропал"),
+            "{:?}",
+            results[0].message
+        );
+    }
+
+    #[test]
+    fn unchecked_archive_is_not_installed() {
+        let (temp, state) = setup();
+        let source = temp.path().join("never_checked.zip");
+        make_zip(&source, b"body");
+        forget_checked(&source);
+        let results = install_items(&state, &[new_mod_request(&source)]).unwrap();
+        assert!(!results[0].success);
+        assert!(!installed_new_mod(&state));
+    }
+
+    #[test]
+    fn one_bad_archive_does_not_stop_the_rest() {
+        // Пачка: один архив пропал — остальные всё равно ставятся.
+        let (temp, state) = setup();
+        let gone = temp.path().join("gone.zip");
+        let fine = temp.path().join("fine.zip");
+        make_zip(&gone, b"gone");
+        make_zip(&fine, b"fine");
+        checked_source(&gone);
+        checked_source(&fine);
+        std::fs::remove_file(&gone).unwrap();
+        let mut second = new_mod_request(&fine);
+        second.file_name = "fine_mod.zip".to_string();
+        let results = install_items(&state, &[new_mod_request(&gone), second]).unwrap();
+        assert!(!results[0].success);
+        assert!(results[1].success, "{:?}", results[1].message);
+    }
+
+    #[test]
+    fn archive_changing_during_the_check_is_not_remembered() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("mod.zip");
+        std::fs::write(&path, b"part").unwrap();
+        let before = Fingerprint::of(&path).ok();
+        std::fs::write(&path, b"part and the rest").unwrap();
+        let after = Fingerprint::of(&path).ok();
+        let problem = checked_print(before.clone(), after).unwrap_err();
+        assert!(problem.contains("менялся"), "{problem}");
+        assert!(checked_print(before.clone(), before.clone()).is_ok());
+        assert!(
+            checked_print(before, None).is_err(),
+            "пропал посреди проверки"
+        );
+    }
+
+    #[test]
+    fn own_copies_in_the_work_folder_are_not_compared() {
+        let root = incoming_root();
+        assert_eq!(
+            install_verdict(&root.join("123-1").join("repacked-1.zip"), &root),
+            fingerprint::Verdict::Same
+        );
+    }
+
+    #[test]
+    fn another_file_in_place_of_the_installed_archive_is_not_deleted() {
+        // Поставили архив, а под тем же именем уже лежит другой (скачали заново):
+        // удаление «скачанного архива после установки» не должно его тронуть.
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_support::test_state(&temp, temp.path());
+        let downloads = temp.path().join("downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        let path = downloads.join("mod.zip");
+        std::fs::write(&path, b"installed one").unwrap();
+        let mut settings = state.settings.load().settings;
+        settings.downloads_folder = Some(downloads.display().to_string());
+        settings.delete_downloads_after_install = true;
+        state.settings.save(&settings).unwrap();
+        checked_source(&path);
+        std::fs::write(&path, b"a newer download").unwrap();
+        assert!(!remove_download_source(&state, &path.display().to_string()).unwrap());
+        assert!(path.is_file());
     }
 
     #[test]
@@ -1031,6 +1281,7 @@ mod tests {
         let (temp, state) = setup();
         let source = temp.path().join("new.zip");
         make_zip(&source, b"body");
+        checked_source(&source);
         let results = install_items(
             &state,
             &[IncomingInstallRequest {
@@ -1099,6 +1350,7 @@ mod tests {
             })
             .unwrap();
 
+        checked_source(&v2);
         let results = install_items(
             &state,
             &[IncomingInstallRequest {
