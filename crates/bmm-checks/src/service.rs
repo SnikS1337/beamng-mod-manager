@@ -125,6 +125,24 @@ impl UpdateCheckService {
         });
     }
 
+    /// Что лежит за кнопкой «Скачать» — к той подписи страницы, что записана сейчас.
+    pub fn apply_file(
+        store: &dyn LibraryStore,
+        mod_id: &str,
+        source: &str,
+        mut file: bmm_domain::library::FileSnapshot,
+    ) {
+        let Some(mut check) = store.get_check(mod_id, source) else {
+            return;
+        };
+        file.page_key = Some(file_check::page_key(
+            check.last_version.as_deref(),
+            check.last_size,
+        ));
+        check.last_file = Some(file);
+        store.save_check(check);
+    }
+
     /// Карточка не нашлась (404). Прошлые версия и размер сохраняются, время проверки
     /// обновляется (иначе страницу дёргали бы при каждом нажатии), счётчик промахов растёт.
     pub fn apply_missing(
@@ -533,6 +551,25 @@ mod tests {
             page_key: key.map(str::to_string),
         });
         store.save_check(check);
+    }
+
+    #[test]
+    fn file_details_are_tied_to_the_current_page_label() {
+        let store = InMemoryLibraryStore::new();
+        with_file(&store, "a", Some("1.0"), 5, Some("1.1"), None);
+        let file = FileSnapshot {
+            url: "https://modsfire.com/x".to_string(),
+            name: Some("a.zip".to_string()),
+            size: Some(5),
+            exact: true,
+            page_key: Some("старая".to_string()),
+        };
+        UpdateCheckService::apply_file(&store, "a", "stmods", file.clone());
+        let saved = store.get_check("a", "stmods").unwrap().last_file.unwrap();
+        assert_eq!(saved.page_key.as_deref(), Some("1.1"));
+        // Записи проверки нет — снимок некуда класть, его и не создаём.
+        UpdateCheckService::apply_file(&store, "нет", "stmods", file);
+        assert!(store.get_check("нет", "stmods").is_none());
     }
 
     #[test]
