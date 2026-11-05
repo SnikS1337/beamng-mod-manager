@@ -17,6 +17,8 @@ use url::Url;
 /// грузились одновременно, а не по очереди в одном окне.
 pub const MODLAND_LABEL: &str = "modland-pages";
 pub const MODHUB_LABEL: &str = "modhub-pages";
+/// Страницы файлов на modsfire: имя и размер файла за кнопкой «Скачать».
+pub const FILE_PAGES_LABEL: &str = "file-pages";
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 // Cloudflare иногда снимает проверку сам за несколько секунд; ждём.
 const SELF_CLEAR_WAIT: Duration = Duration::from_secs(10);

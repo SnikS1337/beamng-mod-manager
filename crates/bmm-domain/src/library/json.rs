@@ -718,6 +718,7 @@ mod tests {
 
     fn check(mod_id: &str) -> CheckState {
         CheckState {
+            last_file: None,
             mod_id: mod_id.to_string(),
             source: "modland".to_string(),
             last_checked_utc: moment(),

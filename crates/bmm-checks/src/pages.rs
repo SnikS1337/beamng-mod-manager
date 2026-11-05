@@ -2349,6 +2349,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "bmw".to_string(),
             source: "modland".to_string(),
             last_checked_utc: now(),
@@ -2438,6 +2439,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "a".to_string(),
             source: "modsgaming".to_string(),
             last_checked_utc: now(),
@@ -2566,6 +2568,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "mb".to_string(),
             source: "modsgaming".to_string(),
             last_checked_utc: now(),

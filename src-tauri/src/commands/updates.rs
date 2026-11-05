@@ -1006,6 +1006,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "m1".to_string(),
             source: "stmods".to_string(),
             last_checked_utc: instant(),
@@ -1137,6 +1138,7 @@ mod tests {
             })
             .unwrap();
         state.library.save_check(CheckState {
+            last_file: None,
             mod_id: mod_id.to_string(),
             source: "modsgaming".to_string(),
             last_checked_utc: Utc::now().fixed_offset(),
@@ -1266,6 +1268,7 @@ mod tests {
             })
             .unwrap();
         let mut check = CheckState {
+            last_file: None,
             mod_id: "m1".to_string(),
             source: "stmods".to_string(),
             last_checked_utc: instant(),

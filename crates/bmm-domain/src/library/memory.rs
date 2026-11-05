@@ -256,6 +256,7 @@ mod tests {
         let store = InMemoryLibraryStore::new();
         store.upsert_mod(installed("a", "A"));
         let state = CheckState {
+            last_file: None,
             mod_id: "a".to_string(),
             source: "modland".to_string(),
             last_checked_utc: Utc

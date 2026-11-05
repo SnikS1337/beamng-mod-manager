@@ -12,6 +12,16 @@ const PRERELEASE = /(alpha|beta|rc)/i;
 /** Почему программа считает, что мод обновился. Только то, что знает наверняка. */
 export function reason(finding: UpdateFinding): string {
   const size = sizeChange(finding);
+  const file = finding.fileName ? `«${finding.fileName}»` : "файл";
+  if (finding.fileVerdict === "same_file") {
+    return `Сайт пишет ${finding.latestVersion ?? "что мод изменился"}, но по ссылке лежит ${file} — тот же, что у вас: имя и размер совпали. Обновлением не считаем.`;
+  }
+  if (finding.fileVerdict === "label_older") {
+    return `Сайт пишет ${finding.latestVersion ?? "новую версию"}, а файл по ссылке подписан ${finding.fileVersion ?? "прежней версией"}: ${file}. Возможно, автор не переименовал файл, а возможно, подпись сайта неверна.`;
+  }
+  if (finding.fileVerdict === "file_newer") {
+    return `На странице версия не менялась, а по ссылке уже ${file} — версия ${finding.fileVersion ?? "новее"}. Похоже, автор обновил файл, не меняя подписи.`;
+  }
   if (finding.authorVersion) {
     return `Сайт пишет ${finding.latestVersion ?? "версию новее"}, но у автора на BeamNG последняя — ${finding.authorVersion}, как у вас. Похоже, перезалив подписан неверно.`;
   }

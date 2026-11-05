@@ -184,7 +184,13 @@ noticedAt: string | null,
  * Версия у автора на BeamNG, если она как у вас, а этот сайт пишет номер выше:
  * скорее неверная подпись перезалива, чем новая версия.
  */
-authorVersion: string | null, };
+authorVersion: string | null, 
+/**
+ * Что показал файл за кнопкой «Скачать»: `same_file` — тот же файл, что у вас;
+ * `label_older` — сайт пишет новую версию, а файл подписан вашей или старее;
+ * `file_newer` — подпись прежняя, а файл новее.
+ */
+fileVerdict: "same_file" | "label_older" | "file_newer" | null, fileName: string | null, fileVersion: string | null, };
 
 export type UpdateSite = { id: string, displayName: string, 
 /**

@@ -63,6 +63,27 @@ pub struct CheckState {
     pub miss_count: i32,
     pub last_game_version: Option<String>,
     pub last_title: Option<String>,
+    /// Файл за кнопкой «Скачать», каким он был при последнем взгляде.
+    #[serde(default)]
+    pub last_file: Option<FileSnapshot>,
+}
+
+/// Что лежит за кнопкой «Скачать» на странице мода: адрес, имя и размер файла.
+/// Сайты-перезаливщики часто не меняют подпись, а файл новый, — или пишут новую
+/// версию над прежним файлом. Имя и размер самого файла это показывают.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct FileSnapshot {
+    /// Куда ведёт ссылка: сам файл или страница файлообменника.
+    pub url: String,
+    pub name: Option<String>,
+    pub size: Option<i64>,
+    /// Размер точный, до байта. Файлообменник пишет его округлённым («243.84 MB»).
+    #[serde(default)]
+    pub exact: bool,
+    /// Подпись страницы (версия или размер), при которой смотрели файл. Сменилась
+    /// подпись — сведения о файле к ней уже не относятся.
+    pub page_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -279,5 +300,47 @@ impl Inner {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_saved_before_file_details_still_reads() {
+        // Библиотека прошлой версии: поля «LastFile» в записи проверки нет.
+        let json = r#"{"ModId":"a","Source":"stmods","LastCheckedUtc":"2026-10-13T12:00:00+00:00",
+            "LastChangedUtc":null,"LastVersion":"1.1","LastSize":null,"MissCount":0,
+            "LastGameVersion":null,"LastTitle":null}"#;
+        let check: CheckState = serde_json::from_str(json).unwrap();
+        assert_eq!(check.last_file, None);
+    }
+
+    #[test]
+    fn file_details_survive_a_save() {
+        let check = CheckState {
+            mod_id: "a".to_string(),
+            source: "stmods".to_string(),
+            last_checked_utc: chrono::DateTime::parse_from_rfc3339("2026-10-13T12:00:00+00:00")
+                .unwrap(),
+            last_changed_utc: None,
+            last_version: Some("1.1".to_string()),
+            last_size: None,
+            miss_count: 0,
+            last_game_version: None,
+            last_title: None,
+            last_file: Some(FileSnapshot {
+                url: "https://modsfire.com/abc".to_string(),
+                name: Some("Dummy_v1.1.zip".to_string()),
+                size: Some(1234),
+                exact: false,
+                page_key: Some("1.1".to_string()),
+            }),
+        };
+        let text = serde_json::to_string(&check).unwrap();
+        assert!(text.contains("\"LastFile\""), "{text}");
+        let back: CheckState = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, check);
     }
 }

@@ -62,6 +62,18 @@ impl StModsSource {
 }
 
 impl ModSource for StModsSource {
+    fn probe_file(
+        &self,
+        listing: &Listing,
+        previous: Option<&bmm_domain::library::FileSnapshot>,
+        open_page: bool,
+        cancel: &AtomicBool,
+    ) -> crate::files::FileProbe {
+        crate::files::offer_url(listing)
+            .map(|offer| crate::files::probe(&self.fetcher, offer, previous, open_page, cancel))
+            .unwrap_or_default()
+    }
+
     fn id(&self) -> &'static str {
         parser::SOURCE_ID
     }

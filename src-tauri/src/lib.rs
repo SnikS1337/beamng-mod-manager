@@ -151,11 +151,21 @@ pub fn run() {
     ));
     let modhub_pages = Arc::new(browser_pages::BrowserPages::new(
         browser_pages::MODHUB_LABEL,
+        browser_log.clone(),
+    ));
+    // Страницы файлов modsfire тоже за Cloudflare; у них своё окно, чтобы не стоять
+    // в очереди за Modland и ModHub.
+    let file_pages = Arc::new(browser_pages::BrowserPages::new(
+        browser_pages::FILE_PAGES_LABEL,
         browser_log,
     ));
     let pages: Arc<dyn PageFetcher> = Arc::new(RoutingPageFetcher::new(
         Arc::new(RoutingPageFetcher::new(
-            default_fetcher(),
+            Arc::new(RoutingPageFetcher::new(
+                default_fetcher(),
+                file_pages.clone(),
+                bmm_sources::net::FILE_PAGE_HOSTS,
+            )),
             modhub_pages.clone(),
             &["modhub.us"],
         )),
@@ -285,7 +295,11 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Служебное окно браузера не должно всплывать на экране при следующем запуске.
-                .with_denylist(&[browser_pages::MODLAND_LABEL, browser_pages::MODHUB_LABEL])
+                .with_denylist(&[
+                    browser_pages::MODLAND_LABEL,
+                    browser_pages::MODHUB_LABEL,
+                    browser_pages::FILE_PAGES_LABEL,
+                ])
                 .build(),
         )
         .manage(state)
@@ -305,6 +319,7 @@ pub fn run() {
             create_main_window(app)?;
             modland_pages.attach(app.handle().clone());
             modhub_pages.attach(app.handle().clone());
+            file_pages.attach(app.handle().clone());
             let state = app.state::<Arc<AppState>>().inner().clone();
             // Прерванная установка оставляет в папке модов тяжёлые `.part`.
             // Убираем только старые: свежий файл может принадлежать идущей установке.

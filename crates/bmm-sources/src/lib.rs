@@ -1,5 +1,6 @@
 //! Сайты модов, HTTP и поиск.
 
+pub mod files;
 pub mod images;
 pub mod net;
 pub mod parsers;

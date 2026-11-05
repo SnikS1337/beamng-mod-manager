@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, FixedOffset};
 use url::Url;
 
+use bmm_domain::file_check::{self, FileVerdict};
 use bmm_domain::library::{
     CheckState, LibraryStore, ModBinding, SourceStatus as StoreSourceStatus,
 };
@@ -37,6 +38,12 @@ pub struct UpdateFinding {
     /// сайт, а у вас — как у автора. Тогда это скорее перезалив с неверной подписью
     /// («1.14.1» вместо «0.14.1»), и обновление показывается только как возможное.
     pub author_version: Option<String>,
+    /// Что показал файл за кнопкой «Скачать»: тот же файл, подписан старой версией
+    /// или новее, чем пишет сайт ([`FileVerdict::code`]).
+    pub file_verdict: Option<String>,
+    /// Имя этого файла и версия в нём, если есть.
+    pub file_name: Option<String>,
+    pub file_version: Option<String>,
 }
 
 /// Сайт, на котором мод выкладывает сам автор.
@@ -128,6 +135,7 @@ impl UpdateCheckService {
         let check = store.get_check(&binding.mod_id, &binding.source);
         store.save_check(match check {
             None => CheckState {
+                last_file: None,
                 mod_id: binding.mod_id.clone(),
                 source: binding.source.clone(),
                 last_checked_utc: now,
@@ -178,6 +186,9 @@ impl UpdateCheckService {
             previous.as_ref().and_then(|state| state.last_changed_utc)
         };
         store.save_check(CheckState {
+            // Сведения о файле живут дольше подписи: к какой подписи они относятся,
+            // помнит сам снимок (`page_key`).
+            last_file: previous.as_ref().and_then(|state| state.last_file.clone()),
             mod_id: binding.mod_id.clone(),
             source: binding.source.clone(),
             last_checked_utc: now,
@@ -210,6 +221,9 @@ impl UpdateCheckService {
     ) {
         let previous = store.get_check(&binding.mod_id, &binding.source);
         store.save_check(CheckState {
+            // Сведения о файле живут дольше подписи: к какой подписи они относятся,
+            // помнит сам снимок (`page_key`).
+            last_file: previous.as_ref().and_then(|state| state.last_file.clone()),
             mod_id: binding.mod_id.clone(),
             source: binding.source.clone(),
             last_checked_utc: now,
@@ -265,12 +279,40 @@ impl UpdateCheckService {
                 let Some(check) = store.get_check(&installed.id, &binding.source) else {
                     continue;
                 };
-                let mut status = UpdateDecider::decide(
+                let page_status = UpdateDecider::decide(
                     &VersionSnapshot::new(installed.version.as_deref(), installed.size_bytes, None),
                     &VersionSnapshot::new(check.last_version.as_deref(), check.last_size, None),
                 );
-                if status == UpdateStatus::None {
+                // Файл за кнопкой «Скачать» уточняет решение по подписи страницы.
+                let page_key = file_check::page_key(check.last_version.as_deref(), check.last_size);
+                let verdict = check.last_file.as_ref().and_then(|file| {
+                    file_check::judge(
+                        file_check::Installed {
+                            version: installed.version.as_deref(),
+                            size: installed.size_bytes,
+                        },
+                        page_status,
+                        &page_key,
+                        file,
+                    )
+                });
+                let mut status = match &verdict {
+                    // Сайт пишет новую версию, а лежит ваш файл: это не обновление.
+                    Some(FileVerdict::SameFile) => UpdateStatus::None,
+                    Some(FileVerdict::LabelOlder { .. }) => UpdateStatus::Possible,
+                    Some(FileVerdict::FileNewer { .. }) => UpdateStatus::Possible,
+                    None => page_status,
+                };
+                let same_file = verdict == Some(FileVerdict::SameFile);
+                if status == UpdateStatus::None && !same_file {
                     continue;
+                }
+                if same_file {
+                    // Показываем только среди скрытых — с пояснением, почему.
+                    if !include_dismissed {
+                        continue;
+                    }
+                    status = UpdateStatus::Possible;
                 }
                 let mut against_author = None;
                 if binding.source != AUTHOR_SOURCE
@@ -282,16 +324,15 @@ impl UpdateCheckService {
                     status = UpdateStatus::Possible;
                     against_author = Some(author.to_string());
                 }
-                let key = check
-                    .last_version
-                    .clone()
-                    .unwrap_or_else(|| match check.last_size {
-                        Some(size) => format!("size:{size}"),
-                        None => "size:".to_string(),
-                    });
-                let is_dismissed = dismissed
-                    .as_deref()
-                    .is_some_and(|dismissed| dismissed.eq_ignore_ascii_case(&key));
+                // Новый файл при прежней подписи пропускают до следующего файла.
+                let key = match &verdict {
+                    Some(FileVerdict::FileNewer { file_version }) => format!("file:{file_version}"),
+                    _ => page_key,
+                };
+                let is_dismissed = same_file
+                    || dismissed
+                        .as_deref()
+                        .is_some_and(|dismissed| dismissed.eq_ignore_ascii_case(&key));
                 if is_dismissed && !include_dismissed {
                     continue;
                 }
@@ -306,6 +347,14 @@ impl UpdateCheckService {
                     dismiss_key: key,
                     is_dismissed,
                     author_version: against_author,
+                    file_verdict: verdict.as_ref().map(|verdict| verdict.code().to_string()),
+                    file_name: verdict
+                        .as_ref()
+                        .and(check.last_file.as_ref())
+                        .and_then(|file| file.name.clone()),
+                    file_version: verdict
+                        .as_ref()
+                        .and_then(|verdict| verdict.file_version().map(str::to_string)),
                 };
                 // Среди не скрытых берём более уверенное; скрытое не вытесняет нескрытое.
                 let replace = match &best {
@@ -405,7 +454,7 @@ pub(crate) fn mod_label(store: &dyn LibraryStore, mod_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmm_domain::library::{InMemoryLibraryStore, InstalledMod, PageSearch};
+    use bmm_domain::library::{FileSnapshot, InMemoryLibraryStore, InstalledMod, PageSearch};
 
     fn now() -> DateTime<FixedOffset> {
         DateTime::parse_from_rfc3339("2026-10-13T12:00:00+00:00").unwrap()
@@ -440,6 +489,7 @@ mod tests {
             .unwrap();
         if let Some(checked) = checked {
             store.save_check(CheckState {
+                last_file: None,
                 mod_id: id.to_string(),
                 source: source.to_string(),
                 last_checked_utc: DateTime::parse_from_rfc3339(checked).unwrap(),
@@ -451,6 +501,160 @@ mod tests {
                 last_title: None,
             });
         }
+    }
+
+    /// Мод `id` версии `ours` и размера `size`, сайт пишет `site`, за ссылкой — `file`.
+    fn with_file(
+        store: &InMemoryLibraryStore,
+        id: &str,
+        ours: Option<&str>,
+        size: i64,
+        site: Option<&str>,
+        file: Option<(&str, i64, Option<&str>)>,
+    ) {
+        add(
+            store,
+            id,
+            ours,
+            "stmods",
+            Some("2026-10-12T12:00:00+00:00"),
+            site,
+            None,
+        );
+        let mut installed = store.get_mod(id).unwrap();
+        installed.size_bytes = Some(size);
+        store.upsert_mod(installed);
+        let mut check = store.get_check(id, "stmods").unwrap();
+        check.last_file = file.map(|(name, file_size, key)| FileSnapshot {
+            url: "https://modsfire.com/abc".to_string(),
+            name: Some(name.to_string()),
+            size: Some(file_size),
+            exact: true,
+            page_key: key.map(str::to_string),
+        });
+        store.save_check(check);
+    }
+
+    #[test]
+    fn same_file_behind_the_link_is_not_an_update() {
+        // Smoke Dust FX: сайт пишет 1.14.1, а по ссылке ваш файл того же размера.
+        let store = InMemoryLibraryStore::new();
+        with_file(
+            &store,
+            "smoke",
+            Some("0.14.1"),
+            4_000_000,
+            Some("1.14.1"),
+            Some(("smoke_dust_fx.zip", 4_000_000, Some("1.14.1"))),
+        );
+        assert!(UpdateCheckService::pending(&store, false).is_empty());
+        // Среди скрытых — с причиной, чтобы было видно, почему его нет.
+        let hidden = UpdateCheckService::pending(&store, true);
+        assert_eq!(hidden.len(), 1);
+        assert!(hidden[0].is_dismissed);
+        assert_eq!(hidden[0].file_verdict.as_deref(), Some("same_file"));
+        assert_eq!(hidden[0].file_name.as_deref(), Some("smoke_dust_fx.zip"));
+    }
+
+    #[test]
+    fn new_label_over_an_old_file_name_is_only_possible() {
+        let store = InMemoryLibraryStore::new();
+        with_file(
+            &store,
+            "dummy",
+            Some("1.1"),
+            10_000_000,
+            Some("1.2"),
+            Some(("Dummy_v1.1.zip", 12_000_000, Some("1.2"))),
+        );
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].status, UpdateStatus::Possible);
+        assert_eq!(pending[0].file_verdict.as_deref(), Some("label_older"));
+        assert_eq!(pending[0].file_version.as_deref(), Some("1.1"));
+        assert_eq!(pending[0].dismiss_key, "1.2");
+    }
+
+    #[test]
+    fn newer_file_behind_an_unchanged_label_is_possible() {
+        let store = InMemoryLibraryStore::new();
+        with_file(
+            &store,
+            "dummy",
+            Some("1.1"),
+            10_000_000,
+            Some("1.1"),
+            Some(("Dummy_v1.2.zip", 12_000_000, Some("1.1"))),
+        );
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].status, UpdateStatus::Possible);
+        assert_eq!(pending[0].file_verdict.as_deref(), Some("file_newer"));
+        assert_eq!(pending[0].file_version.as_deref(), Some("1.2"));
+        // «Пропустить» прячет этот файл, а не подпись страницы.
+        assert_eq!(pending[0].dismiss_key, "file:1.2");
+        UpdateCheckService::dismiss(&store, &pending[0]);
+        assert!(UpdateCheckService::pending(&store, false).is_empty());
+    }
+
+    #[test]
+    fn stale_file_snapshot_does_not_hide_a_new_version() {
+        // Файл смотрели при подписи 1.1; сайт уже пишет 1.2, а новый файл ещё не видели.
+        let store = InMemoryLibraryStore::new();
+        with_file(
+            &store,
+            "dummy",
+            Some("1.1"),
+            10_000_000,
+            Some("1.2"),
+            Some(("dummy.zip", 10_000_000, Some("1.1"))),
+        );
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].status, UpdateStatus::Likely);
+        assert_eq!(pending[0].file_verdict, None);
+    }
+
+    #[test]
+    fn without_file_details_everything_works_as_before() {
+        let store = InMemoryLibraryStore::new();
+        with_file(&store, "dummy", Some("1.1"), 10_000_000, Some("1.2"), None);
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending[0].status, UpdateStatus::Likely);
+        assert_eq!(pending[0].file_verdict, None);
+        assert_eq!(pending[0].file_name, None);
+    }
+
+    #[test]
+    fn same_file_on_one_site_does_not_hide_an_update_on_another() {
+        // STMods: тот же файл; BeamNG автора: настоящая новая версия.
+        let store = InMemoryLibraryStore::new();
+        with_file(
+            &store,
+            "car",
+            Some("1.0"),
+            5_000_000,
+            Some("1.1"),
+            Some(("car.zip", 5_000_000, Some("1.1"))),
+        );
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "car".to_string(),
+                source: "beamng".to_string(),
+                source_id: "car".to_string(),
+                url: Url::parse("https://beamng.test/car").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        let mut author = store.get_check("car", "stmods").unwrap();
+        author.source = "beamng".to_string();
+        author.last_version = Some("1.2".to_string());
+        author.last_file = None;
+        store.save_check(author);
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].source, "beamng");
+        assert_eq!(pending[0].status, UpdateStatus::Likely);
     }
 
     #[test]
@@ -494,6 +698,7 @@ mod tests {
         );
         store.set_dismissed_update("a", Some("1.1"));
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "a".to_string(),
             source: "stmods".to_string(),
             last_checked_utc: now(),
@@ -537,6 +742,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "a".to_string(),
             source: "modland".to_string(),
             last_checked_utc: now(),
@@ -564,6 +770,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: id.to_string(),
             source: source.to_string(),
             last_checked_utc: now(),
@@ -673,6 +880,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "a".to_string(),
             source: "modland".to_string(),
             last_checked_utc: now(),
@@ -725,6 +933,7 @@ mod tests {
                 })
                 .unwrap();
             store.save_check(CheckState {
+                last_file: None,
                 mod_id: id.clone(),
                 source: source.to_string(),
                 last_checked_utc: t0 - chrono::TimeDelta::days(3),

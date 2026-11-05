@@ -3,6 +3,7 @@
 pub mod beamng;
 pub mod modhub;
 pub mod modland;
+pub mod modsfire;
 pub mod modsgaming;
 pub mod stmods;
 
