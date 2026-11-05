@@ -392,6 +392,15 @@ fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, 
     let _batch = state.library.batch();
     UpdateCheckService::apply_card(store, &tracked, &listing, Utc::now().fixed_offset());
     drop(_batch);
+    // И файл за кнопкой «Скачать»: человек сам попросил проверить этот мод, страницу
+    // файлообменника можно открыть.
+    let previous = store
+        .get_check(mod_id, &binding.source)
+        .and_then(|check| check.last_file);
+    let probe = source.probe_file(&listing, previous.as_ref(), true, &AtomicBool::new(false));
+    if let Some(file) = probe.file {
+        UpdateCheckService::apply_file(store, mod_id, &binding.source, file);
+    }
     Ok(build_snapshot(state))
 }
 

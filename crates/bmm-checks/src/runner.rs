@@ -212,6 +212,19 @@ struct Runner<'r, 'a, 'p> {
 /// Страниц файлообменника на одну проверку (на все сайты вместе).
 pub const FILE_PAGES_PER_RUN: usize = 12;
 
+/// Взять одно место из остатка, если оно есть. Сайты идут параллельно — без гонок.
+fn take_one(left: &std::sync::atomic::AtomicUsize) -> bool {
+    use std::sync::atomic::Ordering;
+    let mut current = left.load(Ordering::SeqCst);
+    while current > 0 {
+        match left.compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
+        }
+    }
+    false
+}
+
 #[derive(Default)]
 struct SourceOutcome {
     requests: u32,
@@ -817,16 +830,11 @@ impl Worker<'_, '_> {
             return;
         }
         let store = self.request.store;
-        let Some(mut check) = store.get_check(&binding.mod_id, &binding.source) else {
+        let Some(check) = store.get_check(&binding.mod_id, &binding.source) else {
             return;
         };
         // Место под страницу файлообменника занимаем заранее: сайты идут параллельно.
-        let open_page = self
-            .file_pages
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                left.checked_sub(1)
-            })
-            .is_ok();
+        let open_page = take_one(self.file_pages);
         let probe = adapter.probe_file(
             current,
             check.last_file.as_ref(),
@@ -836,15 +844,9 @@ impl Worker<'_, '_> {
         if open_page && !probe.opened_page {
             self.file_pages.fetch_add(1, Ordering::SeqCst);
         }
-        let Some(mut file) = probe.file else {
-            return;
-        };
-        file.page_key = Some(bmm_domain::file_check::page_key(
-            check.last_version.as_deref(),
-            check.last_size,
-        ));
-        check.last_file = Some(file);
-        store.save_check(check);
+        if let Some(file) = probe.file {
+            UpdateCheckService::apply_file(store, &binding.mod_id, &binding.source, file);
+        }
     }
 
     fn failure_of(&self, source: &str, error: &SourceError) -> (SourceStatus, String) {
