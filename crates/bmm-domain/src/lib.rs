@@ -2,6 +2,7 @@
 
 pub mod atomic;
 pub mod clock;
+pub mod file_check;
 pub mod filename;
 pub mod hosts;
 pub mod json5_safe;

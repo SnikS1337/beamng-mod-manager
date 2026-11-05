@@ -741,6 +741,7 @@ mod tests {
                     })
                     .unwrap();
                 store.save_check(CheckState {
+                    last_file: None,
                     mod_id: id.clone(),
                     source: source.to_string(),
                     last_checked_utc: t0() - TimeDelta::days(2),

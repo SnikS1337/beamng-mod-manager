@@ -748,7 +748,9 @@
             <div class="content">
               <div class="head">
                 <h2>{finding.modName}</h2>
-                {#if filter === "hidden"}
+                {#if finding.fileVerdict === "same_file"}
+                  <span class="chip muted">Тот же файл</span>
+                {:else if filter === "hidden"}
                   <span class="chip muted">Пропущено</span>
                 {:else if possible}
                   <span class="chip possible">Возможно, обновление</span>
@@ -764,7 +766,10 @@
               <p class="why">{reason(finding)}</p>
               <p class="where">{whereText(finding)}</p>
               <div class="actions">
-                {#if filter === "hidden"}
+                {#if finding.fileVerdict === "same_file"}
+                  <!-- Не пропуск человека, а вывод программы: возвращать в список нечего. -->
+                  <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
+                {:else if filter === "hidden"}
                   <button class="btn-primary" type="button" onclick={() => void restore(finding)}>Вернуть в список</button>
                   <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
                 {:else if possible}

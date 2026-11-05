@@ -66,6 +66,18 @@ pub trait ModSource: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Что лежит за кнопкой «Скачать» на странице `listing`: имя и размер файла.
+    /// `open_page` — можно ли открыть страницу файлообменника (встроенным браузером).
+    fn probe_file(
+        &self,
+        _listing: &Listing,
+        _previous: Option<&bmm_domain::library::FileSnapshot>,
+        _open_page: bool,
+        _cancel: &AtomicBool,
+    ) -> crate::files::FileProbe {
+        crate::files::FileProbe::default()
+    }
+
     fn offers(&self, listing: &Listing, cancel: &AtomicBool) -> Result<Vec<Offer>, SourceError> {
         if !listing.offers.is_empty() {
             return Ok(listing.offers.clone());

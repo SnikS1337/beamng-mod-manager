@@ -451,6 +451,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: id.to_string(),
             source: "stmods".to_string(),
             last_checked_utc: now(),
@@ -568,6 +569,7 @@ mod tests {
             })
             .unwrap();
         store.save_check(CheckState {
+            last_file: None,
             mod_id: "c".to_string(),
             source: "stmods".to_string(),
             last_checked_utc: now(),

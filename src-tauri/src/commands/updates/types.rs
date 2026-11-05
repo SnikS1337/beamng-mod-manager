@@ -30,6 +30,13 @@ pub struct UpdateFindingDto {
     /// Версия у автора на BeamNG, если она как у вас, а этот сайт пишет номер выше:
     /// скорее неверная подпись перезалива, чем новая версия.
     pub author_version: Option<String>,
+    /// Что показал файл за кнопкой «Скачать»: `same_file` — тот же файл, что у вас;
+    /// `label_older` — сайт пишет новую версию, а файл подписан вашей или старее;
+    /// `file_newer` — подпись прежняя, а файл новее.
+    #[ts(type = "\"same_file\" | \"label_older\" | \"file_newer\" | null")]
+    pub file_verdict: Option<String>,
+    pub file_name: Option<String>,
+    pub file_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

@@ -117,10 +117,134 @@ pub trait PageFetcher: Send + Sync {
     ) -> Result<Option<(String, Vec<u8>)>, FetchError> {
         self.get_bytes(url)
     }
+    /// Куда ведёт ссылка «Скачать» и что за файл там лежит — без скачивания самого
+    /// файла: читаются только заголовки ответа (запрос первого байта).
+    fn peek(&self, url: &Url, _cancel: &AtomicBool) -> Result<Peek, FetchError> {
+        let _ = url;
+        Err(FetchError::Unsupported)
+    }
+}
+
+/// Что видно по ссылке на скачивание, не скачивая файл.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Peek {
+    /// Последний адрес: сам файл или страница файлообменника.
+    pub final_url: Url,
+    /// По адресу страница (HTML), а не файл: имя и размер пишет она сама.
+    pub page: bool,
+    pub name: Option<String>,
+    /// Точный размер файла из заголовков.
+    pub size: Option<i64>,
+}
+
+/// Страницы файлообменников, которые обычный запрос не пускает (Cloudflare): по ним
+/// не ходим вовсе — их читает встроенный браузер, и только когда нужно.
+pub const FILE_PAGE_HOSTS: &[&str] = &["modsfire.com"];
+
+/// Сколько переходов пройти по ссылке «Скачать».
+const PEEK_HOPS: usize = 6;
+
+fn host_in(url: &Url, hosts: &[&str]) -> bool {
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    hosts.iter().any(|known| {
+        host == *known
+            || host
+                .strip_suffix(known)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
+/// Имя файла из `Content-Disposition`: `filename*=UTF-8''…` важнее `filename="…"`.
+pub fn disposition_name(value: &str) -> Option<String> {
+    let mut plain = None;
+    for part in value.split(';').map(str::trim) {
+        let Some((key, raw)) = part.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        let raw = raw.trim().trim_matches('"');
+        if key == "filename*" {
+            let encoded = raw.split_once("''").map_or(raw, |(_, rest)| rest);
+            let decoded = percent_decode(encoded);
+            if !decoded.trim().is_empty() {
+                return Some(file_name_only(&decoded));
+            }
+        } else if key == "filename" && !raw.trim().is_empty() {
+            plain = Some(file_name_only(raw));
+        }
+    }
+    plain
+}
+
+/// Имя файла из адреса: последний кусок пути, если это архив.
+pub fn name_from_url(url: &Url) -> Option<String> {
+    let last = url.path_segments()?.rev().find(|part| !part.is_empty())?;
+    let name = percent_decode(last);
+    let lower = name.to_ascii_lowercase();
+    [".zip", ".rar", ".7z"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+        .then(|| file_name_only(&name))
+}
+
+fn file_name_only(name: &str) -> String {
+    name.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .trim()
+        .to_string()
+}
+
+fn percent_decode(text: &str) -> String {
+    fn hex(byte: u8) -> Option<u8> {
+        (byte as char).to_digit(16).map(|value| value as u8)
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2]))
+        {
+            out.push(high * 16 + low);
+            index += 3;
+            continue;
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Размер всего файла из ответа на запрос первого байта: `Content-Range: bytes 0-0/12345`,
+/// иначе (сайт отдаёт файл целиком) — `Content-Length`.
+fn total_size(
+    status: u16,
+    content_range: Option<&str>,
+    content_length: Option<&str>,
+) -> Option<i64> {
+    if let Some(total) = content_range
+        .and_then(|range| range.rsplit_once('/'))
+        .and_then(|(_, total)| total.trim().parse::<i64>().ok())
+    {
+        return Some(total).filter(|size| *size > 0);
+    }
+    if status == 200 {
+        return content_length
+            .and_then(|length| length.trim().parse::<i64>().ok())
+            .filter(|size| *size > 0);
+    }
+    None
 }
 
 pub struct HttpPageFetcher {
     client: Client,
+    /// Без перехода по редиректам: ссылку «Скачать» проходим сами, по одному шагу,
+    /// чтобы остановиться у страницы файлообменника и не качать сам файл.
+    peek_client: Client,
     max_body: usize,
 }
 
@@ -279,6 +403,11 @@ impl RoutingPageFetcher {
 }
 
 impl PageFetcher for RoutingPageFetcher {
+    /// Ссылку «Скачать» всегда проходит обычный запрос: браузер начал бы качать файл.
+    fn peek(&self, url: &Url, cancel: &AtomicBool) -> Result<Peek, FetchError> {
+        self.plain.peek(url, cancel)
+    }
+
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
         if self.uses_browser(url) {
             self.browser.get(url)
@@ -379,8 +508,17 @@ impl HttpPageFetcher {
             .cookie_store(true)
             .build()
             .map_err(|error| FetchError::Message(error.to_string()))?;
+        let peek_client = Client::builder()
+            .user_agent(user_agent)
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none())
+            .cookie_store(true)
+            .build()
+            .map_err(|error| FetchError::Message(error.to_string()))?;
         Ok(Self {
             client,
+            peek_client,
             max_body: MAX_BODY_BYTES,
         })
     }
@@ -440,6 +578,78 @@ impl HttpPageFetcher {
 }
 
 impl PageFetcher for HttpPageFetcher {
+    fn peek(&self, url: &Url, cancel: &AtomicBool) -> Result<Peek, FetchError> {
+        let mut current = secure_request_url(url);
+        for _ in 0..PEEK_HOPS {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(FetchError::Cancelled);
+            }
+            ensure_public(&current)?;
+            if host_in(&current, FILE_PAGE_HOSTS) {
+                return Ok(Peek {
+                    final_url: current,
+                    page: true,
+                    name: None,
+                    size: None,
+                });
+            }
+            let response = self
+                .peek_client
+                .get(current.clone())
+                .header(reqwest::header::RANGE, "bytes=0-0")
+                .send()
+                .map_err(map_reqwest_error)?;
+            let status = response.status().as_u16();
+            let header = |name: reqwest::header::HeaderName| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string)
+            };
+            if (300..400).contains(&status) {
+                let Some(next) = header(reqwest::header::LOCATION)
+                    .and_then(|location| current.join(&location).ok())
+                else {
+                    return Err(FetchError::Message("переход без адреса".to_string()));
+                };
+                // Каждый следующий шаг — под тем же запретом локальной сети (проверка
+                // в начале цикла).
+                current = next;
+                continue;
+            }
+            let content_type = header(CONTENT_TYPE)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let page = content_type.contains("text/html") || !(200..300).contains(&status);
+            let name = if page {
+                None
+            } else {
+                header(reqwest::header::CONTENT_DISPOSITION)
+                    .and_then(|value| disposition_name(&value))
+                    .or_else(|| name_from_url(&current))
+            };
+            let size = if page {
+                None
+            } else {
+                total_size(
+                    status,
+                    header(reqwest::header::CONTENT_RANGE).as_deref(),
+                    header(CONTENT_LENGTH).as_deref(),
+                )
+            };
+            // Тело не читаем: ответ закрывается, файл не качается.
+            drop(response);
+            return Ok(Peek {
+                final_url: current,
+                page,
+                name,
+                size,
+            });
+        }
+        Err(FetchError::Message("слишком много переходов".to_string()))
+    }
+
     fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
         let url = secure_request_url(url);
         ensure_public(&url)?;
@@ -824,6 +1034,35 @@ impl PoliteFetcher {
 
     pub fn get(&self, source: &str, url: &Url) -> FetchResult {
         self.fetch(source, url, None, &NEVER)
+    }
+
+    /// [`PageFetcher::peek`] с той же вежливостью к сайту, что у страниц: очередь и
+    /// пауза между запросами. Статус источника не трогает — это не страница мода.
+    pub fn peek(&self, url: &Url, cancel: &AtomicBool) -> Result<Peek, FetchError> {
+        let url = secure_request_url(url);
+        let entry = self.host_entry(&url);
+        if lock(&entry.inner)
+            .blocked_until
+            .is_some_and(|until| until > Instant::now())
+        {
+            return Err(FetchError::Message("сайт на паузе".to_string()));
+        }
+        let _guard = loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(FetchError::Cancelled);
+            }
+            match entry.gate.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(CANCEL_POLL),
+            }
+        };
+        if !self.wait_for_slot(&entry, &url, cancel) {
+            return Err(FetchError::Cancelled);
+        }
+        let result = self.fetcher.peek(&url, cancel);
+        lock(&entry.inner).last_request = Some(Instant::now());
+        result
     }
 
     pub fn post_form(&self, source: &str, url: &Url, form: &[(&str, &str)]) -> FetchResult {
@@ -2496,6 +2735,166 @@ mod tests {
         assert!(polite.message_of("site").is_none(), "причина сбоя снята");
         assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
         assert_eq!(fake.calls.lock().unwrap().len(), 4);
+    }
+
+    /// Сервер на один ответ на каждое подключение: `answers` — по порядку.
+    fn serve(answers: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for answer in answers {
+                let (mut stream, _) = listener.accept().unwrap();
+                seen.push(read_request(&mut stream));
+                let _ = stream.write_all(answer.as_bytes());
+            }
+            seen
+        });
+        (address, handle)
+    }
+
+    #[test]
+    fn peek_follows_the_download_link_to_the_file_without_downloading_it() {
+        // BeamNG: «download?version=» → хранилище → файл. Просим один байт.
+        let (address, server) = serve(vec![
+            "HTTP/1.1 302 Found\r\nLocation: /store/73505/acng-freeroam.zip?sig=1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+            "HTTP/1.1 206 Partial Content\r\nContent-Type: application/zip\r\nContent-Range: bytes 0-0/102644\r\nContent-Length: 1\r\nConnection: close\r\n\r\nP".to_string(),
+        ]);
+        let client = HttpPageFetcher::new().unwrap();
+        let peek = client
+            .peek(&url(&format!("{address}/download?version=73505")), &NEVER)
+            .unwrap();
+        assert!(!peek.page);
+        assert_eq!(peek.size, Some(102_644));
+        assert_eq!(peek.name.as_deref(), Some("acng-freeroam.zip"));
+        let requests = server.join().unwrap();
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.to_lowercase().contains("range: bytes=0-0"))
+        );
+    }
+
+    #[test]
+    fn peek_stops_at_the_file_host_page() {
+        // STMods: download_file.php → modsfire. На modsfire обычный запрос не ходит.
+        let (address, server) = serve(vec![
+            "HTTP/1.1 302 Found\r\nLocation: https://modsfire.com/8YygOUSk8cFJBg8\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        ]);
+        let client = HttpPageFetcher::new().unwrap();
+        let peek = client
+            .peek(
+                &url(&format!("{address}/download_file.php?update_id=1")),
+                &NEVER,
+            )
+            .unwrap();
+        assert!(peek.page);
+        assert_eq!(
+            peek.final_url.as_str(),
+            "https://modsfire.com/8YygOUSk8cFJBg8"
+        );
+        assert_eq!(server.join().unwrap().len(), 1, "на modsfire не ходили");
+    }
+
+    #[test]
+    fn peek_does_not_read_a_file_sent_whole() {
+        // Сервер не умеет «первый байт» и шлёт файл целиком: размер из заголовка,
+        // тело не читаем.
+        let body = "x".repeat(200_000);
+        let (address, server) = serve(vec![format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"Dummy_v1.2.zip\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )]);
+        let client = HttpPageFetcher::new().unwrap();
+        let peek = client
+            .peek(&url(&format!("{address}/get?id=5")), &NEVER)
+            .unwrap();
+        assert!(!peek.page);
+        assert_eq!(peek.size, Some(200_000));
+        assert_eq!(peek.name.as_deref(), Some("Dummy_v1.2.zip"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn peek_sees_a_page_instead_of_a_file() {
+        let (address, server) = serve(vec![
+            "HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\nforbidden".to_string(),
+        ]);
+        let client = HttpPageFetcher::new().unwrap();
+        let peek = client
+            .peek(&url(&format!("{address}/x.zip")), &NEVER)
+            .unwrap();
+        assert!(peek.page);
+        assert_eq!(peek.name, None);
+        assert_eq!(peek.size, None);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn peek_gives_up_on_endless_redirects() {
+        let answer = "HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string();
+        let (address, server) = serve(vec![answer; PEEK_HOPS]);
+        let client = HttpPageFetcher::new().unwrap();
+        assert!(
+            client
+                .peek(&url(&format!("{address}/again")), &NEVER)
+                .is_err()
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn download_link_into_the_home_network_is_refused() {
+        // Вне тестов первый же шаг не пускает в локальную сеть.
+        assert!(!redirect_allowed(&url("http://192.168.1.1/mod.zip")));
+        assert!(!redirect_allowed(&url("http://localhost/mod.zip")));
+    }
+
+    #[test]
+    fn file_names_from_headers_and_addresses() {
+        assert_eq!(
+            disposition_name(r#"attachment; filename="car v1.zip""#).as_deref(),
+            Some("car v1.zip")
+        );
+        assert_eq!(
+            disposition_name(
+                "attachment; filename=\"x.zip\"; filename*=UTF-8''%D0%BC%D0%BE%D0%B4.zip"
+            )
+            .as_deref(),
+            Some("мод.zip"),
+            "имя в UTF-8 важнее"
+        );
+        assert_eq!(
+            disposition_name(r#"attachment; filename="../../evil.zip""#).as_deref(),
+            Some("evil.zip")
+        );
+        assert_eq!(disposition_name("inline"), None);
+        assert_eq!(
+            name_from_url(&url("https://s.example/mods/X/1/my%20car.zip?sig=1")).as_deref(),
+            Some("my car.zip")
+        );
+        assert_eq!(name_from_url(&url("https://s.example/download?id=5")), None);
+        assert_eq!(
+            name_from_url(&url("https://www.mediafire.com/file/abc/car.zip/file")),
+            None
+        );
+        assert_eq!(percent_decode("%zz%4"), "%zz%4", "битый код не трогаем");
+    }
+
+    #[test]
+    fn total_size_from_range_or_whole_length() {
+        assert_eq!(
+            total_size(206, Some("bytes 0-0/102644"), Some("1")),
+            Some(102_644)
+        );
+        assert_eq!(total_size(200, None, Some("5000")), Some(5000));
+        assert_eq!(total_size(206, Some("bytes 0-0/*"), Some("1")), None);
+        assert_eq!(
+            total_size(206, None, Some("1")),
+            None,
+            "кусок — не размер файла"
+        );
+        assert_eq!(total_size(200, None, Some("0")), None);
     }
 
     #[test]

@@ -62,6 +62,9 @@ function mockInitial(): UpdatesSnapshot {
         latestSize: 151 * 1024 * 1024,
         noticedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
         authorVersion: null,
+        fileVerdict: null,
+        fileName: null,
+        fileVersion: null,
       },
       {
         modId: "mock-2",
@@ -78,6 +81,9 @@ function mockInitial(): UpdatesSnapshot {
         latestSize: 438 * 1024 * 1024,
         noticedAt: new Date(Date.now() - 21 * 86400000).toISOString(),
         authorVersion: null,
+        fileVerdict: null,
+        fileName: null,
+        fileVersion: null,
       },
       {
         modId: "mock-3",
@@ -94,6 +100,9 @@ function mockInitial(): UpdatesSnapshot {
         latestSize: null,
         noticedAt: null,
         authorVersion: null,
+        fileVerdict: null,
+        fileName: null,
+        fileVersion: null,
       },
     ],
     hidden: [
@@ -112,6 +121,9 @@ function mockInitial(): UpdatesSnapshot {
         latestSize: null,
         noticedAt: null,
         authorVersion: null,
+        fileVerdict: null,
+        fileName: null,
+        fileVersion: null,
       },
     ],
     suggestions: [

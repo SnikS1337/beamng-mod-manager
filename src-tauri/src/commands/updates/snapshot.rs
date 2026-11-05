@@ -251,6 +251,9 @@ pub(crate) fn finding_dto(
         latest_size: None,
         noticed_at: None,
         author_version: finding.author_version,
+        file_verdict: finding.file_verdict,
+        file_name: finding.file_name,
+        file_version: finding.file_version,
     }
 }
 
