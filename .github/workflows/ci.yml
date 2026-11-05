@@ -1,7 +1,10 @@
 name: ci
 
 on:
+  # Только ветки: метку версии собирает «release», а тот же коммит CI уже проверил
+  # на main — второй прогон по метке ничего не добавлял.
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 

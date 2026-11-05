@@ -60,11 +60,6 @@ jobs:
             throw "В package.json нет версии $version."
           }
 
-      - name: Тесты перед выпуском
-        run: |
-          npm test
-          cargo test --workspace --all-targets --locked
-
       - name: Заметки из CHANGES.md
         shell: pwsh
         run: |
@@ -118,7 +113,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
+      # Тесты, clippy и прочие проверки этого коммита уже идут в CI на main: здесь
+      # они не повторяются (было лишних ~5 минут). Сборка выше идёт параллельно с CI,
+      # а публикуем только после его успеха.
+      - name: CI на этом коммите прошёл
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$(( $(date +%s) + 45 * 60 ))
+          while :; do
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&per_page=20" \
+              --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null then "" else "\(.status) \(.conclusion) \(.html_url)" end')
+            if [ -z "$run" ]; then
+              echo "CI на main для $GITHUB_SHA ещё не начался"
+            else
+              set -- $run
+              if [ "$1" = completed ]; then
+                if [ "$2" = success ]; then echo "CI зелёный: $3"; break; fi
+                echo "::error::CI на этом коммите не прошёл ($2): $3"; exit 1
+              fi
+              echo "CI идёт: $3"
+            fi
+            if [ "$(date +%s)" -gt "$deadline" ]; then echo "::error::Не дождались CI на этом коммите"; exit 1; fi
+            sleep 30
+          done
+
       - uses: actions/download-artifact@v7
         with:
           name: release
