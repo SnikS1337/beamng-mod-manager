@@ -178,10 +178,17 @@ pub fn disposition_name(value: &str) -> Option<String> {
     plain
 }
 
-/// Имя файла из адреса: последний кусок пути, если это архив.
+/// Имя файла из адреса: последний кусок пути, если это архив. Страница файла на
+/// некоторых обменниках — то же имя с `.html` («Dummy_v.0.20.2.zip.html» на sharemods).
 pub fn name_from_url(url: &Url) -> Option<String> {
     let last = url.path_segments()?.rev().find(|part| !part.is_empty())?;
-    let name = percent_decode(last);
+    let mut name = percent_decode(last);
+    for page in [".html", ".htm"] {
+        if name.to_ascii_lowercase().ends_with(page) {
+            name.truncate(name.len() - page.len());
+            break;
+        }
+    }
     let lower = name.to_ascii_lowercase();
     [".zip", ".rar", ".7z"]
         .iter()
@@ -2878,6 +2885,15 @@ mod tests {
             name_from_url(&url("https://www.mediafire.com/file/abc/car.zip/file")),
             None
         );
+        assert_eq!(
+            name_from_url(&url(
+                "https://sharemods.com/ntok8fpikzr4/Dummy_v.0.20.2.zip.html"
+            ))
+            .as_deref(),
+            Some("Dummy_v.0.20.2.zip"),
+            "страница файла с именем файла"
+        );
+        assert_eq!(name_from_url(&url("https://example.com/about.html")), None);
         assert_eq!(percent_decode("%zz%4"), "%zz%4", "битый код не трогаем");
     }
 
