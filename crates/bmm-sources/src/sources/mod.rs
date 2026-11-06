@@ -66,6 +66,11 @@ pub trait ModSource: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Умеет ли сайт показать файл за кнопкой «Скачать» ([`ModSource::probe_file`]).
+    fn probes_files(&self) -> bool {
+        false
+    }
+
     /// Что лежит за кнопкой «Скачать» на странице `listing`: имя и размер файла.
     /// `open_page` — можно ли открыть страницу файлообменника (встроенным браузером).
     fn probe_file(

@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, FixedOffset};
 use url::Url;
 
+use std::collections::HashSet;
+
 use bmm_domain::file_check::{self, FileVerdict};
 use bmm_domain::library::{
     CheckState, LibraryStore, ModBinding, SourceStatus as StoreSourceStatus,
@@ -123,6 +125,28 @@ impl UpdateCheckService {
             miss_count: 0, // раз лента его показала, страница есть
             ..check
         });
+    }
+
+    /// Находки, у которых сведений о файле за ссылкой нет или они о прежней подписи
+    /// страницы: их страницу стоит открыть в ближайшую проверку вне очереди — иначе
+    /// «тот же файл» или «файл подписан старой версией» не увидеть до следующей смены.
+    pub fn stale_file_findings(store: &dyn LibraryStore) -> HashSet<(String, String)> {
+        Self::pending(store, false)
+            .into_iter()
+            .filter(|finding| {
+                let Some(check) = store.get_check(&finding.mod_id, &finding.source) else {
+                    return false;
+                };
+                let key = file_check::page_key(check.last_version.as_deref(), check.last_size);
+                match &check.last_file {
+                    None => true,
+                    Some(file) => {
+                        file.page_key.as_deref() != Some(key.as_str()) || file.name.is_none()
+                    }
+                }
+            })
+            .map(|finding| (finding.mod_id, finding.source))
+            .collect()
     }
 
     /// Что лежит за кнопкой «Скачать» — к той подписи страницы, что записана сейчас.
@@ -544,6 +568,8 @@ mod tests {
         store.upsert_mod(installed);
         let mut check = store.get_check(id, "stmods").unwrap();
         check.last_file = file.map(|(name, file_size, key)| FileSnapshot {
+            offer: None,
+            seen_at: None,
             url: "https://modsfire.com/abc".to_string(),
             name: Some(name.to_string()),
             size: Some(file_size),
@@ -554,10 +580,55 @@ mod tests {
     }
 
     #[test]
+    fn findings_without_fresh_file_details_are_listed_for_a_reread() {
+        let store = InMemoryLibraryStore::new();
+        with_file(&store, "none", Some("1.0"), 5, Some("1.1"), None);
+        with_file(
+            &store,
+            "old",
+            Some("1.0"),
+            5,
+            Some("1.1"),
+            Some(("old.zip", 9, Some("1.0"))),
+        );
+        with_file(
+            &store,
+            "fresh",
+            Some("1.0"),
+            5,
+            Some("1.1"),
+            Some(("f_v1.1.zip", 9, Some("1.1"))),
+        );
+        with_file(&store, "calm", Some("1.0"), 5, Some("1.0"), None);
+        let stale = UpdateCheckService::stale_file_findings(&store);
+        assert!(stale.contains(&("none".to_string(), "stmods".to_string())));
+        assert!(
+            stale.contains(&("old".to_string(), "stmods".to_string())),
+            "снимок о прежней подписи"
+        );
+        assert!(!stale.contains(&("fresh".to_string(), "stmods".to_string())));
+        assert!(
+            !stale.contains(&("calm".to_string(), "stmods".to_string())),
+            "находки нет"
+        );
+
+        // Адрес файла есть, а имени нет (страницу файлообменника ещё не читали).
+        let mut check = store.get_check("fresh", "stmods").unwrap();
+        check.last_file.as_mut().unwrap().name = None;
+        store.save_check(check);
+        assert!(
+            UpdateCheckService::stale_file_findings(&store)
+                .contains(&("fresh".to_string(), "stmods".to_string()))
+        );
+    }
+
+    #[test]
     fn file_details_are_tied_to_the_current_page_label() {
         let store = InMemoryLibraryStore::new();
         with_file(&store, "a", Some("1.0"), 5, Some("1.1"), None);
         let file = FileSnapshot {
+            offer: None,
+            seen_at: None,
             url: "https://modsfire.com/x".to_string(),
             name: Some("a.zip".to_string()),
             size: Some(5),

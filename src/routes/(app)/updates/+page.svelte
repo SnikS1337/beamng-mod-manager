@@ -80,7 +80,6 @@
   let error = $state<string | null>(null);
   // Обычная проверка не трогает моды, проверенные недавно (срок — в настройках). Если она
   // никуда не сходила, следующее нажатие проверяет всё заново.
-  let offerForce = $state(false);
   let readToken = 0;
   let unlisten: (() => void) | undefined;
   let disposed = false;
@@ -233,7 +232,6 @@
     if (event.phase === "done" || event.phase === "pages") void refreshSites();
     if (event.phase === "done") {
       const summary = checkSummary(event);
-      offerForce = summary.offerForce;
       if (summary.text) toasts.show(summary.text);
     }
     // На «Страницы» переводим, только если там появилось что проверить.
@@ -293,10 +291,11 @@
     run.checking = true;
     run.progress = null;
     error = null;
-    const force = offerForce;
-    offerForce = false;
     try {
-      await updatesStart(force, run.requestId);
+      // По кнопке — все моды, без суточной очереди: человек сам решил проверить
+      // сейчас. Паузы между запросами к сайту остаются. Очередь соблюдает только
+      // фоновая проверка.
+      await updatesStart(true, run.requestId);
     } catch (reason) {
       error = errorText(reason);
       run.checking = false;
@@ -603,7 +602,6 @@
     run.checking = true;
     run.progress = null;
     error = null;
-    offerForce = false;
     try {
       await updatesRetrySource(source, run.requestId);
     } catch (reason) {
@@ -917,7 +915,7 @@
         {/if}
       {:else}
         <button class="btn-primary wide" type="button" onclick={() => void check()}>
-          {offerForce ? "Всё равно проверить" : "Проверить сейчас"}
+          Проверить сейчас
         </button>
         <button class="btn-glass wide" type="button" onclick={() => void findPages()}>
           Найти страницы для остальных модов

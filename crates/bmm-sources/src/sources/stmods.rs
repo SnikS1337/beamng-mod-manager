@@ -62,6 +62,10 @@ impl StModsSource {
 }
 
 impl ModSource for StModsSource {
+    fn probes_files(&self) -> bool {
+        true
+    }
+
     fn probe_file(
         &self,
         listing: &Listing,

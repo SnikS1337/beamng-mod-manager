@@ -71,7 +71,7 @@ pub struct CheckState {
 /// Что лежит за кнопкой «Скачать» на странице мода: адрес, имя и размер файла.
 /// Сайты-перезаливщики часто не меняют подпись, а файл новый, — или пишут новую
 /// версию над прежним файлом. Имя и размер самого файла это показывают.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct FileSnapshot {
     /// Куда ведёт ссылка: сам файл или страница файлообменника.
@@ -84,6 +84,13 @@ pub struct FileSnapshot {
     /// Подпись страницы (версия или размер), при которой смотрели файл. Сменилась
     /// подпись — сведения о файле к ней уже не относятся.
     pub page_key: Option<String>,
+    /// Ссылка «Скачать» на странице мода, по которой шли.
+    #[serde(default)]
+    pub offer: Option<String>,
+    /// Когда шли по ссылке. Ссылку на сайте могут считать скачиванием — без нужды
+    /// (та же ссылка, та же подпись, меньше недели) по ней не ходим.
+    #[serde(default)]
+    pub seen_at: Option<DateTime<FixedOffset>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,6 +338,8 @@ mod tests {
             last_game_version: None,
             last_title: None,
             last_file: Some(FileSnapshot {
+                offer: None,
+                seen_at: None,
                 url: "https://modsfire.com/abc".to_string(),
                 name: Some("Dummy_v1.1.zip".to_string()),
                 size: Some(1234),
