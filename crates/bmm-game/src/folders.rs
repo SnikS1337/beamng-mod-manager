@@ -37,15 +37,6 @@ pub fn default_user_roots() -> Vec<PathBuf> {
     ]
 }
 
-pub fn default_user_root() -> PathBuf {
-    let roots = default_user_roots();
-    roots
-        .iter()
-        .find(|root| root.is_dir())
-        .cloned()
-        .unwrap_or_else(|| roots.into_iter().next().unwrap_or_default())
-}
-
 pub fn find_mods_folders(user_root: &Path) -> Vec<PathBuf> {
     if !user_root.is_dir() {
         return Vec::new();

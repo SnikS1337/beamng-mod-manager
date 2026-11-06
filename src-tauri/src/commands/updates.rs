@@ -774,7 +774,7 @@ pub async fn updates_open_check(
     open_site_check(app, state, site, url).await
 }
 
-mod snapshot;
+pub(crate) mod snapshot;
 pub(crate) use snapshot::*;
 
 mod auto;

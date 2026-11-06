@@ -186,14 +186,18 @@ impl Inner {
         true
     }
 
-    pub(crate) fn remove_mod(&mut self, id: &str) {
-        self.mods.remove(id);
+    /// `true`, если что-то убрано: иначе файл библиотеки переписывать незачем.
+    pub(crate) fn remove_mod(&mut self, id: &str) -> bool {
+        let before = self.bindings.len() + self.checks.len();
         self.bindings.retain(|(mod_id, _), _| mod_id != id);
         self.checks.retain(|(mod_id, _), _| mod_id != id);
-        self.dismissed.remove(id);
-        self.history.remove(id);
-        self.declined.remove(id);
-        self.page_searches.remove(id);
+        let mut changed = before != self.bindings.len() + self.checks.len();
+        changed |= self.mods.remove(id).is_some();
+        changed |= self.dismissed.remove(id).is_some();
+        changed |= self.history.remove(id).is_some();
+        changed |= self.declined.remove(id);
+        changed |= self.page_searches.remove(id).is_some();
+        changed
     }
 
     pub(crate) fn upsert_binding(&mut self, binding: ModBinding) -> Result<bool, LibraryError> {
@@ -216,11 +220,10 @@ impl Inner {
         Ok(true)
     }
 
-    pub(crate) fn remove_binding(&mut self, mod_id: &str, source: &str) {
-        self.bindings
-            .remove(&(mod_id.to_string(), source.to_string()));
-        self.checks
-            .remove(&(mod_id.to_string(), source.to_string()));
+    pub(crate) fn remove_binding(&mut self, mod_id: &str, source: &str) -> bool {
+        let key = (mod_id.to_string(), source.to_string());
+        let binding = self.bindings.remove(&key).is_some();
+        self.checks.remove(&key).is_some() || binding
     }
 
     pub(crate) fn save_check(&mut self, state: CheckState) -> bool {
@@ -263,24 +266,29 @@ impl Inner {
         true
     }
 
-    pub(crate) fn add_file_history(&mut self, mod_id: &str, file_name: &str) {
+    pub(crate) fn add_file_history(&mut self, mod_id: &str, file_name: &str) -> bool {
         if file_name.trim().is_empty() {
-            return;
+            return false;
         }
         let Some(current) = self.mods.get(mod_id) else {
-            return;
+            return false;
         };
         let key = file_key(file_name);
         if file_key(&current.file_name) == key {
-            return;
+            return false;
         }
         let history = self.history.entry(mod_id.to_string()).or_default();
+        // Уже последнее в истории — ничего не меняется.
+        if history.last().is_some_and(|last| last == file_name) {
+            return false;
+        }
         history.retain(|existing| file_key(existing) != key);
         history.push(file_name.to_string());
         if history.len() > MAX_FILE_HISTORY {
             let excess = history.len() - MAX_FILE_HISTORY;
             history.drain(0..excess);
         }
+        true
     }
 
     pub(crate) fn set_checking_declined(&mut self, mod_id: &str, declined: bool) -> bool {

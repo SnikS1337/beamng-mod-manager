@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from "#lib/shell/errorText.js";
   import { SaveQueue } from "#lib/features/settings/saveQueue.js";
   import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount } from "svelte";
@@ -159,17 +160,21 @@
     });
     void listenAppUpdateProgress((value) => {
       updateProgress = value;
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlistenUpdate = stop;
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlistenUpdate = stop;
+      })
+      .catch(() => {});
     void listenAppUpdateState((snapshot) => {
       appUpdate = snapshot;
       updateProgress = snapshot.state.progress;
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlistenUpdateState = stop;
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlistenUpdateState = stop;
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
       unlistenUpdate?.();
@@ -582,13 +587,6 @@
     }
   }
 
-  function errorText(reason: unknown): string {
-    if (typeof reason === "string") return reason;
-    if (reason && typeof reason === "object" && "message" in reason) {
-      return String((reason as { message: unknown }).message);
-    }
-    return "Не удалось выполнить действие.";
-  }
 </script>
 
 <div class="settings-page">
@@ -838,7 +836,7 @@
       <div class="row">
         <div class="row-text">
           <label for="keep-backups">Сколько прежних версий хранить</label>
-          <small>При обновлении или исправлении старый файл мода уходит в копии.</small>
+          <small>При обновлении или исправлении старый файл мода уходит в копии — у каждого мода не больше стольких, даже если имя файла менялось.</small>
         </div>
         <input
           id="keep-backups"

@@ -79,11 +79,6 @@ impl UpdateCheckOptions {
             ..Self::default()
         }
     }
-
-    /// TTL в целых часах — удобно для интерфейса и логов.
-    pub fn ttl_hours(&self) -> i64 {
-        self.ttl.num_hours()
-    }
 }
 
 #[cfg(test)]

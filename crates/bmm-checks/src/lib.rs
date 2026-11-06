@@ -8,7 +8,7 @@
 //! - [`UpdateRunner`] — выполняет план через [`bmm_sources::sources::ModSource`];
 //! - [`UpdateCoordinator`] — одна проверка за раз, отмена, пауза после сбоя;
 //! - [`UpdateCheckService`] — список обновлений, «Пропустить версию»;
-//! - [`PageGuesser`], [`pages`], [`BindingSuggester`], [`BindingRepair`], [`BindingActions`] —
+//! - [`PageGuesser`], [`pages`], [`BindingRepair`], [`BindingActions`] —
 //!   подбор и починка привязок.
 //!
 //! Пример запуска из Tauri-команды:
@@ -37,10 +37,7 @@ pub mod planner;
 pub mod runner;
 pub mod service;
 
-pub use bindings::{
-    BindingActions, BindingRepair, BindingSuggester, BindingSuggestion, DeadBinding, DeclineUndo,
-    RepairProposal,
-};
+pub use bindings::{BindingActions, BindingRepair, DeadBinding, DeclineUndo};
 pub use coordinator::{CoordinatorHold, UpdateCoordinator, UpdateCoordinatorOptions};
 pub use options::UpdateCheckOptions;
 pub use page_guesser::{PageGuess, PageGuesser};

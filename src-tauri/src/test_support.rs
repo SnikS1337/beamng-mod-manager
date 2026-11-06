@@ -22,21 +22,24 @@ pub fn test_state(temp: &tempfile::TempDir, mods: &Path) -> AppState {
     let data = temp.path().join("data");
     let paths = AppPaths::at(&data);
     paths.ensure_dirs().unwrap();
-    let settings = SettingsStore::with_system_clock(paths.settings());
-    settings
+    SettingsStore::with_system_clock(paths.settings())
         .save(&AppSettings {
             mods_folder: Some(mods.display().to_string()),
             ..AppSettings::default()
         })
         .unwrap();
+    state_at(&data)
+}
+
+/// Состояние программы на готовой папке данных: её настройки и библиотека.
+pub fn state_at(data: &Path) -> AppState {
+    let paths = AppPaths::at(data);
+    paths.ensure_dirs().unwrap();
     AppState {
+        settings: SettingsStore::with_system_clock(paths.settings()),
+        library: Arc::new(JsonLibraryStore::new(paths.library(), system_clock())),
+        previews: PreviewCache::new(paths.previews()),
         paths,
-        settings,
-        library: Arc::new(JsonLibraryStore::new(
-            temp.path().join("data/library.json"),
-            system_clock(),
-        )),
-        previews: PreviewCache::new(temp.path().join("data/previews")),
         load_lock: Mutex::new(()),
         previews_by_id: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),

@@ -622,14 +622,6 @@ impl PreparedUpdate {
         write_in_place(&self.new_exe, &self.current_exe, &self.backup)
     }
 
-    /// [`PreparedUpdate::apply`] с подстановкой записи (для проверок).
-    pub fn apply_with(
-        &self,
-        overwrite: &mut dyn FnMut(&Path, &Path) -> io::Result<()>,
-    ) -> Result<(), InstallError> {
-        write_in_place_with(&self.new_exe, &self.current_exe, &self.backup, overwrite)
-    }
-
     /// Вернуть прежнюю версию из копии, если новая не запустилась.
     pub fn restore(&self) -> bool {
         restore_in_place(&self.backup, &self.current_exe)

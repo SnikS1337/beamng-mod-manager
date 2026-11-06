@@ -16,7 +16,7 @@ use bmm_packs::incoming::{
 use bmm_packs::scan;
 use bmm_packs::zip_index;
 
-use crate::commands::library::resolve_folder;
+use crate::commands::versions::installer_for;
 use crate::error::AppError;
 use crate::state::{AppState, CachedContent};
 
@@ -237,20 +237,7 @@ fn inspect_paths(state: &AppState, paths: &[String]) -> Result<Vec<IncomingArchi
         .load_lock
         .lock()
         .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
-    let settings = state.settings.load().settings;
-    let (mods_dir, error) = resolve_folder(&settings);
-    let Some(mods_dir) = mods_dir else {
-        return Err(AppError::new(
-            "folder",
-            error.unwrap_or_else(|| "Папка модов не найдена.".to_string()),
-        ));
-    };
-    let keep = settings.keep_backups.max(1) as usize;
-    let installer = bmm_packs::install::ModInstaller::new(
-        bmm_packs::scan::ModLayout::in_app_folder(&mods_dir, state.paths.root()),
-        bmm_domain::clock::system_clock(),
-        Arc::new(move || keep),
-    );
+    let installer = installer_for(state)?;
     let installed = installed_archives(state, &installer);
     let root = incoming_root();
     let _ = fs::create_dir_all(&root);
@@ -330,6 +317,13 @@ fn install_verdict(source: &Path, work_root: &Path) -> fingerprint::Verdict {
     }
     let known = checked().get(source).cloned();
     fingerprint::verdict(known.as_ref(), source)
+}
+
+/// Для замера `real_data_timings`: опись установленных архивов, как при разборе входящего.
+#[cfg(test)]
+pub(crate) fn profile_installed(state: &AppState) -> usize {
+    let installer = installer_for(state).unwrap();
+    installed_archives(state, &installer).len()
 }
 
 fn installed_archives(
@@ -483,19 +477,8 @@ fn install_items(
         .load_lock
         .lock()
         .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
-    let settings = state.settings.load().settings;
-    let (mods_dir, error) = resolve_folder(&settings);
-    let Some(mods_dir) = mods_dir else {
-        return Err(AppError::new(
-            "folder",
-            error.unwrap_or_else(|| "Папка модов не найдена.".to_string()),
-        ));
-    };
-    let installer = bmm_packs::install::ModInstaller::new(
-        bmm_packs::scan::ModLayout::in_app_folder(&mods_dir, state.paths.root()),
-        bmm_domain::clock::system_clock(),
-        Arc::new(move || settings.keep_backups.max(1) as usize),
-    );
+    let installer = installer_for(state)?;
+    let keep = state.settings.load().settings.keep_backups.max(1) as usize;
     let mut results = Vec::new();
     let work_root = incoming_root();
     for request in requests {
@@ -584,6 +567,9 @@ fn install_items(
             {
                 remember_installed_version(state, &request.file_name, version, path);
             }
+            if update.install.success {
+                prune_versions(state, &installer, &request.file_name, keep);
+            }
             let backup_id = if update.install.success {
                 installer
                     .list_backups(replaced)
@@ -619,6 +605,37 @@ fn install_items(
     Ok(results)
 }
 
+/// «Хранить копий» — на мод: после обновления стираем самые старые копии его
+/// прошлых версий сверх настройки. Копию, которую ждёт «Отменить» удаления, не трогаем;
+/// только что сделанная копия — самая новая и остаётся.
+fn prune_versions(
+    state: &AppState,
+    installer: &bmm_packs::install::ModInstaller,
+    file_name: &str,
+    keep: usize,
+) -> usize {
+    let Some(installed) = state
+        .library
+        .mods()
+        .into_iter()
+        .find(|item| item.file_name.eq_ignore_ascii_case(file_name))
+    else {
+        return 0;
+    };
+    let held: std::collections::HashSet<String> = state
+        .deleted
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .values()
+        .map(|ticket| ticket.backup_id.clone())
+        .collect();
+    bmm_packs::versions::surplus(installer, state.library.as_ref(), &installed, keep)
+        .into_iter()
+        .filter(|entry| !held.contains(&entry.id))
+        .filter(|entry| installer.delete_backup(&entry.file_name, &entry.id).success)
+        .count()
+}
+
 /// Версия, которую человек поставил со страницы, — в запись библиотеки вместе с
 /// размером файла: так сверка с папкой не примет обновление за внешнюю замену и не
 /// перепишет версию из имени файла.
@@ -650,20 +667,7 @@ fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppE
         .load_lock
         .lock()
         .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
-    let settings = state.settings.load().settings;
-    let (mods_dir, error) = resolve_folder(&settings);
-    let Some(mods_dir) = mods_dir else {
-        return Err(AppError::new(
-            "folder",
-            error.unwrap_or_else(|| "Папка модов не найдена.".to_string()),
-        ));
-    };
-    let keep = settings.keep_backups.max(1) as usize;
-    let installer = bmm_packs::install::ModInstaller::new(
-        bmm_packs::scan::ModLayout::in_app_folder(&mods_dir, state.paths.root()),
-        bmm_domain::clock::system_clock(),
-        Arc::new(move || keep),
-    );
+    let installer = installer_for(state)?;
     if let Some(replaced) = &ticket.replaces {
         // Новый файл убираем первым и проверяем, что убрался: иначе «Отменить»
         // говорило «готово», а в папке лежали обе версии мода.
@@ -767,65 +771,21 @@ mod tests {
     fn checked_source(path: &Path) {
         remember_checked(path, Fingerprint::of(path).unwrap());
     }
-    use std::collections::HashMap;
     use std::io::Write;
-    use std::sync::Mutex;
 
     use bmm_domain::clock::system_clock;
-    use bmm_domain::library::JsonLibraryStore;
-    use bmm_domain::paths::AppPaths;
-    use bmm_domain::settings::AppSettings;
-    use bmm_domain::settings_store::SettingsStore;
-    use bmm_packs::cache::PreviewCache;
     use bmm_packs::install::{InstallOptions, ModInstaller};
 
     fn setup() -> (tempfile::TempDir, Arc<AppState>) {
         let temp = tempfile::tempdir().unwrap();
-        let data = temp.path().join("data");
         let mods = temp.path().join("mods");
         fs::create_dir_all(&mods).unwrap();
-        let paths = AppPaths::at(&data);
-        paths.ensure_dirs().unwrap();
-        let settings = SettingsStore::with_system_clock(paths.settings());
-        settings
-            .save(&AppSettings {
-                mods_folder: Some(mods.display().to_string()),
-                ..AppSettings::default()
-            })
-            .unwrap();
-        let state = Arc::new(AppState {
-            paths,
-            settings,
-            library: Arc::new(JsonLibraryStore::new(
-                data.join("library.json"),
-                system_clock(),
-            )),
-            previews: PreviewCache::new(data.join("previews")),
-            load_lock: Mutex::new(()),
-            previews_by_id: Mutex::new(HashMap::new()),
-            pending: Mutex::new(HashMap::new()),
-            preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
-            deleted: Mutex::new(HashMap::new()),
-            content_cache: Mutex::new(HashMap::new()),
-            search: None,
-            update: None,
-            app_update: None,
-            search_cancel: Mutex::new(None),
-            last_search: Mutex::new(None),
-            browse: Mutex::new(None),
-        });
+        let state = Arc::new(crate::test_support::test_state(&temp, &mods));
         (temp, state)
     }
 
     fn installer_for_test(state: &AppState) -> ModInstaller {
-        let settings = state.settings.load().settings;
-        let (mods_dir, error) = resolve_folder(&settings);
-        let mods_dir = mods_dir.unwrap_or_else(|| panic!("{error:?}"));
-        ModInstaller::new(
-            scan::ModLayout::in_app_folder(&mods_dir, state.paths.root()),
-            system_clock(),
-            Arc::new(|| 3),
-        )
+        installer_for(state).unwrap()
     }
 
     fn make_zip(path: &std::path::Path, body: &[u8]) {
@@ -1388,5 +1348,149 @@ mod tests {
         assert_eq!(undone.mods[0].id, id);
         assert_eq!(undone.mods[0].file_name, "acadia.zip");
         assert!(!undone.mods[0].unchecked);
+    }
+
+    #[test]
+    fn copies_of_past_versions_are_kept_per_mod_not_per_file_name() {
+        // Обновление обычно меняет имя файла: у каждого имени была одна копия, и
+        // «Хранить копий: 2» не ограничивало ничего — копии копились гигабайтами.
+        let (temp, state) = setup();
+        let mut settings = state.settings.load().settings;
+        settings.keep_backups = 2;
+        state.settings.save(&settings).unwrap();
+        let installer = installer_for_test(&state);
+        let first = temp.path().join("hotw_v1.zip");
+        make_zip(&first, b"one");
+        assert!(
+            installer
+                .install_from_path(&first, "hotw_v1.zip", InstallOptions::default())
+                .success
+        );
+        let id = crate::commands::library::load_snapshot(&state)
+            .unwrap()
+            .mods[0]
+            .id
+            .clone();
+
+        let mut previous = "hotw_v1.zip".to_string();
+        let mut last = None;
+        for version in 2..=5 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let name = format!("hotw_v{version}.zip");
+            let archive = temp.path().join(format!("download-{version}.zip"));
+            make_zip(
+                &archive,
+                format!("body {version}").repeat(version).as_bytes(),
+            );
+            checked_source(&archive);
+            let results = install_items(
+                &state,
+                &[IncomingInstallRequest {
+                    zip_path: archive.display().to_string(),
+                    file_name: name.clone(),
+                    replaces: Some(previous.clone()),
+                    allow_warnings: true,
+                    version: None,
+                }],
+            )
+            .unwrap();
+            assert!(results[0].success, "{:?}", results[0].message);
+            last = results[0].backup_id.clone();
+            previous = name;
+        }
+
+        let installed = state.library.get_mod(&id).unwrap();
+        assert_eq!(installed.file_name, "hotw_v5.zip");
+        let versions =
+            bmm_packs::versions::versions_for(&installer, state.library.as_ref(), &installed);
+        let names: Vec<&str> = versions
+            .iter()
+            .map(|version| version.backup.file_name.as_str())
+            .collect();
+        assert_eq!(names, ["hotw_v4.zip", "hotw_v3.zip"], "две самые новые");
+        assert!(
+            installer.list_backups("hotw_v1.zip").is_empty(),
+            "старые копии стёрты с диска"
+        );
+
+        // «Отменить» последнего обновления всё ещё работает: его копия самая новая.
+        undo_install(
+            &state,
+            &IncomingTicketDto {
+                file_name: "hotw_v5.zip".to_string(),
+                replaces: Some("hotw_v4.zip".to_string()),
+                backup_id: last,
+                was_disabled: false,
+                same_name: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(state.library.get_mod(&id).unwrap().file_name, "hotw_v4.zip");
+    }
+
+    #[test]
+    fn copy_held_by_undo_of_a_delete_is_not_pruned() {
+        let (temp, state) = setup();
+        let mut settings = state.settings.load().settings;
+        settings.keep_backups = 1;
+        state.settings.save(&settings).unwrap();
+        let installer = installer_for_test(&state);
+        let first = temp.path().join("car_v1.zip");
+        make_zip(&first, b"one");
+        installer.install_from_path(&first, "car_v1.zip", InstallOptions::default());
+        let id = crate::commands::library::load_snapshot(&state)
+            .unwrap()
+            .mods[0]
+            .id
+            .clone();
+        let mut previous = "car_v1.zip".to_string();
+        for version in 2..=3 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let name = format!("car_v{version}.zip");
+            let archive = temp.path().join(format!("download-{version}.zip"));
+            make_zip(
+                &archive,
+                format!("body {version}").repeat(version).as_bytes(),
+            );
+            if version == 3 {
+                // Копию v1 держит «Отменить» удаления — пока тост виден, её не стираем.
+                let held = installer.list_backups("car_v1.zip")[0].id.clone();
+                state.deleted.lock().unwrap().insert(
+                    "other".to_string(),
+                    crate::state::DeletedTicket {
+                        mod_id: "other".to_string(),
+                        file_name: "car_v1.zip".to_string(),
+                        backup_id: held,
+                        was_in_disabled: false,
+                        was_enabled: true,
+                    },
+                );
+            }
+            checked_source(&archive);
+            let results = install_items(
+                &state,
+                &[IncomingInstallRequest {
+                    zip_path: archive.display().to_string(),
+                    file_name: name.clone(),
+                    replaces: Some(previous.clone()),
+                    allow_warnings: true,
+                    version: None,
+                }],
+            )
+            .unwrap();
+            assert!(results[0].success, "{:?}", results[0].message);
+            previous = name;
+        }
+        assert_eq!(state.library.get_mod(&id).unwrap().file_name, "car_v3.zip");
+        assert_eq!(
+            installer.list_backups("car_v1.zip").len(),
+            1,
+            "держит «Отменить»"
+        );
+        assert_eq!(
+            installer.list_backups("car_v2.zip").len(),
+            1,
+            "только что сделанная"
+        );
     }
 }

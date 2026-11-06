@@ -39,7 +39,7 @@ impl LibraryStore for InMemoryLibraryStore {
     }
 
     fn remove_mod(&self, id: &str) {
-        self.inner.lock().unwrap().remove_mod(id);
+        let _ = self.inner.lock().unwrap().remove_mod(id);
     }
 
     fn bindings(&self) -> Vec<ModBinding> {
@@ -61,7 +61,7 @@ impl LibraryStore for InMemoryLibraryStore {
     }
 
     fn remove_binding(&self, mod_id: &str, source: &str) {
-        self.inner.lock().unwrap().remove_binding(mod_id, source);
+        let _ = self.inner.lock().unwrap().remove_binding(mod_id, source);
     }
 
     fn get_check(&self, mod_id: &str, source: &str) -> Option<CheckState> {
@@ -132,7 +132,8 @@ impl LibraryStore for InMemoryLibraryStore {
     }
 
     fn add_file_history(&self, mod_id: &str, file_name: &str) {
-        self.inner
+        let _ = self
+            .inner
             .lock()
             .unwrap()
             .add_file_history(mod_id, file_name);

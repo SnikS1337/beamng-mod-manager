@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from "#lib/shell/errorText.js";
   import { onMount } from "svelte";
   import { updatesDismiss } from "#lib/ipc/updates.js";
   import { StaleGuard } from "#lib/features/download/staleGuard.js";
@@ -175,13 +176,6 @@
     return picked.length === 1 && picked[0].kind === "update" ? "Обновить" : "Установить";
   });
 
-  function errorText(reason: unknown): string {
-    if (typeof reason === "string") return reason;
-    if (reason && typeof reason === "object" && "message" in reason) {
-      return String((reason as { message: unknown }).message);
-    }
-    return "Не удалось выполнить действие.";
-  }
 
   function resetArchive(discard = true): void {
     const work = archive?.workDir;

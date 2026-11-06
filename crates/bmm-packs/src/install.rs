@@ -155,10 +155,6 @@ impl ModInstaller {
         &self.layout
     }
 
-    pub fn mods_folder_available(&self) -> bool {
-        self.layout.mods_dir.is_dir()
-    }
-
     pub fn install_from_path(
         &self,
         source: &Path,
@@ -534,6 +530,7 @@ impl ModInstaller {
         list
     }
 
+    #[cfg(test)]
     pub fn restore_latest_backup(&self, file_name: &str) -> OpResult {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return OpResult::fail("Недопустимое имя файла.");

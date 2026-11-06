@@ -1,3 +1,4 @@
+import { errorText } from "#lib/shell/errorText.js";
 export interface ToastOptions {
   undo?: () => void | Promise<void>;
   commit?: () => void | Promise<void>;
@@ -17,13 +18,6 @@ export function readingTime(message: string, withUndo = false): number {
   return Math.min(Math.max(reading, least), 15000);
 }
 
-function errorText(reason: unknown): string {
-  if (typeof reason === "string") return reason;
-  if (reason && typeof reason === "object" && "message" in reason) {
-    return String((reason as { message: unknown }).message);
-  }
-  return "Не удалось выполнить действие.";
-}
 
 class Toasts {
   current = $state<ToastItem | null>(null);

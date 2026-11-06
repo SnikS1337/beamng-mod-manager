@@ -84,10 +84,13 @@ fn open_with<R: std::io::Read + std::io::Seek>(
 }
 
 pub fn read_index(path: &Path) -> Result<ZipIndex, ZipError> {
-    let mut archive = open_archive(path)?;
+    let archive = open_archive(path)?;
     let mut entries = Vec::new();
+    // Опись — из центрального каталога. `by_index` для каждой записи ходил к её
+    // локальному заголовку: у больших карт это тысячи чтений по всему файлу, и опись
+    // 44 установленных модов перед разбором входящего архива занимала 3 секунды.
     for index in 0..archive.len() {
-        let entry = archive.by_index(index)?;
+        let entry = archive.by_index_data(index)?;
         if entry.is_dir() {
             continue;
         }

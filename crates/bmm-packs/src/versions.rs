@@ -67,6 +67,31 @@ pub fn versions_for(
     result
 }
 
+/// Копии прошлых версий мода сверх `keep`, самые старые. «Хранить копий» — на мод,
+/// а не на имя файла: обновление обычно меняет имя (`hotw0.3.0.zip` → `hotw_0-4-0.zip`),
+/// у каждого имени была своя единственная копия, и копии копились без предела.
+/// Берутся только имена этого мода — текущее и из его истории: копию похожего чужого
+/// файла (тот же ключ имени) «лишней» не считаем.
+pub fn surplus(
+    installer: &ModInstaller,
+    store: &dyn LibraryStore,
+    installed: &InstalledMod,
+    keep: usize,
+) -> Vec<BackupEntry> {
+    let own: HashSet<String> = store
+        .file_history(&installed.id)
+        .into_iter()
+        .chain(std::iter::once(installed.file_name.clone()))
+        .map(|name| name.to_lowercase())
+        .collect();
+    versions_for(installer, store, installed)
+        .into_iter()
+        .filter(|version| own.contains(&version.backup.file_name.to_lowercase()))
+        .skip(keep.max(1))
+        .map(|version| version.backup)
+        .collect()
+}
+
 pub fn deleted(installer: &ModInstaller, store: &dyn LibraryStore) -> Vec<DeletedMod> {
     let raw = installer.deleted_mods();
     if raw.is_empty() {
@@ -398,5 +423,74 @@ mod tests {
             .map(|entries| entries.filter_map(Result::ok).collect())
             .unwrap_or_default();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn surplus_counts_only_this_mods_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = ModLayout {
+            mods_dir: temp.path().join("mods"),
+            disabled_dir: temp.path().join("disabled"),
+            backup_dir: temp.path().join("backups"),
+        };
+        std::fs::create_dir_all(&layout.mods_dir).unwrap();
+        let tick = Arc::new(std::sync::atomic::AtomicI64::new(0));
+        let clock_tick = tick.clone();
+        let installer = ModInstaller::new(
+            layout,
+            Arc::new(move || {
+                now()
+                    + chrono::TimeDelta::seconds(
+                        clock_tick.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                    )
+            }),
+            Arc::new(|| 5),
+        );
+        let source = temp.path().join("source.zip");
+        zip(&source);
+        // Похожее имя чужого мода: у него своя копия.
+        installer.install_from_path(&source, "car_v0.zip", InstallOptions::default());
+        assert!(installer.remove("car_v0.zip").success);
+        installer.install_from_path(&source, "car_v1.zip", InstallOptions::default());
+        installer.update_from_path(
+            "car_v1.zip",
+            &source,
+            "car_v2.zip",
+            InstallOptions::default(),
+        );
+        installer.update_from_path(
+            "car_v2.zip",
+            &source,
+            "car_v3.zip",
+            InstallOptions::default(),
+        );
+        let store = InMemoryLibraryStore::new();
+        let installed = InstalledMod {
+            id: "car".to_string(),
+            name: "Car".to_string(),
+            file_name: "car_v3.zip".to_string(),
+            version: None,
+            size_bytes: Some(1),
+            installed_at_utc: now(),
+            enabled: true,
+        };
+        store.upsert_mod(installed.clone());
+        store.add_file_history("car", "car_v1.zip");
+        store.add_file_history("car", "car_v2.zip");
+        let names = |list: Vec<BackupEntry>| {
+            list.into_iter()
+                .map(|entry| entry.file_name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(surplus(&installer, &store, &installed, 1)),
+            ["car_v1.zip"]
+        );
+        assert!(surplus(&installer, &store, &installed, 2).is_empty());
+        assert_eq!(
+            names(surplus(&installer, &store, &installed, 0)),
+            ["car_v1.zip"],
+            "меньше одной копии не бывает"
+        );
     }
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from "#lib/shell/errorText.js";
   import { anyOverlay } from "#lib/shell/overlays.js";
   import { findPageText } from "./findPageText";
   import { openExternal } from "#lib/shell/openExternal.js";
@@ -848,13 +849,6 @@
     }
   }
 
-  function errorText(reason: unknown): string {
-    if (typeof reason === "string") return reason;
-    if (reason && typeof reason === "object" && "message" in reason) {
-      return String((reason as { message: unknown }).message);
-    }
-    return "Не удалось выполнить действие.";
-  }
 
   function appError(reason: unknown): AppError {
     if (

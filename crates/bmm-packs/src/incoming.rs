@@ -565,15 +565,6 @@ impl PackagingProblem {
         }
     }
 
-    pub fn from_code(code: &str) -> Option<Self> {
-        match code {
-            "wrapped" => Some(Self::Wrapped),
-            "loose" => Some(Self::Loose),
-            "not_mod" => Some(Self::NotMod),
-            _ => None,
-        }
-    }
-
     pub fn fixable(self) -> bool {
         matches!(self, Self::Wrapped | Self::Loose)
     }

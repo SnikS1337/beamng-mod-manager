@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from "#lib/shell/errorText.js";
   import { onMount, tick, untrack } from "svelte";
   import { isTauri } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
@@ -193,7 +194,7 @@
         openArchive(
           {
             source: path,
-            problem: errorText(reason),
+            problem: errorText(reason, "Не удалось проверить архив."),
             workDir: "",
             items: [],
           },
@@ -311,7 +312,7 @@
                   try {
                     await incomingUndo(tickets[index]);
                   } catch (reason) {
-                    problem ??= errorText(reason);
+                    problem ??= errorText(reason, "Не удалось проверить архив.");
                   }
                 }
                 window.dispatchEvent(new CustomEvent("bmm:library-changed"));
@@ -321,7 +322,7 @@
             : undefined,
       });
     } catch (reason) {
-      toasts.show(errorText(reason));
+      toasts.show(errorText(reason, "Не удалось проверить архив."));
     } finally {
       installing = false;
       void pump();
@@ -334,7 +335,7 @@
       try {
         await incomingUndo(tickets[index]);
       } catch (reason) {
-        problem ??= errorText(reason);
+        problem ??= errorText(reason, "Не удалось проверить архив.");
       }
     }
     window.dispatchEvent(new CustomEvent("bmm:library-changed"));
@@ -468,13 +469,6 @@
     return name.length > limit ? `${name.slice(0, limit - 1)}…` : name;
   }
 
-  function errorText(reason: unknown): string {
-    if (typeof reason === "string") return reason;
-    if (reason && typeof reason === "object" && "message" in reason) {
-      return String((reason as { message: unknown }).message);
-    }
-    return "Не удалось проверить архив.";
-  }
 
   function hasFiles(event: DragEvent): boolean {
     return event.dataTransfer?.types.includes("Files") ?? false;

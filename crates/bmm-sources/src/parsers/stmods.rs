@@ -148,10 +148,6 @@ pub fn category_hint(text: &str) -> Option<&'static str> {
     }
 }
 
-pub fn is_update_marked(card_html: &str) -> bool {
-    card_html.contains(">ОБНОВЛЕНИЕ<")
-}
-
 pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
     let mut listing = basis.clone();
     let mut size = basis.size_bytes;
@@ -324,12 +320,6 @@ mod tests {
         assert_eq!(slug_category("karta_gambler_hills_by_bifdro"), Some("maps"));
         assert_eq!(slug_category("map_desert_race"), Some("maps"));
         assert_eq!(slug_category("bmw_m5_f90_by_bubon2012"), None);
-    }
-
-    #[test]
-    fn update_mark() {
-        assert!(is_update_marked("<div class=\"label\">ОБНОВЛЕНИЕ</div>"));
-        assert!(!is_update_marked("<div>МОД</div>"));
     }
 
     #[test]

@@ -139,5 +139,15 @@ npm run tauri icon -- design/icon/app-large.svg
 `LOCALAPPDATA`, указывающим на пустую папку. Папка `.dev/` в корне исключена из git
 (локальные скрипты, журналы, патчи).
 
+Замер на своих данных: скопируйте `library.json`, `settings.json`, `matches.json` и
+`previews` из папки данных в отдельную папку (настройки укажут на настоящую папку
+модов — её замер только читает) и запустите
+
+```powershell
+$env:BMM_PROFILE_DATA = "<копия>"
+$env:CARGO_PROFILE_RELEASE_LTO = "false"   # собирается в разы быстрее, замер тот же
+cargo test --release -p bmm-desktop --lib real_data_timings -- --ignored --nocapture
+```
+
 Для сбора сведений о BeamNG на другой машине есть `tools/windows/collect-beamng-info.ps1`:
 он только читает файлы игры и складывает zip на рабочем столе.
