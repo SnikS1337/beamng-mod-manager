@@ -1344,6 +1344,40 @@ mod tests {
     }
 
     #[test]
+    fn archive_with_a_broken_entry_header_is_still_blocked() {
+        // Опись архива теперь читается только из каталога и битый заголовок записи не
+        // замечает. Запрет ставит проверка архива — установить такой нельзя.
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("car.zip");
+        build_zip(&source, &[("vehicles/car/a.jbeam", b"x")]);
+        let mut bytes = fs::read(&source).unwrap();
+        let header = bytes
+            .windows(4)
+            .position(|window| window == b"PK\x03\x04".as_slice())
+            .unwrap();
+        bytes[header..header + 4].copy_from_slice(&[0, 0, 0, 0]);
+        fs::write(&source, &bytes).unwrap();
+
+        let index = read_index(&source).expect("каталог цел");
+        assert_eq!(index.entries.len(), 1);
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items.len(), 1);
+        assert!(analysis.items[0].blocked, "битый архив не ставится");
+        assert!(
+            analysis.items[0]
+                .findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Block)
+        );
+    }
+
+    #[test]
     fn wrapper_is_repacked() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("Car.zip");

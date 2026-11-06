@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { UpdateSite, UpdateSource } from "#lib/ipc/updates.js";
 import {
-  afterPass,
+  coveredBy,
+  followupOf,
   freshSources,
   markPassed,
+  nextFromQueue,
   noPasses,
+  queuePass,
   runStarted,
   sitesAfterPass,
   wasPassed,
@@ -108,13 +111,39 @@ describe("панель сайтов после прохождения", () => {
 });
 
 describe("что делать после прохождения", () => {
-  it("идёт своя проверка — повтор после неё, а не молча никогда", () => {
-    expect(afterPass(3, true)).toBe("afterRun");
-    expect(afterPass(0, true)).toBe("afterRun");
-  });
+  const tracked: Record<string, number> = { modhub: 3, modland: 0, stmods: 5 };
+  const trackedOf = (site: string) => tracked[site] ?? 0;
 
   it("сайт без модов — ищем на нём страницы, с модами — проверяем снова", () => {
-    expect(afterPass(0, false)).toBe("findPages");
-    expect(afterPass(2, false)).toBe("check");
+    expect(followupOf(0)).toBe("findPages");
+    expect(followupOf(2)).toBe("check");
+  });
+
+  it("очередь без повторов, в порядке прохождения", () => {
+    let queue = queuePass([], "modhub");
+    queue = queuePass(queue, "modland");
+    queue = queuePass(queue, "modhub");
+    expect(queue).toEqual(["modhub", "modland"]);
+  });
+
+  it("после проверки — проверка, поиск страниц остаётся на потом", () => {
+    const first = nextFromQueue(["modland", "modhub", "stmods"], trackedOf);
+    expect(first).toEqual({ run: "check", rest: ["modland"] });
+    expect(nextFromQueue(first.rest, trackedOf)).toEqual({ run: "findPages", rest: [] });
+    expect(nextFromQueue([], trackedOf)).toEqual({ run: null, rest: [] });
+  });
+
+  it("новая проверка снимает из очереди то, что покроет сама", () => {
+    // Иначе после следующей проверки по кнопке запускалась ещё одна, лишняя.
+    const queue = ["modhub", "modland"];
+    expect(coveredBy(queue, "check", trackedOf)).toEqual(["modland"]);
+    expect(coveredBy(queue, "findPages", trackedOf)).toEqual(["modhub"]);
+    expect(coveredBy(queue, "retry", trackedOf)).toEqual(queue);
+  });
+
+  it("сайт, за которым начали следить, уже проверяется, а не ищется", () => {
+    // Прошли сайт без модов, а пока шла проверка, на нём нашли страницу.
+    const later = (site: string) => (site === "modland" ? 1 : trackedOf(site));
+    expect(nextFromQueue(["modland"], later)).toEqual({ run: "check", rest: [] });
   });
 });

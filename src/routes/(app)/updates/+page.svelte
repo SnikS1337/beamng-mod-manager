@@ -17,10 +17,13 @@
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { checkSummary, failedSites, updateHeadline } from "#lib/features/updates/summary.js";
   import {
-    afterPass,
+    coveredBy,
+    followupOf,
     freshSources,
     markPassed,
+    nextFromQueue,
     noPasses,
+    queuePass,
     runStarted,
     sitesAfterPass,
     wasPassed,
@@ -303,16 +306,17 @@
   }
 
   /** Номер начала своей проверки — см. `passes.ts`. */
-  function startRun() {
+  function startRun(kind: "check" | "findPages" | "retry") {
     const started = runStarted(passes);
     passes = started.passes;
     runEpoch = started.epoch;
+    queued = coveredBy(queued, kind, trackedOn);
   }
 
   async function check() {
     if (run.checking) return;
     stopFinishing();
-    startRun();
+    startRun("check");
     run.requestId += 1;
     run.checking = true;
     run.progress = null;
@@ -330,7 +334,7 @@
 
   async function cancel() {
     // Остановили сами — и повтор после прохождения сайта не нужен.
-    queuedRecheck = null;
+    queued = [];
     stopFinishing();
     run.requestId += 1;
     run.checking = false;
@@ -342,7 +346,7 @@
   async function findPages() {
     if (run.checking) return;
     stopFinishing();
-    startRun();
+    startRun("findPages");
     run.checking = true;
     run.progress = null;
     error = null;
@@ -455,8 +459,8 @@
   /** Номер начала последней своей проверки; 0 — начатой до открытия страницы. */
   let runEpoch = 0;
   let sitesToken = 0;
-  /** Сайт прошли во время своей проверки — проверим его, когда она закончится. */
-  let queuedRecheck: string | null = null;
+  /** Сайты, пройденные во время своей проверки: повторим, когда она закончится. */
+  let queued: string[] = [];
 
   async function openCheck(source: string) {
     if (passing !== null) return;
@@ -471,12 +475,11 @@
         sources = freshSources(sources, passes, runEpoch);
         void refreshSites();
         const name = CHECK_SITES[source] ?? source;
-        const next = afterPass(trackedOn(source), run.checking);
         passing = null;
-        if (next === "afterRun") {
-          queuedRecheck = source;
+        if (run.checking) {
+          queued = queuePass(queued, source);
           toasts.show(`${name} пускает программу — проверим, когда закончится текущая проверка`);
-        } else if (next === "findPages") {
+        } else if (followupOf(trackedOn(source)) === "findPages") {
           // За сайтом ещё не следит ни один мод — проверять на нём нечего, а вот
           // страницы модов на нём теперь можно найти.
           toasts.show(`${name} пускает программу — ищем на нём страницы модов`);
@@ -502,10 +505,11 @@
 
   /** Своя проверка закончилась — запускаем отложенный повтор после прохождения сайта. */
   function startQueuedRecheck() {
-    const source = queuedRecheck;
-    queuedRecheck = null;
-    if (source === null || run.checking) return;
-    void (afterPass(trackedOn(source), false) === "findPages" ? findPages() : check());
+    if (run.checking) return;
+    const next = nextFromQueue(queued, trackedOn);
+    queued = next.rest;
+    if (next.run === "check") void check();
+    else if (next.run === "findPages") void findPages();
   }
 
   async function openLink(url: string) {
@@ -637,7 +641,7 @@
   async function retrySource(source: string) {
     if (run.checking) return;
     stopFinishing();
-    startRun();
+    startRun("retry");
     run.requestId += 1;
     run.checking = true;
     run.progress = null;
