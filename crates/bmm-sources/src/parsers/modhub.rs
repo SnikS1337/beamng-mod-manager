@@ -38,9 +38,6 @@ static CREDITS: LazyLock<Regex> = LazyLock::new(|| {
 });
 static UPLOADER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?s)<h3 class="author-name">(?<a>.*?)</h3>"#).unwrap());
-static MIRROR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)class="btn btn-mirror">.*?</i>\s*(?<h>[^<]+?)\s*</button>"#).unwrap()
-});
 static DESCRIPTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?s)<div class="description">.*?<div class="content">(?<d>.*?)</div>"#).unwrap()
 });
@@ -166,17 +163,6 @@ fn description_version(text: &str) -> Option<String> {
                 .any(|word| tail.contains(word));
             (!about_game).then(|| captures.name("v").map(|v| v.as_str().to_string()))?
         })
-}
-
-/// Файлообменники под кнопками скачивания («modsfire.com», «mods.to»): скачивание
-/// идёт формой на сайте, прямой ссылки на странице нет.
-pub fn mirrors(html: &str) -> Vec<String> {
-    MIRROR
-        .captures_iter(html)
-        .filter_map(|captures| captures.name("h"))
-        .map(|host| clean(host.as_str()).to_lowercase())
-        .filter(|host| !host.is_empty())
-        .collect()
 }
 
 fn listing_for(url: url::Url, source_id: String, title: &str) -> Listing {
@@ -353,7 +339,6 @@ mod tests {
             url.as_str()
                 .contains("thumb_universal-monster-frame-v4196-040x_")
         }));
-        assert_eq!(mirrors(&html), ["modsfire.com"]);
     }
 
     #[test]
@@ -365,7 +350,6 @@ mod tests {
             Some("CarPay"),
             "«mods.to» — не автор"
         );
-        assert_eq!(mirrors(&html), ["mods.to"]);
         assert_eq!(detail.game_version.as_deref(), Some("0.39"));
     }
 
@@ -374,7 +358,6 @@ mod tests {
         let html = fixture("mod-percheron-addon-real.html");
         let detail = parse_detail(&html, &page("cherrier-percheron-addon"));
         assert_eq!(detail.mod_version.as_deref(), Some("1.0"));
-        assert_eq!(mirrors(&html), ["modsbase.com"]);
     }
 
     #[test]

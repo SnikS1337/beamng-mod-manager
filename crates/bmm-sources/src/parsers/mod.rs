@@ -93,10 +93,6 @@ pub fn join_url(base: &str, href: &str) -> Option<url::Url> {
     base.join(href.trim()).ok()
 }
 
-pub fn is_http(url: &url::Url) -> bool {
-    matches!(url.scheme(), "http" | "https")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

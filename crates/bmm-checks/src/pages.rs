@@ -36,13 +36,6 @@ pub struct PageSearchReport {
     pub skipped_sites: Vec<String>,
 }
 
-impl PageSearchReport {
-    /// Есть ли что показать пользователю.
-    pub fn has_suggestions(&self) -> bool {
-        self.found > 0
-    }
-}
-
 /// Похожая страница того же мода на другом сайте.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageMatch {
@@ -1255,14 +1248,6 @@ pub fn bind_url(
         ));
     }
     Ok(listing)
-}
-
-/// Мод без привязок, для которого поиск страницы уже не имеет смысла.
-pub fn is_awaiting_manual(store: &dyn LibraryStore, installed: &InstalledMod) -> bool {
-    store.is_checking_declined(&installed.id)
-        || store
-            .get_page_search(&installed.id)
-            .is_some_and(|search| search.rejected)
 }
 
 #[cfg(test)]

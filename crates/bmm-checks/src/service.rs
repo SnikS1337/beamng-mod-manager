@@ -432,11 +432,6 @@ impl UpdateCheckService {
         result
     }
 
-    /// Все обновления, включая скрытые пользователем.
-    pub fn pending_including_dismissed(store: &dyn LibraryStore) -> Vec<UpdateFinding> {
-        Self::pending(store, true)
-    }
-
     /// «Пропустить эту версию».
     pub fn dismiss(store: &dyn LibraryStore, finding: &UpdateFinding) {
         store.set_dismissed_update(&finding.mod_id, Some(&finding.dismiss_key));

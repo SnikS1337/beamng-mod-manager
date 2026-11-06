@@ -1628,6 +1628,46 @@ mod tests {
         assert!(again.mods.iter().all(|card| card.duplicate_of.is_none()));
     }
 
+    /// Замер на копии настоящей папки данных (настройки указывают на настоящую папку
+    /// модов): `BMM_PROFILE_DATA=<копия> cargo test --release -p bmm-desktop -- --ignored real_data`.
+    #[test]
+    #[ignore = "замер на настоящих данных"]
+    fn real_data_timings() {
+        let Some(data) = std::env::var_os("BMM_PROFILE_DATA") else {
+            return;
+        };
+        let state = crate::test_support::state_at(std::path::Path::new(&data));
+        let time = |label: &str, run: &dyn Fn()| {
+            let started = std::time::Instant::now();
+            run();
+            eprintln!("{label}: {:?}", started.elapsed());
+        };
+        time("библиотека, первый раз", &|| {
+            load_snapshot(&state).unwrap();
+        });
+        time("библиотека, снова", &|| {
+            load_snapshot(&state).unwrap();
+        });
+        time("названия", &|| {
+            fill_titles(&state);
+        });
+        time("обновления", &|| {
+            crate::commands::updates::snapshot::build_snapshot(&state);
+        });
+        time(
+            "установленные архивы (входящие)",
+            &|| {
+                crate::commands::incoming::profile_installed(&state);
+            },
+        );
+        time(
+            "установленные архивы, снова",
+            &|| {
+                crate::commands::incoming::profile_installed(&state);
+            },
+        );
+    }
+
     #[test]
     fn toggle_moves_files_the_game_has_not_seen() {
         let temp = tempfile::tempdir().unwrap();

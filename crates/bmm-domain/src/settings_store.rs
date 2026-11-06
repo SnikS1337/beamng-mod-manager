@@ -21,11 +21,7 @@ pub struct SettingsLoadResult {
     pub save_blocked: bool,
 }
 
-impl SettingsLoadResult {
-    pub fn had_problems(&self) -> bool {
-        !self.warnings.is_empty()
-    }
-}
+impl SettingsLoadResult {}
 
 pub struct SettingsStore {
     path: PathBuf,
@@ -422,7 +418,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SettingsStore::new(dir.path().join("settings.json"), fixed_clock());
         let result = store.load();
-        assert!(!result.had_problems());
+        assert!(result.warnings.is_empty());
         assert!(!result.settings.allow_downloads);
         assert_eq!(result.settings.check_ttl_hours, 6);
     }
@@ -487,7 +483,13 @@ mod tests {
         let result = store.load();
         assert!(result.warnings.is_empty(), "{:?}", result.warnings);
         assert!(result.settings.disabled_sources.is_empty());
-        assert!(result.settings.is_source_enabled("modland"));
+        assert!(
+            !result
+                .settings
+                .disabled_sources
+                .iter()
+                .any(|id| id == "modland")
+        );
     }
 
     #[test]
@@ -571,9 +573,9 @@ mod tests {
         let path = dir.path().join("settings.json");
         fs::write(&path, r#"{ "KeepBackups": tr"#).unwrap();
         let store = SettingsStore::new(path.clone(), fixed_clock());
-        assert!(store.load().had_problems());
+        assert!(!store.load().warnings.is_empty());
         fs::write(&path, r#"{ "KeepBackups": 5"#).unwrap();
-        assert!(store.load().had_problems());
+        assert!(!store.load().warnings.is_empty());
 
         let backups: Vec<String> = fs::read_dir(dir.path())
             .unwrap()
@@ -598,7 +600,7 @@ mod tests {
         let path = dir.path().join("settings.json");
         fs::write(&path, vec![b' '; MAX_BYTES as usize + 1]).unwrap();
         let result = SettingsStore::new(path.clone(), fixed_clock()).load();
-        assert!(result.had_problems());
+        assert!(!result.warnings.is_empty());
         assert!(!path.exists());
         assert_eq!(
             fs::read_dir(dir.path())
@@ -664,7 +666,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let store = store_with(dir.path(), text);
             let result = store.load();
-            assert!(result.had_problems(), "{text}");
+            assert!(!result.warnings.is_empty(), "{text}");
             assert!(!result.settings.allow_downloads, "{text}");
         }
     }

@@ -189,14 +189,14 @@ impl LibraryStore for JsonLibraryStore {
 
     fn remove_mod(&self, id: &str) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.inner.remove_mod(id);
-        self.changed(&mut state, true);
+        let changed = state.inner.remove_mod(id);
+        self.changed(&mut state, changed);
     }
 
     fn bindings(&self) -> Vec<ModBinding> {
         self.state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|error| error.into_inner())
             .inner
             .bindings
             .values()
@@ -217,14 +217,14 @@ impl LibraryStore for JsonLibraryStore {
 
     fn remove_binding(&self, mod_id: &str, source: &str) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.inner.remove_binding(mod_id, source);
-        self.changed(&mut state, true);
+        let changed = state.inner.remove_binding(mod_id, source);
+        self.changed(&mut state, changed);
     }
 
     fn get_check(&self, mod_id: &str, source: &str) -> Option<CheckState> {
         self.state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|error| error.into_inner())
             .inner
             .checks
             .get(&(mod_id.to_string(), source.to_string()))
@@ -232,17 +232,16 @@ impl LibraryStore for JsonLibraryStore {
     }
 
     fn save_check(&self, check: CheckState) {
-        let key = (check.mod_id.clone(), check.source.clone());
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let has_binding = state.inner.bindings.contains_key(&key);
+        // Без привязки проверка не сохраняется — и файл переписывать незачем.
         let changed = state.inner.save_check(check);
-        self.changed(&mut state, if has_binding { changed } else { true });
+        self.changed(&mut state, changed);
     }
 
     fn checks(&self) -> Vec<CheckState> {
         self.state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|error| error.into_inner())
             .inner
             .checks
             .values()
@@ -253,7 +252,7 @@ impl LibraryStore for JsonLibraryStore {
     fn source_status(&self, source: &str) -> SourceStatus {
         self.state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|error| error.into_inner())
             .inner
             .statuses
             .get(source)
@@ -294,7 +293,7 @@ impl LibraryStore for JsonLibraryStore {
     fn get_dismissed_update(&self, mod_id: &str) -> Option<String> {
         self.state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|error| error.into_inner())
             .inner
             .dismissed
             .get(mod_id)
@@ -310,7 +309,7 @@ impl LibraryStore for JsonLibraryStore {
     fn file_history(&self, mod_id: &str) -> Vec<String> {
         self.state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|error| error.into_inner())
             .inner
             .history
             .get(mod_id)
@@ -320,8 +319,8 @@ impl LibraryStore for JsonLibraryStore {
 
     fn add_file_history(&self, mod_id: &str, file_name: &str) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.inner.add_file_history(mod_id, file_name);
-        self.changed(&mut state, true);
+        let changed = state.inner.add_file_history(mod_id, file_name);
+        self.changed(&mut state, changed);
     }
 
     fn is_checking_declined(&self, mod_id: &str) -> bool {
@@ -342,7 +341,7 @@ impl LibraryStore for JsonLibraryStore {
     fn get_page_search(&self, mod_id: &str) -> Option<PageSearch> {
         self.state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|error| error.into_inner())
             .inner
             .page_searches
             .get(mod_id)
@@ -860,6 +859,33 @@ mod tests {
             last_game_version: Some("0.39".to_string()),
             last_title: Some("Some Car".to_string()),
         }
+    }
+
+    #[test]
+    fn nothing_changed_means_no_write() {
+        // Было: удаление несуществующего, проверка без привязки и повтор того же имени
+        // в истории каждый раз переписывали весь файл библиотеки.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let store = JsonLibraryStore::new(&path, system_clock());
+        store.upsert_mod(installed("a", "A", "1.0"));
+        store.add_file_history("a", "old.zip");
+        fs::remove_file(&path).unwrap();
+
+        store.remove_mod("нет");
+        store.remove_binding("a", "modland");
+        store.save_check(check("a"));
+        store.add_file_history("a", "old.zip");
+        store.add_file_history("a", "a.zip");
+        assert!(!path.exists(), "ничего не поменялось — файл не пишется");
+
+        store.add_file_history("a", "older.zip");
+        assert!(path.exists(), "настоящее изменение пишется сразу");
+        assert_eq!(store.file_history("a"), ["old.zip", "older.zip"]);
+        fs::remove_file(&path).unwrap();
+        store.remove_mod("a");
+        assert!(path.exists());
+        assert!(store.mods().is_empty());
     }
 
     #[test]

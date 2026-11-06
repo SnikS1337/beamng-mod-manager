@@ -110,12 +110,6 @@ impl GameModEntry {
         if same_file { self.repo.as_ref() } else { None }
     }
 
-    pub fn in_mods_root(&self) -> bool {
-        self.full_path.as_deref().is_none_or(|path| {
-            normalize_full_path(path) == format!("mods/{}", normalize_full_path(&self.file_name))
-        })
-    }
-
     pub fn is_at(&self, sub_folder: Option<&str>) -> bool {
         let Some(full) = &self.full_path else {
             return true;
@@ -651,7 +645,6 @@ mod tests {
         assert!(bmw.active);
         assert_eq!(bmw.mod_type, "vehicle");
         assert_eq!(bmw.file_size, Some(331_770_968));
-        assert!(bmw.in_mods_root());
         assert!(read.find("unknown.zip").is_none());
     }
 

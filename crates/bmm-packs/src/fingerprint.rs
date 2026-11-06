@@ -57,12 +57,6 @@ impl Fingerprint {
             edges: hasher.finish(),
         })
     }
-
-    /// Тот же размер и время изменения: переименованный или перенесённый файл.
-    /// Содержимое не читаем — старого пути уже нет.
-    pub fn same_stamp(&self, len: u64, modified: Option<SystemTime>) -> bool {
-        self.len == len && self.modified.is_some() && self.modified == modified
-    }
 }
 
 fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
@@ -246,22 +240,5 @@ mod tests {
         let checked = Fingerprint::of(&empty).unwrap();
         assert_eq!(checked.len, 0);
         assert_eq!(verdict(Some(&checked), &empty), Verdict::Same);
-    }
-
-    #[test]
-    fn renamed_file_keeps_its_stamp() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("mod.zip");
-        write(&path, b"PK archive");
-        let checked = Fingerprint::of(&path).unwrap();
-        let renamed = temp.path().join("mod (renamed).zip");
-        std::fs::rename(&path, &renamed).unwrap();
-        let meta = std::fs::metadata(&renamed).unwrap();
-        assert!(checked.same_stamp(meta.len(), meta.modified().ok()));
-        assert!(!checked.same_stamp(meta.len() + 1, meta.modified().ok()));
-        assert!(
-            !checked.same_stamp(meta.len(), None),
-            "без времени не узнаём"
-        );
     }
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from "#lib/shell/errorText.js";
   import { passButton, rerunAfterPass } from "#lib/shell/siteCheck.js";
   import { anyOverlay } from "#lib/shell/overlays.js";
   import { openExternal } from "#lib/shell/openExternal.js";
@@ -237,7 +238,7 @@
       await searchStart(searchText, current);
     } catch (reason) {
       if (current === requestId) {
-        error = errorText(reason);
+        error = errorText(reason, "Не удалось выполнить поиск.");
         searching = false;
       }
     }
@@ -269,7 +270,7 @@
       browseFrom = 3;
       browseHasMore = event.cards.length > 0;
     } catch (reason) {
-      if (current === requestId) error = errorText(reason);
+      if (current === requestId) error = errorText(reason, "Не удалось выполнить поиск.");
     } finally {
       if (current === requestId) searching = false;
     }
@@ -290,7 +291,7 @@
       browseFrom += 2;
       browseHasMore = cards.length > before;
     } catch (reason) {
-      if (current === requestId) error = errorText(reason);
+      if (current === requestId) error = errorText(reason, "Не удалось выполнить поиск.");
     } finally {
       if (current === requestId) searching = false;
     }
@@ -331,7 +332,7 @@
         sources = event.sources;
       }
     } catch (reason) {
-      if (at === requestId) error = errorText(reason);
+      if (at === requestId) error = errorText(reason, "Не удалось выполнить поиск.");
     } finally {
       // Новый поиск мог перехватить повтор — кнопку всё равно разблокируем.
       retrying = null;
@@ -430,7 +431,7 @@
         toasts.show("Проверка не завершена. Пройдите её в окне и попробуйте снова");
       }
     } catch (reason) {
-      error = errorText(reason);
+      error = errorText(reason, "Не удалось выполнить поиск.");
     } finally {
       passing = null;
     }
@@ -459,7 +460,7 @@
       cards = event.cards;
       sources = event.sources;
     } catch (reason) {
-      if (at === requestId) error = errorText(reason);
+      if (at === requestId) error = errorText(reason, "Не удалось выполнить поиск.");
     } finally {
       deciding = null;
     }
@@ -681,13 +682,6 @@
     }, "flow-search");
   }
 
-  function errorText(reason: unknown): string {
-    if (typeof reason === "string") return reason;
-    if (reason && typeof reason === "object" && "message" in reason) {
-      return String((reason as { message: unknown }).message);
-    }
-    return "Не удалось выполнить поиск.";
-  }
 
   const HISTORY_KEY = "bmm.search.history";
   const FILTERS_KEY = "bmm.search.filters";

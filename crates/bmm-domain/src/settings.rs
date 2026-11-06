@@ -217,10 +217,6 @@ impl AppSettings {
         }
     }
 
-    pub fn is_source_enabled(&self, id: &str) -> bool {
-        !self.disabled_sources.iter().any(|source| source == id)
-    }
-
     pub fn to_check_options(&self) -> CheckOptions {
         CheckOptions {
             ttl: Duration::from_secs(self.check_ttl_hours.clamp(1, 168) as u64 * 3600),

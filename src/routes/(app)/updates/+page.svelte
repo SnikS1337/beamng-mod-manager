@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from "#lib/shell/errorText.js";
   import { needsPassButton, passButton } from "#lib/shell/siteCheck.js";
   import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
@@ -577,13 +578,6 @@
       : `${where} · ${stage}`;
   }
 
-  function errorText(reason: unknown): string {
-    if (typeof reason === "string") return reason;
-    if (reason && typeof reason === "object" && "message" in reason) {
-      return String((reason as { message: unknown }).message);
-    }
-    return "Не удалось выполнить действие.";
-  }
 
   function whereText(finding: UpdateFinding): string {
     const parts = [sourceName(finding.source)];

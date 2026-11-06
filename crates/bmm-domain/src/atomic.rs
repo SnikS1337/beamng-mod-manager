@@ -12,12 +12,6 @@ static QUARANTINE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const WRITE_ATTEMPTS: u32 = 5;
 const STALE_TEMP: Duration = Duration::from_secs(60 * 60);
 
-pub fn temp_path(path: &Path) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(".tmp");
-    PathBuf::from(name)
-}
-
 pub fn unique_temp_path(path: &Path) -> PathBuf {
     let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut name: OsString = path.as_os_str().to_owned();
@@ -246,7 +240,6 @@ mod tests {
         fs::write(&blocker, b"file").unwrap();
         let path = blocker.join("settings.json");
         assert!(write_atomic(&path, b"x").is_err());
-        assert!(!temp_path(&path).exists());
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 

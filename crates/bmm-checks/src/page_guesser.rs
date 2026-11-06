@@ -17,7 +17,7 @@ use bmm_domain::models::{Listing, PriceStatus};
 use bmm_domain::text::{TitleNormalizer, TitleParser};
 use bmm_domain::versioning::{VersionComparer, VersionOrder};
 
-use crate::bindings::BindingSuggester;
+use crate::bindings::query_for;
 
 /// Ничего не нашли — следующий поиск для этого мода не раньше.
 pub const RETRY_AFTER: TimeDelta = TimeDelta::days(14);
@@ -177,7 +177,7 @@ impl PageGuesser {
     pub fn query_for(installed: &InstalledMod, title: Option<&str>) -> String {
         match title.map(str::trim) {
             Some(title) if !title.is_empty() => title.to_string(),
-            _ => BindingSuggester::query_for(installed),
+            _ => query_for(installed),
         }
     }
 
