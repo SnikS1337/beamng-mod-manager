@@ -47,6 +47,14 @@ fn archive_name(raw: &str) -> Option<String> {
     .then_some(name)
 }
 
+/// Страница «Page Not Found»: файла по этому адресу больше нет. Сайт отвечает так
+/// с кодом 404, но браузерное окно кода не видит — узнаём по тексту.
+pub fn is_missing(html: &str) -> bool {
+    static MISSING: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<title>\s*Page Not Found\s*-\s*ModsFire").unwrap());
+    MISSING.is_match(html)
+}
+
 /// Имя и размер файла со страницы modsfire; `None` — это не страница файла
 /// (заглушка Cloudflare, «файл удалён», другая вёрстка).
 pub fn parse(html: &str) -> Option<HostedFile> {
@@ -118,6 +126,19 @@ mod tests {
 <meta name="description" content="Download file pack_2_MB_edition_v1.0.zip - 300 KB MB from ModsFire.com">"#;
         let file = parse(html).unwrap();
         assert_eq!(file.size_bytes, Some(300 * 1024));
+    }
+
+    #[test]
+    fn deleted_file_page_is_recognised() {
+        // modsfire.com/2G9uMu8tD03V394 (Lada 2101 на ModsGaming), 2026-11-06.
+        let html = "<html><head><title>Page Not Found - ModsFire.com</title></head><body>Page Not Found\nSorry, but the page you were trying to view does not exist.</body></html>";
+        assert!(is_missing(html));
+        assert_eq!(parse(html), None);
+        assert!(!is_missing(&fixture()));
+        assert!(
+            !is_missing("<title>Just a moment...</title>"),
+            "заглушка — не удаление"
+        );
     }
 
     #[test]

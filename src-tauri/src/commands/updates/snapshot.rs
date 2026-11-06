@@ -254,6 +254,7 @@ pub(crate) fn finding_dto(
         file_verdict: finding.file_verdict,
         file_name: finding.file_name,
         file_version: finding.file_version,
+        file_gone: finding.file_gone,
     }
 }
 

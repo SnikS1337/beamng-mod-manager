@@ -37,6 +37,8 @@ pub struct UpdateFindingDto {
     pub file_verdict: Option<String>,
     pub file_name: Option<String>,
     pub file_version: Option<String>,
+    /// Файла по ссылке «Скачать» больше нет (файлообменник: «не найдено»).
+    pub file_gone: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

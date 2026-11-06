@@ -91,6 +91,10 @@ pub struct FileSnapshot {
     /// (та же ссылка, та же подпись, меньше недели) по ней не ходим.
     #[serde(default)]
     pub seen_at: Option<DateTime<FixedOffset>>,
+    /// Файлообменник ответил, что файла нет (404): ссылка на сайте мёртвая. Страницу
+    /// второй раз не открываем, пока сайт не даст другую.
+    #[serde(default)]
+    pub gone: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,6 +342,7 @@ mod tests {
             last_game_version: None,
             last_title: None,
             last_file: Some(FileSnapshot {
+                gone: false,
                 offer: None,
                 seen_at: None,
                 url: "https://modsfire.com/abc".to_string(),

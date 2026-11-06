@@ -229,7 +229,7 @@ pub fn file_needs_look(
         return true;
     };
     let key = bmm_domain::file_check::page_key(check.last_version.as_deref(), check.last_size);
-    known.name.is_none()
+    (known.name.is_none() && !known.gone)
         || known.page_key.as_deref() != Some(key.as_str())
         || known.offer.as_deref() != offer
         || known
@@ -1204,6 +1204,7 @@ mod tests {
 
     fn snapshot(name: &str) -> FileSnapshot {
         FileSnapshot {
+            gone: false,
             offer: None,
             seen_at: None,
             url: "https://modsfire.com/abc".to_string(),
@@ -1406,6 +1407,15 @@ mod tests {
             ..fresh.clone()
         };
         assert!(file_needs_look(Some(&nameless), &check, offer, now()));
+        let deleted = FileSnapshot {
+            name: None,
+            gone: true,
+            ..fresh.clone()
+        };
+        assert!(
+            !file_needs_look(Some(&deleted), &check, offer, now()),
+            "файл удалён — ждём новую ссылку"
+        );
         let unseen = FileSnapshot {
             seen_at: None,
             ..fresh

@@ -23,6 +23,7 @@ function finding(patch: Partial<UpdateFinding>): UpdateFinding {
     fileVerdict: null,
     fileName: null,
     fileVersion: null,
+    fileGone: false,
     ...patch,
   };
 }
@@ -159,5 +160,14 @@ describe("версия сайта при неизвестной своей", () 
   it("версии на сайте нет — о ней не пишем", () => {
     const text = reason(finding({ installedSize: 990 * MB, latestSize: 970 * MB }));
     expect(text).not.toContain("сайт пишет");
+  });
+});
+
+describe("файл по ссылке удалён", () => {
+  it("так и сказано в пояснении", () => {
+    const text = reason(finding({ installedSize: 353 * MB, latestSize: 16 * MB, fileGone: true }));
+    expect(text).toContain("Похоже, страница о другом моде");
+    expect(text.endsWith("Файл по ссылке «Скачать» удалён с файлообменника.")).toBe(true);
+    expect(reason(finding({ installedSize: 353 * MB, latestSize: 16 * MB }))).not.toContain("удалён");
   });
 });

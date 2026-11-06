@@ -34,6 +34,12 @@ function times(finding: UpdateFinding): number {
 
 /** Почему программа считает, что мод обновился. Только то, что знает наверняка. */
 export function reason(finding: UpdateFinding): string {
+  const text = why(finding);
+  // Скачать по ссылке на сайте всё равно не выйдет — об этом лучше знать сразу.
+  return finding.fileGone ? `${text} Файл по ссылке «Скачать» удалён с файлообменника.` : text;
+}
+
+function why(finding: UpdateFinding): string {
   const size = sizeChange(finding);
   const file = finding.fileName ? `«${finding.fileName}»` : "файл";
   if (finding.fileVerdict === "same_file") {

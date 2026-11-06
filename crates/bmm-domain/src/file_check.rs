@@ -136,6 +136,7 @@ mod tests {
 
     fn file(name: &str, size: Option<i64>, exact: bool, key: &str) -> FileSnapshot {
         FileSnapshot {
+            gone: false,
             offer: None,
             seen_at: None,
             url: "https://modsfire.com/abc".to_string(),

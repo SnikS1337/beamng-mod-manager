@@ -73,6 +73,7 @@ pub fn probe(
         let exact = peek.size.is_some();
         return FileProbe {
             file: Some(FileSnapshot {
+                gone: false,
                 offer: None,
                 seen_at: None,
                 url: without_query(&peek.final_url),
@@ -87,9 +88,9 @@ pub fn probe(
     let url = peek.final_url.to_string();
     if let Some(previous) = previous
         && previous.url == url
-        && previous.name.is_some()
+        && (previous.name.is_some() || previous.gone)
     {
-        // Тот же адрес — тот же файл: страницу не открываем.
+        // Тот же адрес — тот же файл (или тот же удалённый): страницу не открываем.
         return FileProbe {
             file: Some(FileSnapshot {
                 page_key: None,
@@ -99,6 +100,7 @@ pub fn probe(
         };
     }
     let bare = FileSnapshot {
+        gone: false,
         offer: None,
         seen_at: None,
         url: url.clone(),
@@ -114,13 +116,20 @@ pub fn probe(
         };
     }
     let result = fetcher.get_cancellable(FILE_HOST_SOURCE, &peek.final_url, cancel);
+    // Файлообменник ответил «нет такой страницы»: файл удалён, ссылка мёртвая.
+    let gone = result
+        .response
+        .as_ref()
+        .is_some_and(|response| response.status == 404 || modsfire::is_missing(&response.text));
     let hosted = result
         .response
         .filter(|response| response.status == 200)
         .and_then(|response| modsfire::parse(&response.text));
     FileProbe {
         file: Some(match hosted {
+            None if gone => FileSnapshot { gone: true, ..bare },
             Some(hosted) => FileSnapshot {
+                gone: false,
                 offer: None,
                 seen_at: None,
                 url,
@@ -294,6 +303,7 @@ mod tests {
             &modsfire_page(),
         );
         let previous = FileSnapshot {
+            gone: false,
             offer: None,
             seen_at: None,
             url: "https://modsfire.com/OLDFILE".to_string(),
@@ -353,6 +363,42 @@ mod tests {
         let probe = probe(&polite, &url("https://stmods.org/d"), None, true, &NO);
         assert!(probe.opened_page);
         assert_eq!(probe.file.unwrap().name, None);
+    }
+
+    #[test]
+    fn deleted_file_is_remembered_and_not_reopened() {
+        let (fake, polite) = fetcher(
+            Ok(Peek {
+                final_url: url("https://modsfire.com/2G9uMu8tD03V394"),
+                page: true,
+                name: None,
+                size: None,
+            }),
+            "<title>Page Not Found - ModsFire.com</title>",
+        );
+        let first = probe(
+            &polite,
+            &url("https://modsgaming.us/load/0-0-1-83642-20"),
+            None,
+            true,
+            &NO,
+        );
+        let file = first.file.unwrap();
+        assert!(file.gone);
+        assert_eq!(file.name, None);
+        let again = probe(
+            &polite,
+            &url("https://modsgaming.us/load/0-0-1-83642-20"),
+            Some(&file),
+            true,
+            &NO,
+        );
+        assert!(
+            !again.opened_page,
+            "мёртвую страницу второй раз не открываем"
+        );
+        assert!(again.file.unwrap().gone);
+        assert_eq!(fake.pages.lock().unwrap().len(), 1);
     }
 
     #[test]
