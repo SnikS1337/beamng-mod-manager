@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -25,6 +25,8 @@ const BATCH_FLUSH_EVERY: Duration = Duration::from_secs(20);
 
 struct State {
     inner: Inner,
+    /// Поля, которых эта версия программы не знает: их записала более новая.
+    unknown: Unknown,
     batch: usize,
     dirty: bool,
     save_blocked: bool,
@@ -43,11 +45,12 @@ impl JsonLibraryStore {
     pub fn new(path: impl Into<PathBuf>, now: Clock) -> Self {
         let path = path.into();
         atomic::cleanup_stale_temps(&path);
-        let (inner, warnings, save_blocked) = load(&path, &now);
+        let (inner, warnings, save_blocked, unknown) = load(&path, &now);
         Self {
             path,
             state: Mutex::new(State {
                 inner,
+                unknown,
                 batch: 0,
                 dirty: false,
                 save_blocked,
@@ -116,7 +119,10 @@ impl JsonLibraryStore {
         }
 
         let model = model_of(&state.inner);
-        let json = match serde_json::to_string_pretty(&model) {
+        let json = match serde_json::to_value(&model)
+            .map(|value| state.unknown.restore(value))
+            .and_then(|value| serde_json::to_string_pretty(&value))
+        {
             Ok(json) => json,
             Err(error) => {
                 state.save_error = Some(error.to_string());
@@ -373,6 +379,94 @@ struct FileModel {
     last_run_utc: Option<DateTime<FixedOffset>>,
 }
 
+/// Поля файла, которые знает эта версия.
+const KNOWN_ROOT: &[&str] = &[
+    "Schema",
+    "Mods",
+    "Bindings",
+    "Checks",
+    "Sources",
+    "Dismissed",
+    "History",
+    "Declined",
+    "PageSearches",
+    "LastRunUtc",
+];
+
+/// Поля, которых эта версия не знает, — чтобы не выбросить их при сохранении.
+///
+/// Было: отладочная сборка записала сведения о файле за ссылкой «Скачать», потом
+/// запустилась прежняя версия (чтобы обновиться) и сохранила библиотеку без них —
+/// у всех 44 модов. Теперь прежняя версия переписывает только то, что знает, а
+/// чужие поля файла и записей модов, привязок и проверок оставляет как были.
+#[derive(Debug, Default)]
+struct Unknown {
+    root: Map<String, Value>,
+    /// (раздел, запись) → её незнакомые поля.
+    records: HashMap<(&'static str, String), Map<String, Value>>,
+}
+
+impl Unknown {
+    fn record_key(section: &str, value: &Map<String, Value>) -> Option<String> {
+        let text = |key: &str| value.get(key).and_then(Value::as_str);
+        match section {
+            "Mods" => text("Id").map(str::to_string),
+            "Bindings" | "Checks" => Some(format!("{}\u{0}{}", text("ModId")?, text("Source")?)),
+            _ => None,
+        }
+    }
+
+    /// Запомнить поля `raw`, которых нет в том, что эта версия сама пишет (`known`).
+    fn remember(&mut self, section: &'static str, raw: &Value, known: &Value) {
+        let (Some(raw), Some(known)) = (raw.as_object(), known.as_object()) else {
+            return;
+        };
+        let extra: Map<String, Value> = raw
+            .iter()
+            .filter(|(key, _)| !known.contains_key(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        if extra.is_empty() {
+            return;
+        }
+        if let Some(key) = Self::record_key(section, known) {
+            self.records.insert((section, key), extra);
+        }
+    }
+
+    /// Вернуть незнакомые поля в то, что сейчас сохраняется. Своё не перетирают.
+    fn restore(&self, mut value: Value) -> Value {
+        let Some(root) = value.as_object_mut() else {
+            return value;
+        };
+        for (key, extra) in &self.root {
+            root.entry(key.clone()).or_insert_with(|| extra.clone());
+        }
+        if self.records.is_empty() {
+            return value;
+        }
+        for section in ["Mods", "Bindings", "Checks"] {
+            let Some(Value::Array(items)) = root.get_mut(section) else {
+                continue;
+            };
+            for item in items {
+                let Some(object) = item.as_object_mut() else {
+                    continue;
+                };
+                let Some(key) = Self::record_key(section, object) else {
+                    continue;
+                };
+                if let Some(extra) = self.records.get(&(section, key)) {
+                    for (name, field) in extra {
+                        object.entry(name.clone()).or_insert_with(|| field.clone());
+                    }
+                }
+            }
+        }
+        value
+    }
+}
+
 fn model_of(inner: &Inner) -> FileModel {
     let mods = inner.sorted_mods();
     let existing: HashSet<String> = mods.iter().map(|item| item.id.clone()).collect();
@@ -440,7 +534,13 @@ fn model_of(inner: &Inner) -> FileModel {
     }
 }
 
-fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
+fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool, Unknown) {
+    let mut unknown = Unknown::default();
+    let (inner, warnings, blocked) = load_inner(path, now, &mut unknown);
+    (inner, warnings, blocked, unknown)
+}
+
+fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<String>, bool) {
     let mut inner = Inner::default();
     let mut warnings = Vec::new();
     if !path.exists() {
@@ -525,10 +625,16 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
         ));
     }
 
+    for (key, value) in root {
+        if !KNOWN_ROOT.contains(&key.as_str()) {
+            unknown.root.insert(key.clone(), value.clone());
+        }
+    }
+
     // Каждую запись разбираем отдельно: одна битая строка не должна обнулять
     // привязки, проверки и историю остальных модов.
     let mut skipped = 0usize;
-    for installed in parse_array::<InstalledMod>(root, "Mods", &mut skipped) {
+    for installed in parse_records::<InstalledMod>(root, "Mods", &mut skipped, unknown) {
         if installed.id.trim().is_empty() || installed.file_name.trim().is_empty() {
             skipped += 1;
             continue;
@@ -536,13 +642,13 @@ fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool) {
         inner.upsert_mod(installed);
     }
 
-    for binding in parse_array::<ModBinding>(root, "Bindings", &mut skipped) {
+    for binding in parse_records::<ModBinding>(root, "Bindings", &mut skipped, unknown) {
         if inner.upsert_binding(binding).is_err() {
             skipped += 1;
         }
     }
 
-    for check in parse_array::<CheckState>(root, "Checks", &mut skipped) {
+    for check in parse_records::<CheckState>(root, "Checks", &mut skipped, unknown) {
         inner.save_check(check);
     }
 
@@ -616,6 +722,31 @@ fn parse_array<T: DeserializeOwned>(
     for item in items {
         match serde_json::from_value(item.clone()) {
             Ok(item) => result.push(item),
+            Err(_) => *skipped += 1,
+        }
+    }
+    result
+}
+
+/// Как [`parse_array`], но запоминает незнакомые поля каждой записи.
+fn parse_records<T: DeserializeOwned + Serialize>(
+    root: &Map<String, Value>,
+    key: &'static str,
+    skipped: &mut usize,
+    unknown: &mut Unknown,
+) -> Vec<T> {
+    let Some(Value::Array(items)) = root.get(key) else {
+        return parse_array(root, key, skipped);
+    };
+    let mut result = Vec::new();
+    for item in items {
+        match serde_json::from_value::<T>(item.clone()) {
+            Ok(parsed) => {
+                if let Ok(known) = serde_json::to_value(&parsed) {
+                    unknown.remember(key, item, &known);
+                }
+                result.push(parsed);
+            }
             Err(_) => *skipped += 1,
         }
     }
@@ -729,6 +860,103 @@ mod tests {
             last_game_version: Some("0.39".to_string()),
             last_title: Some("Some Car".to_string()),
         }
+    }
+
+    #[test]
+    fn fields_of_a_newer_version_survive_a_save_by_this_one() {
+        // Было: сведения о файле за ссылкой, записанные новой версией, пропали у всех
+        // модов, когда прежняя версия сохранила библиотеку.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        fs::write(
+            &path,
+            r#"{"Schema":1,"FutureSection":{"x":1},
+            "Mods":[{"Id":"a","Name":"A","FileName":"a.zip","Version":"1.0","SizeBytes":100,
+                     "InstalledAtUtc":"2026-10-21T12:00:00+00:00","Enabled":true,"FutureMod":"m"},
+                    {"Id":"b","Name":"B","FileName":"b.zip","Version":"1.0","SizeBytes":100,
+                     "InstalledAtUtc":"2026-10-21T12:00:00+00:00","Enabled":true,"FutureMod":"gone"}],
+            "Bindings":[{"ModId":"a","Source":"modland","SourceId":"x","Url":"https://modland.net/x",
+                         "Confirmed":true,"FutureBinding":[1,2]}],
+            "Checks":[{"ModId":"a","Source":"modland","LastCheckedUtc":"2026-10-21T12:00:00+00:00",
+                       "LastChangedUtc":null,"LastVersion":"1.0","LastSize":100,"MissCount":0,
+                       "LastGameVersion":null,"LastTitle":null,"FutureCheck":{"Name":"a_v1.zip"}}]}"#,
+        )
+        .unwrap();
+        {
+            let store = JsonLibraryStore::new(&path, system_clock());
+            assert!(
+                store.load_warnings().is_empty(),
+                "{:?}",
+                store.load_warnings()
+            );
+            // Эта версия меняет запись проверки и удаляет мод b.
+            let mut changed = check("a");
+            changed.last_version = Some("1.1".to_string());
+            store.save_check(changed);
+            store.remove_mod("b");
+        }
+        let saved: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["FutureSection"]["x"], 1);
+        assert_eq!(
+            saved["Mods"].as_array().unwrap().len(),
+            1,
+            "удалённый мод не воскрес"
+        );
+        assert_eq!(saved["Mods"][0]["FutureMod"], "m");
+        assert_eq!(saved["Bindings"][0]["FutureBinding"][1], 2);
+        assert_eq!(saved["Checks"][0]["FutureCheck"]["Name"], "a_v1.zip");
+        assert_eq!(
+            saved["Checks"][0]["LastVersion"], "1.1",
+            "своё поле записано заново, а не взято из старого файла"
+        );
+    }
+
+    #[test]
+    fn records_write_every_known_field_even_when_empty() {
+        // На этом держится сохранение чужих полей: незнакомым считается то, чего нет
+        // в собственной записи. Пропусти запись пустое поле — его старое значение
+        // вернулось бы из файла.
+        let mut empty = check("a");
+        empty.last_version = None;
+        empty.last_size = None;
+        empty.last_game_version = None;
+        empty.last_title = None;
+        let value = serde_json::to_value(&empty).unwrap();
+        for key in [
+            "LastVersion",
+            "LastSize",
+            "LastGameVersion",
+            "LastTitle",
+            "LastFile",
+        ] {
+            assert!(value.get(key).is_some(), "{key}");
+        }
+        let mut quiet = installed("a", "A", "1.0");
+        quiet.version = None;
+        quiet.size_bytes = None;
+        let value = serde_json::to_value(&quiet).unwrap();
+        for key in ["Version", "SizeBytes"] {
+            assert!(value.get(key).is_some(), "{key}");
+        }
+    }
+
+    #[test]
+    fn known_field_cleared_by_this_version_does_not_come_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        {
+            let store = JsonLibraryStore::new(&path, system_clock());
+            store.upsert_mod(installed("a", "A", "1.0"));
+            store.save_check(check("a"));
+        }
+        {
+            let store = JsonLibraryStore::new(&path, system_clock());
+            let mut cleared = check("a");
+            cleared.last_title = None;
+            store.save_check(cleared);
+        }
+        let saved: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(saved["Checks"][0]["LastTitle"].is_null());
     }
 
     #[test]

@@ -217,8 +217,19 @@ impl SettingsStore {
 
     pub fn save(&self, settings: &AppSettings) -> std::io::Result<()> {
         let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
-        let json =
-            serde_json::to_string_pretty(&settings.normalize()).map_err(std::io::Error::other)?;
+        let mut value =
+            serde_json::to_value(settings.normalize()).map_err(std::io::Error::other)?;
+        // Настройки, которых эта версия не знает (их записала более новая), остаются в
+        // файле: прежняя версия, запущенная ради обновления, не должна их стирать.
+        if let Some(own) = value.as_object_mut()
+            && let Ok(text) = fs::read_to_string(&self.path)
+            && let Ok(Value::Object(old)) = crate::json5_safe::from_str::<Value>(&text)
+        {
+            for (key, field) in old {
+                own.entry(key).or_insert(field);
+            }
+        }
+        let json = serde_json::to_string_pretty(&value).map_err(std::io::Error::other)?;
         atomic::write_atomic(&self.path, json.as_bytes())
     }
 
@@ -326,6 +337,33 @@ fn strs_field(root: &Map<String, Value>, name: &str, warnings: &mut Vec<String>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_of_a_newer_version_survive_a_save_by_this_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"SchemaVersion":2,"AllowDownloads":true,"FutureOption":"on"}"#,
+        )
+        .unwrap();
+        let store = SettingsStore::with_system_clock(&path);
+        let mut settings = store.load().settings;
+        settings.allow_downloads = false;
+        store.save(&settings).unwrap();
+        let saved: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["FutureOption"], "on");
+        assert_eq!(saved["AllowDownloads"], false, "своё значение — новое");
+    }
+
+    #[test]
+    fn every_setting_is_written_even_when_empty() {
+        // Иначе старое значение пустой настройки вернулось бы из файла.
+        let value = serde_json::to_value(AppSettings::default().normalize()).unwrap();
+        for key in ["ModsFolder", "UserFolder", "DownloadsFolder"] {
+            assert!(value.get(key).is_some(), "{key}");
+        }
+    }
     use chrono::{TimeZone, Utc};
     use std::sync::Arc;
 
