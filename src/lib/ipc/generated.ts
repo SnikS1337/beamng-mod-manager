@@ -190,7 +190,11 @@ authorVersion: string | null,
  * `label_older` — сайт пишет новую версию, а файл подписан вашей или старее;
  * `file_newer` — подпись прежняя, а файл новее.
  */
-fileVerdict: "same_file" | "label_older" | "file_newer" | null, fileName: string | null, fileVersion: string | null, };
+fileVerdict: "same_file" | "label_older" | "file_newer" | null, fileName: string | null, fileVersion: string | null, 
+/**
+ * Файла по ссылке «Скачать» больше нет (файлообменник: «не найдено»).
+ */
+fileGone: boolean, };
 
 export type UpdateSite = { id: string, displayName: string, 
 /**

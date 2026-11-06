@@ -65,6 +65,7 @@ function mockInitial(): UpdatesSnapshot {
         fileVerdict: null,
         fileName: null,
         fileVersion: null,
+        fileGone: false,
       },
       {
         modId: "mock-2",
@@ -84,6 +85,7 @@ function mockInitial(): UpdatesSnapshot {
         fileVerdict: null,
         fileName: null,
         fileVersion: null,
+        fileGone: false,
       },
       {
         modId: "mock-3",
@@ -103,6 +105,7 @@ function mockInitial(): UpdatesSnapshot {
         fileVerdict: null,
         fileName: null,
         fileVersion: null,
+        fileGone: false,
       },
     ],
     hidden: [
@@ -124,6 +127,7 @@ function mockInitial(): UpdatesSnapshot {
         fileVerdict: null,
         fileName: null,
         fileVersion: null,
+        fileGone: false,
       },
     ],
     suggestions: [

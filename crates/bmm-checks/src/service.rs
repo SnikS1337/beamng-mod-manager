@@ -46,6 +46,8 @@ pub struct UpdateFinding {
     /// Имя этого файла и версия в нём, если есть.
     pub file_name: Option<String>,
     pub file_version: Option<String>,
+    /// Файла по ссылке «Скачать» больше нет: файлообменник ответил «не найдено».
+    pub file_gone: bool,
 }
 
 /// Сайт, на котором мод выкладывает сам автор.
@@ -141,7 +143,8 @@ impl UpdateCheckService {
                 match &check.last_file {
                     None => true,
                     Some(file) => {
-                        file.page_key.as_deref() != Some(key.as_str()) || file.name.is_none()
+                        file.page_key.as_deref() != Some(key.as_str())
+                            || (file.name.is_none() && !file.gone)
                     }
                 }
             })
@@ -346,6 +349,10 @@ impl UpdateCheckService {
                     None => page_status,
                 };
                 let same_file = verdict == Some(FileVerdict::SameFile);
+                let file_gone = check
+                    .last_file
+                    .as_ref()
+                    .is_some_and(|file| file.gone && file.page_key.as_deref() == Some(&page_key));
                 if status == UpdateStatus::None && !same_file {
                     continue;
                 }
@@ -397,6 +404,7 @@ impl UpdateCheckService {
                     file_version: verdict
                         .as_ref()
                         .and_then(|verdict| verdict.file_version().map(str::to_string)),
+                    file_gone,
                 };
                 // Среди не скрытых берём более уверенное; скрытое не вытесняет нескрытое.
                 let replace = match &best {
@@ -568,6 +576,7 @@ mod tests {
         store.upsert_mod(installed);
         let mut check = store.get_check(id, "stmods").unwrap();
         check.last_file = file.map(|(name, file_size, key)| FileSnapshot {
+            gone: false,
             offer: None,
             seen_at: None,
             url: "https://modsfire.com/abc".to_string(),
@@ -620,6 +629,19 @@ mod tests {
             UpdateCheckService::stale_file_findings(&store)
                 .contains(&("fresh".to_string(), "stmods".to_string()))
         );
+        // Имени нет, потому что файл удалён: перечитывать нечего.
+        let mut check = store.get_check("fresh", "stmods").unwrap();
+        check.last_file.as_mut().unwrap().gone = true;
+        store.save_check(check);
+        assert!(
+            !UpdateCheckService::stale_file_findings(&store)
+                .contains(&("fresh".to_string(), "stmods".to_string()))
+        );
+        let finding = UpdateCheckService::pending(&store, false)
+            .into_iter()
+            .find(|finding| finding.mod_id == "fresh")
+            .unwrap();
+        assert!(finding.file_gone);
     }
 
     #[test]
@@ -627,6 +649,7 @@ mod tests {
         let store = InMemoryLibraryStore::new();
         with_file(&store, "a", Some("1.0"), 5, Some("1.1"), None);
         let file = FileSnapshot {
+            gone: false,
             offer: None,
             seen_at: None,
             url: "https://modsfire.com/x".to_string(),
