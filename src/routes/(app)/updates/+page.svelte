@@ -15,6 +15,15 @@
   import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { checkSummary, failedSites, updateHeadline } from "#lib/features/updates/summary.js";
+  import {
+    afterPass,
+    freshSources,
+    markPassed,
+    noPasses,
+    runStarted,
+    sitesAfterPass,
+    wasPassed,
+  } from "#lib/features/updates/passes.js";
   import { motion } from "#lib/shell/motion.svelte.js";
   import { looksLikeOtherMod, reason, sizeChange } from "#lib/features/updates/reason.js";
   import {
@@ -191,7 +200,8 @@
           suggestions: event.suggestions,
           coverage: event.coverage ?? snapshot.coverage,
         };
-        if (event.sources.length > 0) sources = event.sources;
+        // Фоновая проверка начата неизвестно когда — как будто до любого прохождения.
+        if (event.sources.length > 0) sources = freshSources(event.sources, passes, 0);
         if (hadProgress) finishProgress();
       }
       return;
@@ -204,7 +214,7 @@
     if (event.phase === "progress") {
       stopFinishing();
       run.progress = event.progress;
-      if (event.sources.length > 0) sources = event.sources;
+      if (event.sources.length > 0) sources = freshSources(event.sources, passes, runEpoch);
       return;
     }
     if (event.phase === "error") {
@@ -212,8 +222,11 @@
       run.checking = false;
       run.progress = null;
       stopFinishing();
+      startQueuedRecheck();
       return;
     }
+    // Сайт, который прошли во время этой проверки, «просит проверку» уже не в тосте.
+    event = { ...event, sources: freshSources(event.sources, passes, runEpoch) };
     const known = new Set(snapshot.suggestions.map((item) => item.modId));
     const found = event.suggestions.filter((item) => !known.has(item.modId)).length;
     readToken += 1;
@@ -229,6 +242,7 @@
     run.checking = false;
     run.progress = null;
     finishProgress();
+    startQueuedRecheck();
     if (event.phase === "done" || event.phase === "pages") void refreshSites();
     if (event.phase === "done") {
       const summary = checkSummary(event);
@@ -255,9 +269,12 @@
   // Панель «Проверка»: состояние сайтов и время последней проверки — из снимка.
   async function refreshSites() {
     const token = readToken;
+    // Последнее чтение побеждает: ответ, ушедший до прохождения сайта, не вернёт ему
+    // «просит проверку» поверх уже прочитанного «пускает».
+    const mine = ++sitesToken;
     try {
       const fresh = await updatesSnapshot();
-      if (token === readToken) {
+      if (token === readToken && mine === sitesToken) {
         snapshot = {
           ...snapshot,
           sites: fresh.sites,
@@ -284,9 +301,17 @@
     }
   }
 
+  /** Номер начала своей проверки — см. `passes.ts`. */
+  function startRun() {
+    const started = runStarted(passes);
+    passes = started.passes;
+    runEpoch = started.epoch;
+  }
+
   async function check() {
     if (run.checking) return;
     stopFinishing();
+    startRun();
     run.requestId += 1;
     run.checking = true;
     run.progress = null;
@@ -303,6 +328,8 @@
   }
 
   async function cancel() {
+    // Остановили сами — и повтор после прохождения сайта не нужен.
+    queuedRecheck = null;
     stopFinishing();
     run.requestId += 1;
     run.checking = false;
@@ -314,6 +341,7 @@
   async function findPages() {
     if (run.checking) return;
     stopFinishing();
+    startRun();
     run.checking = true;
     run.progress = null;
     error = null;
@@ -421,9 +449,13 @@
     }
   }
 
-  // Сайты, чью проверку прошли в этом запуске: кнопка «Пройти проверку» им больше
-  // не нужна, пока сайт сам снова не попросит.
-  let passedSites = $state<string[]>([]);
+  // Сайты, чью проверку прошли, пока открыта страница, и чьи ответы об этом устарели.
+  let passes = $state(noPasses());
+  /** Номер начала последней своей проверки; 0 — начатой до открытия страницы. */
+  let runEpoch = 0;
+  let sitesToken = 0;
+  /** Сайт прошли во время своей проверки — проверим его, когда она закончится. */
+  let queuedRecheck: string | null = null;
 
   async function openCheck(source: string) {
     if (passing !== null) return;
@@ -431,24 +463,25 @@
     try {
       const passed = await updatesOpenCheck(source);
       if (passed) {
-        passedSites = [...passedSites.filter((id) => id !== source), source];
-        // Панель сайтов — сразу из сохранённого состояния: «просит проверку» уходит
-        // не после проверки, а как только сайт пустил.
+        passes = markPassed(passes, source);
+        // Панель сайтов — сразу: «просит проверку» уходит не после проверки, а как
+        // только сайт пустил. Чтение сохранённого состояния это подтвердит.
+        snapshot = { ...snapshot, sites: sitesAfterPass(snapshot.sites, source) };
+        sources = freshSources(sources, passes, runEpoch);
         void refreshSites();
-        sources = sources.map((item) =>
-          item.id === source ? { ...item, status: "ok", note: null } : item,
-        );
-        const tracked = snapshot.sites?.find((site) => site.id === source)?.tracked ?? 0;
         const name = CHECK_SITES[source] ?? source;
-        // За сайтом ещё не следит ни один мод — проверять на нём нечего, а вот
-        // страницы модов на нём теперь можно найти.
-        if (tracked === 0) {
+        const next = afterPass(trackedOn(source), run.checking);
+        passing = null;
+        if (next === "afterRun") {
+          queuedRecheck = source;
+          toasts.show(`${name} пускает программу — проверим, когда закончится текущая проверка`);
+        } else if (next === "findPages") {
+          // За сайтом ещё не следит ни один мод — проверять на нём нечего, а вот
+          // страницы модов на нём теперь можно найти.
           toasts.show(`${name} пускает программу — ищем на нём страницы модов`);
-          passing = null;
           await findPages();
         } else {
           toasts.show(`${name} пускает программу — проверяем снова`);
-          passing = null;
           await check();
         }
       } else {
@@ -460,6 +493,18 @@
     } finally {
       passing = null;
     }
+  }
+
+  function trackedOn(source: string): number {
+    return snapshot.sites?.find((site) => site.id === source)?.tracked ?? 0;
+  }
+
+  /** Своя проверка закончилась — запускаем отложенный повтор после прохождения сайта. */
+  function startQueuedRecheck() {
+    const source = queuedRecheck;
+    queuedRecheck = null;
+    if (source === null || run.checking) return;
+    void (afterPass(trackedOn(source), false) === "findPages" ? findPages() : check());
   }
 
   async function openLink(url: string) {
@@ -578,7 +623,7 @@
           retry: true,
         };
       }
-      if (site.tracked === 0 && passedSites.includes(site.id)) {
+      if (site.tracked === 0 && wasPassed(passes, site.id)) {
         return { id: site.id, name: site.displayName, tone: "ok", text: "пускает программу", when, retry: false };
       }
       if (site.tracked === 0) {
@@ -598,6 +643,7 @@
   async function retrySource(source: string) {
     if (run.checking) return;
     stopFinishing();
+    startRun();
     run.requestId += 1;
     run.checking = true;
     run.progress = null;

@@ -70,6 +70,8 @@ struct State {
     last_finished: Option<DateTime<FixedOffset>>,
     /// Последняя законченная проверка была полной (по кнопке, без суточной очереди).
     last_forced: bool,
+    /// [`State::resolutions`] на старте последней законченной проверки.
+    last_resolutions: u64,
     next_run_id: u64,
     last_completed_run: Option<u64>,
     last_cancelled_run: Option<u64>,
@@ -218,8 +220,11 @@ impl UpdateCoordinator {
             // Повторное нажатие сразу после полной проверки получает её отчёт. Отчёт
             // фоновой проверки с очередью — нет: было, после стартовой проверки кнопка
             // за 3 секунды отвечала «не успели: 21 мод».
+            // И не после прохождения проверки сайта: тот отчёт сайт пропустил. Было —
+            // «Пройти проверку ModHub» сколько ни проходи, ModHub «просит проверку».
             if force
                 && state.last_forced
+                && state.last_resolutions == state.resolutions
                 && let Some(last) = &state.last_report
                 && !last.cancelled
                 && let Some(finished) = state.last_finished
@@ -294,8 +299,14 @@ impl UpdateCoordinator {
     fn finish_run(&self, id: u64, report: &UpdateRunReport) {
         {
             let mut state = self.lock();
-            if let Some(running) = state.running.as_ref().filter(|running| running.id == id) {
-                state.last_forced = running.forced;
+            if let Some((forced, resolutions)) = state
+                .running
+                .as_ref()
+                .filter(|running| running.id == id)
+                .map(|running| (running.forced, running.resolutions))
+            {
+                state.last_forced = forced;
+                state.last_resolutions = resolutions;
                 state.running = None;
             }
             state.last_report = Some(report.clone());
@@ -1020,6 +1031,35 @@ mod tests {
 
         // А второй клик по кнопке сразу после полной — её отчёт.
         *clock.lock().unwrap() = t0() + TimeDelta::seconds(10);
+        assert!(coordinator.check(true, None).reused);
+    }
+
+    #[test]
+    fn check_after_passing_a_site_is_not_the_old_report() {
+        let site = Site::new();
+        site.set_feed(vec![l("m0", "1.0")]);
+        let clock = clock_at(t0());
+        let coordinator = coordinator_with_hooks(
+            store(1),
+            Arc::clone(&site),
+            clock_of(&clock),
+            UpdateCoordinatorOptions::default(),
+            None,
+            None,
+        );
+        coordinator.check(true, None);
+        let calls = site.feed_calls();
+        *clock.lock().unwrap() = t0() + TimeDelta::seconds(10);
+        // Человек прошёл проверку «вы человек?» и проверяет снова.
+        coordinator.resolve_human_check("x");
+        let again = coordinator.check(true, None);
+        assert!(
+            !again.reused,
+            "сайт пустил — значит проверяем по-настоящему"
+        );
+        assert!(site.feed_calls() > calls);
+        // А двойной клик после этой проверки — снова её отчёт.
+        *clock.lock().unwrap() = t0() + TimeDelta::seconds(15);
         assert!(coordinator.check(true, None).reused);
     }
 
