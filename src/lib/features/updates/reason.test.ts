@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UpdateFinding } from "#lib/ipc/updates.js";
-import { reason } from "./reason";
+import { looksLikeOtherMod, reason } from "./reason";
 
 const MB = 1024 * 1024;
 
@@ -110,5 +110,52 @@ describe("причина по файлу за кнопкой «Скачать»"
       }),
     );
     expect(text).toContain("тот же, что у вас");
+  });
+});
+
+describe("страница о другом моде", () => {
+  it("размер разошёлся в разы, версий нет — похоже, другой мод", () => {
+    // Lada 2101: у вас vaz_2101_Rework на 353 МБ, на странице 16 МБ.
+    const lada = finding({ installedSize: 353 * MB, latestSize: 16 * MB });
+    expect(looksLikeOtherMod(lada)).toBe(true);
+    const text = reason(lada);
+    expect(text).toContain("меньше вашего в 22 раз");
+    expect(text).toContain("Это другой мод");
+    expect(text).not.toContain("вышло обновление");
+  });
+
+  it("рост карты на две трети — ещё обновление", () => {
+    // Poland: 490 → 809 МБ.
+    const poland = finding({ latestVersion: "2.2.1", installedSize: 490 * MB, latestSize: 809 * MB });
+    expect(looksLikeOtherMod(poland)).toBe(false);
+    expect(reason(poland)).toContain("вышло обновление");
+  });
+
+  it("та же версия и размер в разы больше — тоже подозрительно", () => {
+    const grown = finding({ installedVersion: "1.0", latestVersion: "1.0", installedSize: 10 * MB, latestSize: 50 * MB });
+    expect(looksLikeOtherMod(grown)).toBe(true);
+    expect(reason(grown)).toContain("больше вашего в 5 раз");
+  });
+
+  it("решение по версии или по файлу важнее размера", () => {
+    expect(looksLikeOtherMod(finding({ status: "likely", installedSize: 100 * MB, latestSize: 5 * MB }))).toBe(false);
+    expect(
+      looksLikeOtherMod(finding({ fileVerdict: "label_older", installedSize: 100 * MB, latestSize: 5 * MB })),
+    ).toBe(false);
+    expect(looksLikeOtherMod(finding({ installedSize: null, latestSize: 5 * MB }))).toBe(false);
+    expect(looksLikeOtherMod(finding({ installedSize: 0, latestSize: 5 * MB }))).toBe(false);
+  });
+});
+
+describe("версия сайта при неизвестной своей", () => {
+  it("Nissan: сайт пишет 2.0 — это видно в пояснении", () => {
+    const text = reason(finding({ latestVersion: "2.0", installedSize: 990 * MB, latestSize: 970 * MB }));
+    expect(text).toContain("сайт пишет 2.0");
+    expect(text).toContain("990 МБ → 970 МБ");
+  });
+
+  it("версии на сайте нет — о ней не пишем", () => {
+    const text = reason(finding({ installedSize: 990 * MB, latestSize: 970 * MB }));
+    expect(text).not.toContain("сайт пишет");
   });
 });

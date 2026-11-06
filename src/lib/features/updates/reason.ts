@@ -9,6 +9,29 @@ export function sizeChange(finding: UpdateFinding): string {
 
 const PRERELEASE = /(alpha|beta|rc)/i;
 
+/** Во сколько раз должен разойтись размер, чтобы страница казалась чужой. */
+const OTHER_MOD_RATIO = 4;
+
+/**
+ * Похоже, страница о другом моде: версии ничего не решают (их нет или они те же), а
+ * размер разошёлся в разы. Было: Lada 2101 — у вас 353 МБ («Rework»), на странице
+ * 16 МБ — и это показывалось как «Возможно, вышло обновление».
+ */
+export function looksLikeOtherMod(finding: UpdateFinding): boolean {
+  if (finding.status !== "possible" || finding.fileVerdict || finding.authorVersion) return false;
+  const ours = finding.installedSize ?? 0;
+  const theirs = finding.latestSize ?? 0;
+  if (ours <= 0 || theirs <= 0) return false;
+  const ratio = Math.max(ours, theirs) / Math.min(ours, theirs);
+  return ratio >= OTHER_MOD_RATIO;
+}
+
+function times(finding: UpdateFinding): number {
+  const ours = finding.installedSize ?? 1;
+  const theirs = finding.latestSize ?? 1;
+  return Math.round(Math.max(ours, theirs) / Math.min(ours, theirs));
+}
+
 /** Почему программа считает, что мод обновился. Только то, что знает наверняка. */
 export function reason(finding: UpdateFinding): string {
   const size = sizeChange(finding);
@@ -30,11 +53,16 @@ export function reason(finding: UpdateFinding): string {
   }
   const ours = finding.installedVersion;
   const theirs = finding.latestVersion;
+  if (looksLikeOtherMod(finding)) {
+    const smaller = (finding.latestSize ?? 0) < (finding.installedSize ?? 0);
+    return `Размер на сайте ${smaller ? "меньше" : "больше"} вашего в ${times(finding)} раз (${size}), а по версиям не понять. Похоже, страница о другом моде — если так, нажмите «Это другой мод».`;
+  }
   if (ours && theirs && PRERELEASE.test(ours) && !PRERELEASE.test(theirs)) {
     return `У вас сборка ${ours}, на сайте — ${theirs} без пометки. Возможно, вышла финальная версия, а возможно, это тот же файл.`;
   }
   if (!ours && size) {
-    return `Версия у вас не указана, а размер на сайте другой: ${size}. Возможно, вышло обновление.`;
+    const site = theirs ? `, а сайт пишет ${theirs}` : "";
+    return `Версия у вас не указана${site}, и размер на сайте другой: ${size}. Возможно, вышло обновление.`;
   }
   if (size) return `Версия та же, но размер на сайте изменился: ${size}. Возможно, автор перезалил файл.`;
   return "На сайте что-то изменилось, а версия не указана. Проверьте описание на странице.";
