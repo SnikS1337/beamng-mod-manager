@@ -68,6 +68,8 @@ struct State {
     running: Option<Running>,
     last_report: Option<UpdateRunReport>,
     last_finished: Option<DateTime<FixedOffset>>,
+    /// Последняя законченная проверка была полной (по кнопке, без суточной очереди).
+    last_forced: bool,
     next_run_id: u64,
     last_completed_run: Option<u64>,
     last_cancelled_run: Option<u64>,
@@ -83,6 +85,8 @@ struct State {
 
 struct Running {
     id: u64,
+    /// Полная проверка (по кнопке).
+    forced: bool,
     cancel: Arc<AtomicBool>,
     /// [`State::resolutions`] на момент старта.
     resolutions: u64,
@@ -211,7 +215,11 @@ impl UpdateCoordinator {
                 return state.last_report.clone().unwrap_or_default();
             }
 
+            // Повторное нажатие сразу после полной проверки получает её отчёт. Отчёт
+            // фоновой проверки с очередью — нет: было, после стартовой проверки кнопка
+            // за 3 секунды отвечала «не успели: 21 мод».
             if force
+                && state.last_forced
                 && let Some(last) = &state.last_report
                 && !last.cancelled
                 && let Some(finished) = state.last_finished
@@ -231,6 +239,7 @@ impl UpdateCoordinator {
             let cancel = Arc::new(AtomicBool::new(false));
             state.running = Some(Running {
                 id,
+                forced: force,
                 cancel: Arc::clone(&cancel),
                 resolutions: state.resolutions,
             });
@@ -285,11 +294,8 @@ impl UpdateCoordinator {
     fn finish_run(&self, id: u64, report: &UpdateRunReport) {
         {
             let mut state = self.lock();
-            if state
-                .running
-                .as_ref()
-                .is_some_and(|running| running.id == id)
-            {
+            if let Some(running) = state.running.as_ref().filter(|running| running.id == id) {
+                state.last_forced = running.forced;
                 state.running = None;
             }
             state.last_report = Some(report.clone());
@@ -986,6 +992,35 @@ mod tests {
         assert!(!fresh.reused);
         assert!(site.feed_calls() > calls);
         assert_eq!(cleared.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn button_right_after_the_background_check_still_checks_everything() {
+        // Было: стартовая проверка (с суточной очередью) закончилась, человек нажал
+        // «Проверить сейчас» — и за 3 секунды получил её же отчёт: «не успели: 21 мод».
+        let site = Site::new();
+        site.set_feed(vec![l("m0", "1.0")]);
+        let clock = clock_at(t0());
+        let coordinator = coordinator_with_hooks(
+            store(1),
+            Arc::clone(&site),
+            clock_of(&clock),
+            UpdateCoordinatorOptions::default(),
+            None,
+            None,
+        );
+        let background = coordinator.check(false, None);
+        assert!(!background.reused);
+        let calls = site.feed_calls();
+
+        *clock.lock().unwrap() = t0() + TimeDelta::seconds(5);
+        let button = coordinator.check(true, None);
+        assert!(!button.reused, "полная проверка, а не чужой отчёт");
+        assert!(site.feed_calls() > calls);
+
+        // А второй клик по кнопке сразу после полной — её отчёт.
+        *clock.lock().unwrap() = t0() + TimeDelta::seconds(10);
+        assert!(coordinator.check(true, None).reused);
     }
 
     #[test]

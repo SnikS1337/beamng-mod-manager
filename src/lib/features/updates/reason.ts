@@ -1,4 +1,4 @@
-import { formatSize } from "#lib/features/garage/format.js";
+import { formatSize, plural } from "#lib/features/garage/format.js";
 import type { UpdateFinding } from "#lib/ipc/updates.js";
 
 /** «633 МБ → 647 МБ», если размер на сайте другой. */
@@ -55,7 +55,8 @@ export function reason(finding: UpdateFinding): string {
   const theirs = finding.latestVersion;
   if (looksLikeOtherMod(finding)) {
     const smaller = (finding.latestSize ?? 0) < (finding.installedSize ?? 0);
-    return `Размер на сайте ${smaller ? "меньше" : "больше"} вашего в ${times(finding)} раз (${size}), а по версиям не понять. Похоже, страница о другом моде — если так, нажмите «Это другой мод».`;
+    const count = times(finding);
+    return `Размер на сайте ${smaller ? "меньше" : "больше"} вашего в ${count} ${plural(count, "раз", "раза", "раз")} (${size}), а по версиям не понять. Похоже, страница о другом моде — если так, нажмите «Это другой мод».`;
   }
   if (ours && theirs && PRERELEASE.test(ours) && !PRERELEASE.test(theirs)) {
     return `У вас сборка ${ours}, на сайте — ${theirs} без пометки. Возможно, вышла финальная версия, а возможно, это тот же файл.`;

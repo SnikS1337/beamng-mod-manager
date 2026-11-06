@@ -119,7 +119,7 @@ describe("страница о другом моде", () => {
     const lada = finding({ installedSize: 353 * MB, latestSize: 16 * MB });
     expect(looksLikeOtherMod(lada)).toBe(true);
     const text = reason(lada);
-    expect(text).toContain("меньше вашего в 22 раз");
+    expect(text).toContain("меньше вашего в 22 раза (");
     expect(text).toContain("Это другой мод");
     expect(text).not.toContain("вышло обновление");
   });
@@ -134,7 +134,9 @@ describe("страница о другом моде", () => {
   it("та же версия и размер в разы больше — тоже подозрительно", () => {
     const grown = finding({ installedVersion: "1.0", latestVersion: "1.0", installedSize: 10 * MB, latestSize: 50 * MB });
     expect(looksLikeOtherMod(grown)).toBe(true);
-    expect(reason(grown)).toContain("больше вашего в 5 раз");
+    expect(reason(grown)).toContain("больше вашего в 5 раз (");
+    const four = finding({ installedSize: 4 * MB, latestSize: 16 * MB });
+    expect(reason(four)).toContain("в 4 раза (");
   });
 
   it("решение по версии или по файлу важнее размера", () => {
