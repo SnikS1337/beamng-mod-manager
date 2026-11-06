@@ -59,6 +59,10 @@ impl ModlandSource {
 }
 
 impl ModSource for ModlandSource {
+    fn probes_files(&self) -> bool {
+        true
+    }
+
     fn probe_file(
         &self,
         listing: &Listing,

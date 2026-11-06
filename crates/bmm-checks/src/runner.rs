@@ -212,6 +212,31 @@ struct Runner<'r, 'a, 'p> {
 /// Страниц файлообменника на одну проверку (на все сайты вместе).
 pub const FILE_PAGES_PER_RUN: usize = 12;
 
+/// Как долго сведения о файле за ссылкой считаются свежими.
+pub const FILE_FRESH_FOR: chrono::TimeDelta = chrono::TimeDelta::days(7);
+
+/// Идти ли сейчас по ссылке «Скачать». Сайт может считать такой заход скачиванием, и
+/// полная проверка по кнопке накручивала бы авторам счётчики. Поэтому идём, только
+/// если о файле ничего не знаем, сменилась подпись страницы или сама ссылка (STMods
+/// даёт новую на каждый новый файл), или прошла неделя.
+pub fn file_needs_look(
+    known: Option<&bmm_domain::library::FileSnapshot>,
+    check: &bmm_domain::library::CheckState,
+    offer: Option<&str>,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> bool {
+    let Some(known) = known else {
+        return true;
+    };
+    let key = bmm_domain::file_check::page_key(check.last_version.as_deref(), check.last_size);
+    known.name.is_none()
+        || known.page_key.as_deref() != Some(key.as_str())
+        || known.offer.as_deref() != offer
+        || known
+            .seen_at
+            .is_none_or(|seen| now - seen >= FILE_FRESH_FOR)
+}
+
 /// Взять одно место из остатка, если оно есть. Сайты идут параллельно — без гонок.
 fn take_one(left: &std::sync::atomic::AtomicUsize) -> bool {
     use std::sync::atomic::Ordering;
@@ -338,8 +363,38 @@ impl Runner<'_, '_, '_> {
         let mut cancelled = false;
         let mut stopped_by_time = false;
 
+        // Находки без сведений о файле: их страницы открываем вне очереди.
+        let stale_files = UpdateCheckService::stale_file_findings(store);
+        let refresh: Vec<TrackedBinding> = tracked
+            .iter()
+            .filter(|binding| {
+                stale_files.contains(&(binding.mod_id.clone(), binding.source.clone()))
+                    && by_id
+                        .get(binding.source.as_str())
+                        .is_some_and(|adapter| adapter.probes_files())
+                    && statuses
+                        .get(&binding.source)
+                        .is_none_or(|status| *status == SourceStatus::Ok)
+            })
+            .cloned()
+            .collect();
+
         let mut jobs: Vec<(&String, u32, &std::sync::Arc<dyn ModSource>)> = Vec::new();
-        for (source, pages) in &plan.feed_pages {
+        let refresh_sources: BTreeSet<&String> =
+            refresh.iter().map(|binding| &binding.source).collect();
+        let mut feed_pages: Vec<(&String, u32)> = plan
+            .feed_pages
+            .iter()
+            .map(|(source, pages)| (source, *pages))
+            .collect();
+        for source in refresh_sources {
+            if !plan.feed_pages.contains_key(source) {
+                // Сайт по очереди не нужен — только эти страницы, без ленты.
+                feed_pages.push((source, 0));
+            }
+        }
+        for (source, pages) in feed_pages {
+            let pages = &pages;
             if reports.contains_key(source) {
                 continue;
             }
@@ -353,6 +408,7 @@ impl Runner<'_, '_, '_> {
         }
 
         let due = &plan.due;
+        let refresh = &refresh;
         let budget = &self.budget;
         let file_pages = &self.file_pages;
         let progress = &mut self.progress;
@@ -366,6 +422,7 @@ impl Runner<'_, '_, '_> {
                         budget,
                         progress: sender.clone(),
                         file_pages,
+                        refresh,
                     };
                     let handle = std::thread::Builder::new()
                         .name(format!("bmm-check-{source}"))
@@ -524,6 +581,8 @@ struct Worker<'r, 'a> {
     progress: mpsc::Sender<UpdateProgress>,
     /// Общий на все сайты остаток страниц файлообменника ([`FILE_PAGES_PER_RUN`]).
     file_pages: &'r std::sync::atomic::AtomicUsize,
+    /// Находки без сведений о файле: их страницы открываются вне очереди.
+    refresh: &'r [TrackedBinding],
 }
 
 impl Worker<'_, '_> {
@@ -697,9 +756,21 @@ impl Worker<'_, '_> {
             outcome.up_to_date += 1;
         }
 
-        let Some(list) = card_plan.to_fetch.get(source) else {
+        let mut list: Vec<TrackedBinding> =
+            card_plan.to_fetch.get(source).cloned().unwrap_or_default();
+        for binding in self
+            .refresh
+            .iter()
+            .filter(|binding| binding.source == source)
+        {
+            if !list.iter().any(|planned| planned.mod_id == binding.mod_id) {
+                list.push(binding.clone());
+            }
+        }
+        if list.is_empty() {
             return outcome;
-        };
+        }
+        let list = &list;
 
         let mut done = 0usize;
         let mut attempted = 0usize;
@@ -833,6 +904,15 @@ impl Worker<'_, '_> {
         let Some(check) = store.get_check(&binding.mod_id, &binding.source) else {
             return;
         };
+        let offer = bmm_sources::files::offer_url(current).map(|url| url.to_string());
+        if !file_needs_look(
+            check.last_file.as_ref(),
+            &check,
+            offer.as_deref(),
+            self.request.now,
+        ) {
+            return;
+        }
         // Место под страницу файлообменника занимаем заранее: сайты идут параллельно.
         let open_page = take_one(self.file_pages);
         let probe = adapter.probe_file(
@@ -844,7 +924,9 @@ impl Worker<'_, '_> {
         if open_page && !probe.opened_page {
             self.file_pages.fetch_add(1, Ordering::SeqCst);
         }
-        if let Some(file) = probe.file {
+        if let Some(mut file) = probe.file {
+            file.offer = offer;
+            file.seen_at = Some(self.request.now);
             UpdateCheckService::apply_file(store, &binding.mod_id, &binding.source, file);
         }
     }
@@ -1040,6 +1122,9 @@ mod tests {
             }
             Ok(self.cards.lock().unwrap().get(url.as_str()).cloned())
         }
+        fn probes_files(&self) -> bool {
+            true
+        }
         fn probe_file(
             &self,
             listing: &Listing,
@@ -1119,6 +1204,8 @@ mod tests {
 
     fn snapshot(name: &str) -> FileSnapshot {
         FileSnapshot {
+            offer: None,
+            seen_at: None,
             url: "https://modsfire.com/abc".to_string(),
             name: Some(name.to_string()),
             size: Some(1000),
@@ -1197,6 +1284,157 @@ mod tests {
             pending[0].status,
             bmm_domain::versioning::UpdateStatus::Likely
         );
+    }
+
+    #[test]
+    fn finding_without_file_details_is_reopened_out_of_turn() {
+        // Было: сведения о файле пропали (их стёрла прежняя версия), а мод проверен
+        // час назад — до завтра «тот же файл» никто не увидит.
+        let store = InMemoryLibraryStore::new();
+        let hour_ago = now() - TimeDelta::hours(1);
+        add(
+            &store,
+            "smoke",
+            "x",
+            "smoke",
+            Some("0.14.1"),
+            Some("1.14.1"),
+            Some(hour_ago),
+        );
+        add(
+            &store,
+            "calm",
+            "x",
+            "calm",
+            Some("1.0"),
+            Some("1.0"),
+            Some(hour_ago),
+        );
+        let site = Site::new("x");
+        site.set_card(l("x", "smoke", Some("1.14.1"), None));
+        site.set_file(Some(snapshot("smoke.zip")));
+        let report = run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(site.card_calls(), 1, "только находка, без очереди");
+        assert_eq!(site.feed_calls(), 0, "ленту сайта по очереди не читали");
+        assert_eq!(report.fresh_skipped, 2);
+        let file = store.get_check("smoke", "x").unwrap().last_file.unwrap();
+        assert_eq!(file.page_key.as_deref(), Some("1.14.1"));
+
+        // Сведения свежие — второй раз не открываем.
+        let again = Site::new("x");
+        again.set_card(l("x", "smoke", Some("1.14.1"), None));
+        run_simple(
+            &store,
+            &sources(&again),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(again.card_calls(), 0);
+    }
+
+    #[test]
+    fn site_asking_for_a_human_check_is_not_reopened_for_files() {
+        let store = InMemoryLibraryStore::new();
+        let hour_ago = now() - TimeDelta::hours(1);
+        add(
+            &store,
+            "smoke",
+            "x",
+            "smoke",
+            Some("0.14.1"),
+            Some("1.14.1"),
+            Some(hour_ago),
+        );
+        store.set_source_status("x", bmm_domain::library::SourceStatus::NeedsHumanCheck);
+        let site = Site::new("x");
+        site.set_card(l("x", "smoke", Some("1.14.1"), None));
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(site.card_calls(), 0);
+    }
+
+    #[test]
+    fn download_link_is_not_visited_without_need() {
+        // Ссылку «Скачать» сайт может считать скачиванием: при проверке по кнопке
+        // каждый раз проходить её у всех модов — накручивать авторам счётчики.
+        let store = InMemoryLibraryStore::new();
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(now()));
+        let check = store.get_check("a", "x").unwrap();
+        let fresh = FileSnapshot {
+            page_key: Some("1.0".to_string()),
+            offer: Some("https://x.test/dl/1".to_string()),
+            seen_at: Some(now() - TimeDelta::days(1)),
+            ..snapshot("a.zip")
+        };
+        let offer = Some("https://x.test/dl/1");
+        assert!(
+            !file_needs_look(Some(&fresh), &check, offer, now()),
+            "всё известно"
+        );
+        assert!(
+            file_needs_look(None, &check, offer, now()),
+            "ничего не знаем"
+        );
+        assert!(
+            file_needs_look(Some(&fresh), &check, Some("https://x.test/dl/2"), now()),
+            "новая ссылка — новый файл"
+        );
+        let other_label = FileSnapshot {
+            page_key: Some("0.9".to_string()),
+            ..fresh.clone()
+        };
+        assert!(file_needs_look(Some(&other_label), &check, offer, now()));
+        let old = FileSnapshot {
+            seen_at: Some(now() - FILE_FRESH_FOR),
+            ..fresh.clone()
+        };
+        assert!(
+            file_needs_look(Some(&old), &check, offer, now()),
+            "неделя прошла"
+        );
+        let nameless = FileSnapshot {
+            name: None,
+            ..fresh.clone()
+        };
+        assert!(file_needs_look(Some(&nameless), &check, offer, now()));
+        let unseen = FileSnapshot {
+            seen_at: None,
+            ..fresh
+        };
+        assert!(
+            file_needs_look(Some(&unseen), &check, offer, now()),
+            "старый снимок"
+        );
+    }
+
+    #[test]
+    fn full_check_by_the_button_does_not_walk_every_download_link() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::hours(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        // Ленты нет — проверить мод можно только по его странице.
+        let site = Site::new("x");
+        site.set_card(l("x", "a", Some("1.0"), None));
+        site.set_file(Some(snapshot("a.zip")));
+        let force = UpdateCheckOptions::default().with_force(true);
+        run_simple(&store, &sources(&site), now(), force.clone());
+        assert_eq!(site.probes().len(), 1, "первый раз — смотрим");
+        run_simple(&store, &sources(&site), now(), force);
+        assert_eq!(
+            site.card_calls(),
+            2,
+            "страницу по кнопке открываем каждый раз"
+        );
+        assert_eq!(site.probes().len(), 1, "а по ссылке второй раз не идём");
     }
 
     #[test]

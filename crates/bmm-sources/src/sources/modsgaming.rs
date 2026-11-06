@@ -96,6 +96,10 @@ impl ModsGamingSource {
 }
 
 impl ModSource for ModsGamingSource {
+    fn probes_files(&self) -> bool {
+        true
+    }
+
     fn probe_file(
         &self,
         listing: &Listing,

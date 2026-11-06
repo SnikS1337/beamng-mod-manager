@@ -2,10 +2,9 @@ import type { UpdatesEvent, UpdateSite } from "#lib/ipc/updates.js";
 import type { CoverageDto } from "#lib/ipc/generated.js";
 import { plural } from "#lib/features/garage/format.js";
 
-/** Итог нажатия «Проверить сейчас»: одна строка для тоста и нужна ли «Всё равно проверить». */
+/** Итог нажатия «Проверить сейчас»: одна строка для тоста. */
 export interface CheckSummary {
     text: string | null;
-    offerForce: boolean;
 }
 
 /** Что показать под заголовком «Обновления». */
@@ -76,38 +75,34 @@ type Done = Pick<
     UpdatesEvent,
     "cancelled" | "newCount" | "requests" | "stoppedByTime" | "sources"
 > &
-    Partial<Pick<UpdatesEvent, "coverage">>;
+    Partial<Pick<UpdatesEvent, "coverage" | "findings">>;
 
+/**
+ * Итог проверки по кнопке. Кнопка проверяет все моды (суточную очередь соблюдает
+ * только фоновая проверка), поэтому «проверены недавно — завтра» тут не бывает.
+ * Было: «Новых версий нет» рядом с «Доступные 4» — непонятно, куда делись четыре.
+ */
 export function checkSummary(event: Done): CheckSummary {
     // Остановили сами — говорить нечего.
-    if (event.cancelled) return { text: null, offerForce: false };
+    if (event.cancelled) return { text: null };
     if (event.sources.length === 0 && event.requests === 0) {
-        return {
-            text: "Нет включённых сайтов — проверять нечего",
-            offerForce: false,
-        };
+        return { text: "Нет включённых сайтов — проверять нечего" };
     }
 
     const human = event.sources.filter((source) => source.status === "needsHumanCheck");
     const down = event.sources.filter((source) => source.status === "unavailable");
-    const failed = [...human, ...down];
-    const postponed = event.sources.reduce(
-        (sum, source) => sum + source.postponed,
-        0,
-    );
+    const postponed = event.sources.reduce((sum, source) => sum + source.postponed, 0);
+    const waiting = event.findings?.length ?? 0;
     const parts: string[] = [];
 
     if (event.newCount > 0) {
         parts.push(
             `Нашли обновления: ${event.newCount} ${plural(event.newCount, "мод", "мода", "модов")}`,
         );
-    } else if (event.requests === 0 && failed.length === 0) {
-        return {
-            text: "Всё проверено недавно. Нажмите ещё раз, чтобы проверить заново",
-            offerForce: true,
-        };
+        if (waiting > event.newCount) parts.push(`всего ждут обновления: ${waiting}`);
     } else if (event.requests > 0) {
-        parts.push("Новых версий нет");
+        parts.push("Новых обновлений нет");
+        if (waiting > 0) parts.push(`ждут обновления, как и раньше: ${waiting}`);
     }
 
     if (human.length > 0) {
@@ -128,13 +123,18 @@ export function checkSummary(event: Done): CheckSummary {
     if (event.stoppedByTime) {
         parts.push("Проверили не всё — остальное в следующий раз");
     } else if (postponed > 0) {
-        // Это не «не успели»: страницы этих модов проверялись недавно, открывать их
-        // снова незачем.
+        // По кнопке очередь не соблюдается; отложенные — это предел страниц за раз.
         parts.push(
-            `${postponed} ${plural(postponed, "мод проверен", "мода проверены", "модов проверены")} недавно — их очередь в следующий раз`,
+            `Не успели: ${postponed} ${plural(postponed, "мод", "мода", "модов")} — проверим в следующий раз`,
         );
     }
     const pageless = pagelessText(event.coverage);
     if (pageless) parts.push(pageless.charAt(0).toUpperCase() + pageless.slice(1));
-    return { text: parts.join(". "), offerForce: false };
+    if (parts.length === 0) return { text: "Сайты не ответили — проверить не удалось" };
+    // Части после первой, начатые со строчной, — продолжение той же фразы.
+    return {
+        text: parts.reduce((text, part) =>
+            /^[a-zа-яё]/.test(part) ? `${text}, ${part}` : `${text}. ${part}`,
+        ),
+    };
 }

@@ -398,7 +398,9 @@ fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, 
         .get_check(mod_id, &binding.source)
         .and_then(|check| check.last_file);
     let probe = source.probe_file(&listing, previous.as_ref(), true, &AtomicBool::new(false));
-    if let Some(file) = probe.file {
+    if let Some(mut file) = probe.file {
+        file.offer = bmm_sources::files::offer_url(&listing).map(|url| url.to_string());
+        file.seen_at = Some(Utc::now().fixed_offset());
         UpdateCheckService::apply_file(store, mod_id, &binding.source, file);
     }
     Ok(build_snapshot(state))

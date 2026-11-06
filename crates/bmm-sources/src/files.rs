@@ -73,6 +73,8 @@ pub fn probe(
         let exact = peek.size.is_some();
         return FileProbe {
             file: Some(FileSnapshot {
+                offer: None,
+                seen_at: None,
                 url: without_query(&peek.final_url),
                 name: peek.name.or_else(|| name_from_url(&peek.final_url)),
                 size: peek.size,
@@ -97,6 +99,8 @@ pub fn probe(
         };
     }
     let bare = FileSnapshot {
+        offer: None,
+        seen_at: None,
         url: url.clone(),
         name: name_from_url(&peek.final_url),
         size: None,
@@ -117,6 +121,8 @@ pub fn probe(
     FileProbe {
         file: Some(match hosted {
             Some(hosted) => FileSnapshot {
+                offer: None,
+                seen_at: None,
                 url,
                 name: Some(hosted.name),
                 size: hosted.size_bytes,
@@ -288,6 +294,8 @@ mod tests {
             &modsfire_page(),
         );
         let previous = FileSnapshot {
+            offer: None,
+            seen_at: None,
             url: "https://modsfire.com/OLDFILE".to_string(),
             name: Some("old.zip".to_string()),
             size: Some(1),
