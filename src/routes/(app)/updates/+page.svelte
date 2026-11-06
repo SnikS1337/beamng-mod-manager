@@ -16,7 +16,7 @@
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { checkSummary, failedSites, updateHeadline } from "#lib/features/updates/summary.js";
   import { motion } from "#lib/shell/motion.svelte.js";
-  import { reason, sizeChange } from "#lib/features/updates/reason.js";
+  import { looksLikeOtherMod, reason, sizeChange } from "#lib/features/updates/reason.js";
   import {
     listenUpdates,
     updatesCancel,
@@ -750,6 +750,8 @@
                   <span class="chip muted">Тот же файл</span>
                 {:else if filter === "hidden"}
                   <span class="chip muted">Пропущено</span>
+                {:else if looksLikeOtherMod(finding)}
+                  <span class="chip lost">Похоже, другой мод</span>
                 {:else if possible}
                   <span class="chip possible">Возможно, обновление</span>
                 {:else}
@@ -770,6 +772,11 @@
                 {:else if filter === "hidden"}
                   <button class="btn-primary" type="button" onclick={() => void restore(finding)}>Вернуть в список</button>
                   <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
+                {:else if looksLikeOtherMod(finding)}
+                  <!-- Главное действие — то, что скорее всего верно: страница не та. -->
+                  <button class="btn-primary" type="button" onclick={() => void unfollow(finding)}>Это другой мод</button>
+                  <button class="btn-ghost" type="button" onclick={() => void openLink(finding.url)}>Открыть страницу</button>
+                  {@render moreActions(finding, "Пропустить это изменение")}
                 {:else if possible}
                   <button class="btn-primary" type="button" onclick={() => void update(finding)}>Открыть страницу</button>
                   {@render moreActions(finding, "Пропустить это изменение")}
