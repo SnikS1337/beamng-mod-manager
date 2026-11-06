@@ -65,15 +65,46 @@ export function sitesAfterPass(sites: UpdateSite[], site: string): UpdateSite[] 
   );
 }
 
-/**
- * Что делать после прохождения: сайт без модов — искать на нём страницы, с модами —
- * проверить снова. Если своя проверка уже идёт, повтор ждёт её конца: раньше он
- * молча не запускался, и кнопка возвращалась вместе с концом старой проверки.
- */
-export function afterPass(
-  tracked: number,
-  checking: boolean,
-): "findPages" | "check" | "afterRun" {
-  if (checking) return "afterRun";
+/** Что запустить, когда сайт пустил: на сайте без модов — поиск страниц, с модами — проверку. */
+export type Followup = "check" | "findPages";
+
+export function followupOf(tracked: number): Followup {
   return tracked === 0 ? "findPages" : "check";
+}
+
+/**
+ * Сайт прошли, пока идёт своя проверка: повтор ждёт её конца. Раньше он молча не
+ * запускался, и кнопка возвращалась вместе с концом старой проверки. Сайтов в очереди
+ * может быть несколько — прошли ModHub, потом Modland.
+ */
+export function queuePass(queue: string[], site: string): string[] {
+  return queue.includes(site) ? queue : [...queue, site];
+}
+
+/**
+ * Началась своя проверка — она начата после прохождения, и сайты, которые она покроет,
+ * повторять незачем: проверка — сайты с модами, поиск страниц — сайты без модов.
+ * «Повторить» одного сайта идёт по суточной очереди и полной проверки не заменяет.
+ */
+export function coveredBy(
+  queue: string[],
+  kind: Followup | "retry",
+  trackedOf: (site: string) => number,
+): string[] {
+  if (kind === "retry") return queue;
+  return queue.filter((site) => followupOf(trackedOf(site)) !== kind);
+}
+
+/**
+ * Своя проверка закончилась: что запустить из очереди. Сначала проверка (она одна
+ * покрывает все сайты с модами), поиск страниц — после неё.
+ */
+export function nextFromQueue(
+  queue: string[],
+  trackedOf: (site: string) => number,
+): { run: Followup | null; rest: string[] } {
+  if (queue.length === 0) return { run: null, rest: [] };
+  const pages = queue.filter((site) => followupOf(trackedOf(site)) === "findPages");
+  if (pages.length < queue.length) return { run: "check", rest: pages };
+  return { run: "findPages", rest: [] };
 }

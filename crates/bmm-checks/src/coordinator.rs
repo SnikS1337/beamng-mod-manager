@@ -1296,6 +1296,29 @@ mod tests {
     }
 
     #[test]
+    fn site_passed_during_a_forced_check_is_checked_again() {
+        // Прошли проверку сайта, пока шла проверка по кнопке: та сайт пропустила.
+        // Следующее нажатие в ту же минуту — новая проверка, а не её отчёт.
+        let (site, gate, started) = Site::gated();
+        let coordinator = Arc::new(coordinator(
+            store(1),
+            Arc::clone(&site),
+            clock_of(&clock_at(t0())),
+            UpdateCoordinatorOptions::default(),
+        ));
+        let first = spawn_check(Arc::clone(&coordinator), true);
+        wait_started(&started);
+        coordinator.resolve_human_check("x");
+        gate.open();
+        first.join().unwrap();
+        assert!(!coordinator.check(true, None).reused);
+        assert!(
+            coordinator.check(true, None).reused,
+            "двойной клик после неё — её отчёт"
+        );
+    }
+
+    #[test]
     fn full_check_waits_for_a_single_mod_check() {
         // Проверка одного мода и полная писали одно состояние параллельно — старый
         // результат мог затереть свежий. Теперь полная ждёт.

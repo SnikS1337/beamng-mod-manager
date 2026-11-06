@@ -319,13 +319,6 @@ fn install_verdict(source: &Path, work_root: &Path) -> fingerprint::Verdict {
     fingerprint::verdict(known.as_ref(), source)
 }
 
-/// Для замера `real_data_timings`: опись установленных архивов, как при разборе входящего.
-#[cfg(test)]
-pub(crate) fn profile_installed(state: &AppState) -> usize {
-    let installer = installer_for(state).unwrap();
-    installed_archives(state, &installer).len()
-}
-
 fn installed_archives(
     state: &AppState,
     installer: &bmm_packs::install::ModInstaller,
@@ -567,9 +560,6 @@ fn install_items(
             {
                 remember_installed_version(state, &request.file_name, version, path);
             }
-            if update.install.success {
-                prune_versions(state, &installer, &request.file_name, keep);
-            }
             let backup_id = if update.install.success {
                 installer
                     .list_backups(replaced)
@@ -578,6 +568,15 @@ fn install_items(
             } else {
                 None
             };
+            if update.install.success {
+                prune_versions(
+                    state,
+                    &installer,
+                    &request.file_name,
+                    keep,
+                    backup_id.as_deref(),
+                );
+            }
             results.push(IncomingInstallResult {
                 success: update.install.success,
                 message: update.install.message,
@@ -606,13 +605,15 @@ fn install_items(
 }
 
 /// «Хранить копий» — на мод: после обновления стираем самые старые копии его
-/// прошлых версий сверх настройки. Копию, которую ждёт «Отменить» удаления, не трогаем;
-/// только что сделанная копия — самая новая и остаётся.
+/// прошлых версий сверх настройки. Не трогаем копию, которую ждёт «Отменить» этого
+/// обновления (`undo`), — даже если часы перевели назад и она вышла «старше» других, —
+/// и копии, которые ждёт «Отменить» удаления.
 fn prune_versions(
     state: &AppState,
     installer: &bmm_packs::install::ModInstaller,
     file_name: &str,
     keep: usize,
+    undo: Option<&str>,
 ) -> usize {
     let Some(installed) = state
         .library
@@ -622,13 +623,14 @@ fn prune_versions(
     else {
         return 0;
     };
-    let held: std::collections::HashSet<String> = state
+    let mut held: std::collections::HashSet<String> = state
         .deleted
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .values()
         .map(|ticket| ticket.backup_id.clone())
         .collect();
+    held.extend(undo.map(str::to_string));
     bmm_packs::versions::surplus(installer, state.library.as_ref(), &installed, keep)
         .into_iter()
         .filter(|entry| !held.contains(&entry.id))
@@ -1492,5 +1494,103 @@ mod tests {
             1,
             "только что сделанная"
         );
+    }
+
+    #[test]
+    fn copy_for_undo_survives_a_clock_turned_back() {
+        // Часы перевели назад: копия, только что сделанная обновлением, выглядит старше
+        // прежних. «Отменить» без неё не вернуло бы прошлую версию.
+        let (temp, state) = setup();
+        let layout = installer_for_test(&state).layout().clone();
+        let tick = Arc::new(std::sync::atomic::AtomicI64::new(100));
+        let clock_tick = tick.clone();
+        let installer = ModInstaller::new(
+            layout,
+            Arc::new(move || {
+                system_clock()()
+                    - chrono::TimeDelta::seconds(
+                        clock_tick.fetch_sub(10, std::sync::atomic::Ordering::SeqCst),
+                    )
+            }),
+            Arc::new(|| 1),
+        );
+        let source = temp.path().join("source.zip");
+        make_zip(&source, b"body");
+        installer.install_from_path(&source, "car_v1.zip", InstallOptions::default());
+        installer.update_from_path(
+            "car_v1.zip",
+            &source,
+            "car_v2.zip",
+            InstallOptions::default(),
+        );
+        tick.store(1000, std::sync::atomic::Ordering::SeqCst);
+        installer.update_from_path(
+            "car_v2.zip",
+            &source,
+            "car_v3.zip",
+            InstallOptions::default(),
+        );
+        state.library.upsert_mod(bmm_domain::library::InstalledMod {
+            id: "car".to_string(),
+            name: "Car".to_string(),
+            file_name: "car_v3.zip".to_string(),
+            version: None,
+            size_bytes: Some(1),
+            installed_at_utc: system_clock()(),
+            enabled: true,
+        });
+        state.library.add_file_history("car", "car_v1.zip");
+        state.library.add_file_history("car", "car_v2.zip");
+        let undo = installer.list_backups("car_v2.zip")[0].id.clone();
+
+        prune_versions(&state, &installer, "car_v3.zip", 1, Some(&undo));
+        assert_eq!(
+            installer.list_backups("car_v2.zip").len(),
+            1,
+            "копия для «Отменить»"
+        );
+
+        prune_versions(&state, &installer, "car_v3.zip", 1, None);
+        assert!(
+            installer.list_backups("car_v2.zip").is_empty(),
+            "без «Отменить» лишняя копия уходит"
+        );
+        assert_eq!(installer.list_backups("car_v1.zip").len(), 1);
+    }
+
+    #[test]
+    fn updates_under_the_same_name_keep_the_setting_too() {
+        let (temp, state) = setup();
+        let mut settings = state.settings.load().settings;
+        settings.keep_backups = 2;
+        state.settings.save(&settings).unwrap();
+        let installer = installer_for_test(&state);
+        let first = temp.path().join("first.zip");
+        make_zip(&first, b"one");
+        installer.install_from_path(&first, "dummy.zip", InstallOptions::default());
+        crate::commands::library::load_snapshot(&state).unwrap();
+        for version in 2..=5 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let archive = temp.path().join(format!("download-{version}.zip"));
+            make_zip(
+                &archive,
+                format!("body {version}").repeat(version).as_bytes(),
+            );
+            checked_source(&archive);
+            let results = install_items(
+                &state,
+                &[IncomingInstallRequest {
+                    zip_path: archive.display().to_string(),
+                    file_name: "dummy.zip".to_string(),
+                    replaces: Some("dummy.zip".to_string()),
+                    allow_warnings: true,
+                    version: None,
+                }],
+            )
+            .unwrap();
+            assert!(results[0].success, "{:?}", results[0].message);
+            assert!(results[0].backup_id.is_some());
+        }
+        assert_eq!(installer.list_backups("dummy.zip").len(), 2);
     }
 }
