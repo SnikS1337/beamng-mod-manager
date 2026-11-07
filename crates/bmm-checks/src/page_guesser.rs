@@ -113,7 +113,7 @@ fn archive_key(name: &str) -> String {
 
 /// На странице лежит архив с именем установленного. Короткое имя («map.zip») —
 /// только если и размер тот же.
-fn same_archive(installed: &InstalledMod, listing: &Listing) -> bool {
+pub(crate) fn same_archive(installed: &InstalledMod, listing: &Listing) -> bool {
     let mine = archive_key(&installed.file_name);
     if mine.chars().count() < 4 {
         return false;

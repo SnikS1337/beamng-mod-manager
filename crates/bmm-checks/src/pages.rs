@@ -420,7 +420,9 @@ fn search_pages_of(
         // обычно нет, а совпадение одного названия обманчиво («Mercedes-Benz ML» — десятки
         // разных модов): открываем страницу мода и решаем ещё раз уже с размером и автором.
         let needs_detail = guess.as_ref().is_some_and(|guess| {
-            guess.certain && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
+            guess.certain
+                && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
+                && !crate::page_guesser::same_archive(installed, &guess.listing)
         });
         if needs_detail {
             let found = guess
@@ -839,6 +841,9 @@ pub fn find_extra_pages_on(
             if guess.as_ref().is_some_and(|guess| {
                 guess.certain
                     && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
+                    // Тот же архив уже доказал страницу; на странице новой версии
+                    // архив другой, и уточнение «отменило» бы верную находку.
+                    && !crate::page_guesser::same_archive(installed, &guess.listing)
             }) {
                 let found = guess.as_ref().map(|guess| guess.listing.clone());
                 guess = found
@@ -1748,6 +1753,61 @@ mod tests {
             None,
         );
         assert_eq!(again.searched, 0);
+    }
+
+    #[test]
+    fn same_archive_is_not_second_guessed_by_the_newest_post() {
+        // Страница канала по своему адресу отдаёт уже новую версию с другим архивом:
+        // «уточнение» по ней отменяло верную находку по тому же архиву.
+        let store = InMemoryLibraryStore::new();
+        let mut dirt = installed("dirt", "carp_dynamicdirt_0.2.zip");
+        dirt.size_bytes = Some(20_000_000);
+        store.upsert_mod(dirt);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "dirt".to_string(),
+                source: "stmods".to_string(),
+                source_id: "st".to_string(),
+                url: Url::parse("https://stmods.test/st").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        let archive = |listing: &mut Listing, name: &str, size: i64| {
+            listing.offers.push(bmm_domain::models::Offer {
+                kind: bmm_domain::models::OfferKind::ExternalHost,
+                host: "t.me".to_string(),
+                url: listing.url.clone(),
+                host_file_id: Some(name.to_string()),
+                size_bytes: Some(size),
+            });
+            listing.size_bytes = Some(size);
+            listing.author = None;
+        };
+        let mut hit = on_site("telegram", "tg-02", "carp dynamicdirt v0.2");
+        hit.mod_version = Some("0.2".to_string());
+        archive(&mut hit, "carp_dynamicdirt_0.2.zip", 20_000_000);
+        let mut newest = on_site("telegram", "tg-03", "Carp's Dynamic Dirt v0.3");
+        newest.mod_version = Some("0.3".to_string());
+        archive(&mut newest, "carp_dynamicdirt_0.3.zip", 25_000_000);
+        let search = sites(vec![VerifySite::new("telegram", Some(newest), vec![hit])]);
+        let report = find_extra_pages_on(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            Some(&["telegram"]),
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(report.followed, 1);
+        let bound = store
+            .bindings()
+            .into_iter()
+            .find(|binding| binding.source == "telegram")
+            .unwrap();
+        assert_eq!(bound.source_id, "tg-02");
     }
 
     #[test]
