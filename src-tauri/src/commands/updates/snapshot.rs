@@ -68,7 +68,7 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         .and_then(|runtime| runtime.coordinator.last_report())
         .map(|report| report.sources)
         .unwrap_or_default();
-    let disabled = state.settings.load().settings.disabled_sources;
+    let disabled = state.settings.load().settings.off_sources();
     let check_disabled = state.settings.load().settings.check_disabled_mods;
     let tracked: Vec<ModBinding> = store
         .bindings()

@@ -12,6 +12,7 @@ use ts_rs::TS;
 
 use bmm_domain::settings::AppSettings;
 
+use crate::error::AppError;
 use crate::state::AppState;
 
 const STABLE_AFTER: Duration = Duration::from_millis(1500);
@@ -127,6 +128,30 @@ pub fn downloads_expect() {
         now_millis() + EXPECT_FOR.as_millis() as u64,
         std::sync::atomic::Ordering::Relaxed,
     );
+}
+
+/// «Обновить» у мода из Telegram-канала: архив отдаёт только приложение Telegram.
+/// Открываем пост в нём (нет приложения — в браузере) и полчаса смотрим «Загрузки»
+/// и папку Telegram Desktop: скачанный архив программа предложит установить сама.
+#[tauri::command]
+pub fn telegram_open(app: AppHandle, url: String) -> Result<(), AppError> {
+    use bmm_sources::parsers::telegram as channel;
+    use tauri_plugin_opener::OpenerExt;
+    let post = url::Url::parse(url.trim())
+        .ok()
+        .and_then(|url| channel::post_id(&url))
+        .ok_or_else(|| AppError::new("url", "Это не пост Telegram-канала с модами."))?;
+    downloads_expect();
+    if app
+        .opener()
+        .open_url(channel::app_link(post), None::<&str>)
+        .is_err()
+    {
+        app.opener()
+            .open_url(channel::post_url(post).as_str(), None::<&str>)
+            .map_err(|error| AppError::new("open", error.to_string()))?;
+    }
+    Ok(())
 }
 
 /// Встроенное окно загрузки знает точную папку: даже если перехват не сработает,
@@ -312,6 +337,17 @@ fn settings_cached(
 }
 
 fn watch_folders(settings: &bmm_domain::settings::AppSettings, expecting: bool) -> Vec<PathBuf> {
+    watch_folders_in(settings, expecting, downloads_folder())
+}
+
+/// Куда Telegram Desktop сохраняет файлы по умолчанию.
+pub(crate) const TELEGRAM_FOLDER: &str = "Telegram Desktop";
+
+fn watch_folders_in(
+    settings: &bmm_domain::settings::AppSettings,
+    expecting: bool,
+    downloads: Option<PathBuf>,
+) -> Vec<PathBuf> {
     let expected = expecting.then(|| {
         EXPECT_FOLDER
             .lock()
@@ -324,8 +360,12 @@ fn watch_folders(settings: &bmm_domain::settings::AppSettings, expecting: bool) 
         folders.push(folder.clone());
     }
     if (settings.allow_downloads || (expecting && expected.is_none()))
-        && let Some(downloads) = downloads_folder()
+        && let Some(downloads) = downloads
     {
+        // Архивы из Telegram-канала Telegram Desktop кладёт в свою папку внутри «Загрузок».
+        if !settings.source_off(bmm_sources::parsers::telegram::SOURCE_ID) {
+            folders.push(downloads.join(TELEGRAM_FOLDER));
+        }
         folders.push(downloads);
     }
     if settings.allow_downloads
@@ -956,6 +996,30 @@ mod tests {
             ..off
         };
         assert!(watch_folders(&on, false).contains(&downloads));
+    }
+
+    #[test]
+    fn telegram_folder_is_watched_with_downloads_when_the_channel_is_on() {
+        let temp = tempfile::tempdir().unwrap();
+        let downloads = temp.path().join("Downloads");
+        let telegram = downloads.join(TELEGRAM_FOLDER);
+        std::fs::create_dir_all(&telegram).unwrap();
+        let mut settings = bmm_domain::settings::AppSettings::default();
+        // Канал выключен (по умолчанию) — его папку не смотрим.
+        let off = watch_folders_in(&settings, true, Some(downloads.clone()));
+        assert!(off.contains(&downloads));
+        assert!(!off.contains(&telegram));
+        settings.set_off_sources(&[]);
+        let on = watch_folders_in(&settings, true, Some(downloads.clone()));
+        assert!(on.contains(&telegram) && on.contains(&downloads));
+        // Без «Обновить» и без разрешения смотреть «Загрузки» — ни той, ни другой.
+        assert!(watch_folders_in(&settings, false, Some(downloads.clone())).is_empty());
+        // Папки Telegram нет — смотреть нечего, но «Загрузки» остаются.
+        std::fs::remove_dir(&telegram).unwrap();
+        assert_eq!(
+            watch_folders_in(&settings, true, Some(downloads.clone())),
+            [downloads]
+        );
     }
 
     #[test]
