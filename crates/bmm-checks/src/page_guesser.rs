@@ -108,7 +108,13 @@ fn archive_key(name: &str) -> String {
         },
         None => stem,
     };
-    stem.chars().filter(|ch| ch.is_alphanumeric()).collect()
+    let key: String = stem.chars().filter(|ch| ch.is_alphanumeric()).collect();
+    // Метку канала дописывают при раздаче: «ikarus_55_lux_tg_m0dsbeamng» и
+    // «ikarus_55_lux» — один архив.
+    let key = key
+        .strip_suffix("m0dsbeamng")
+        .map_or(key.as_str(), |rest| rest.strip_suffix("tg").unwrap_or(rest));
+    key.to_string()
 }
 
 /// На странице лежит архив с именем установленного. Короткое имя («map.zip») —
@@ -1003,6 +1009,12 @@ mod tests {
             "v1beta",
             "скобки — не копия, если внутри не число"
         );
+        assert_eq!(
+            archive_key("ikarus_55_lux_tg_m0dsbeamng.zip"),
+            archive_key("ikarus_55_lux.zip")
+        );
+        assert_eq!(archive_key("Audi A4 B6 & tg_@m0dsbeamng.zip"), "audia4b6");
+        assert_eq!(archive_key("mark2_tg_m0dsbeamng.zip"), "mark2");
     }
 
     #[test]

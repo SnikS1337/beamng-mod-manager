@@ -717,7 +717,9 @@ pub fn find_extra_pages_on(
                 .filter(|binding| binding.mod_id == installed.id)
                 .collect();
             // Без страницы — дело обычного поиска; с неподтверждённой — ждём человека.
-            if own.is_empty() || own.iter().any(|binding| !binding.confirmed) {
+            // Но сайт по выбору ищем и модам без страниц: у обычного поиска пауза общая,
+            // и только что включённый Telegram-канал ждал бы её две недели.
+            if (own.is_empty() && only.is_none()) || own.iter().any(|binding| !binding.confirmed) {
                 return None;
             }
             // Вторые страницы ищем не чаще раза в две недели на каждом сайте: каждый поиск —
@@ -1808,6 +1810,58 @@ mod tests {
             .find(|binding| binding.source == "telegram")
             .unwrap();
         assert_eq!(bound.source_id, "tg-02");
+    }
+
+    #[test]
+    fn mod_without_any_page_is_searched_on_the_channel_too() {
+        let store = InMemoryLibraryStore::new();
+        let mut car = installed("car", "maserati_granturismo.zip");
+        car.name = "Maserati GranTurismo".to_string();
+        car.size_bytes = Some(100_000_000);
+        store.upsert_mod(car);
+        // Обычный поиск страниц искал его вчера — пауза у него общая.
+        store.set_page_search(
+            "car",
+            Some(PageSearch {
+                at: now() - chrono::TimeDelta::days(1),
+                rejected: false,
+            }),
+        );
+        let search = sites(vec![VerifySite::new(
+            "telegram",
+            None,
+            vec![on_site("telegram", "tg", "Maserati GranTurismo")],
+        )]);
+        let channel_only = find_extra_pages_on(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            Some(&["telegram"]),
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        );
+        assert_eq!(channel_only.followed, 1);
+        // Неподтверждённое предложение ждёт человека — сам не ищем.
+        let store = InMemoryLibraryStore::new();
+        followed_car(&store);
+        let mut suggestion = store.bindings().pop().unwrap();
+        suggestion.confirmed = false;
+        store.upsert_binding(suggestion).unwrap();
+        let waiting = find_extra_pages_on(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            Some(&["telegram"]),
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(waiting.searched, 0);
     }
 
     #[test]
