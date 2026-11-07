@@ -31,6 +31,8 @@ static HOME: LazyLock<Url> = LazyLock::new(|| {
 /// название в канале чуть поменяли («Audi A6 (C6)» → «Audi A6/RS6 (C6)»). «A4 B8»
 /// и «A4 B6» так не сходятся.
 const SAME_MOD: f64 = 0.8;
+/// Сколько страниц без выпусков подряд пролистываем ради одной страницы ленты.
+const EMPTY_PAGES_IN_A_ROW: usize = 5;
 
 pub struct TelegramSource {
     fetcher: Arc<PoliteFetcher>,
@@ -101,28 +103,49 @@ impl TelegramSource {
     }
 
     /// Новейший выпуск того же мода в канале, если он новее `base`.
+    ///
+    /// Ищем по названию. Поиск Telegram ищет слова целиком и может не найти «A4/S4»:
+    /// если в выдаче нет даже самого `base`, повторяем по первым словам названия.
     fn newest_like(
         &self,
         base: &Listing,
         cancel: &AtomicBool,
     ) -> Result<Option<Listing>, SourceError> {
         let name = TitleParser::parse(&base.title).name;
-        let query = if name.trim().is_empty() {
+        let full = if name.trim().is_empty() {
             base.title.clone()
         } else {
             name
         };
-        let Some(url) = Self::search_url(&query) else {
-            return Ok(None);
-        };
-        let page = self.load_page(&url, cancel)?;
-        let found = parser::search_releases(&page.messages);
-        Ok(found
-            .iter()
-            .map(parser::to_listing)
-            .filter(|listing| same_mod(&listing.source_id, &base.source_id))
-            .filter(|listing| post_of(listing) > post_of(base))
-            .max_by_key(post_of))
+        let short: String = base
+            .source_id
+            .split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut queries = vec![full];
+        if !short.is_empty() && !queries[0].eq_ignore_ascii_case(&short) {
+            queries.push(short);
+        }
+        for query in queries {
+            let Some(url) = Self::search_url(&query) else {
+                continue;
+            };
+            let page = self.load_page(&url, cancel)?;
+            let same: Vec<Listing> = parser::search_releases(&page.messages)
+                .iter()
+                .map(parser::to_listing)
+                .filter(|listing| same_mod(&listing.source_id, &base.source_id))
+                .collect();
+            if same.is_empty() {
+                continue;
+            }
+            return Ok(same
+                .into_iter()
+                .filter(|listing| post_of(listing) > post_of(base))
+                .max_by_key(post_of));
+        }
+        Ok(None)
     }
 }
 
@@ -218,10 +241,21 @@ impl ModSource for TelegramSource {
                 None => return Ok(Vec::new()), // дальше постов нет
             }
         };
-        let loaded = self.load_page(&Self::feed_url(before), cancel)?;
-        let (found, orphan) = parser::releases(&loaded.messages);
-        self.remember_cursor(page + 1, parser::next_before(&loaded, orphan, before));
-        Ok(found.iter().rev().map(parser::to_listing).collect())
+        // Страница из одних новостей и скриншотов — не конец ленты: пустая страница
+        // остановила бы проверку, а на первой ещё и выглядела бы «сломанной вёрсткой».
+        let mut before = before;
+        for _ in 0..EMPTY_PAGES_IN_A_ROW {
+            let loaded = self.load_page(&Self::feed_url(before), cancel)?;
+            let (found, orphan) = parser::releases(&loaded.messages);
+            let next = parser::next_before(&loaded, orphan, before);
+            if !found.is_empty() || next.is_none() {
+                self.remember_cursor(page + 1, next);
+                return Ok(found.iter().rev().map(parser::to_listing).collect());
+            }
+            before = next;
+        }
+        self.remember_cursor(page + 1, before);
+        Ok(Vec::new())
     }
 
     fn listing(&self, url: &Url, cancel: &AtomicBool) -> Result<Option<Listing>, SourceError> {
@@ -239,6 +273,10 @@ impl ModSource for TelegramSource {
         };
         let base = parser::to_listing(release);
         Ok(Some(self.newest_like(&base, cancel)?.unwrap_or(base)))
+    }
+
+    fn page_per_version(&self) -> bool {
+        true
     }
 
     fn probes_files(&self) -> bool {
@@ -428,6 +466,52 @@ mod tests {
         assert_eq!(channel.calls().len(), 1, "старше первого поста не ходим");
     }
 
+    fn news_page(ids: &[i64]) -> String {
+        let posts: String = ids
+            .iter()
+            .map(|id| {
+                format!(
+                    r#"<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="m0dsbeamng/{id}"><div class="tgme_widget_message_text">Новости канала</div></div></div>"#
+                )
+            })
+            .collect();
+        format!(
+            r#"<section class="tgme_channel_history">{posts}<a class="tme_messages_more" data-before="{}"></a></section>"#,
+            ids[0]
+        )
+    }
+
+    #[test]
+    fn page_of_news_only_is_skipped_not_the_end_of_the_feed() {
+        let news = news_page(&[18400, 18401]);
+        let channel = Channel::new(&[
+            ("", news.as_str()),
+            ("before=18400", "feed-real.html"),
+            ("before=18345", "feed-before-real.html"),
+        ]);
+        let telegram = source(&channel);
+        let cancel = AtomicBool::new(false);
+        let first = telegram.feed_page(1, &cancel).unwrap();
+        assert_eq!(first[0].title, "Audi A4/S4 B8 v1.9");
+        assert_eq!(telegram.cursor(2), Some(Some(18345)));
+        assert!(!telegram.feed_page(2, &cancel).unwrap().is_empty());
+        assert_eq!(channel.calls(), ["", "before=18400", "before=18345"]);
+    }
+
+    #[test]
+    fn endless_news_stops_after_a_few_pages() {
+        let channel = Channel::new(&[("*", news_page(&[500, 501]).as_str())]);
+        let telegram = source(&channel);
+        // Одна и та же страница новостей: курсор не двигается дальше 500 — стоп.
+        assert!(
+            telegram
+                .feed_page(1, &AtomicBool::new(false))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(channel.calls().len() <= EMPTY_PAGES_IN_A_ROW);
+    }
+
     #[test]
     fn not_a_channel_page_is_an_error_not_an_empty_feed() {
         let channel = Channel::new(&[(
@@ -477,6 +561,44 @@ mod tests {
         assert_eq!(found.mod_version.as_deref(), Some("1.9"));
         assert_eq!(found.url.as_str(), "https://t.me/m0dsbeamng/18360");
         assert_eq!(found.size_bytes, crate::parsers::parse_size("230.7 MB"));
+    }
+
+    #[test]
+    fn search_by_the_first_words_when_the_full_title_finds_nothing() {
+        let channel = Channel::new(&[
+            ("before=17396", "search-a4-real.html"),
+            ("q=audi+a4", "search-a4-real.html"),
+        ]);
+        let telegram = source(&channel);
+        let found = telegram
+            .listing(
+                &url("https://t.me/m0dsbeamng/17383"),
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.mod_version.as_deref(), Some("1.9"));
+        assert_eq!(
+            channel.calls(),
+            ["before=17396", "q=Audi+A4%2FS4+B8", "q=audi+a4"],
+            "сначала полное название, потом первые слова"
+        );
+    }
+
+    #[test]
+    fn found_but_no_newer_version_means_one_search() {
+        let channel = Channel::new(&[
+            ("before=18373", "feed-real.html"),
+            ("*", "search-a4-real.html"),
+        ]);
+        let telegram = source(&channel);
+        telegram
+            .listing(
+                &url("https://t.me/m0dsbeamng/18360"),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(channel.calls().len(), 2, "пост и один поиск");
     }
 
     #[test]
