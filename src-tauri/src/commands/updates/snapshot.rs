@@ -319,6 +319,7 @@ pub(crate) fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> U
             .find(|known| known.source == source.source)
         {
             Some(known) => {
+                let keep = bmm_checks::coordinator::keeps_reason(known, &source);
                 known.feed_pages_fetched += source.feed_pages_fetched;
                 known.cards_fetched += source.cards_fetched;
                 known.postponed += source.postponed;
@@ -336,8 +337,9 @@ pub(crate) fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> U
                 if source.status != bmm_sources::sources::SourceStatus::Ok {
                     known.status = source.status;
                 }
-                if source.note.is_some() {
+                if !keep && source.note.is_some() {
                     known.note = source.note;
+                    known.reach = source.reach;
                 }
             }
             None => sources.push(source),

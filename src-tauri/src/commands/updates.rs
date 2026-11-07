@@ -137,6 +137,96 @@ fn run_page_search(
     )
 }
 
+/// Сайты, которые в этой проверке не открылись (блокировка, сайт лежит): их моды
+/// ищем на других сайтах.
+pub(crate) fn down_sites(report: &UpdateRunReport) -> Vec<String> {
+    report
+        .sources
+        .iter()
+        .filter(|source| source.status == SourceStatus::Unavailable)
+        .map(|source| source.source.clone())
+        .collect()
+}
+
+/// Моды с недоступных сайтов — на других сайтах. `only` — один мод.
+fn run_fallback_search(
+    app: Option<&AppHandle>,
+    state: &AppState,
+    request_id: u64,
+    cancel: &AtomicBool,
+    down: &[String],
+    only: Option<&str>,
+) -> bmm_checks::PageSearchReport {
+    if down.is_empty() {
+        return bmm_checks::PageSearchReport::default();
+    }
+    let Some(service) = page_search_service(state) else {
+        return bmm_checks::PageSearchReport::default();
+    };
+    let _batch = state.library.batch();
+    let mut progress = |progress: &UpdateProgress| {
+        if let Some(app) = app {
+            let _ = app.emit("updates://event", progress_event(request_id, progress));
+        }
+    };
+    let include_disabled = state.settings.load().settings.check_disabled_mods;
+    bmm_checks::find_fallback_pages(
+        state.library.as_ref(),
+        service.as_ref(),
+        Utc::now().fixed_offset(),
+        cancel,
+        down,
+        include_disabled,
+        only,
+        &|mod_id| page_title(state, mod_id),
+        &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
+        Some(&mut progress),
+    )
+}
+
+/// Подбор страниц после проверки: сначала запасные сайты модам с недоступных сайтов,
+/// потом страницы модам без страниц. Подбор — подсказка: его сбой не съедает итог.
+pub(crate) fn search_after_check(
+    app: &AppHandle,
+    state: &AppState,
+    request_id: u64,
+    cancel: &AtomicBool,
+    report: &UpdateRunReport,
+) -> bmm_checks::PageSearchReport {
+    let down = down_sites(report);
+    let fallback = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        run_fallback_search(Some(app), state, request_id, cancel, &down, None)
+    }))
+    .unwrap_or_default();
+    if fallback.cancelled {
+        return fallback;
+    }
+    let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        run_page_search(app, state, request_id, cancel, false)
+    }))
+    .unwrap_or_default();
+    add_page_reports(fallback, pages)
+}
+
+pub(crate) fn add_page_reports(
+    first: bmm_checks::PageSearchReport,
+    second: bmm_checks::PageSearchReport,
+) -> bmm_checks::PageSearchReport {
+    let mut skipped = first.skipped_sites;
+    for site in second.skipped_sites {
+        if !skipped.contains(&site) {
+            skipped.push(site);
+        }
+    }
+    bmm_checks::PageSearchReport {
+        found: first.found + second.found,
+        followed: first.followed + second.followed,
+        searched: first.searched + second.searched,
+        cancelled: first.cancelled || second.cancelled,
+        skipped_sites: skipped,
+    }
+}
+
 /// Взятые под наблюдение страницы проверяем сразу — но не после «Остановить»:
 /// иначе отменённый поиск превращался в новую проверку на минуты.
 pub(crate) fn recheck_after_pages(report: &bmm_checks::PageSearchReport) -> bool {
@@ -278,11 +368,13 @@ async fn start_updates(
                     // Сбрасываем отмену только когда поиск страниц действительно наш:
                     // иначе «Проверка» снимет отмену чужого поиска.
                     page_cancel.store(false, Ordering::SeqCst);
-                    // Подбор — подсказка: его сбой не должен съедать итог проверки.
-                    let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        run_page_search(&app, &state_for_task, request_id, &page_cancel, false)
-                    }))
-                    .unwrap_or_default();
+                    let pages = search_after_check(
+                        &app,
+                        &state_for_task,
+                        request_id,
+                        &page_cancel,
+                        &report,
+                    );
                     // Взятые под наблюдение сами — проверяем сразу, а не при следующем запуске.
                     if recheck_after_pages(&pages) {
                         let again = {
@@ -1188,6 +1280,42 @@ mod tests {
             refollow(&state, mod_id, "modsgaming").is_err(),
             "вернуть второй раз нечего"
         );
+    }
+
+    #[test]
+    fn sites_that_did_not_open_get_a_fallback_search() {
+        let mut down = site_report("modland", 0, &[]);
+        down.status = bmm_sources::sources::SourceStatus::Unavailable;
+        let mut human = site_report("modhub", 0, &[]);
+        human.status = bmm_sources::sources::SourceStatus::NeedsHumanCheck;
+        let report = run_report(vec![site_report("stmods", 3, &[]), down, human], 4);
+        assert_eq!(
+            down_sites(&report),
+            ["modland"],
+            "проверку «вы человек?» проходят, а не обходят"
+        );
+        let first = bmm_checks::PageSearchReport {
+            found: 1,
+            followed: 1,
+            searched: 2,
+            cancelled: false,
+            skipped_sites: vec!["modhub".to_string()],
+        };
+        let second = bmm_checks::PageSearchReport {
+            found: 2,
+            followed: 0,
+            searched: 5,
+            cancelled: true,
+            skipped_sites: vec!["modhub".to_string(), "modland".to_string()],
+        };
+        let sum = add_page_reports(first, second);
+        assert_eq!((sum.found, sum.followed, sum.searched), (3, 1, 7));
+        assert!(sum.cancelled);
+        assert_eq!(sum.skipped_sites, ["modhub", "modland"]);
+        assert!(recheck_after_pages(&bmm_checks::PageSearchReport {
+            followed: 1,
+            ..bmm_checks::PageSearchReport::default()
+        }));
     }
 
     fn site_report(source: &str, cards: u32, missing: &[&str]) -> SourceRunReport {

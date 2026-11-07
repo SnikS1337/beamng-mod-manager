@@ -131,10 +131,13 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                     && let Some(_guard) = PageBusyGuard::acquire(runtime.page_busy.clone())
                 {
                     runtime.page_cancel.store(false, Ordering::SeqCst);
-                    let pages = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        run_page_search(&app, &state, AUTO_REQUEST_ID, &runtime.page_cancel, false)
-                    }))
-                    .unwrap_or_default();
+                    let pages = search_after_check(
+                        &app,
+                        &state,
+                        AUTO_REQUEST_ID,
+                        &runtime.page_cancel,
+                        &report,
+                    );
                     if recheck_after_pages(&pages)
                         && let Some(again) = contained(|| {
                             let _batch = state.library.batch();
