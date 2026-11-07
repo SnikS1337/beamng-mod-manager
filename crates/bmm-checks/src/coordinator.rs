@@ -1262,7 +1262,9 @@ mod tests {
         let first = spawn_check(Arc::clone(&coordinator), false);
         wait_started(&started);
         let second = spawn_check(Arc::clone(&coordinator), false);
-        thread::sleep(Duration::from_millis(100));
+        // Ждём, пока вторая встанет в очередь, а не 100 мс: под нагрузкой (сборка
+        // рядом) она не успевала, и тест падал через раз.
+        wait_for_waiter(&coordinator);
         gate.open();
         first.join().unwrap();
         second.join().unwrap();
@@ -1284,7 +1286,9 @@ mod tests {
         wait_started(&started);
         coordinator.resolve_human_check("x");
         let second = spawn_check(Arc::clone(&coordinator), false);
-        thread::sleep(Duration::from_millis(100));
+        // Ждём, пока вторая встанет в очередь, а не 100 мс: под нагрузкой (сборка
+        // рядом) она не успевала, и тест падал через раз.
+        wait_for_waiter(&coordinator);
         gate.open();
         first.join().unwrap();
         second.join().unwrap();
