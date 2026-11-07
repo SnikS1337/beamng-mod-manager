@@ -457,9 +457,9 @@ fn title_from_file(file_name: &str) -> Option<String> {
 }
 
 /// Название без автора и версии — по нему один и тот же мод узнаётся во всех постах:
-/// «Audi A4/S4 B8 v1.8» и «Audi A4/S4 B8 v1.9» — один мод. Общий нормализатор
-/// названий здесь не годится: он убирает короткие «версии» вроде «A4» и «B8», и все
-/// Audi становились одним модом.
+/// «Audi A4/S4 B8 v1.8» и «Audi A4/S4 B8 v1.9» — один мод. Сверх общего разбора
+/// названий убираем то, что канал пишет рядом с версией: «update», «публичная
+/// версия», цену («- 500 rub»).
 pub fn identity(title: &str) -> String {
     let (name, _) = split_author(&PRICE.replace_all(title, " "));
     let parsed = TitleParser::parse(&name);

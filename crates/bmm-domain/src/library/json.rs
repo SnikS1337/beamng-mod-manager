@@ -353,6 +353,20 @@ impl LibraryStore for JsonLibraryStore {
         let changed = state.inner.set_page_search(mod_id, search);
         self.changed(&mut state, changed);
     }
+
+    fn get_source_search(&self, mod_id: &str, source: &str) -> Option<PageSearch> {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inner
+            .get_source_search(mod_id, source)
+    }
+
+    fn set_source_search(&self, mod_id: &str, source: &str, search: Option<PageSearch>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let changed = state.inner.set_source_search(mod_id, source, search);
+        self.changed(&mut state, changed);
+    }
 }
 
 #[derive(Serialize)]
@@ -374,6 +388,8 @@ struct FileModel {
     declined: Option<Vec<String>>,
     #[serde(default)]
     page_searches: Option<BTreeMap<String, PageSearch>>,
+    #[serde(default)]
+    source_searches: Option<BTreeMap<String, BTreeMap<String, PageSearch>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_run_utc: Option<DateTime<FixedOffset>>,
 }
@@ -389,6 +405,7 @@ const KNOWN_ROOT: &[&str] = &[
     "History",
     "Declined",
     "PageSearches",
+    "SourceSearches",
     "LastRunUtc",
 ];
 
@@ -505,6 +522,16 @@ fn model_of(inner: &Inner) -> FileModel {
         })
         .collect();
 
+    let source_searches = mods
+        .iter()
+        .filter_map(|item| {
+            inner
+                .source_searches
+                .get(&item.id)
+                .map(|sources| (item.id.clone(), sources.clone()))
+        })
+        .collect();
+
     FileModel {
         schema: SCHEMA,
         mods: Some(mods),
@@ -529,6 +556,7 @@ fn model_of(inner: &Inner) -> FileModel {
         history: Some(history),
         declined: Some(declined),
         page_searches: Some(page_searches),
+        source_searches: Some(source_searches),
         last_run_utc: inner.last_run,
     }
 }
@@ -671,6 +699,14 @@ fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<St
 
     for (mod_id, search) in parse_map::<PageSearch>(root, "PageSearches", &mut skipped) {
         inner.set_page_search(&mod_id, Some(search));
+    }
+
+    for (mod_id, sources) in
+        parse_map::<BTreeMap<String, PageSearch>>(root, "SourceSearches", &mut skipped)
+    {
+        for (source, search) in sources {
+            inner.set_source_search(&mod_id, &source, Some(search));
+        }
     }
 
     inner.last_run = root
@@ -859,6 +895,57 @@ mod tests {
             last_game_version: Some("0.39".to_string()),
             last_title: Some("Some Car".to_string()),
         }
+    }
+
+    #[test]
+    fn searches_on_a_separate_site_survive_a_restart_and_leave_with_the_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let at = DateTime::parse_from_rfc3339("2026-11-07T10:00:00+00:00").unwrap();
+        {
+            let store = JsonLibraryStore::new(&path, system_clock());
+            store.upsert_mod(installed("a", "A", "1.0"));
+            store.upsert_mod(installed("b", "B", "1.0"));
+            store.set_source_search(
+                "a",
+                "Telegram",
+                Some(PageSearch {
+                    at,
+                    rejected: false,
+                }),
+            );
+            store.set_source_search("b", "telegram", Some(PageSearch { at, rejected: true }));
+            // Мода нет — записи тоже нет.
+            store.set_source_search(
+                "нет",
+                "telegram",
+                Some(PageSearch {
+                    at,
+                    rejected: false,
+                }),
+            );
+        }
+        let store = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(
+            store.get_source_search("a", "telegram"),
+            Some(PageSearch {
+                at,
+                rejected: false
+            }),
+            "сайт без учёта регистра"
+        );
+        assert!(store.get_source_search("b", "telegram").unwrap().rejected);
+        assert_eq!(store.get_source_search("a", "modland"), None);
+        assert_eq!(store.get_source_search("нет", "telegram"), None);
+        // Обычный поиск страниц свою запись пишет отдельно и эту не трогает.
+        store.set_page_search("a", Some(PageSearch { at, rejected: true }));
+        assert!(store.get_source_search("a", "telegram").is_some());
+        store.set_source_search("a", "telegram", None);
+        assert_eq!(store.get_source_search("a", "telegram"), None);
+        store.remove_mod("b");
+        drop(store);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("\"b\""), "{text}");
     }
 
     #[test]
