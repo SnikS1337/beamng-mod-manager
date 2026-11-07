@@ -71,7 +71,7 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         .and_then(|runtime| runtime.coordinator.last_report())
         .map(|report| report.sources)
         .unwrap_or_default();
-    let disabled = state.settings.load().settings.off_sources();
+    let disabled = state.settings.load().settings.disabled_sources;
     let check_disabled = state.settings.load().settings.check_disabled_mods;
     let tracked: Vec<ModBinding> = store
         .bindings()
@@ -92,16 +92,9 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
             runtime
                 .sources
                 .iter()
-                .filter_map(|source| {
+                .map(|source| {
                     let id = source.id().to_string();
                     let off = disabled.iter().any(|item| item.eq_ignore_ascii_case(&id));
-                    let tracked_here = tracked
-                        .iter()
-                        .filter(|binding| binding.source == id)
-                        .count();
-                    if !site_shown(&id, off, tracked_here) {
-                        return None;
-                    }
                     let status = if off {
                         "off"
                     } else {
@@ -113,8 +106,11 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
                             _ => "ok",
                         }
                     };
-                    Some(UpdateSiteDto {
-                        tracked: tracked_here,
+                    UpdateSiteDto {
+                        tracked: tracked
+                            .iter()
+                            .filter(|binding| binding.source == id)
+                            .count(),
                         display_name: source.display_name().to_string(),
                         status: status.to_string(),
                         last_checked: checks
@@ -128,7 +124,7 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
                             .find(|report| report.source == id)
                             .and_then(|report| report.note.clone()),
                         id,
-                    })
+                    }
                 })
                 .collect()
         })
@@ -357,35 +353,5 @@ pub(crate) fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> U
         cancelled: first.cancelled || again.cancelled,
         stopped_by_time: first.stopped_by_time || again.stopped_by_time,
         reused: false,
-    }
-}
-
-/// Сайт в панели «Сайты» обновлений. Выключенный сайт из тех, что включают сами
-/// (Telegram-канал), — не показываем, пока за ним не следит ни один мод: большинству
-/// он не нужен, и строка «выключен» только мешала бы.
-fn site_shown(id: &str, off: bool, tracked: usize) -> bool {
-    !(off
-        && tracked == 0
-        && bmm_domain::settings::OPT_IN_SOURCES
-            .iter()
-            .any(|known| known.eq_ignore_ascii_case(id)))
-}
-
-#[cfg(test)]
-mod site_tests {
-    use super::site_shown;
-
-    #[test]
-    fn switched_off_opt_in_site_is_hidden_until_something_tracks_it() {
-        assert!(!site_shown("telegram", true, 0));
-        assert!(
-            site_shown("telegram", true, 2),
-            "моды следят — видно, что сайт выключен"
-        );
-        assert!(site_shown("telegram", false, 0));
-        assert!(
-            site_shown("modland", true, 0),
-            "обычный выключенный сайт — как раньше"
-        );
     }
 }

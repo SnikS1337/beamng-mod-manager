@@ -115,11 +115,6 @@
     { id: "stmods", label: "STMods", note: "Каталог модов BeamNG" },
     { id: "modsgaming", label: "ModsGaming", note: "Русский каталог модов" },
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления; в поиске не участвует" },
-    {
-      id: "telegram",
-      label: "Telegram",
-      note: "Канал @m0dsbeamng: новые версии и поиск. Архивы скачиваются в самом Telegram",
-    },
   ];
   // `/settings?section=folders` — ссылки вроде «Не нашли папку с модами» ведут сразу к нужному.
   const requested = new URLSearchParams(globalThis.location?.search ?? "").get("section");

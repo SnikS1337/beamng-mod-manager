@@ -98,7 +98,11 @@ pub fn spawn_auto_check(app: AppHandle, state: Arc<AppState>) {
                         .unwrap_or_else(|poison| poison.into_inner());
                     enabled.clear();
                     for source in runtime.sources.iter() {
-                        if !settings.source_off(source.id()) {
+                        if !settings
+                            .disabled_sources
+                            .iter()
+                            .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
+                        {
                             enabled.insert(source.id().to_string());
                         }
                     }

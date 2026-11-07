@@ -26,9 +26,6 @@ describe("операторы поиска", () => {
 
   it("знает ModHub", () => {
     expect(parseSearchInput("bmw сайт:modhub.us").source).toBe("modhub");
-    expect(parseSearchInput("audi сайт:telegram").source).toBe("telegram");
-    expect(parseSearchInput("audi сайт:tg").source).toBe("telegram");
-    expect(parseSearchInput("audi site:t.me").source).toBe("telegram");
     expect(parseSearchInput("bmw site:modhub").source).toBe("modhub");
   });
 

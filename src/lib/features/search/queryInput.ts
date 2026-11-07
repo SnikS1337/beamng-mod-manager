@@ -33,9 +33,6 @@ const SOURCE_ALIASES: Record<string, string> = {
   stmods: "stmods",
   modsgaming: "modsgaming",
   "modsgaming.us": "modsgaming",
-  telegram: "telegram",
-  tg: "telegram",
-  "t.me": "telegram",
 };
 
 /// `автор:Flanje`, `тип:карта`, `сайт:stmods`; остальное — обычный запрос.

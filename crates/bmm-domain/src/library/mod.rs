@@ -151,11 +151,6 @@ pub trait LibraryStore: Send + Sync {
     fn set_checking_declined(&self, mod_id: &str, declined: bool);
     fn get_page_search(&self, mod_id: &str) -> Option<PageSearch>;
     fn set_page_search(&self, mod_id: &str, state: Option<PageSearch>);
-
-    /// Поиск страницы мода на отдельном сайте — там, где мод ищем, даже если у него
-    /// уже есть страница на других (Telegram-канал выкладывает обновления тех же модов).
-    fn get_source_search(&self, mod_id: &str, source: &str) -> Option<PageSearch>;
-    fn set_source_search(&self, mod_id: &str, source: &str, state: Option<PageSearch>);
 }
 
 #[derive(Debug, Default)]
@@ -168,8 +163,6 @@ pub(crate) struct Inner {
     pub(crate) history: HashMap<String, Vec<String>>,
     pub(crate) declined: HashSet<String>,
     pub(crate) page_searches: HashMap<String, PageSearch>,
-    /// Мод → сайт → поиск страницы на нём ([`LibraryStore::get_source_search`]).
-    pub(crate) source_searches: HashMap<String, BTreeMap<String, PageSearch>>,
     pub(crate) last_run: Option<DateTime<FixedOffset>>,
 }
 
@@ -204,7 +197,6 @@ impl Inner {
         changed |= self.history.remove(id).is_some();
         changed |= self.declined.remove(id);
         changed |= self.page_searches.remove(id).is_some();
-        changed |= self.source_searches.remove(id).is_some();
         changed
     }
 
@@ -308,49 +300,6 @@ impl Inner {
         } else {
             self.declined.remove(mod_id)
         }
-    }
-
-    pub(crate) fn set_source_search(
-        &mut self,
-        mod_id: &str,
-        source: &str,
-        state: Option<PageSearch>,
-    ) -> bool {
-        if !self.mods.contains_key(mod_id) {
-            return false;
-        }
-        let source = source.trim().to_lowercase();
-        let current = self
-            .source_searches
-            .get(mod_id)
-            .and_then(|sources| sources.get(&source));
-        if current == state.as_ref() {
-            return false;
-        }
-        match state {
-            Some(state) => {
-                self.source_searches
-                    .entry(mod_id.to_string())
-                    .or_default()
-                    .insert(source, state);
-            }
-            None => {
-                if let Some(sources) = self.source_searches.get_mut(mod_id) {
-                    sources.remove(&source);
-                    if sources.is_empty() {
-                        self.source_searches.remove(mod_id);
-                    }
-                }
-            }
-        }
-        true
-    }
-
-    pub(crate) fn get_source_search(&self, mod_id: &str, source: &str) -> Option<PageSearch> {
-        self.source_searches
-            .get(mod_id)
-            .and_then(|sources| sources.get(&source.trim().to_lowercase()))
-            .cloned()
     }
 
     pub(crate) fn set_page_search(&mut self, mod_id: &str, state: Option<PageSearch>) -> bool {

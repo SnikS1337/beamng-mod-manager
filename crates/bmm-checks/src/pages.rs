@@ -420,9 +420,7 @@ fn search_pages_of(
         // обычно нет, а совпадение одного названия обманчиво («Mercedes-Benz ML» — десятки
         // разных модов): открываем страницу мода и решаем ещё раз уже с размером и автором.
         let needs_detail = guess.as_ref().is_some_and(|guess| {
-            guess.certain
-                && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
-                && !crate::page_guesser::same_archive(installed, &guess.listing)
+            guess.certain && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
         });
         if needs_detail {
             let found = guess
@@ -637,58 +635,6 @@ pub fn find_extra_pages(
     include_disabled: bool,
     title_of: &dyn Fn(&str) -> Option<String>,
     author_of: &dyn Fn(&str) -> Option<String>,
-    progress: Option<&mut dyn FnMut(&UpdateProgress)>,
-) -> PageSearchReport {
-    find_extra_pages_on(
-        store,
-        search,
-        now,
-        cancel,
-        include_disabled,
-        None,
-        title_of,
-        author_of,
-        progress,
-    )
-}
-
-/// Пора ли искать мод на сайте `site`. У каждого сайта своя отметка: сайт, который
-/// включили недавно (Telegram-канал), ищется сразу, а не через две недели после
-/// прошлого поиска на остальных. Пока отметки нет, у прежних сайтов действует общая.
-fn site_due(
-    store: &dyn LibraryStore,
-    mod_id: &str,
-    site: &str,
-    global: Option<&PageSearch>,
-    now: DateTime<FixedOffset>,
-) -> bool {
-    let fresh = |search: &PageSearch| {
-        now - search.at >= crate::page_guesser::RETRY_AFTER || search.at > now
-    };
-    match store.get_source_search(mod_id, site) {
-        Some(search) => !search.rejected && fresh(&search),
-        None if bmm_domain::settings::OPT_IN_SOURCES
-            .iter()
-            .any(|known| known.eq_ignore_ascii_case(site)) =>
-        {
-            true
-        }
-        None => global.is_none_or(fresh),
-    }
-}
-
-/// Как [`find_extra_pages`], но только на сайтах `only` (если заданы): при каждой
-/// проверке ищем страницы на быстрых сайтах, включённых по выбору.
-#[allow(clippy::too_many_arguments)]
-pub fn find_extra_pages_on(
-    store: &dyn LibraryStore,
-    search: &SearchService,
-    now: DateTime<FixedOffset>,
-    cancel: &AtomicBool,
-    include_disabled: bool,
-    only: Option<&[&str]>,
-    title_of: &dyn Fn(&str) -> Option<String>,
-    author_of: &dyn Fn(&str) -> Option<String>,
     mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
     let mut result = PageSearchReport::default();
@@ -697,7 +643,6 @@ pub fn find_extra_pages_on(
         .iter()
         .filter(|source| source.supports_search())
         .map(|source| source.id())
-        .filter(|id| only.is_none_or(|only| only.iter().any(|site| site.eq_ignore_ascii_case(id))))
         .collect();
     let bindings = store.bindings();
     let due: Vec<(InstalledMod, Vec<&'static str>)> = store
@@ -705,11 +650,15 @@ pub fn find_extra_pages_on(
         .into_iter()
         .filter(|installed| include_disabled || installed.enabled)
         .filter(|installed| !store.is_checking_declined(&installed.id))
-        // «Это другой мод» — сам больше не ищем нигде.
-        .filter(|installed| {
-            !store
-                .get_page_search(&installed.id)
-                .is_some_and(|search| search.rejected)
+        // Вторые страницы ищем не чаще раза в две недели: каждый поиск — запрос на
+        // каждый недостающий сайт, а Modland и ModHub отвечают по несколько секунд.
+        // По журналу: повторное нажатие «Найти страницы» тратило на это пять минут.
+        .filter(|installed| match store.get_page_search(&installed.id) {
+            None => true,
+            Some(search) => {
+                !search.rejected
+                    && (now - search.at >= crate::page_guesser::RETRY_AFTER || search.at > now)
+            }
         })
         .filter_map(|installed| {
             let own: Vec<&ModBinding> = bindings
@@ -717,20 +666,13 @@ pub fn find_extra_pages_on(
                 .filter(|binding| binding.mod_id == installed.id)
                 .collect();
             // Без страницы — дело обычного поиска; с неподтверждённой — ждём человека.
-            // Но сайт по выбору ищем и модам без страниц: у обычного поиска пауза общая,
-            // и только что включённый Telegram-канал ждал бы её две недели.
-            if (own.is_empty() && only.is_none()) || own.iter().any(|binding| !binding.confirmed) {
+            if own.is_empty() || own.iter().any(|binding| !binding.confirmed) {
                 return None;
             }
-            // Вторые страницы ищем не чаще раза в две недели на каждом сайте: каждый поиск —
-            // запрос, а Modland и ModHub отвечают по несколько секунд. По журналу:
-            // повторное нажатие «Найти страницы» тратило на это пять минут.
-            let global = store.get_page_search(&installed.id);
             let missing: Vec<&'static str> = sites
                 .iter()
                 .copied()
                 .filter(|site| !own.iter().any(|binding| binding.source == *site))
-                .filter(|site| site_due(store, &installed.id, site, global.as_ref(), now))
                 .collect();
             (!missing.is_empty()).then_some((installed, missing))
         })
@@ -777,14 +719,6 @@ pub fn find_extra_pages_on(
                 Ok(found) => {
                     answered = true;
                     listings.extend(found);
-                    store.set_source_search(
-                        &installed.id,
-                        site,
-                        Some(PageSearch {
-                            at: now,
-                            rejected: false,
-                        }),
-                    );
                     // Ответил — значит, пускает: снимаем старую отметку «просит проверку».
                     if answered_sites.insert(site)
                         && store.source_status(site)
@@ -843,9 +777,6 @@ pub fn find_extra_pages_on(
             if guess.as_ref().is_some_and(|guess| {
                 guess.certain
                     && (guess.listing.size_bytes.is_none() || guess.listing.author.is_none())
-                    // Тот же архив уже доказал страницу; на странице новой версии
-                    // архив другой, и уточнение «отменило» бы верную находку.
-                    && !crate::page_guesser::same_archive(installed, &guess.listing)
             }) {
                 let found = guess.as_ref().map(|guess| guess.listing.clone());
                 guess = found
@@ -1070,8 +1001,6 @@ pub struct Unfollowed {
     pub binding: ModBinding,
     pub check: Option<CheckState>,
     pub search: Option<PageSearch>,
-    /// Отметка поиска на сайте этой страницы.
-    pub site_search: Option<PageSearch>,
     pub dismissed: Option<String>,
 }
 
@@ -1092,19 +1021,18 @@ pub fn unfollow_page(
     let saved = Unfollowed {
         check: store.get_check(mod_id, source),
         search: store.get_page_search(mod_id),
-        site_search: store.get_source_search(mod_id, source),
         dismissed: store.get_dismissed_update(mod_id),
         binding,
     };
     store.remove_binding(mod_id, source);
     store.set_dismissed_update(mod_id, None);
-    let rejected = Some(PageSearch {
-        at: now,
-        rejected: true,
-    });
-    store.set_page_search(mod_id, rejected.clone());
-    // И на этом сайте отдельно: у него своя отметка поиска.
-    store.set_source_search(mod_id, source, rejected);
+    store.set_page_search(
+        mod_id,
+        Some(PageSearch {
+            at: now,
+            rejected: true,
+        }),
+    );
     Some(saved)
 }
 
@@ -1130,7 +1058,6 @@ pub fn refollow_page(store: &dyn LibraryStore, saved: &Unfollowed) -> bool {
         store.save_check(check.clone());
     }
     store.set_page_search(&binding.mod_id, saved.search.clone());
-    store.set_source_search(&binding.mod_id, &binding.source, saved.site_search.clone());
     store.set_dismissed_update(&binding.mod_id, saved.dismissed.as_deref());
     true
 }
@@ -1273,7 +1200,7 @@ pub fn bind_url(
         .ok_or_else(|| {
             BindError::new(
                 BindErrorCode::UnknownSite,
-                "Этот сайт программа не знает: подойдут STMods, ModsGaming, Modland, ModHub, репозиторий BeamNG и Telegram-канал @m0dsbeamng.",
+                "Этот сайт программа не знает: подойдут STMods, ModsGaming, Modland, ModHub и репозиторий BeamNG.",
             )
         })?;
     if !source.is_mod_page(&url) {
@@ -1642,265 +1569,6 @@ mod tests {
             None,
         );
         assert_eq!(again.searched, 0);
-    }
-
-    fn followed_car(store: &InMemoryLibraryStore) {
-        let mut car = installed("car", "maserati_granturismo.zip");
-        car.name = "Maserati GranTurismo".to_string();
-        car.size_bytes = Some(100_000_000);
-        store.upsert_mod(car);
-        store
-            .upsert_binding(ModBinding {
-                mod_id: "car".to_string(),
-                source: "stmods".to_string(),
-                source_id: "st".to_string(),
-                url: Url::parse("https://stmods.test/st").unwrap(),
-                confirmed: true,
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn newly_enabled_channel_is_searched_at_once_old_sites_wait_their_turn() {
-        // Было: Telegram включили, а «Telegram не проверялся»: все моды недавно искали
-        // на остальных сайтах, и двухнедельная пауза закрывала и новый.
-        let store = InMemoryLibraryStore::new();
-        followed_car(&store);
-        store.set_page_search(
-            "car",
-            Some(PageSearch {
-                at: now() - chrono::TimeDelta::days(3),
-                rejected: false,
-            }),
-        );
-        let search = sites(vec![
-            VerifySite::new(
-                "modland",
-                None,
-                vec![on_site("modland", "ml", "Maserati GranTurismo")],
-            ),
-            VerifySite::new(
-                "telegram",
-                None,
-                vec![on_site("telegram", "tg", "Maserati GranTurismo")],
-            ),
-        ]);
-        let report = find_extra_pages(
-            &store,
-            &search,
-            now(),
-            &AtomicBool::new(false),
-            true,
-            &|_| None,
-            &|_| Some("Flanje".to_string()),
-            None,
-        );
-        assert_eq!(report.followed, 1);
-        let sources: Vec<String> = store
-            .bindings()
-            .into_iter()
-            .map(|binding| binding.source)
-            .collect();
-        assert!(sources.contains(&"telegram".to_string()));
-        assert!(
-            !sources.contains(&"modland".to_string()),
-            "Modland ждёт своих двух недель"
-        );
-        assert!(store.get_source_search("car", "telegram").is_some());
-        assert!(store.get_source_search("car", "modland").is_none());
-    }
-
-    #[test]
-    fn search_on_chosen_sites_only() {
-        let store = InMemoryLibraryStore::new();
-        followed_car(&store);
-        let search = sites(vec![
-            VerifySite::new(
-                "modland",
-                None,
-                vec![on_site("modland", "ml", "Maserati GranTurismo")],
-            ),
-            VerifySite::new(
-                "telegram",
-                None,
-                vec![on_site("telegram", "tg", "Maserati GranTurismo")],
-            ),
-        ]);
-        let report = find_extra_pages_on(
-            &store,
-            &search,
-            now(),
-            &AtomicBool::new(false),
-            true,
-            Some(&["telegram"]),
-            &|_| None,
-            &|_| Some("Flanje".to_string()),
-            None,
-        );
-        assert_eq!(report.followed, 1);
-        assert!(
-            store.get_source_search("car", "modland").is_none(),
-            "Modland не спрашивали"
-        );
-        // На следующей проверке тот же мод в канале не ищем — до срока.
-        let again = find_extra_pages_on(
-            &store,
-            &search,
-            now() + chrono::TimeDelta::hours(1),
-            &AtomicBool::new(false),
-            true,
-            Some(&["telegram"]),
-            &|_| None,
-            &|_| Some("Flanje".to_string()),
-            None,
-        );
-        assert_eq!(again.searched, 0);
-    }
-
-    #[test]
-    fn same_archive_is_not_second_guessed_by_the_newest_post() {
-        // Страница канала по своему адресу отдаёт уже новую версию с другим архивом:
-        // «уточнение» по ней отменяло верную находку по тому же архиву.
-        let store = InMemoryLibraryStore::new();
-        let mut dirt = installed("dirt", "carp_dynamicdirt_0.2.zip");
-        dirt.size_bytes = Some(20_000_000);
-        store.upsert_mod(dirt);
-        store
-            .upsert_binding(ModBinding {
-                mod_id: "dirt".to_string(),
-                source: "stmods".to_string(),
-                source_id: "st".to_string(),
-                url: Url::parse("https://stmods.test/st").unwrap(),
-                confirmed: true,
-            })
-            .unwrap();
-        let archive = |listing: &mut Listing, name: &str, size: i64| {
-            listing.offers.push(bmm_domain::models::Offer {
-                kind: bmm_domain::models::OfferKind::ExternalHost,
-                host: "t.me".to_string(),
-                url: listing.url.clone(),
-                host_file_id: Some(name.to_string()),
-                size_bytes: Some(size),
-            });
-            listing.size_bytes = Some(size);
-            listing.author = None;
-        };
-        let mut hit = on_site("telegram", "tg-02", "carp dynamicdirt v0.2");
-        hit.mod_version = Some("0.2".to_string());
-        archive(&mut hit, "carp_dynamicdirt_0.2.zip", 20_000_000);
-        let mut newest = on_site("telegram", "tg-03", "Carp's Dynamic Dirt v0.3");
-        newest.mod_version = Some("0.3".to_string());
-        archive(&mut newest, "carp_dynamicdirt_0.3.zip", 25_000_000);
-        let search = sites(vec![VerifySite::new("telegram", Some(newest), vec![hit])]);
-        let report = find_extra_pages_on(
-            &store,
-            &search,
-            now(),
-            &AtomicBool::new(false),
-            true,
-            Some(&["telegram"]),
-            &|_| None,
-            &|_| None,
-            None,
-        );
-        assert_eq!(report.followed, 1);
-        let bound = store
-            .bindings()
-            .into_iter()
-            .find(|binding| binding.source == "telegram")
-            .unwrap();
-        assert_eq!(bound.source_id, "tg-02");
-    }
-
-    #[test]
-    fn mod_without_any_page_is_searched_on_the_channel_too() {
-        let store = InMemoryLibraryStore::new();
-        let mut car = installed("car", "maserati_granturismo.zip");
-        car.name = "Maserati GranTurismo".to_string();
-        car.size_bytes = Some(100_000_000);
-        store.upsert_mod(car);
-        // Обычный поиск страниц искал его вчера — пауза у него общая.
-        store.set_page_search(
-            "car",
-            Some(PageSearch {
-                at: now() - chrono::TimeDelta::days(1),
-                rejected: false,
-            }),
-        );
-        let search = sites(vec![VerifySite::new(
-            "telegram",
-            None,
-            vec![on_site("telegram", "tg", "Maserati GranTurismo")],
-        )]);
-        let channel_only = find_extra_pages_on(
-            &store,
-            &search,
-            now(),
-            &AtomicBool::new(false),
-            true,
-            Some(&["telegram"]),
-            &|_| None,
-            &|_| Some("Flanje".to_string()),
-            None,
-        );
-        assert_eq!(channel_only.followed, 1);
-        // Неподтверждённое предложение ждёт человека — сам не ищем.
-        let store = InMemoryLibraryStore::new();
-        followed_car(&store);
-        let mut suggestion = store.bindings().pop().unwrap();
-        suggestion.confirmed = false;
-        store.upsert_binding(suggestion).unwrap();
-        let waiting = find_extra_pages_on(
-            &store,
-            &search,
-            now(),
-            &AtomicBool::new(false),
-            true,
-            Some(&["telegram"]),
-            &|_| None,
-            &|_| None,
-            None,
-        );
-        assert_eq!(waiting.searched, 0);
-    }
-
-    #[test]
-    fn not_this_mod_on_the_channel_is_not_found_again() {
-        let store = InMemoryLibraryStore::new();
-        followed_car(&store);
-        let search = sites(vec![VerifySite::new(
-            "telegram",
-            None,
-            vec![on_site("telegram", "tg", "Maserati GranTurismo")],
-        )]);
-        let run = |at| {
-            find_extra_pages_on(
-                &store,
-                &search,
-                at,
-                &AtomicBool::new(false),
-                true,
-                Some(&["telegram"]),
-                &|_| None,
-                &|_| Some("Flanje".to_string()),
-                None,
-            )
-        };
-        assert_eq!(run(now()).followed, 1);
-        // «Это другой мод» у страницы в канале.
-        let saved = unfollow_page(&store, "car", "telegram", now()).unwrap();
-        assert!(store.get_source_search("car", "telegram").unwrap().rejected);
-        let later = now() + chrono::TimeDelta::days(60);
-        assert_eq!(run(later).followed, 0, "сам больше не находит");
-        assert!(
-            store
-                .bindings()
-                .iter()
-                .all(|binding| binding.source != "telegram")
-        );
-        // «Отменить» возвращает и страницу, и прежнюю отметку.
-        assert!(refollow_page(&store, &saved));
-        assert!(!store.get_source_search("car", "telegram").unwrap().rejected);
     }
 
     #[test]

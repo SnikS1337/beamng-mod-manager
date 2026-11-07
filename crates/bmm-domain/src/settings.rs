@@ -113,9 +113,6 @@ pub struct AppSettings {
     /// Проверять обновления и для модов, которые сейчас выключены.
     pub check_disabled_mods: bool,
     pub disabled_sources: Vec<String>,
-    /// Включённые сайты из [`OPT_IN_SOURCES`]: они по умолчанию выключены, и
-    /// [`Self::disabled_sources`] про них не говорит.
-    pub enabled_sources: Vec<String>,
     pub keep_backups: i32,
     pub max_card_checks_per_source: i32,
     pub liquid_glass: bool,
@@ -152,7 +149,6 @@ impl Default for AppSettings {
             // Все сайты включены: Modland и ModHub за Cloudflare иногда просят
             // проверку «вы человек?», но без них поиск и проверка беднее.
             disabled_sources: Vec::new(),
-            enabled_sources: Vec::new(),
             keep_backups: 3,
             max_card_checks_per_source: 150,
             liquid_glass: true,
@@ -192,14 +188,7 @@ impl AppSettings {
                 self.auto_check_every_hours.clamp(1, 168)
             },
             check_disabled_mods: self.check_disabled_mods,
-            disabled_sources: normalized_sources(&self.disabled_sources)
-                .into_iter()
-                .filter(|id| !is_opt_in(id))
-                .collect(),
-            enabled_sources: normalized_sources(&self.enabled_sources)
-                .into_iter()
-                .filter(|id| is_opt_in(id))
-                .collect(),
+            disabled_sources: normalized_sources(&self.disabled_sources),
             keep_backups: self.keep_backups.clamp(1, 20),
             max_card_checks_per_source: self.max_card_checks_per_source.clamp(5, 500),
             liquid_glass: self.liquid_glass,
@@ -226,52 +215,6 @@ impl AppSettings {
             },
             window_maximized: self.window_maximized,
         }
-    }
-
-    /// Сайт выключен: снят человеком или из тех, что включают сами.
-    pub fn source_off(&self, id: &str) -> bool {
-        let id = id.trim().to_lowercase();
-        if is_opt_in(&id) {
-            !self
-                .enabled_sources
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(&id))
-        } else {
-            self.disabled_sources
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(&id))
-        }
-    }
-
-    /// Все выключенные сайты — для проверки, поиска и окна настроек.
-    pub fn off_sources(&self) -> Vec<String> {
-        let mut off: Vec<String> = self
-            .disabled_sources
-            .iter()
-            .map(|id| id.trim().to_lowercase())
-            .filter(|id| !id.is_empty() && !is_opt_in(id))
-            .collect();
-        off.extend(
-            OPT_IN_SOURCES
-                .iter()
-                .filter(|id| self.source_off(id))
-                .map(|id| id.to_string()),
-        );
-        off.sort();
-        off.dedup();
-        off
-    }
-
-    /// Обратно из списка «выключено» окна настроек: сайты по выбору — в
-    /// [`Self::enabled_sources`], остальные — в [`Self::disabled_sources`].
-    pub fn set_off_sources(&mut self, off: &[String]) {
-        let off = normalized_sources(off);
-        self.enabled_sources = OPT_IN_SOURCES
-            .iter()
-            .filter(|id| !off.iter().any(|known| known == *id))
-            .map(|id| id.to_string())
-            .collect();
-        self.disabled_sources = off.into_iter().filter(|id| !is_opt_in(id)).collect();
     }
 
     pub fn to_check_options(&self) -> CheckOptions {
@@ -309,16 +252,6 @@ fn clean_folder(value: &str) -> Option<String> {
     }
 }
 
-/// Сайты, которые по умолчанию выключены: их включают в настройках сами.
-/// Telegram-канал — не сайт с каталогом, и скачивать из него можно только в Telegram.
-pub const OPT_IN_SOURCES: &[&str] = &["telegram"];
-
-fn is_opt_in(id: &str) -> bool {
-    OPT_IN_SOURCES
-        .iter()
-        .any(|known| known.eq_ignore_ascii_case(id.trim()))
-}
-
 fn normalized_sources(values: &[String]) -> Vec<String> {
     let mut result: Vec<String> = values
         .iter()
@@ -353,41 +286,6 @@ fn normalized_folders(values: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn opt_in_sources_are_off_until_turned_on() {
-        let mut settings = AppSettings::default();
-        assert!(settings.source_off("telegram"), "по умолчанию выключен");
-        assert!(!settings.source_off("modland"));
-        assert_eq!(settings.off_sources(), ["telegram"]);
-
-        // Окно настроек присылает весь список «выключено».
-        settings.set_off_sources(&["modland".to_string()]);
-        assert!(!settings.source_off("Telegram"));
-        assert!(settings.source_off("modland"));
-        assert_eq!(settings.enabled_sources, ["telegram"]);
-        assert_eq!(settings.disabled_sources, ["modland"]);
-        assert_eq!(settings.off_sources(), ["modland"]);
-
-        settings.set_off_sources(&[" Telegram ".to_string(), "stmods".to_string()]);
-        assert!(settings.source_off("telegram"));
-        assert!(settings.enabled_sources.is_empty());
-        assert_eq!(settings.disabled_sources, ["stmods"]);
-    }
-
-    #[test]
-    fn normalize_keeps_lists_apart() {
-        let settings = AppSettings {
-            disabled_sources: vec!["telegram".to_string(), "STMods".to_string()],
-            enabled_sources: vec!["Telegram".to_string(), "modland".to_string()],
-            ..AppSettings::default()
-        }
-        .normalize();
-        // «Выключен» для сайта по выбору решает только список включённых.
-        assert_eq!(settings.disabled_sources, ["stmods"]);
-        assert_eq!(settings.enabled_sources, ["telegram"]);
-        assert!(!settings.source_off("telegram"));
-    }
 
     #[test]
     fn defaults() {
