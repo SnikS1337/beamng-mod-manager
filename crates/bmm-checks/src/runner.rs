@@ -1625,22 +1625,36 @@ mod tests {
         let y = Site::new("y").with_feed(vec![l("y", "b", Some("1.1"), None)]);
         x.set_card(l("x", "a", Some("1.1"), None));
         y.set_card(l("y", "b", Some("1.1"), None));
-        let slow: Arc<dyn Fn() + Send + Sync> =
-            Arc::new(|| std::thread::sleep(std::time::Duration::from_millis(400)));
-        x.on_card(slow.clone());
-        y.on_card(slow);
+        // Карточка каждого сайта ждёт, пока не откроется карточка другого: по очереди
+        // никто не дождётся (5 с впустую, вместе — 1). Раньше тест мерил время
+        // (< 750 мс) и под нагрузкой падал, хотя сайты шли вместе.
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let together = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let meet: Arc<dyn Fn() + Send + Sync> = {
+            let active = Arc::clone(&active);
+            let together = Arc::clone(&together);
+            Arc::new(move || {
+                use std::sync::atomic::Ordering;
+                active.fetch_add(1, Ordering::SeqCst);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while active.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                together.fetch_max(active.load(Ordering::SeqCst), Ordering::SeqCst);
+            })
+        };
+        x.on_card(meet.clone());
+        y.on_card(meet);
         let all: Vec<Arc<dyn ModSource>> = vec![x.clone(), y.clone()];
 
-        let started = std::time::Instant::now();
         let report = run_simple(&store, &all, now(), UpdateCheckOptions::default());
-        let elapsed = started.elapsed();
 
         assert_eq!(report.findings.len(), 2);
         assert!(report.complete());
-        // По очереди было бы ≥ 800 мс; вместе — время самого медленного сайта.
-        assert!(
-            elapsed < std::time::Duration::from_millis(750),
-            "{elapsed:?}"
+        assert_eq!(
+            together.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "карточки сайтов открыты одновременно"
         );
     }
 
