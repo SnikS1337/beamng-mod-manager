@@ -39,6 +39,28 @@ pub struct UpdateFindingDto {
     pub file_version: Option<String>,
     /// Файла по ссылке «Скачать» больше нет (файлообменник: «не найдено»).
     pub file_gone: bool,
+    /// Сайт обновления сейчас не открывается: почему.
+    pub site_down: Option<SiteDownDto>,
+    /// Тот же мод на других сайтах (которые открываются), где тоже есть обновление.
+    pub alternatives: Vec<UpdateAlternativeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "SiteDown")]
+pub struct SiteDownDto {
+    pub note: String,
+    #[ts(type = "SiteReach | null")]
+    pub reach: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "UpdateAlternative")]
+pub struct UpdateAlternativeDto {
+    pub source: String,
+    pub url: String,
+    pub latest_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

@@ -14,6 +14,8 @@ import type {
 export type {
   FindPageResult,
   LostPage,
+  SiteDown,
+  UpdateAlternative,
   PageMatch,
   PageSuggestion,
   PageVerification,
@@ -66,6 +68,8 @@ function mockInitial(): UpdatesSnapshot {
         fileName: null,
         fileVersion: null,
         fileGone: false,
+        siteDown: null,
+        alternatives: [],
       },
       {
         modId: "mock-2",
@@ -86,6 +90,8 @@ function mockInitial(): UpdatesSnapshot {
         fileName: null,
         fileVersion: null,
         fileGone: false,
+        siteDown: null,
+        alternatives: [],
       },
       {
         modId: "mock-3",
@@ -106,6 +112,17 @@ function mockInitial(): UpdatesSnapshot {
         fileName: null,
         fileVersion: null,
         fileGone: false,
+        siteDown: {
+          note: "Не открывается из вашей сети: соединение обрывается, а другие сайты отвечают — похоже на блокировку. Попробуйте VPN.",
+          reach: "reset",
+        },
+        alternatives: [
+          {
+            source: "stmods",
+            url: "https://stmods.org/beamng_drive/maps/priozersk/",
+            latestVersion: "0.1",
+          },
+        ],
       },
     ],
     hidden: [
@@ -128,6 +145,8 @@ function mockInitial(): UpdatesSnapshot {
         fileName: null,
         fileVersion: null,
         fileGone: false,
+        siteDown: null,
+        alternatives: [],
       },
     ],
     suggestions: [
@@ -245,6 +264,12 @@ export async function updatesRetrySource(source: string, requestId: number): Pro
 
 export async function updatesCheckMod(modId: string): Promise<UpdatesSnapshot> {
   if (isTauri()) return invoke<UpdatesSnapshot>("updates_check_mod", { modId });
+  return clone(mockSnapshot);
+}
+
+/** Сайт обновления не открывается: ищем мод на других сайтах и сразу их смотрим. */
+export async function updatesFindFallback(modId: string): Promise<UpdatesSnapshot> {
+  if (isTauri()) return invoke<UpdatesSnapshot>("updates_find_fallback", { modId });
   return clone(mockSnapshot);
 }
 

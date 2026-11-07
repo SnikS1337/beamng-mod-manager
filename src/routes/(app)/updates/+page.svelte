@@ -31,9 +31,22 @@
   import { motion } from "#lib/shell/motion.svelte.js";
   import { looksLikeOtherMod, reason, sizeChange } from "#lib/features/updates/reason.js";
   import {
+    applyBatch,
+    askText,
+    batchAskText,
+    batchNeedsAsk,
+    onAlternative,
+    planAfterSearch,
+    planBatch,
+    planUpdate,
+    type BatchPlan,
+    type UpdatePlan,
+  } from "#lib/features/updates/fallback.js";
+  import {
     listenUpdates,
     updatesCancel,
     updatesCheckMod,
+    updatesFindFallback,
     updatesConfirmPage,
     updatesDismiss,
     updatesFindPages,
@@ -531,22 +544,82 @@
   // «Обновить все» — только уверенные обновления: «возможно» сначала смотрит человек.
   const sure = $derived(snapshot.findings.filter((finding) => finding.status === "likely"));
 
-  /** «Обновить все»: окно загрузки проводит по страницам, установка — одна в конце. */
-  async function updateAll() {
+  /** Вопрос у мода, чей сайт не открывается: скачать с другого сайта или поискать там. */
+  let ask = $state<{ modId: string; plan: UpdatePlan; busy: boolean } | null>(null);
+  /** Вопрос перед «Обновить все»: часть модов можно взять с других сайтов. */
+  let batchAsk = $state<BatchPlan | null>(null);
+
+  /**
+   * «Обновить все»: окно загрузки проводит по страницам, установка — одна в конце.
+   * `useAlternatives` — ответ на вопрос о недоступных сайтах (без него спрашиваем).
+   */
+  async function updateAll(useAlternatives?: boolean) {
+    ask = null;
     if (sure.length === 0) return;
     if (sure.length === 1) {
+      batchAsk = null;
       await update(sure[0]);
       return;
     }
+    const plan = planBatch(sure);
+    if (useAlternatives === undefined && batchNeedsAsk(plan)) {
+      batchAsk = plan;
+      return;
+    }
+    batchAsk = null;
     try {
-      await downloadOpenBatch(sure.map(requestOf));
+      await downloadOpenBatch(applyBatch(sure, plan, useAlternatives ?? false).map(requestOf));
     } catch (reason) {
       error = errorText(reason);
     }
   }
 
-  /** «Обновить»: окно загрузки; если оно недоступно — браузер и наблюдение за «Загрузками». */
+  /** «Обновить»: сайт не открывается — сначала спрашиваем, откуда качать. */
   async function update(finding: UpdateFinding) {
+    batchAsk = null;
+    const plan = planUpdate(finding);
+    if (plan.kind !== "open") {
+      ask = { modId: finding.modId, plan, busy: false };
+      return;
+    }
+    ask = null;
+    await openUpdate(finding);
+  }
+
+  async function useAlternative(finding: UpdateFinding, alternative: UpdateFinding["alternatives"][number]) {
+    ask = null;
+    await openUpdate(onAlternative(finding, alternative));
+  }
+
+  async function openAnyway(finding: UpdateFinding) {
+    ask = null;
+    await openUpdate(finding);
+  }
+
+  /** «Поискать»: ищем мод на сайтах, которые открываются, и спрашиваем снова. */
+  async function searchElsewhere(finding: UpdateFinding) {
+    if (!ask || ask.busy) return;
+    ask = { ...ask, busy: true };
+    try {
+      const fresh = await updatesFindFallback(finding.modId);
+      snapshot = fresh;
+      const again = fresh.findings.find((item) => item.modId === finding.modId);
+      const plan = planAfterSearch(again);
+      if (plan.kind === "open") {
+        ask = null;
+        if (again) await openUpdate(again);
+        else toasts.show("Обновления у этого мода уже нет");
+        return;
+      }
+      ask = { modId: finding.modId, plan, busy: false };
+    } catch (reason) {
+      error = errorText(reason);
+      ask = ask ? { ...ask, busy: false } : null;
+    }
+  }
+
+  /** Окно загрузки; если оно недоступно — браузер и наблюдение за «Загрузками». */
+  async function openUpdate(finding: UpdateFinding) {
     try {
       await downloadOpen(requestOf(finding));
       return;
@@ -585,6 +658,7 @@
 
   function whereText(finding: UpdateFinding): string {
     const parts = [sourceName(finding.source)];
+    if (finding.siteDown) parts.push("сайт сейчас не открывается");
     if (finding.noticedAt) parts.push(`замечено ${formatAgo(finding.noticedAt)}`);
     const size = sizeChange(finding);
     if (finding.status === "likely" && size) parts.push(size);
@@ -774,6 +848,17 @@
               Обновить все
             </button>
           </div>
+          {#if batchAsk}
+            <div class="ask" role="group" aria-label="Часть сайтов не открывается">
+              <b>Часть сайтов не открывается</b>
+              <span>{batchAskText(batchAsk, plural)}</span>
+              <div class="actions">
+                <button class="btn-primary" type="button" onclick={() => void updateAll(true)}>Качать с других сайтов</button>
+                <button class="btn-ghost" type="button" onclick={() => void updateAll(false)}>Как есть</button>
+                <button class="btn-ghost" type="button" onclick={() => (batchAsk = null)}>Отмена</button>
+              </div>
+            </div>
+          {/if}
         {/if}
         {#each filter === "available" ? snapshot.findings : snapshot.hidden as finding (finding.modId)}
           {@const possible = finding.status !== "likely"}
@@ -830,6 +915,31 @@
                   {@render moreActions(finding, "Пропустить это обновление")}
                 {/if}
               </div>
+              {#if ask && ask.modId === finding.modId && filter === "available"}
+                {@const current = ask}
+                {@const text = askText(finding, current.plan, sourceName)}
+                <div class="ask" role="group" aria-label={text.title}>
+                  <b>{text.title}</b>
+                  {#if text.note}<span>{text.note}</span>{/if}
+                  <span>{text.offer}</span>
+                  <div class="actions">
+                    {#if current.plan.kind === "askAlternative"}
+                      {@const alternative = current.plan.alternative}
+                      <button class="btn-primary" type="button" onclick={() => void useAlternative(finding, alternative)}>
+                        Скачать с {sourceName(alternative.source)}
+                      </button>
+                    {:else if current.plan.kind === "askSearch"}
+                      <button class="btn-primary" type="button" disabled={current.busy} onclick={() => void searchElsewhere(finding)}>
+                        {current.busy ? "Ищем…" : "Поискать"}
+                      </button>
+                    {/if}
+                    <button class="btn-ghost" type="button" disabled={current.busy} onclick={() => void openAnyway(finding)}>
+                      Всё равно открыть {sourceName(finding.source)}
+                    </button>
+                    <button class="btn-ghost" type="button" disabled={current.busy} onclick={() => (ask = null)}>Отмена</button>
+                  </div>
+                </div>
+              {/if}
             </div>
           </article>
         {/each}
@@ -1150,6 +1260,25 @@
 
   .all button {
     flex: none;
+  }
+
+  .ask {
+    display: grid;
+    gap: 4px;
+    margin-top: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--accent-brand);
+    border-radius: 10px;
+    background: var(--accent-brand-soft);
+  }
+
+  .ask span {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+  }
+
+  .ask .actions {
+    margin-top: 6px;
   }
 
   .card {

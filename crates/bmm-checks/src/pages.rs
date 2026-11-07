@@ -721,10 +721,12 @@ pub fn find_fallback_pages(
         .filter(|installed| only.is_none_or(|only| only == installed.id))
         .filter(|installed| include_disabled || installed.enabled || only.is_some())
         .filter(|installed| !store.is_checking_declined(&installed.id))
+        // Человек нажал «Поискать на других сайтах» — ищем, даже если искали недавно.
         .filter(|installed| match store.get_page_search(&installed.id) {
             None => true,
             Some(search) => {
-                !search.rejected && (now - search.at >= FALLBACK_RETRY || search.at > now)
+                !search.rejected
+                    && (only.is_some() || now - search.at >= FALLBACK_RETRY || search.at > now)
             }
         })
         .filter_map(|installed| {
@@ -1874,11 +1876,12 @@ mod tests {
             fallback(&store, &nothing, tomorrow, &["stmods"], None).searched,
             1
         );
-        // `only` — только этот мод.
+        // `only` — только этот мод, и без суточной паузы: человек нажал сам.
         maserati(&store, "other", "stmods");
-        let later = tomorrow + FALLBACK_RETRY;
-        let one = fallback(&store, &nothing, later, &["stmods"], Some("other"));
+        let one = fallback(&store, &nothing, tomorrow, &["stmods"], Some("other"));
         assert_eq!(one.searched, 1);
+        let again = fallback(&store, &nothing, tomorrow, &["stmods"], Some("car"));
+        assert_eq!(again.searched, 1, "по кнопке — и в тот же день");
     }
 
     #[test]

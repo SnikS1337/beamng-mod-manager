@@ -24,6 +24,8 @@ function finding(patch: Partial<UpdateFinding>): UpdateFinding {
     fileName: null,
     fileVersion: null,
     fileGone: false,
+    siteDown: null,
+    alternatives: [],
     ...patch,
   };
 }
