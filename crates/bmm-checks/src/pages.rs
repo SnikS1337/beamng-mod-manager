@@ -1637,6 +1637,158 @@ mod tests {
         assert_eq!(again.searched, 0);
     }
 
+    fn followed_car(store: &InMemoryLibraryStore) {
+        let mut car = installed("car", "maserati_granturismo.zip");
+        car.name = "Maserati GranTurismo".to_string();
+        car.size_bytes = Some(100_000_000);
+        store.upsert_mod(car);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "car".to_string(),
+                source: "stmods".to_string(),
+                source_id: "st".to_string(),
+                url: Url::parse("https://stmods.test/st").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn newly_enabled_channel_is_searched_at_once_old_sites_wait_their_turn() {
+        // Было: Telegram включили, а «Telegram не проверялся»: все моды недавно искали
+        // на остальных сайтах, и двухнедельная пауза закрывала и новый.
+        let store = InMemoryLibraryStore::new();
+        followed_car(&store);
+        store.set_page_search(
+            "car",
+            Some(PageSearch {
+                at: now() - chrono::TimeDelta::days(3),
+                rejected: false,
+            }),
+        );
+        let search = sites(vec![
+            VerifySite::new(
+                "modland",
+                None,
+                vec![on_site("modland", "ml", "Maserati GranTurismo")],
+            ),
+            VerifySite::new(
+                "telegram",
+                None,
+                vec![on_site("telegram", "tg", "Maserati GranTurismo")],
+            ),
+        ]);
+        let report = find_extra_pages(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        );
+        assert_eq!(report.followed, 1);
+        let sources: Vec<String> = store
+            .bindings()
+            .into_iter()
+            .map(|binding| binding.source)
+            .collect();
+        assert!(sources.contains(&"telegram".to_string()));
+        assert!(
+            !sources.contains(&"modland".to_string()),
+            "Modland ждёт своих двух недель"
+        );
+        assert!(store.get_source_search("car", "telegram").is_some());
+        assert!(store.get_source_search("car", "modland").is_none());
+    }
+
+    #[test]
+    fn search_on_chosen_sites_only() {
+        let store = InMemoryLibraryStore::new();
+        followed_car(&store);
+        let search = sites(vec![
+            VerifySite::new(
+                "modland",
+                None,
+                vec![on_site("modland", "ml", "Maserati GranTurismo")],
+            ),
+            VerifySite::new(
+                "telegram",
+                None,
+                vec![on_site("telegram", "tg", "Maserati GranTurismo")],
+            ),
+        ]);
+        let report = find_extra_pages_on(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            true,
+            Some(&["telegram"]),
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        );
+        assert_eq!(report.followed, 1);
+        assert!(
+            store.get_source_search("car", "modland").is_none(),
+            "Modland не спрашивали"
+        );
+        // На следующей проверке тот же мод в канале не ищем — до срока.
+        let again = find_extra_pages_on(
+            &store,
+            &search,
+            now() + chrono::TimeDelta::hours(1),
+            &AtomicBool::new(false),
+            true,
+            Some(&["telegram"]),
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        );
+        assert_eq!(again.searched, 0);
+    }
+
+    #[test]
+    fn not_this_mod_on_the_channel_is_not_found_again() {
+        let store = InMemoryLibraryStore::new();
+        followed_car(&store);
+        let search = sites(vec![VerifySite::new(
+            "telegram",
+            None,
+            vec![on_site("telegram", "tg", "Maserati GranTurismo")],
+        )]);
+        let run = |at| {
+            find_extra_pages_on(
+                &store,
+                &search,
+                at,
+                &AtomicBool::new(false),
+                true,
+                Some(&["telegram"]),
+                &|_| None,
+                &|_| Some("Flanje".to_string()),
+                None,
+            )
+        };
+        assert_eq!(run(now()).followed, 1);
+        // «Это другой мод» у страницы в канале.
+        let saved = unfollow_page(&store, "car", "telegram", now()).unwrap();
+        assert!(store.get_source_search("car", "telegram").unwrap().rejected);
+        let later = now() + chrono::TimeDelta::days(60);
+        assert_eq!(run(later).followed, 0, "сам больше не находит");
+        assert!(
+            store
+                .bindings()
+                .iter()
+                .all(|binding| binding.source != "telegram")
+        );
+        // «Отменить» возвращает и страницу, и прежнюю отметку.
+        assert!(refollow_page(&store, &saved));
+        assert!(!store.get_source_search("car", "telegram").unwrap().rejected);
+    }
+
     #[test]
     fn page_search_remembers_that_a_site_asks_for_human_check() {
         // Было: Modland без привязанных модов отвечал поиску страниц проверкой
