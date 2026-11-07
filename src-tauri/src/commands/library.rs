@@ -154,6 +154,23 @@ fn compact_mod_info(value: &serde_json::Value) -> serde_json::Value {
 
 /// Короткая подпись из `mod_info`: по ней видно, что «машина» на самом деле
 /// человечек-реквизит (`75KG Ragdoll Humanoid`).
+/// Типы машин архива из кэша (`vehicle_types.json`): «Prop,Car» → ["Prop", "Car"].
+pub(crate) fn types_from_cache(
+    key: Option<&String>,
+    vehicle_types: &BTreeMap<String, String>,
+) -> Vec<String> {
+    key.and_then(|key| vehicle_types.get(key))
+        .map(|kinds| {
+            kinds
+                .split(',')
+                .map(str::trim)
+                .filter(|kind| !kind.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn mod_info_hint(value: &serde_json::Value) -> Option<&str> {
     let data = value.get("data")?;
     data.get("tag_line")
@@ -171,6 +188,7 @@ fn mark_duplicates(
     preview_keys: &HashMap<String, String>,
     contents: &BTreeMap<String, Vec<String>>,
     infos: &BTreeMap<String, serde_json::Value>,
+    vehicle_types: &BTreeMap<String, String>,
     modified: &HashMap<String, i64>,
 ) -> Vec<ModCardDto> {
     let empty: Vec<String> = Vec::new();
@@ -186,10 +204,14 @@ fn mark_duplicates(
             .and_then(|key| infos.get(key))
             .and_then(mod_info_hint)
     };
+    let types_of = |id: &str| types_from_cache(preview_keys.get(id), vehicle_types);
     for card in &mut mods {
-        card.role =
-            bmm_packs::duplicates::role_of_with_hint(content_of(&card.id), hint_of(&card.id))
-                .map(|role| role.code().to_string());
+        card.role = bmm_packs::duplicates::role_of_full(
+            content_of(&card.id),
+            hint_of(&card.id),
+            &types_of(&card.id),
+        )
+        .map(|role| role.code().to_string());
     }
     let items: Vec<bmm_packs::duplicates::DupItem> = mods
         .iter()
@@ -295,6 +317,8 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
     let known_problems = state.previews.problems_shared();
     let known_contents = state.previews.contents_shared();
     let known_infos = state.previews.mod_infos_shared();
+    let known_types = state.previews.vehicle_types_shared();
+    let mut types: Vec<(String, Vec<String>)> = Vec::new();
     let mut infos: Vec<(String, serde_json::Value)> = Vec::new();
     // Старые записи хранили весь info.json; сжимаем их при первом чтении.
     for (key, value) in known_infos.iter() {
@@ -310,7 +334,12 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
     let mut flush = |found: &mut Vec<(String, Option<String>)>,
                      problems: &mut Vec<(String, Option<String>)>,
                      contents: &mut Vec<(String, Vec<String>)>,
-                     infos: &mut Vec<(String, serde_json::Value)>| {
+                     infos: &mut Vec<(String, serde_json::Value)>,
+                     types: &mut Vec<(String, Vec<String>)>| {
+        if state.previews.put_vehicle_types(types).is_ok() {
+            written += types.len();
+        }
+        types.clear();
         if state.previews.put_mod_infos(infos).is_ok() {
             written += infos.len();
         }
@@ -338,7 +367,10 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
         let need_info = !known_infos.contains_key(&target.key)
             && !infos.iter().any(|(key, _)| *key == target.key)
             && target.path.is_file();
-        if !(need_title || need_problem || need_contents || need_info) {
+        let need_types = !known_types.contains_key(&target.key)
+            && !types.iter().any(|(key, _)| *key == target.key)
+            && target.path.is_file();
+        if !(need_title || need_problem || need_contents || need_info || need_types) {
             continue;
         }
         let index = match bmm_packs::zip_index::read_index(&target.path) {
@@ -382,6 +414,13 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
                 incoming::content_keys(&index).into_iter().collect(),
             ));
         }
+        // Типы машин: манекен («Prop») — не машина.
+        if need_types {
+            types.push((
+                target.key.clone(),
+                overview::vehicle_types_from_index(&target.path, &index),
+            ));
+        }
         // mod_info из архива — страница в репозитории BeamNG и версия ещё до запуска игры.
         if need_info {
             match overview::try_mod_info_from_index(&target.path, &index) {
@@ -397,11 +436,23 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
                 Err(_) => {}
             }
         }
-        if found.len() + problems.len() + contents.len() + infos.len() >= 100 {
-            flush(&mut found, &mut problems, &mut contents, &mut infos);
+        if found.len() + problems.len() + contents.len() + infos.len() + types.len() >= 100 {
+            flush(
+                &mut found,
+                &mut problems,
+                &mut contents,
+                &mut infos,
+                &mut types,
+            );
         }
     }
-    flush(&mut found, &mut problems, &mut contents, &mut infos);
+    flush(
+        &mut found,
+        &mut problems,
+        &mut contents,
+        &mut infos,
+        &mut types,
+    );
     written
 }
 
@@ -1547,6 +1598,27 @@ mod tests {
             &mods.join("testcar.zip"),
             &[("vehicles/testcar/a.jbeam", b"x")],
         );
+        // Старый Dummy без mod_info: тип только в info.json машины.
+        write_zip(
+            &mods.join("Dummy v.0.20.2.zip"),
+            &[
+                ("vehicles/dummy/dummy.jbeam", b"x"),
+                (
+                    "vehicles/dummy/info.json",
+                    br#"{ "Name":"Dummy", "Author":"B25Mitch", "Type":"Prop", }"#,
+                ),
+            ],
+        );
+        write_zip(
+            &mods.join("sedan.zip"),
+            &[
+                ("vehicles/sedan/a.jbeam", b"x"),
+                (
+                    "vehicles/sedan/info.json",
+                    br#"{"Name":"Sedan","Type":"Car"}"#,
+                ),
+            ],
+        );
         write_zip(
             &mods.join("testmap.zip"),
             &[("levels/testlevel/a.json", b"x")],
@@ -1566,6 +1638,12 @@ mod tests {
         };
         assert_eq!(role("career.zip"), Some("addon"), "gameplay/ — не машина");
         assert_eq!(role("dummy.zip"), Some("addon"), "humanoid — не машина");
+        assert_eq!(
+            role("Dummy v.0.20.2.zip"),
+            Some("addon"),
+            "Type: Prop — не машина"
+        );
+        assert_eq!(role("sedan.zip"), Some("vehicle"));
         assert_eq!(role("testcar.zip"), Some("vehicle"));
         assert_eq!(role("testmap.zip"), Some("map"));
     }

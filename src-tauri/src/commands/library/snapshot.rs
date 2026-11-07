@@ -200,6 +200,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     let archive_titles = state.previews.titles_shared();
     let archive_problems = state.previews.problems_shared();
     let archive_infos = state.previews.mod_infos_shared();
+    let vehicle_types = state.previews.vehicle_types_shared();
     let archive_contents = state.previews.contents_shared();
 
     let game_version = mods_dir.parent().and_then(info::detect_version);
@@ -298,6 +299,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         &preview_keys,
         &archive_contents,
         &archive_infos,
+        &vehicle_types,
         &modified,
     );
 

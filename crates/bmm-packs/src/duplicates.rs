@@ -226,11 +226,28 @@ pub fn role_of(content: &[String]) -> Option<Role> {
 /// (`gameplay/`) и человечки-реквизит (ragdoll/humanoid) — дополнения, даже если
 /// внутри лежит папка `vehicles/`.
 pub fn role_of_with_hint(content: &[String], hint: Option<&str>) -> Option<Role> {
+    role_of_full(content, hint, &[])
+}
+
+/// Как [`role_of_with_hint`], но знает и типы машин из их `info.json`: если все
+/// «машины» архива — предметы (`Prop`: манекен, конусы, рампы), это дополнение.
+pub fn role_of_full(
+    content: &[String],
+    hint: Option<&str>,
+    vehicle_types: &[String],
+) -> Option<Role> {
     if content.is_empty() {
         return None;
     }
     let keys: HashSet<String> = content.iter().map(|key| key.to_lowercase()).collect();
-    if keys.iter().any(|key| key.starts_with("gameplay/")) || hint.is_some_and(is_humanoid_hint) {
+    let only_props = !vehicle_types.is_empty()
+        && vehicle_types
+            .iter()
+            .all(|kind| kind.trim().eq_ignore_ascii_case("prop"));
+    if keys.iter().any(|key| key.starts_with("gameplay/"))
+        || hint.is_some_and(is_humanoid_hint)
+        || only_props
+    {
         return Some(Role::Addon);
     }
     let identity = crate::incoming::identity_keys(&keys);
@@ -436,6 +453,31 @@ mod tests {
             ),
             Some(Role::Addon)
         );
+    }
+
+    #[test]
+    fn props_by_their_info_type_are_addons() {
+        // Dummy v0.20.2 без mod_info: в vehicles/dummy/info.json «"Type": "Prop"».
+        let dummy = keys(&["vehicles/dummy"]);
+        assert_eq!(
+            role_of_full(&dummy, None, &["Prop".to_string()]),
+            Some(Role::Addon)
+        );
+        // Машина с прицепом-предметом — всё ещё машина.
+        assert_eq!(
+            role_of_full(
+                &keys(&["vehicles/truck", "vehicles/cones"]),
+                None,
+                &["Truck".to_string(), "Prop".to_string()]
+            ),
+            Some(Role::Vehicle)
+        );
+        assert_eq!(
+            role_of_full(&dummy, None, &[]),
+            Some(Role::Vehicle),
+            "тип не известен — как раньше"
+        );
+        assert_eq!(role_of_full(&[], None, &["Prop".to_string()]), None);
     }
 
     #[test]

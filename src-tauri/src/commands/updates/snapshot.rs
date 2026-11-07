@@ -15,6 +15,7 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         .collect();
     let contents = state.previews.contents_shared();
     let infos = state.previews.mod_infos_shared();
+    let vehicle_types = state.previews.vehicle_types_shared();
     let role_of = |mod_id: &str| -> Option<String> {
         let key = keys.get(mod_id)?;
         let empty: &[String] = &[];
@@ -22,7 +23,9 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         let hint = infos
             .get(key)
             .and_then(crate::commands::library::mod_info_hint);
-        bmm_packs::duplicates::role_of_with_hint(content, hint).map(|role| role.code().to_string())
+        let types = crate::commands::library::types_from_cache(Some(key), &vehicle_types);
+        bmm_packs::duplicates::role_of_full(content, hint, &types)
+            .map(|role| role.code().to_string())
     };
     let name_of = |mod_id: &str| -> String {
         keys.get(mod_id)

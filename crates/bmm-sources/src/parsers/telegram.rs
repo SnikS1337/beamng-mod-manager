@@ -299,9 +299,12 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
     let mut open: Option<Release> = None;
     let mut orphan: Option<i64> = None;
     let mut seen_text = false;
-    let close = |open: &mut Option<Release>, found: &mut Vec<Release>| {
+    // Открытый пост — список модов («Предстоящие моды:», «Вышли от нас: 1) … 2) …»):
+    // без архива это новость, а не выпуск.
+    let mut open_news = false;
+    let close = |open: &mut Option<Release>, found: &mut Vec<Release>, news: bool| {
         if let Some(release) = open.take()
-            && (!release.files.is_empty() || (loose && release.photo.is_some()))
+            && (!release.files.is_empty() || (loose && release.photo.is_some() && !news))
         {
             found.push(release);
         }
@@ -311,7 +314,8 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
         match (title, message.files.is_empty()) {
             // Пост с текстом без архива: описание выпуска (архив следом) или новость.
             (Some(title), true) => {
-                close(&mut open, &mut found);
+                close(&mut open, &mut found, open_news);
+                open_news = message.text.as_deref().is_some_and(is_list_post);
                 seen_text = true;
                 open = Some(Release {
                     post: message.id,
@@ -323,7 +327,7 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
             }
             // Архив с подписью — выпуск сам по себе.
             (Some(title), false) => {
-                close(&mut open, &mut found);
+                close(&mut open, &mut found, open_news);
                 seen_text = true;
                 found.push(Release {
                     post: message.id,
@@ -355,7 +359,7 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
                     // и это выпуск — с названием из имени файла.
                     orphan = Some(message.id);
                 } else {
-                    close(&mut open, &mut found);
+                    close(&mut open, &mut found, open_news);
                     if let Some(title) = message
                         .files
                         .first()
@@ -375,7 +379,7 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
             (None, true) => {}
         }
     }
-    close(&mut open, &mut found);
+    close(&mut open, &mut found, open_news);
     (found, orphan)
 }
 
@@ -400,11 +404,36 @@ pub fn next_before(page: &Page, orphan: Option<i64>, current: Option<i64>) -> Op
     }
 }
 
-/// Название выпуска — первая строка поста без значков и хэштегов.
+/// Пост-список модов, а не описание одного: первая строка кончается двоеточием
+/// («Предстоящие моды:») или в тексте нумерованный список («1) …», «2. …»).
+fn is_list_post(text: &str) -> bool {
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+    let numbered = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| {
+            let digits = line.chars().take_while(char::is_ascii_digit).count();
+            (1..=2).contains(&digits)
+                && line[digits..].starts_with(['.', ')'])
+                && line[digits + 1..].starts_with(' ')
+        })
+        .count();
+    let colon = first
+        .trim_end_matches(|ch: char| !ch.is_alphanumeric() && ch != ':')
+        .ends_with(':');
+    colon || numbered >= 2
+}
+
+/// Название выпуска — первая строка поста без значков и хэштегов. Строка тегов
+/// («#Rolls Royce») — не название: без этой проверки от неё оставалось «Royce».
 pub fn title_of(text: &str) -> Option<String> {
     let line = text.lines().map(str::trim).find(|line| {
         let cleaned = clean_title(line);
-        !cleaned.is_empty() && !cleaned.starts_with('#')
+        !cleaned.is_empty() && !cleaned.starts_with('#') && !line.starts_with('#')
     })?;
     let cleaned = clean_title(line);
     (cleaned.chars().any(char::is_alphanumeric)).then(|| shorten(&cleaned))
@@ -769,6 +798,71 @@ mod tests {
         let (strict, orphan) = releases(&messages);
         assert!(strict.is_empty());
         assert_eq!(orphan, Some(17000));
+    }
+
+    #[test]
+    fn tag_line_is_not_a_title() {
+        assert_eq!(title_of("#Rolls Royce"), None);
+        assert_eq!(
+            title_of("#Rolls Royce\nRolls-Royce Phantom (1.0)").as_deref(),
+            Some("Rolls-Royce Phantom (1.0)")
+        );
+        // Подпись архива — только теги: архив идёт к описанию перед ним, а не сам по себе.
+        let mut caption = file_post(
+            4071,
+            "2026-01-01T10:00:01+00:00",
+            "rolls royce phantom.zip",
+            None,
+        );
+        caption.text = Some("#Rolls Royce".to_string());
+        let messages = vec![
+            text_post(
+                4065,
+                "2026-01-01T10:00:00+00:00",
+                "😱 Официальный релиз Rolls-Royce Phantom (1.0) 😱",
+            ),
+            caption,
+        ];
+        let found = search_releases(&messages);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].title,
+            "Официальный релиз Rolls-Royce Phantom (1.0)"
+        );
+        assert_eq!(found[0].files.len(), 1);
+    }
+
+    #[test]
+    fn lists_of_mods_are_news_not_releases() {
+        let with_photo = |id: i64, text: &str| {
+            let mut post = text_post(id, "2026-01-01T10:00:00+00:00", text);
+            post.photo = Some(Url::parse("https://cdn4.telesco.pe/file/x.jpg").unwrap());
+            post
+        };
+        let messages = vec![
+            with_photo(
+                4016,
+                "Предстоящие моды:\n\n1.  Skoda Kodiaq\n2.  Rolls-Royce Ghost",
+            ),
+            with_photo(
+                11434,
+                "Модификации, которые вышли от нас:🚘\n1) Rolls-Royce Phantom\n2) LiXiang Li7",
+            ),
+            with_photo(2788, "Rolls Royce Wraith⚡️\n\n#RollsRoyce"),
+            with_photo(
+                4436,
+                "Rolls-Royce Wraith (V1.1)\n8 конфигураций\nХорошо проработанный кузов",
+            ),
+        ];
+        let titles: Vec<String> = search_releases(&messages)
+            .into_iter()
+            .map(|release| release.title)
+            .collect();
+        assert_eq!(titles, ["Rolls Royce Wraith", "Rolls-Royce Wraith (V1.1)"]);
+        assert!(!is_list_post(
+            "Audi A4/S4 B8 v1.9\n- 20 конфигураций.\n- PBR материалы;"
+        ));
+        assert!(!is_list_post("BMW 2.0 v1.2\n1.5 литра"));
     }
 
     #[test]
