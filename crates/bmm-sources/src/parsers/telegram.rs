@@ -110,6 +110,15 @@ static LOOSE_VERSION: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+/// Метка канала в имени архива: «_tg_m0dsbeamng», « & tg_@m0dsbeamng», «g_m0dsbeamng».
+static CHANNEL_TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(?:^|[\s_&+-]+)(?:t?g[\s_]*)?@?m0dsbeamng").unwrap());
+/// Время в тексте («В 18:00 будет…») — анонс, а не название.
+static CLOCK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|[^\d.])\d{1,2}:\d{2}(?:$|[^\d])").unwrap());
+/// Имя архива в тексте («RusPack (4).zip - RusPack (1).zip»).
+static ARCHIVE_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\.(?:zip|rar|7z)(?:$|[^\p{L}\d])").unwrap());
 static BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<br\s*/?>").unwrap());
 static INLINE_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<[^>]+>").unwrap());
 /// Слова, которые пишут рядом с версией, а не в названии мода.
@@ -299,23 +308,34 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
     let mut open: Option<Release> = None;
     let mut orphan: Option<i64> = None;
     let mut seen_text = false;
-    // Открытый пост — список модов («Предстоящие моды:», «Вышли от нас: 1) … 2) …»):
-    // без архива это новость, а не выпуск.
-    let mut open_news = false;
-    let close = |open: &mut Option<Release>, found: &mut Vec<Release>, news: bool| {
+    // Открытый пост без архива в поиске — выпуск (см. [`described_release`]).
+    let mut open_release = false;
+    // Первая строка открытого поста — не название («Дорогие друзья!»): с архивом
+    // название берём из имени файла.
+    let mut open_weak = false;
+    let close = |open: &mut Option<Release>, found: &mut Vec<Release>, release_alone: bool| {
         if let Some(release) = open.take()
-            && (!release.files.is_empty() || (loose && release.photo.is_some() && !news))
+            && (!release.files.is_empty() || (loose && release.photo.is_some() && release_alone))
         {
             found.push(release);
         }
     };
     for message in messages {
-        let title = message.text.as_deref().and_then(title_of);
+        let headline = message.text.as_deref().and_then(headline_of);
+        let weak = headline
+            .as_ref()
+            .is_some_and(|(line, title)| weak_title(line, title));
+        let title = headline.map(|(_, title)| title);
         match (title, message.files.is_empty()) {
             // Пост с текстом без архива: описание выпуска (архив следом) или новость.
             (Some(title), true) => {
-                close(&mut open, &mut found, open_news);
-                open_news = message.text.as_deref().is_some_and(is_list_post);
+                close(&mut open, &mut found, open_release);
+                open_release = !weak
+                    && message
+                        .text
+                        .as_deref()
+                        .is_some_and(|text| described_release(text, &title));
+                open_weak = weak;
                 seen_text = true;
                 open = Some(Release {
                     post: message.id,
@@ -327,8 +347,17 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
             }
             // Архив с подписью — выпуск сам по себе.
             (Some(title), false) => {
-                close(&mut open, &mut found, open_news);
+                close(&mut open, &mut found, open_release);
                 seen_text = true;
+                let title = if weak {
+                    message
+                        .files
+                        .first()
+                        .and_then(|file| title_from_file(&file.name))
+                        .unwrap_or(title)
+                } else {
+                    title
+                };
                 found.push(Release {
                     post: message.id,
                     title,
@@ -350,6 +379,15 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
                 });
                 if fits {
                     if let Some(release) = open.as_mut() {
+                        if open_weak
+                            && release.files.is_empty()
+                            && let Some(title) = message
+                                .files
+                                .first()
+                                .and_then(|file| title_from_file(&file.name))
+                        {
+                            release.title = title;
+                        }
                         release.files.extend(message.files.iter().cloned());
                     }
                 } else if !loose && !seen_text && found.is_empty() && open.is_none() {
@@ -359,7 +397,7 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
                     // и это выпуск — с названием из имени файла.
                     orphan = Some(message.id);
                 } else {
-                    close(&mut open, &mut found, open_news);
+                    close(&mut open, &mut found, open_release);
                     if let Some(title) = message
                         .files
                         .first()
@@ -379,7 +417,7 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
             (None, true) => {}
         }
     }
-    close(&mut open, &mut found, open_news);
+    close(&mut open, &mut found, open_release);
     (found, orphan)
 }
 
@@ -431,12 +469,52 @@ fn is_list_post(text: &str) -> bool {
 /// Название выпуска — первая строка поста без значков и хэштегов. Строка тегов
 /// («#Rolls Royce») — не название: без этой проверки от неё оставалось «Royce».
 pub fn title_of(text: &str) -> Option<String> {
+    headline_of(text).map(|(_, title)| title)
+}
+
+/// Строка поста, из которой взято название, и само название.
+fn headline_of(text: &str) -> Option<(&str, String)> {
     let line = text.lines().map(str::trim).find(|line| {
         let cleaned = clean_title(line);
         !cleaned.is_empty() && !cleaned.starts_with('#') && !line.starts_with('#')
     })?;
     let cleaned = clean_title(line);
-    (cleaned.chars().any(char::is_alphanumeric)).then(|| shorten(&cleaned))
+    (cleaned.chars().any(char::is_alphanumeric)).then(|| (line, shorten(&cleaned)))
+}
+
+/// Первая строка — не название мода: обращение или вопрос («Дорогие друзья!»,
+/// «…кто ждёт эту машину?»), анонс со временем («В 18:00 будет объявлен сбор…»),
+/// список архивов («RusPack (4).zip - RusPack (1).zip»). С версией — название:
+/// «Обновление! BMW M5 v2.0».
+fn weak_title(line: &str, title: &str) -> bool {
+    ARCHIVE_NAME.is_match(line)
+        || (!has_version(title) && (line.contains(['?', '!']) || CLOCK.is_match(line)))
+}
+
+/// Пост с картинкой без архива в выдаче поиска — выпуск, а не анонс или новость:
+/// в названии версия или ниже описание пунктами («- 20 конфигураций», «✅ Добавлено…»).
+/// «Lada Vesta💞 #Lada #Vesta» и «Audi A4 B9⚡️ #Audi» — картинки-анонсы. Список модов
+/// («Предстоящие моды:», «Вышли от нас: 1) … 2) …») — новость, но пак с версией и
+/// списком машин («Russian Traffic Pack (V1.1)\n1. BMW…\n2. …») — выпуск.
+fn described_release(text: &str, title: &str) -> bool {
+    if has_version(title) {
+        return true;
+    }
+    if is_list_post(text) {
+        return false;
+    }
+    let points = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with(['-', '–', '—', '•', '*', '+', '✅', '✔', '▪', '🔹']))
+        .count();
+    points >= 2
+}
+
+/// В названии есть версия мода.
+fn has_version(title: &str) -> bool {
+    let (name, _) = split_author(title);
+    TitleParser::parse(&name).mod_version.is_some() || LOOSE_VERSION.is_match(&name)
 }
 
 fn clean_title(line: &str) -> String {
@@ -477,7 +555,15 @@ fn shorten(title: &str) -> String {
 }
 
 fn title_from_file(file_name: &str) -> Option<String> {
-    let guessed = from_file_name(file_name);
+    let stripped = CHANNEL_TAG.replace_all(file_name, "");
+    // «tg_m0dsbeamng.zip» — одна метка, без имени.
+    let stem = stripped
+        .rsplit_once('.')
+        .map_or(&*stripped, |(stem, _)| stem);
+    if !stem.chars().any(char::is_alphanumeric) {
+        return None;
+    }
+    let guessed = from_file_name(&stripped);
     let name = guessed.name.trim();
     if name.is_empty() {
         return None;
@@ -757,7 +843,21 @@ mod tests {
             .find(|listing| listing.source_id == identity("Audi A4/S4 B6 (V1.0)"))
             .unwrap();
         assert_eq!(b6.mod_version.as_deref(), Some("1.0"), "«(V1.0)»");
-        assert!(listings.len() >= 6, "{}", listings.len());
+        let titles: Vec<&str> = listings
+            .iter()
+            .map(|listing| listing.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Audi A4/S4 B8 v1.9",
+                "Agent's Simplified Realistic Traffic Mod v1.2",
+                "Audi A4 B9 (Обновленный)",
+                "Audi A4 B5 (V1.0)",
+                "Audi A4/S4 B6 (V1.0)",
+            ],
+            "картинки-анонсы «Audi A4 B9⚡️ #Audi» без версии и описания — не выпуски"
+        );
         // Старый пост «- 500 rub» — тот же мод: в выдаче одна запись, самая новая.
         assert!(
             !listings
@@ -858,11 +958,129 @@ mod tests {
             .into_iter()
             .map(|release| release.title)
             .collect();
-        assert_eq!(titles, ["Rolls Royce Wraith", "Rolls-Royce Wraith (V1.1)"]);
+        // «Rolls Royce Wraith⚡️ #RollsRoyce» — картинка-анонс: ни версии, ни описания.
+        assert_eq!(titles, ["Rolls-Royce Wraith (V1.1)"]);
         assert!(!is_list_post(
             "Audi A4/S4 B8 v1.9\n- 20 конфигураций.\n- PBR материалы;"
         ));
         assert!(!is_list_post("BMW 2.0 v1.2\n1.5 литра"));
+    }
+
+    fn photo_post(id: i64, time: &str, text: &str) -> Message {
+        let mut post = text_post(id, time, text);
+        post.photo = Some(Url::parse("https://cdn4.telesco.pe/file/x.jpg").unwrap());
+        post
+    }
+
+    #[test]
+    fn chatter_and_announcements_are_not_releases() {
+        // Поиск «Lada» по каналу: обращения, вопросы и анонсы шли в выдачу модами.
+        let messages = vec![
+            photo_post(
+                3320,
+                "2024-08-30T20:55:00+00:00",
+                "Долгожданный релиз🥹\n\nРеворк на lada vesta от автора",
+            ),
+            photo_post(
+                3351,
+                "2024-09-08T09:46:00+00:00",
+                "Lada Vesta💞\n\n#Lada #Vesta",
+            ),
+            photo_post(
+                6049,
+                "2025-04-20T19:33:00+00:00",
+                "Lada Vesta (V3.0)\n✅Добавлено 12 новых конфигураций.\n✅Добавлены скины.",
+            ),
+            photo_post(
+                6095,
+                "2025-04-22T20:29:00+00:00",
+                "Lada G90 от автора , есть тут такие, кто ждет эту машину? 🌚",
+            ),
+            photo_post(
+                8156,
+                "2025-07-29T07:20:00+00:00",
+                "‼️В 18:00 будет объявлен сбор на Lada Vesta NG‼️",
+            ),
+            photo_post(
+                8360,
+                "2025-08-04T15:23:00+00:00",
+                "Lada Granta (V1.01 Modified)\nПеределка Гранты.\n- 26 конфигураций (+1);\n- Новый конфиг такси;",
+            ),
+        ];
+        let titles: Vec<String> = search_releases(&messages)
+            .into_iter()
+            .map(|release| release.title)
+            .collect();
+        assert_eq!(
+            titles,
+            ["Lada Vesta (V3.0)", "Lada Granta (V1.01 Modified)"]
+        );
+        let pack = photo_post(
+            17115,
+            "2026-08-31T11:31:00+00:00",
+            "Russian Traffic Pack (V1.1) by author\nВ паке 130 конфигураций.\nСписок автомобилей:\n1. BMW 5-series\n2. Lada Vesta",
+        );
+        assert_eq!(
+            search_releases(&[pack]).len(),
+            1,
+            "пак со списком машин — выпуск"
+        );
+        // Восклицание с версией — название: «Обновление! BMW M5 v2.0».
+        let update = photo_post(1, "2026-01-01T10:00:00+00:00", "Обновление! BMW M5 v2.0");
+        assert_eq!(search_releases(&[update]).len(), 1);
+        assert!(!weak_title("BMW 2.0 v1.2", "BMW 2.0 v1.2"));
+        assert!(weak_title("Выйдет в 9:30", "Выйдет в 9:30"));
+    }
+
+    #[test]
+    fn greeting_with_an_archive_takes_the_name_of_the_file() {
+        let messages = vec![
+            photo_post(
+                8206,
+                "2025-07-29T15:23:00+00:00",
+                "‼️Дорогие друзья! ‼️\n\nРады представить Lada Vesta NG\nЧто есть в моде?",
+            ),
+            file_post(
+                8207,
+                "2025-07-29T15:23:01+00:00",
+                "Lada Vesta NG tg_@m0dsbeamng.zip",
+                Some(554_000_000),
+            ),
+        ];
+        for found in [search_releases(&messages), releases(&messages).0] {
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].title, "Lada Vesta NG");
+            assert_eq!(found[0].post, 8206);
+            assert_eq!(found[0].files.len(), 1);
+        }
+        // Обращение без архива — не выпуск.
+        assert!(search_releases(&messages[..1]).is_empty());
+        // Подпись архива — список архивов: название тоже из имени файла.
+        let mut pack = file_post(2691, "2024-07-07T14:03:00+00:00", "RusPack (4).zip", None);
+        pack.text =
+            Some("RusPack (4).zip - RusPack (1).zip\nRusPack (2).zip - RusPack (2).zip".into());
+        let found = search_releases(&[pack]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].title, "RusPack");
+    }
+
+    #[test]
+    fn channel_tag_is_cut_from_file_names() {
+        for (file, title) in [
+            ("Lada_2110.11.12 & tg_@m0dsbeamng.zip", "Lada 2110.11.12"),
+            ("LADA NIVA g_m0dsbeamng.zip", "LADA NIVA"),
+            ("Lada_2170_Sport tg_m0dsbeamng.zip", "Lada 2170 Sport"),
+            ("Audi_A4_S4_B8_v1.4 g_m0dsbeamng.zip", "Audi A4 S4 B8 v1.4"),
+            (
+                "hawaii_haleakala_maui_v1.2.1_tg_m0dsbeamng.zip",
+                "hawaii haleakala maui v1.2.1",
+            ),
+            ("racing_m0dsbeamng.zip", "racing"),
+            ("Mustang_tg_m0dsbeamng (1).zip", "Mustang"),
+        ] {
+            assert_eq!(title_from_file(file).as_deref(), Some(title), "{file}");
+        }
+        assert_eq!(title_from_file("tg_m0dsbeamng.zip"), None);
     }
 
     #[test]
