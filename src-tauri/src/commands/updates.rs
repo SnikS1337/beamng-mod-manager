@@ -439,26 +439,44 @@ pub async fn updates_check_mod(
 
 fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, AppError> {
     let store = state.library.as_ref();
-    let binding = store
+    let settings = state.settings.load().settings;
+    let pages: Vec<ModBinding> = store
         .bindings()
         .into_iter()
-        .find(|binding| binding.mod_id == mod_id && binding.confirmed)
-        .ok_or_else(|| AppError::new("updates", "У мода нет страницы для проверки обновлений."))?;
-    let settings = state.settings.load().settings;
-    if settings
-        .disabled_sources
-        .iter()
-        .any(|source| source.eq_ignore_ascii_case(&binding.source))
-    {
+        .filter(|binding| binding.mod_id == mod_id && binding.confirmed)
+        .collect();
+    if pages.is_empty() {
         return Err(AppError::new(
             "updates",
-            "Сайт этого мода выключен в настройках.",
+            "У мода нет страницы для проверки обновлений.",
         ));
     }
+    let enabled: Vec<ModBinding> = pages
+        .into_iter()
+        .filter(|binding| {
+            !settings
+                .disabled_sources
+                .iter()
+                .any(|source| source.eq_ignore_ascii_case(&binding.source))
+        })
+        .collect();
     let runtime = state
         .update
         .as_ref()
         .ok_or_else(|| AppError::new("updates", "Проверка обновлений недоступна."))?;
+    // Страниц несколько — сначала та, чей сайт открывается.
+    let last = runtime
+        .coordinator
+        .last_report()
+        .map(|report| report.sources)
+        .unwrap_or_default();
+    let down = snapshot::down_now(state, &last);
+    let binding = enabled
+        .iter()
+        .find(|binding| !down.contains_key(&binding.source))
+        .or_else(|| enabled.first())
+        .cloned()
+        .ok_or_else(|| AppError::new("updates", "Сайт этого мода выключен в настройках."))?;
     // Занимаем координатор до записи результата: полная проверка, начатая в это
     // время, подождёт, а не перепишет состояние параллельно.
     let Some(_hold) = runtime.coordinator.hold() else {
@@ -467,6 +485,18 @@ fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, 
             "Проверка обновлений уже идёт. Дождитесь её окончания.",
         ));
     };
+    check_binding(state, runtime, &binding)?;
+    Ok(build_snapshot(state))
+}
+
+/// Открывает страницу мода и записывает, что на ней. Координатор должен быть занят.
+fn check_binding(
+    state: &AppState,
+    runtime: &crate::state::UpdateRuntime,
+    binding: &ModBinding,
+) -> Result<(), AppError> {
+    let store = state.library.as_ref();
+    let mod_id = binding.mod_id.as_str();
     let source = runtime
         .sources
         .iter()
@@ -498,6 +528,75 @@ fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, 
         file.offer = bmm_sources::files::offer_url(&listing).map(|url| url.to_string());
         file.seen_at = Some(Utc::now().fixed_offset());
         UpdateCheckService::apply_file(store, mod_id, &binding.source, file);
+    }
+    Ok(())
+}
+
+/// «Поискать на других сайтах»: сайт обновления не открывается, а запасного нет.
+/// Ищем мод на сайтах, которые открываются, и сразу смотрим найденные страницы.
+#[tauri::command]
+pub async fn updates_find_fallback(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    mod_id: String,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || find_fallback_once(&app, &state, &mod_id))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))?
+}
+
+fn find_fallback_once(
+    app: &AppHandle,
+    state: &AppState,
+    mod_id: &str,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    let runtime = state
+        .update
+        .as_ref()
+        .ok_or_else(|| AppError::new("updates", "Проверка обновлений недоступна."))?;
+    let store = state.library.as_ref();
+    let finding = UpdateCheckService::finding_for(store, mod_id)
+        .ok_or_else(|| AppError::new("updates", "Обновления у этого мода уже нет."))?;
+    let last = runtime
+        .coordinator
+        .last_report()
+        .map(|report| report.sources)
+        .unwrap_or_default();
+    let mut down: Vec<String> = snapshot::down_now(state, &last).into_keys().collect();
+    if !down.contains(&finding.source) {
+        down.push(finding.source.clone());
+    }
+    let Some(_busy) = PageBusyGuard::acquire(runtime.page_busy.clone()) else {
+        return Err(AppError::new(
+            "pages",
+            "Сейчас идёт поиск страниц. Попробуйте, когда он закончится.",
+        ));
+    };
+    let known: Vec<String> = store
+        .bindings()
+        .into_iter()
+        .filter(|binding| binding.mod_id == mod_id)
+        .map(|binding| binding.source)
+        .collect();
+    let report = run_fallback_search(
+        Some(app),
+        state,
+        0,
+        &AtomicBool::new(false),
+        &down,
+        Some(mod_id),
+    );
+    if report.followed > 0
+        && let Some(_hold) = runtime.coordinator.hold()
+    {
+        let _batch = state.library.batch();
+        for binding in store.bindings().into_iter().filter(|binding| {
+            binding.mod_id == mod_id && binding.confirmed && !known.contains(&binding.source)
+        }) {
+            // Не открылась и эта — обновление на ней покажет следующая проверка.
+            let _ = check_binding(state, runtime, &binding);
+        }
     }
     Ok(build_snapshot(state))
 }
@@ -1280,6 +1379,73 @@ mod tests {
             refollow(&state, mod_id, "modsgaming").is_err(),
             "вернуть второй раз нечего"
         );
+    }
+
+    #[test]
+    fn update_on_a_site_that_does_not_open_offers_only_sites_that_do() {
+        let (_temp, state) = state();
+        let mut blocked = site_report("modland", 0, &[]);
+        blocked.status = bmm_sources::sources::SourceStatus::Unavailable;
+        blocked.note = Some("похоже на блокировку".to_string());
+        blocked.reach = Some(bmm_sources::reach::Reach::Reset);
+        let mut lying = site_report("modhub", 0, &[]);
+        lying.status = bmm_sources::sources::SourceStatus::Unavailable;
+        lying.note = None;
+        let down = down_now(&state, &[blocked, lying, site_report("stmods", 2, &[])]);
+        assert_eq!(down.len(), 2);
+        assert_eq!(down["modland"].note, "похоже на блокировку");
+        assert_eq!(down["modland"].reach.as_deref(), Some("reset"));
+        assert_eq!(down["modhub"].note, "сайт не открылся при проверке");
+        assert_eq!(down["modhub"].reach, None);
+
+        let finding = UpdateFinding {
+            mod_id: "car".to_string(),
+            mod_name: "Car".to_string(),
+            source: "modland".to_string(),
+            status: UpdateStatus::Likely,
+            installed_version: Some("1.0".to_string()),
+            latest_version: Some("1.3".to_string()),
+            url: url::Url::parse("https://modland.net/car").unwrap(),
+            dismiss_key: "1.3".to_string(),
+            is_dismissed: false,
+            author_version: None,
+            file_verdict: None,
+            file_name: None,
+            file_version: None,
+            file_gone: false,
+            alternatives: ["modhub", "stmods"]
+                .into_iter()
+                .map(|source| bmm_checks::service::UpdateAlternative {
+                    source: source.to_string(),
+                    url: url::Url::parse(&format!("https://{source}.test/car")).unwrap(),
+                    latest_version: Some("1.3".to_string()),
+                })
+                .collect(),
+        };
+        let mut dto = finding_dto(&|id: &str| id.to_string(), finding);
+        assert_eq!(dto.alternatives.len(), 2);
+        mark_down(&mut dto, &down, &[]);
+        assert_eq!(
+            dto.site_down.as_ref().map(|down| down.note.as_str()),
+            Some("похоже на блокировку")
+        );
+        let offered: Vec<&str> = dto
+            .alternatives
+            .iter()
+            .map(|other| other.source.as_str())
+            .collect();
+        assert_eq!(offered, ["stmods"], "ModHub тоже не открывается");
+        // Сайт открывается — ничего не меняется.
+        let mut fine = dto.clone();
+        fine.source = "stmods".to_string();
+        fine.site_down = None;
+        mark_down(&mut fine, &HashMap::new(), &[]);
+        assert!(fine.site_down.is_none());
+        assert_eq!(fine.alternatives.len(), 1);
+        // Сайт выключен в настройках — с него не предлагаем.
+        let mut off = fine.clone();
+        mark_down(&mut off, &HashMap::new(), &["STMods".to_string()]);
+        assert!(off.alternatives.is_empty());
     }
 
     #[test]

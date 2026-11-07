@@ -44,9 +44,18 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
             _ => None,
         }
     };
+    let last_report_sources = state
+        .update
+        .as_ref()
+        .and_then(|runtime| runtime.coordinator.last_report())
+        .map(|report| report.sources)
+        .unwrap_or_default();
+    let down = down_now(state, &last_report_sources);
+    let off_sites = state.settings.load().settings.disabled_sources;
     let finding = |finding: UpdateFinding| -> UpdateFindingDto {
         let check = store.get_check(&finding.mod_id, &finding.source);
         let mut dto = finding_dto(&name_of, finding);
+        mark_down(&mut dto, &down, &off_sites);
         dto.role = role_of(&dto.mod_id);
         dto.preview_url = preview_for_role(dto.role.as_deref(), preview_of(&dto.mod_id));
         dto.installed_size = store.get_mod(&dto.mod_id).and_then(|item| item.size_bytes);
@@ -65,12 +74,6 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
         .max()
         .map(|at| at.to_rfc3339());
     let statuses = store.source_statuses();
-    let last_report_sources = state
-        .update
-        .as_ref()
-        .and_then(|runtime| runtime.coordinator.last_report())
-        .map(|report| report.sources)
-        .unwrap_or_default();
     let disabled = state.settings.load().settings.disabled_sources;
     let check_disabled = state.settings.load().settings.check_disabled_mods;
     let tracked: Vec<ModBinding> = store
@@ -258,7 +261,76 @@ pub(crate) fn finding_dto(
         file_name: finding.file_name,
         file_version: finding.file_version,
         file_gone: finding.file_gone,
+        site_down: None,
+        alternatives: finding
+            .alternatives
+            .into_iter()
+            .map(|other| UpdateAlternativeDto {
+                source: other.source,
+                url: other.url.to_string(),
+                latest_version: other.latest_version,
+            })
+            .collect(),
     }
+}
+
+/// Сайты, которые сейчас не открываются: сетевой слой держит их на паузе после
+/// сбоев или последняя проверка их не открыла. Подпись — самая свежая.
+pub(crate) fn down_now(
+    state: &AppState,
+    last_report: &[SourceRunReport],
+) -> HashMap<String, SiteDownDto> {
+    let mut down: HashMap<String, SiteDownDto> = HashMap::new();
+    for report in last_report {
+        if report.status == bmm_sources::sources::SourceStatus::Unavailable {
+            down.insert(
+                report.source.clone(),
+                SiteDownDto {
+                    note: report
+                        .note
+                        .clone()
+                        .unwrap_or_else(|| "сайт не открылся при проверке".to_string()),
+                    reach: report.reach.map(|reach| reach.code().to_string()),
+                },
+            );
+        }
+    }
+    if let Some(search) = &state.search {
+        for source in search.sources.iter() {
+            let id = source.id();
+            if search.fetcher.status_of(id) == bmm_sources::sources::SourceStatus::Unavailable
+                && let Some(note) = search.fetcher.message_of(id)
+            {
+                down.insert(
+                    id.to_string(),
+                    SiteDownDto {
+                        note,
+                        reach: search
+                            .fetcher
+                            .reach_of(id)
+                            .map(|reach| reach.code().to_string()),
+                    },
+                );
+            }
+        }
+    }
+    down
+}
+
+/// Сведения о недоступности для строки обновления: запасные сайты, которые тоже не
+/// открываются или выключены в настройках, не предлагаем.
+pub(crate) fn mark_down(
+    dto: &mut UpdateFindingDto,
+    down: &HashMap<String, SiteDownDto>,
+    disabled: &[String],
+) {
+    dto.site_down = down.get(&dto.source).cloned();
+    dto.alternatives.retain(|other| {
+        !down.contains_key(&other.source)
+            && !disabled
+                .iter()
+                .any(|site| site.eq_ignore_ascii_case(&other.source))
+    });
 }
 
 /// У дополнений картинка из архива — случайная текстура, поэтому она не нужна

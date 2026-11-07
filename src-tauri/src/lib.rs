@@ -372,6 +372,7 @@ pub fn run() {
             commands::updates::updates_start,
             commands::updates::updates_retry_source,
             commands::updates::updates_check_mod,
+            commands::updates::updates_find_fallback,
             commands::updates::updates_decline_mod,
             commands::updates::updates_undo_decline,
             commands::updates::updates_resume_mod,

@@ -48,6 +48,55 @@ pub struct UpdateFinding {
     pub file_version: Option<String>,
     /// Файла по ссылке «Скачать» больше нет: файлообменник ответил «не найдено».
     pub file_gone: bool,
+    /// Тот же мод на других сайтах, где тоже есть обновление: откуда скачать, если
+    /// этот сайт не открывается. Сначала более новые версии.
+    pub alternatives: Vec<UpdateAlternative>,
+}
+
+/// Другой сайт, где лежит то же обновление мода.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateAlternative {
+    pub source: String,
+    pub url: Url,
+    pub latest_version: Option<String>,
+}
+
+/// Другие сайты с тем же обновлением: не скрытые, с файлом на месте. Сначала новее,
+/// при равной версии — страница автора.
+fn alternatives_of(chosen: &UpdateFinding, others: Vec<UpdateFinding>) -> Vec<UpdateAlternative> {
+    let mut found: Vec<UpdateFinding> = others
+        .into_iter()
+        .filter(|other| {
+            other.source != chosen.source
+                && !other.is_dismissed
+                && !other.file_gone
+                && other.status != UpdateStatus::None
+        })
+        .collect();
+    // Ключ, а не попарное сравнение: у версий без номера порядок не полный.
+    let version = |finding: &UpdateFinding| {
+        VersionComparer::try_parse(finding.latest_version.as_deref()).map(|mut parts| {
+            while parts.last() == Some(&0) {
+                parts.pop();
+            }
+            parts
+        })
+    };
+    found.sort_by_cached_key(|finding| {
+        (
+            std::cmp::Reverse(version(finding)),
+            finding.source != AUTHOR_SOURCE,
+            finding.source.clone(),
+        )
+    });
+    found
+        .into_iter()
+        .map(|other| UpdateAlternative {
+            source: other.source,
+            url: other.url,
+            latest_version: other.latest_version,
+        })
+        .collect()
 }
 
 /// Сайт, на котором мод выкладывает сам автор.
@@ -319,7 +368,7 @@ impl UpdateCheckService {
                         VersionOrder::Same | VersionOrder::Older
                     )
                 });
-            let mut best: Option<UpdateFinding> = None;
+            let mut candidates: Vec<UpdateFinding> = Vec::new();
             for binding in by_mod.get(&installed.id).into_iter().flatten() {
                 let Some(check) = store.get_check(&installed.id, &binding.source) else {
                     continue;
@@ -405,28 +454,38 @@ impl UpdateCheckService {
                         .as_ref()
                         .and_then(|verdict| verdict.file_version().map(str::to_string)),
                     file_gone,
+                    alternatives: Vec::new(),
                 };
-                // Среди не скрытых берём более уверенное; скрытое не вытесняет нескрытое.
-                let replace = match &best {
+                candidates.push(finding);
+            }
+            // Среди не скрытых берём более уверенное; скрытое не вытесняет нескрытое.
+            let mut best: Option<usize> = None;
+            for (index, finding) in candidates.iter().enumerate() {
+                let replace = match best.map(|best| &candidates[best]) {
                     None => true,
                     Some(best) => {
                         (best.is_dismissed && !finding.is_dismissed)
                             || (best.is_dismissed == finding.is_dismissed
                                 && (status_rank(finding.status) > status_rank(best.status)
-                                    // При равной уверенности — страница автора: качать
-                                    // лучше оттуда, а не с перезаливщика.
+                                    // При равной уверенности — сайт, где файл на месте;
+                                    // потом страница автора: качать лучше оттуда, а
+                                    // не с перезаливщика.
                                     || (status_rank(finding.status)
                                         == status_rank(best.status)
-                                        && finding.source == AUTHOR_SOURCE
-                                        && best.source != AUTHOR_SOURCE)))
+                                        && ((best.file_gone && !finding.file_gone)
+                                            || (best.file_gone == finding.file_gone
+                                                && finding.source == AUTHOR_SOURCE
+                                                && best.source != AUTHOR_SOURCE)))))
                     }
                 };
                 if replace {
-                    best = Some(finding);
+                    best = Some(index);
                 }
             }
             if let Some(best) = best {
-                result.push(best);
+                let mut chosen = candidates.swap_remove(best);
+                chosen.alternatives = alternatives_of(&chosen, candidates);
+                result.push(chosen);
             }
         }
         result
@@ -907,6 +966,127 @@ mod tests {
             last_game_version: None,
             last_title: None,
         });
+    }
+
+    #[test]
+    fn update_lists_other_sites_with_the_same_update() {
+        // Сайт обновления не открывается — качать можно с другого, где оно тоже есть.
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(InstalledMod {
+            id: "car".to_string(),
+            name: "Car".to_string(),
+            file_name: "car.zip".to_string(),
+            version: Some("1.0".to_string()),
+            size_bytes: Some(100),
+            installed_at_utc: now(),
+            enabled: true,
+        });
+        check(&store, "car", "stmods", "1.2", 120);
+        check(&store, "car", "modland", "1.3", 130);
+        check(&store, "car", "modsgaming", "1.2.0", 125);
+        check(&store, "car", "beamng", "1.2", 121);
+        check(&store, "car", "modhub", "1.0", 100);
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending.len(), 1, "один мод — одна строка");
+        let finding = &pending[0];
+        let shown: Vec<(&str, Option<&str>)> =
+            std::iter::once((finding.source.as_str(), finding.latest_version.as_deref()))
+                .chain(
+                    finding
+                        .alternatives
+                        .iter()
+                        .map(|other| (other.source.as_str(), other.latest_version.as_deref())),
+                )
+                .collect();
+        assert_eq!(
+            shown.len(),
+            4,
+            "ModHub без обновления — не запасной: {shown:?}"
+        );
+        assert!(!shown.iter().any(|(source, _)| *source == "modhub"));
+        let rest: Vec<&str> = finding
+            .alternatives
+            .iter()
+            .map(|other| other.source.as_str())
+            .collect();
+        assert!(
+            !rest.contains(&finding.source.as_str()),
+            "выбранный сайт не дублируется"
+        );
+        // Порядок запасных: новее — раньше, при равной версии — страница автора.
+        let versions: Vec<Option<&str>> = finding
+            .alternatives
+            .iter()
+            .map(|other| other.latest_version.as_deref())
+            .collect();
+        let mut sorted = versions.clone();
+        sorted.sort_by_key(|version| {
+            std::cmp::Reverse(VersionComparer::try_parse(*version).map(|mut parts| {
+                while parts.last() == Some(&0) {
+                    parts.pop();
+                }
+                parts
+            }))
+        });
+        assert_eq!(versions, sorted);
+        if finding.source != "beamng" {
+            let author = rest.iter().position(|source| *source == "beamng").unwrap();
+            let stmods = rest.iter().position(|source| *source == "stmods");
+            if let Some(stmods) = stmods {
+                assert!(author < stmods, "1.2 у автора раньше, чем 1.2 перезалива");
+            }
+        }
+        assert_eq!(
+            finding.alternatives[0].url.as_str(),
+            format!("https://{}.test/car", finding.alternatives[0].source)
+        );
+    }
+
+    #[test]
+    fn hidden_or_gone_updates_are_not_alternatives() {
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(InstalledMod {
+            id: "car".to_string(),
+            name: "Car".to_string(),
+            file_name: "car.zip".to_string(),
+            version: Some("1.0".to_string()),
+            size_bytes: Some(100),
+            installed_at_utc: now(),
+            enabled: true,
+        });
+        check(&store, "car", "stmods", "1.3", 130);
+        check(&store, "car", "modland", "1.3", 130);
+        let mut gone = store.get_check("car", "modland").unwrap();
+        gone.last_file = Some(FileSnapshot {
+            gone: true,
+            page_key: Some(file_check::page_key(Some("1.3"), Some(130))),
+            ..FileSnapshot::default()
+        });
+        store.save_check(gone);
+        let pending = UpdateCheckService::pending(&store, false);
+        assert_eq!(pending[0].source, "stmods");
+        assert!(
+            pending[0].alternatives.is_empty(),
+            "файла нет — не запасной: {:?}",
+            pending[0].alternatives
+        );
+        // Один сайт — запасных нет.
+        let lone = InMemoryLibraryStore::new();
+        lone.upsert_mod(InstalledMod {
+            id: "x".to_string(),
+            name: "X".to_string(),
+            file_name: "x.zip".to_string(),
+            version: Some("1.0".to_string()),
+            size_bytes: Some(100),
+            installed_at_utc: now(),
+            enabled: true,
+        });
+        check(&lone, "x", "stmods", "1.1", 110);
+        assert!(
+            UpdateCheckService::pending(&lone, false)[0]
+                .alternatives
+                .is_empty()
+        );
     }
 
     #[test]

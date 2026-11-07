@@ -199,7 +199,19 @@ fileVerdict: "same_file" | "label_older" | "file_newer" | null, fileName: string
 /**
  * Файла по ссылке «Скачать» больше нет (файлообменник: «не найдено»).
  */
-fileGone: boolean, };
+fileGone: boolean, 
+/**
+ * Сайт обновления сейчас не открывается: почему.
+ */
+siteDown: SiteDown | null, 
+/**
+ * Тот же мод на других сайтах (которые открываются), где тоже есть обновление.
+ */
+alternatives: Array<UpdateAlternative>, };
+
+export type SiteDown = { note: string, reach: SiteReach | null, };
+
+export type UpdateAlternative = { source: string, url: string, latestVersion: string | null, };
 
 export type UpdateSite = { id: string, displayName: string, 
 /**
