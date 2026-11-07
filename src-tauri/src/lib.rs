@@ -386,7 +386,6 @@ pub fn run() {
             commands::updates::updates_refollow,
             commands::updates::mod_bind_page,
             commands::downloads::downloads_expect,
-            commands::downloads::telegram_open,
             commands::download_window::download_open,
             commands::download_window::download_open_batch,
             commands::download_window::download_batch,

@@ -10,13 +10,7 @@
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
-  import { downloadOpen, downloadOpenBatch, telegramOpen, type DownloadRequest } from "#lib/ipc/download.js";
-  import {
-    isTelegramPost,
-    planUpdateAll,
-    TELEGRAM_OPENED,
-    telegramLeftText,
-  } from "#lib/features/telegram/telegram.js";
+  import { downloadOpen, downloadOpenBatch, type DownloadRequest } from "#lib/ipc/download.js";
   import { onDestroy, onMount } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
   import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
@@ -540,33 +534,19 @@
   /** «Обновить все»: окно загрузки проводит по страницам, установка — одна в конце. */
   async function updateAll() {
     if (sure.length === 0) return;
-    // Моды из Telegram качаются в самом Telegram — окно загрузки ведёт только по сайтам.
-    const plan = planUpdateAll(sure.map(requestOf));
-    const single = plan.single;
-    if (single) {
-      const finding = sure.find((item) => item.modId === single.modId && item.url === single.pageUrl);
-      if (finding) await update(finding);
-    } else if (plan.batch.length > 0) {
-      try {
-        await downloadOpenBatch(plan.batch);
-      } catch (reason) {
-        error = errorText(reason);
-      }
+    if (sure.length === 1) {
+      await update(sure[0]);
+      return;
     }
-    if (plan.telegramLeft > 0) toasts.show(telegramLeftText(plan.telegramLeft));
+    try {
+      await downloadOpenBatch(sure.map(requestOf));
+    } catch (reason) {
+      error = errorText(reason);
+    }
   }
 
   /** «Обновить»: окно загрузки; если оно недоступно — браузер и наблюдение за «Загрузками». */
   async function update(finding: UpdateFinding) {
-    if (isTelegramPost(finding.url)) {
-      try {
-        await telegramOpen(finding.url);
-        toasts.show(TELEGRAM_OPENED);
-        return;
-      } catch {
-        // Telegram не открылся — ниже прежний путь: страница в браузере.
-      }
-    }
     try {
       await downloadOpen(requestOf(finding));
       return;

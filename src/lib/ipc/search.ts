@@ -144,7 +144,6 @@ const SOURCE_NAMES: Record<string, string> = {
   modsgaming: "ModsGaming",
   modhub: "ModHub",
   beamng: "BeamNG (официальный)",
-  telegram: "Telegram",
 };
 
 let mockModlandNeedsCheck = true;

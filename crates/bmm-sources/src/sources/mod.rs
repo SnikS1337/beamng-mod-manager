@@ -6,7 +6,6 @@ pub mod modhub;
 pub mod modland;
 pub mod modsgaming;
 pub mod stmods;
-pub mod telegram;
 
 use std::sync::atomic::AtomicBool;
 
@@ -67,13 +66,6 @@ pub trait ModSource: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Каждая версия мода — своя страница (пост в канале), а не обновлённая старая.
-    /// Тогда привязка переезжает на страницу, где нашлась новая версия: «Обновить»
-    /// должен вести к ней, а не к прежней.
-    fn page_per_version(&self) -> bool {
-        false
-    }
-
     /// Умеет ли сайт показать файл за кнопкой «Скачать» ([`ModSource::probe_file`]).
     fn probes_files(&self) -> bool {
         false
@@ -108,7 +100,6 @@ pub fn all_sources(fetcher: std::sync::Arc<PoliteFetcher>) -> Vec<std::sync::Arc
         std::sync::Arc::new(stmods::StModsSource::new(fetcher.clone())),
         std::sync::Arc::new(modsgaming::ModsGamingSource::new(fetcher.clone())),
         std::sync::Arc::new(modhub::ModHubSource::new(fetcher.clone())),
-        std::sync::Arc::new(telegram::TelegramSource::new(fetcher.clone())),
         std::sync::Arc::new(beamng::BeamNgRepoSource::new(fetcher)),
     ]
 }

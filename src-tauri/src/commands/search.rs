@@ -228,7 +228,7 @@ pub async fn search_start(
         .clone()
         .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
     let settings = state.settings.load().settings;
-    let sources = searchable_sources(&runtime, &settings.off_sources());
+    let sources = searchable_sources(&runtime, &settings.disabled_sources);
     let fetcher = runtime.fetcher.clone();
     reset_challenged(&fetcher, &sources);
     let options = runtime.service.options().clone();
@@ -318,7 +318,7 @@ pub async fn search_browse(
         .clone()
         .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
     let settings = state.settings.load().settings;
-    let sources = searchable_sources(&runtime, &settings.off_sources());
+    let sources = searchable_sources(&runtime, &settings.disabled_sources);
     if sources.is_empty() {
         return Err(AppError::new("search", "Все сайты выключены."));
     }
@@ -442,7 +442,10 @@ pub async fn search_retry_source(
         .find(|source| {
             source.id() == source_id
                 && source.supports_search()
-                && !settings.source_off(source.id())
+                && !settings
+                    .disabled_sources
+                    .iter()
+                    .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
         })
         .cloned()
         .ok_or_else(|| AppError::new("search", "Сайт выключен или не поддерживает поиск."))?;
@@ -609,8 +612,6 @@ const PREVIEW_HOSTS: &[&str] = &[
     "modsgaming.ru",
     "modsgaming.us",
     "beamng.com",
-    // Картинки постов Telegram-канала.
-    "telesco.pe",
 ];
 
 fn preview_url_allowed(url: &Url) -> bool {

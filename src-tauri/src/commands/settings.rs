@@ -58,7 +58,7 @@ impl SettingsDto {
             check_app_updates: settings.check_app_updates,
             auto_check_every_hours: settings.auto_check_every_hours,
             check_disabled_mods: settings.check_disabled_mods,
-            disabled_sources: settings.off_sources(),
+            disabled_sources: settings.disabled_sources.clone(),
             keep_backups: settings.keep_backups,
             max_card_checks_per_source: settings.max_card_checks_per_source,
             liquid_glass: settings.liquid_glass,
@@ -106,7 +106,7 @@ impl SettingsDto {
         settings.check_app_updates = self.check_app_updates;
         settings.auto_check_every_hours = self.auto_check_every_hours;
         settings.check_disabled_mods = self.check_disabled_mods;
-        settings.set_off_sources(&self.disabled_sources);
+        settings.disabled_sources = self.disabled_sources.clone();
         settings.keep_backups = self.keep_backups;
         settings.max_card_checks_per_source = self.max_card_checks_per_source;
         settings.liquid_glass = self.liquid_glass;

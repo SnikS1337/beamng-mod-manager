@@ -82,59 +82,10 @@ pub fn site_hint(file_name: &str) -> Option<&'static str> {
         ("modhub", "modhub"),
         ("stmods", "stmods"),
         ("modsgaming", "modsgaming"),
-        // «Audi_A4_S8_B8_tg_m0dsbeamng.zip» — из Telegram-канала.
-        ("m0dsbeamng", "telegram"),
     ]
     .into_iter()
     .find(|(word, _)| words.contains(word))
     .map(|(_, source)| source)
-}
-
-/// Довесок к оценке страницы с тем же архивом: она выигрывает у похожих названий.
-const SAME_FILE_BONUS: f64 = 0.5;
-
-/// Имя архива без расширения, копии «(1)» и знаков: «poland_map tg_m0dsbeamng.zip» и
-/// «poland_map_tg_m0dsbeamng.zip» — одно имя.
-fn archive_key(name: &str) -> String {
-    let lower = name.trim().to_lowercase();
-    let stem = [".zip", ".rar", ".7z"]
-        .iter()
-        .find_map(|extension| lower.strip_suffix(extension))
-        .unwrap_or(&lower);
-    let stem = match stem.trim_end().strip_suffix(')') {
-        Some(rest) => match rest.rfind('(') {
-            Some(open) if rest[open + 1..].chars().all(|ch| ch.is_ascii_digit()) => &rest[..open],
-            _ => stem,
-        },
-        None => stem,
-    };
-    let key: String = stem.chars().filter(|ch| ch.is_alphanumeric()).collect();
-    // Метку канала дописывают при раздаче: «ikarus_55_lux_tg_m0dsbeamng» и
-    // «ikarus_55_lux» — один архив.
-    let key = key
-        .strip_suffix("m0dsbeamng")
-        .map_or(key.as_str(), |rest| rest.strip_suffix("tg").unwrap_or(rest));
-    key.to_string()
-}
-
-/// На странице лежит архив с именем установленного. Короткое имя («map.zip») —
-/// только если и размер тот же.
-pub(crate) fn same_archive(installed: &InstalledMod, listing: &Listing) -> bool {
-    let mine = archive_key(&installed.file_name);
-    if mine.chars().count() < 4 {
-        return false;
-    }
-    listing.offers.iter().any(|offer| {
-        let Some(name) = offer.host_file_id.as_deref() else {
-            return false;
-        };
-        if archive_key(name) != mine {
-            return false;
-        }
-        let same_size =
-            bmm_domain::versioning::SizeComparer::same(installed.size_bytes, offer.size_bytes);
-        same_size == Some(true) || (same_size.is_none() && mine.chars().count() >= 8)
-    })
 }
 
 /// Предложенная страница: запись на сайте и насколько она похожа.
@@ -310,10 +261,6 @@ impl PageGuesser {
                 continue;
             }
 
-            // На странице лежит архив с тем же именем, что у установленного: это его
-            // страница, как бы её ни назвали («mark2_tg_m0dsbeamng.zip» в посте
-            // «Toyota Mark II»). Имена файлов показывает Telegram-канал.
-            let same_file = same_archive(installed, listing);
             // Одно слово («police») совпадает со слишком многим: только целиком.
             let mut similarity = 0.0f64;
             let mut tokens = 0usize;
@@ -366,11 +313,10 @@ impl PageGuesser {
                     tokens = tokens.max(2);
                 }
             }
-            if !same_file && (similarity < min_name || (tokens < 2 && similarity < 1.0)) {
+            if similarity < min_name || (tokens < 2 && similarity < 1.0) {
                 continue;
             }
-            if !same_file
-                && !author.is_empty()
+            if !author.is_empty()
                 && let Some(listing_author) = listing.author.as_deref()
             {
                 let listing_author = author_key(Some(listing_author));
@@ -397,13 +343,8 @@ impl PageGuesser {
             let mut score = similarity;
             let order =
                 VersionComparer::compare(installed_version.as_deref(), site_version.as_deref());
-            if same_file {
-                score += SAME_FILE_BONUS;
-            }
             match order {
-                // На сайте старее установленного — это не его страница (кроме того же архива).
-                VersionOrder::Older if !same_file => continue,
-                VersionOrder::Older => {}
+                VersionOrder::Older => continue, // на сайте старее установленного — это не его страница
                 VersionOrder::Same => score += 0.1,
                 VersionOrder::Newer => score += 0.02,
                 VersionOrder::Unknown => {}
@@ -450,7 +391,7 @@ impl PageGuesser {
                     && tokens >= 2
                     && !other_author
                     && order != VersionOrder::Unknown);
-            let certain = (certain && !contained) || same_file;
+            let certain = certain && !contained;
             fits.push(PageGuess {
                 listing: listing.clone(),
                 score,
@@ -950,125 +891,6 @@ mod tests {
         assert!(!guess.certain, "без автора и версии — только предложение");
     }
 
-    fn with_archive(mut listing: Listing, name: &str, size: Option<i64>) -> Listing {
-        listing.offers.push(bmm_domain::models::Offer {
-            kind: bmm_domain::models::OfferKind::ExternalHost,
-            host: "t.me".to_string(),
-            url: listing.url.clone(),
-            host_file_id: Some(name.to_string()),
-            size_bytes: size,
-        });
-        listing
-    }
-
-    #[test]
-    fn page_with_the_same_archive_is_the_page_whatever_its_title() {
-        // Одно слово в имени файла и совсем другое название поста — тот же архив.
-        let mine = installed("m", "mark2_tg_m0dsbeamng.zip", None, Some(120_000_000));
-        let post = with_archive(
-            listing(
-                "telegram",
-                "1",
-                "Toyota Mark II JZX81",
-                None,
-                Some(120_000_000),
-                PriceStatus::Free,
-            ),
-            "mark2_tg_m0dsbeamng.zip",
-            Some(120_000_000),
-        );
-        let other = listing(
-            "telegram",
-            "2",
-            "Toyota Mark 2",
-            None,
-            None,
-            PriceStatus::Free,
-        );
-        let guess = PageGuesser::pick(&mine, None, &[other, post]).unwrap();
-        assert_eq!(guess.listing.source_id, "1");
-        assert!(guess.certain);
-    }
-
-    #[test]
-    fn archive_names_match_without_separators_and_copy_marks() {
-        assert_eq!(
-            archive_key("poland_map tg_m0dsbeamng.zip"),
-            archive_key("poland_map_tg_m0dsbeamng.zip")
-        );
-        assert_eq!(
-            archive_key("Poland_Map_TG_m0dsbeamng (1).ZIP"),
-            archive_key("poland_map_tg_m0dsbeamng.zip")
-        );
-        assert_ne!(
-            archive_key("poland_map_winter_tg_m0dsbeamng.zip"),
-            archive_key("poland_map_tg_m0dsbeamng.zip")
-        );
-        assert_eq!(
-            archive_key("v1 (beta).zip"),
-            "v1beta",
-            "скобки — не копия, если внутри не число"
-        );
-        assert_eq!(
-            archive_key("ikarus_55_lux_tg_m0dsbeamng.zip"),
-            archive_key("ikarus_55_lux.zip")
-        );
-        assert_eq!(archive_key("Audi A4 B6 & tg_@m0dsbeamng.zip"), "audia4b6");
-        assert_eq!(archive_key("mark2_tg_m0dsbeamng.zip"), "mark2");
-    }
-
-    #[test]
-    fn short_or_resized_archive_is_not_proof() {
-        let post = |size: Option<i64>| {
-            with_archive(
-                listing(
-                    "telegram",
-                    "1",
-                    "Совсем другое",
-                    None,
-                    size,
-                    PriceStatus::Free,
-                ),
-                "maps.zip",
-                size,
-            )
-        };
-        let short = installed("m", "maps.zip", None, None);
-        // Короткое имя без размера — мало ли архивов «maps.zip».
-        assert!(!same_archive(&short, &post(None)));
-        let sized = installed("m", "maps.zip", None, Some(5_000_000));
-        assert!(same_archive(&sized, &post(Some(5_000_000))));
-        // Три буквы — не довод и при том же размере.
-        let tiny = installed("m", "map.zip", None, Some(5_000_000));
-        assert!(!same_archive(
-            &tiny,
-            &with_archive(post(Some(5_000_000)), "map.zip", Some(5_000_000))
-        ));
-        let long = installed("m", "poland_map_tg_m0dsbeamng.zip", None, Some(5_000_000));
-        let other_size = with_archive(
-            listing(
-                "telegram",
-                "1",
-                "x",
-                None,
-                Some(9_000_000),
-                PriceStatus::Free,
-            ),
-            "poland_map tg_m0dsbeamng.zip",
-            Some(9_000_000),
-        );
-        assert!(
-            !same_archive(&long, &other_size),
-            "другой размер — другой файл"
-        );
-        let unknown_size = with_archive(
-            listing("telegram", "1", "x", None, None, PriceStatus::Free),
-            "poland_map tg_m0dsbeamng.zip",
-            None,
-        );
-        assert!(same_archive(&long, &unknown_size));
-    }
-
     #[test]
     fn site_in_file_name_is_a_hint() {
         assert_eq!(
@@ -1076,12 +898,7 @@ mod tests {
             Some("modland")
         );
         assert_eq!(site_hint("weather_fx_modland.zip"), Some("modland"));
-        // Telegram-канал теперь тоже источник: его метка в имени — подсказка.
-        assert_eq!(site_hint("Sumner_Road_tg_m0dsbeamng.zip"), Some("telegram"));
-        assert_eq!(
-            site_hint("Audi A4 B6 & tg_@m0dsbeamng.zip"),
-            Some("telegram")
-        );
+        assert_eq!(site_hint("Sumner_Road_tg_m0dsbeamng.zip"), None);
         assert_eq!(site_hint("bmw_m8_modhub.zip"), Some("modhub"));
         assert_eq!(
             site_hint("modlandia_cars.zip"),
