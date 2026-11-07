@@ -325,6 +325,10 @@ fn add_to_batch(batch: &mut Vec<DownloadRequest>, request: &DownloadRequest) -> 
 
 #[tauri::command]
 pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(), AppError> {
+    // Пост Telegram-канала окно загрузки не откроет: архив отдаёт только приложение.
+    if is_telegram_post(&request.page_url) {
+        return crate::commands::downloads::telegram_open(app, request.page_url);
+    }
     let queued = {
         let url = Url::parse(&request.page_url)
             .map_err(|_| AppError::new("url", "Некорректный адрес страницы мода."))?;
@@ -353,16 +357,21 @@ pub async fn download_open(app: AppHandle, request: DownloadRequest) -> Result<(
     open_request(app, request).await
 }
 
+fn is_telegram_post(raw: &str) -> bool {
+    Url::parse(raw.trim())
+        .ok()
+        .is_some_and(|url| bmm_sources::parsers::telegram::post_id(&url).is_some())
+}
+
 /// «Обновить все»: окно откроет первую страницу, панель поведёт по остальным.
 #[tauri::command]
 pub async fn download_open_batch(
     app: AppHandle,
     requests: Vec<DownloadRequest>,
 ) -> Result<(), AppError> {
-    let first = requests
-        .first()
-        .cloned()
-        .ok_or_else(|| AppError::new("batch", "Нечего обновлять."))?;
+    if requests.is_empty() {
+        return Err(AppError::new("batch", "Нечего обновлять."));
+    }
     if let Some(bad) = requests.iter().find(|request| {
         Url::parse(&request.page_url)
             .ok()
@@ -373,6 +382,17 @@ pub async fn download_open_batch(
             format!("Некорректный адрес страницы «{}».", bad.mod_name),
         ));
     }
+    // Моды из Telegram качаются в самом Telegram — в очередь окна их не ставим.
+    let requests: Vec<DownloadRequest> = requests
+        .into_iter()
+        .filter(|request| !is_telegram_post(&request.page_url))
+        .collect();
+    let Some(first) = requests.first().cloned() else {
+        return Err(AppError::new(
+            "batch",
+            "Эти моды скачиваются в Telegram: нажмите «Обновить» у каждого.",
+        ));
+    };
     *BATCH.lock().unwrap_or_else(|error| error.into_inner()) = requests;
     let _ = app.emit_to(PANEL_LABEL, "download://batch", download_batch());
     open_request(app, first).await
@@ -883,6 +903,15 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telegram_posts_are_not_for_the_download_window() {
+        assert!(is_telegram_post("https://t.me/m0dsbeamng/18360"));
+        assert!(is_telegram_post(" https://t.me/s/m0dsbeamng/1 "));
+        assert!(!is_telegram_post("https://t.me/m0dsbeamng"));
+        assert!(!is_telegram_post("https://www.modland.net/m0dsbeamng/1"));
+        assert!(!is_telegram_post("не адрес"));
+    }
 
     #[test]
     fn download_name_stays_a_plain_file_name() {

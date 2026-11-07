@@ -272,7 +272,20 @@ impl ModSource for TelegramSource {
             return Ok(None);
         };
         let base = parser::to_listing(release);
-        Ok(Some(self.newest_like(&base, cancel)?.unwrap_or(base)))
+        let Some(newest) = self.newest_like(&base, cancel)? else {
+            return Ok(Some(base));
+        };
+        // Поиск часто показывает только описание, без поста с архивом: тогда нет ни
+        // размера, ни ссылки на файл. Новую версию дочитываем с её страницы.
+        if newest.offers.is_empty() {
+            let post = post_of(&newest);
+            let around = self.load_page(&Self::around_url(post), cancel)?;
+            let (strict, _) = parser::releases(&around.messages);
+            if let Some(full) = strict.iter().find(|release| release.post == post) {
+                return Ok(Some(parser::to_listing(full)));
+            }
+        }
+        Ok(Some(newest))
     }
 
     fn page_per_version(&self) -> bool {
@@ -344,7 +357,7 @@ mod tests {
     }
 
     fn fixture(name: &str) -> String {
-        if name.starts_with('<') {
+        if name.contains('<') {
             return name.to_string();
         }
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -561,6 +574,42 @@ mod tests {
         assert_eq!(found.mod_version.as_deref(), Some("1.9"));
         assert_eq!(found.url.as_str(), "https://t.me/m0dsbeamng/18360");
         assert_eq!(found.size_bytes, crate::parsers::parse_size("230.7 MB"));
+    }
+
+    #[test]
+    fn newest_version_found_without_its_archive_is_read_in_full() {
+        // В выдаче поиска — только описание v1.9 (18360), без поста с архивом.
+        let search_without_files = {
+            let page = fixture("search-a4-real.html");
+            let start = page.find(r#"data-post="m0dsbeamng/18365""#).unwrap();
+            let wrap = page[..start]
+                .rfind("<div class=\"tgme_widget_message_wrap")
+                .unwrap();
+            let end = page[start..]
+                .find("<div class=\"tgme_widget_message_wrap")
+                .map_or(page.len(), |offset| start + offset);
+            format!("{}{}", &page[..wrap], &page[end..])
+        };
+        let channel = Channel::new(&[
+            ("before=17396", "search-a4-real.html"),
+            ("q=Audi+A4%2FS4+B8", search_without_files.as_str()),
+            ("before=18373", "feed-real.html"),
+        ]);
+        let telegram = source(&channel);
+        let found = telegram
+            .listing(
+                &url("https://t.me/m0dsbeamng/17383"),
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.mod_version.as_deref(), Some("1.9"));
+        assert_eq!(found.size_bytes, crate::parsers::parse_size("230.7 MB"));
+        assert_eq!(found.offers.len(), 1);
+        assert_eq!(
+            channel.calls().last().map(String::as_str),
+            Some("before=18373")
+        );
     }
 
     #[test]
