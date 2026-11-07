@@ -21,6 +21,8 @@ pub use crate::net::{FetchResult, PageFetcher, PoliteFetcher, SourceStatus};
 pub struct SourceError {
     pub status: SourceStatus,
     pub message: String,
+    /// Сайт не открылся из-за соединения — как именно.
+    pub reach: Option<crate::reach::Reach>,
 }
 
 impl SourceError {
@@ -28,6 +30,16 @@ impl SourceError {
         Self {
             status: SourceStatus::Unavailable,
             message: message.into(),
+            reach: None,
+        }
+    }
+
+    /// Соединение с сайтом не установилось.
+    pub fn unreachable(reach: crate::reach::Reach, message: impl Into<String>) -> Self {
+        Self {
+            status: SourceStatus::Unavailable,
+            message: message.into(),
+            reach: Some(reach),
         }
     }
 
@@ -35,6 +47,7 @@ impl SourceError {
         Self {
             status: SourceStatus::Unavailable,
             message: "поиск отменён".to_string(),
+            reach: None,
         }
     }
 }

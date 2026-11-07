@@ -269,7 +269,9 @@ impl BrowserPages {
             return Err(FetchError::Network);
         }
         if looks_like_error_page(&html) {
-            return Err(FetchError::Network);
+            // Код ошибки на странице браузера говорит, как не открылся сайт.
+            return Err(bmm_sources::reach::from_browser_page(&html)
+                .map_or(FetchError::Network, FetchError::Unreachable));
         }
         let final_url = window.url().unwrap_or_else(|_| url.clone());
         Ok(RawResponse {

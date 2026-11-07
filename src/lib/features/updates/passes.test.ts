@@ -25,6 +25,7 @@ function source(id: string, status: UpdateSource["status"], note: string | null 
     unreadable: 0,
     layoutChanged: false,
     note,
+    reach: null,
   };
 }
 

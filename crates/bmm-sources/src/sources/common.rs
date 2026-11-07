@@ -71,6 +71,7 @@ pub fn load(
         message: result
             .message
             .unwrap_or_else(|| "сайт не ответил".to_string()),
+        reach: result.reach,
     })
 }
 

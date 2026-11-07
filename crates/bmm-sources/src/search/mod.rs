@@ -18,6 +18,7 @@ use bmm_domain::models::{Listing, PriceStatus};
 use bmm_domain::text::{ModKind, TitleNormalizer, TitleParser};
 use bmm_domain::versioning::{VersionComparer, VersionOrder};
 
+use crate::reach::{self, Others, Reach, Visit};
 use crate::sources::{ModSource, SourceStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +49,28 @@ pub struct SourceReport {
     pub count: usize,
     pub note: Option<String>,
     pub pending: bool,
+    /// Сайт не открылся из-за соединения — как именно.
+    pub reach: Option<Reach>,
+}
+
+/// Подписи неоткрывшихся сайтов — по всему поиску (см. [`reach::verdicts`]).
+pub fn explain_unreachable(reports: &mut [SourceReport]) {
+    let visits: Vec<Visit> = reports
+        .iter()
+        .map(|report| Visit {
+            answered: report.status == SourceStatus::Ok && !report.pending && report.note.is_none(),
+            reach: report.reach,
+        })
+        .collect();
+    let verdicts = reach::verdicts(&visits);
+    for (report, others) in reports.iter_mut().zip(verdicts) {
+        let (Some(reach), Some(others)) = (report.reach, others) else {
+            continue;
+        };
+        if others != Others::Unknown || report.note.is_none() {
+            report.note = Some(reach::explain(reach, others));
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -77,10 +100,13 @@ impl Default for SearchOptions {
 }
 
 type StatusFn = Arc<dyn Fn(&str) -> SourceStatus + Send + Sync>;
+/// Подпись недоступного сайта и как он не открылся — от сетевого слоя.
+pub type NoteFn = Arc<dyn Fn(&str) -> Option<(String, Option<Reach>)> + Send + Sync>;
 
 pub struct SearchService {
     sources: Vec<Arc<dyn ModSource>>,
     status_of: StatusFn,
+    notes: Option<NoteFn>,
     options: SearchOptions,
     decisions: Option<Arc<dyn MatchDecisions + Send + Sync>>,
 }
@@ -126,9 +152,17 @@ impl SearchService {
         Self {
             sources,
             status_of,
+            notes: None,
             options,
             decisions,
         }
+    }
+
+    /// Чем подписать сайт, который сейчас на паузе после сбоев: вместо «сайт
+    /// недоступен» — почему.
+    pub fn with_notes(mut self, notes: NoteFn) -> Self {
+        self.notes = Some(notes);
+        self
     }
 
     pub fn sources(&self) -> &[Arc<dyn ModSource>] {
@@ -247,6 +281,7 @@ impl SearchService {
         let order = run.order();
         let runner = Runner {
             status_of: Arc::clone(&self.status_of),
+            notes: self.notes.clone(),
             options: self.options.clone(),
         };
         let total = self.sources.len();
@@ -403,6 +438,7 @@ impl SearchService {
         let run_kind = RunKind::Search(variants);
         let runner = Runner {
             status_of: Arc::clone(&self.status_of),
+            notes: self.notes.clone(),
             options: self.options.clone(),
         };
         let run = match catch_unwind(AssertUnwindSafe(|| {
@@ -436,11 +472,12 @@ impl SearchService {
         query: &str,
         order: GroupOrder,
     ) -> SearchResponse {
-        let reports = slots
+        let mut reports: Vec<SourceReport> = slots
             .iter()
             .flatten()
             .map(|run| run.report.clone())
             .collect();
+        explain_unreachable(&mut reports);
         let listings: Vec<Listing> = slots
             .iter()
             .flatten()
@@ -476,6 +513,7 @@ impl SearchService {
                         count: 0,
                         note: Some("ищем…".to_string()),
                         pending: true,
+                        reach: None,
                     });
                 }
             }
@@ -664,6 +702,7 @@ impl SearchService {
 #[derive(Clone)]
 struct Runner {
     status_of: StatusFn,
+    notes: Option<NoteFn>,
     options: SearchOptions,
 }
 
@@ -683,15 +722,7 @@ impl Runner {
         }
         let status = (self.status_of)(source.id());
         if status != SourceStatus::Ok {
-            return self.stopped_with_note(
-                source,
-                status,
-                if status == SourceStatus::NeedsHumanCheck {
-                    "нужно пройти проверку на сайте"
-                } else {
-                    "сайт недоступен"
-                },
-            );
+            return self.paused(source, status);
         }
         let mut last_error = None;
         let started = Instant::now();
@@ -718,6 +749,7 @@ impl Runner {
                             count: listings.len(),
                             note: None,
                             pending: false,
+                            reach: None,
                         },
                         listings,
                     };
@@ -738,6 +770,7 @@ impl Runner {
                     count: 0,
                     note: Some(error.message),
                     pending: false,
+                    reach: error.reach,
                 },
                 listings: Vec::new(),
             },
@@ -749,6 +782,7 @@ impl Runner {
                     count: 0,
                     note: None,
                     pending: false,
+                    reach: None,
                 },
                 listings: Vec::new(),
             },
@@ -779,15 +813,7 @@ impl Runner {
         }
         let status = (self.status_of)(source.id());
         if status != SourceStatus::Ok {
-            return self.stopped_with_note(
-                source,
-                status,
-                if status == SourceStatus::NeedsHumanCheck {
-                    "нужно пройти проверку на сайте"
-                } else {
-                    "сайт недоступен"
-                },
-            );
+            return self.paused(source, status);
         }
         let mut found = Vec::new();
         let mut last_error = None;
@@ -813,6 +839,7 @@ impl Runner {
                         count: 0,
                         note: Some(error.message),
                         pending: false,
+                        reach: error.reach,
                     },
                     listings: Vec::new(),
                 },
@@ -832,8 +859,24 @@ impl Runner {
                 note: last_error
                     .map(|error| format!("часть страниц не загрузилась: {}", error.message)),
                 pending: false,
+                reach: None,
             },
             listings,
+        }
+    }
+
+    /// Сайт на паузе: просит проверку или не открывался — без запроса.
+    fn paused(&self, source: &dyn ModSource, status: SourceStatus) -> SourceRun {
+        if status == SourceStatus::NeedsHumanCheck {
+            return self.stopped_with_note(source, status, "нужно пройти проверку на сайте");
+        }
+        match self.notes.as_ref().and_then(|notes| notes(source.id())) {
+            Some((note, reach)) => {
+                let mut run = self.stopped_with_note(source, status, &note);
+                run.report.reach = reach;
+                run
+            }
+            None => self.stopped_with_note(source, status, "сайт недоступен"),
         }
     }
 
@@ -855,6 +898,7 @@ impl Runner {
                 count: 0,
                 note: Some(note.to_string()),
                 pending: false,
+                reach: None,
             },
             listings: Vec::new(),
         }
@@ -874,6 +918,7 @@ impl Runner {
                 count: 0,
                 note: Some(format!("источник упал: {message}")),
                 pending: false,
+                reach: None,
             },
             listings: Vec::new(),
         }
@@ -1176,6 +1221,7 @@ mod tests {
                     count: 0,
                     note: Some("сайт не ответил вовремя".to_string()),
                     pending: false,
+                    reach: None,
                 },
                 SourceReport {
                     source_id: "stmods".to_string(),
@@ -1184,6 +1230,7 @@ mod tests {
                     count: 1,
                     note: None,
                     pending: false,
+                    reach: None,
                 },
             ],
             listings: vec![stale, kept],
@@ -1814,6 +1861,87 @@ mod tests {
             .unwrap();
         assert_eq!(report.status, SourceStatus::Unavailable);
         assert!(report.note.as_deref().unwrap_or("").contains("разметка"));
+    }
+
+    #[test]
+    fn site_cut_off_while_another_answers_looks_blocked() {
+        let blocked = ScriptedSource::new("modland", |_query, _cancel| {
+            Err(SourceError::unreachable(
+                crate::reach::Reach::Reset,
+                "Не открывается: соединение обрывается.",
+            ))
+        });
+        let good = Arc::new(FakeSource {
+            id: "stmods",
+            title: "Car X",
+        });
+        let response = service_with(vec![blocked, good], SearchOptions::default()).search(
+            "car",
+            &AtomicBool::new(false),
+            None,
+        );
+        let report = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "modland")
+            .unwrap();
+        assert_eq!(report.reach, Some(crate::reach::Reach::Reset));
+        let note = report.note.as_deref().unwrap();
+        assert!(note.contains("похоже на блокировку"), "{note}");
+        let good = response
+            .sources
+            .iter()
+            .find(|report| report.source_id == "stmods")
+            .unwrap();
+        assert_eq!(good.reach, None);
+        assert_eq!(good.note, None);
+    }
+
+    #[test]
+    fn site_resting_after_failures_says_why() {
+        let resting = Arc::new(FakeSource {
+            id: "modland",
+            title: "Car Y",
+        });
+        let service = SearchService::new(
+            vec![resting],
+            Arc::new(|_| SourceStatus::Unavailable),
+            SearchOptions::default(),
+            None,
+        )
+        .with_notes(Arc::new(|source| {
+            (source == "modland").then(|| {
+                (
+                    "Не открывается: адрес сайта не находится.".to_string(),
+                    Some(crate::reach::Reach::NoAddress),
+                )
+            })
+        }));
+        let response = service.search("car", &AtomicBool::new(false), None);
+        assert!(response.cards.is_empty(), "на паузе сайт не спрашиваем");
+        let report = &response.sources[0];
+        assert_eq!(report.status, SourceStatus::Unavailable);
+        assert_eq!(report.reach, Some(crate::reach::Reach::NoAddress));
+        assert!(
+            report
+                .note
+                .as_deref()
+                .unwrap()
+                .contains("адрес сайта не находится")
+        );
+        // Без подписей — как раньше.
+        let plain = SearchService::new(
+            vec![Arc::new(FakeSource {
+                id: "modland",
+                title: "Car Y",
+            })],
+            Arc::new(|_| SourceStatus::Unavailable),
+            SearchOptions::default(),
+            None,
+        )
+        .search("car", &AtomicBool::new(false), None);
+        assert_eq!(plain.sources[0].note.as_deref(), Some("сайт недоступен"));
+        assert_eq!(plain.sources[0].reach, None);
     }
 
     #[test]

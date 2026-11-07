@@ -15,6 +15,7 @@ use url::Url;
 
 use bmm_domain::library::LibraryStore;
 use bmm_domain::versioning::{VersionComparer, VersionOrder};
+use bmm_sources::reach::{Others, Reach, Visit};
 use bmm_sources::sources::{ModSource, SourceError, SourceStatus};
 
 use crate::options::UpdateCheckOptions;
@@ -47,6 +48,8 @@ pub struct SourceRunReport {
     /// Похоже, сайт поменял вёрстку: лента пуста, карточки не находятся или не читаются.
     pub layout_changed: bool,
     pub note: Option<String>,
+    /// Сайт не открылся из-за соединения — как именно (блокировка, нет сети…).
+    pub reach: Option<Reach>,
 }
 
 /// Итог одной проверки.
@@ -261,6 +264,7 @@ struct SourceOutcome {
     layout_changed: bool,
     note: Option<String>,
     failure: Option<(SourceStatus, String)>,
+    reach: Option<Reach>,
     missing: Vec<String>,
     unreadable: Vec<String>,
     postponed: Vec<TrackedBinding>,
@@ -328,6 +332,7 @@ impl Runner<'_, '_, '_> {
                     unreadable_mods: Vec::new(),
                     layout_changed: false,
                     note: Some(note.to_string()),
+                    reach: None,
                 },
             );
         }
@@ -347,6 +352,7 @@ impl Runner<'_, '_, '_> {
                         unreadable_mods: Vec::new(),
                         layout_changed: false,
                         note: Some(why.clone()),
+                        reach: None,
                     },
                 );
             }
@@ -354,6 +360,7 @@ impl Runner<'_, '_, '_> {
 
         let mut feed_pages_done: BTreeMap<String, u32> = BTreeMap::new();
         let mut cards_done: BTreeMap<String, u32> = BTreeMap::new();
+        let mut reaches: BTreeMap<String, Reach> = BTreeMap::new();
         let mut missing: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut unreadable: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut layout: BTreeSet<String> = BTreeSet::new();
@@ -488,6 +495,9 @@ impl Runner<'_, '_, '_> {
             }
             if let Some(failure) = outcome.failure {
                 failed.insert(source.clone(), failure);
+                if let Some(reach) = outcome.reach {
+                    reaches.insert(source.clone(), reach);
+                }
             }
             postponed_all.extend(outcome.postponed);
         }
@@ -532,9 +542,11 @@ impl Runner<'_, '_, '_> {
                     unreadable_mods: unreadable.get(&source).cloned().unwrap_or_default(),
                     layout_changed: layout.contains(&source),
                     note,
+                    reach: reaches.get(&source).copied(),
                 },
             );
         }
+        explain_unreachable(&mut reports);
 
         self.emit(&UpdateProgress {
             source: String::new(),
@@ -673,6 +685,7 @@ impl Worker<'_, '_> {
                         return outcome;
                     }
                     outcome.failure = Some(self.failure_of(source, &error));
+                    outcome.reach = error.reach;
                     return outcome; // у сайта, отказавшего на ленте, карточки не открываем
                 }
             }
@@ -851,6 +864,7 @@ impl Worker<'_, '_> {
                         break;
                     }
                     outcome.failure = Some(self.failure_of(source, &error));
+                    outcome.reach = error.reach;
                     break;
                 }
             }
@@ -948,6 +962,31 @@ impl Worker<'_, '_> {
 
     fn emit(&self, progress: &UpdateProgress) {
         let _ = self.progress.send(progress.clone());
+    }
+}
+
+/// Подпись сайта, который не открылся, — по другим сайтам той же проверки: ответил
+/// хоть один — похоже на блокировку, не ответил никто — похоже, нет интернета.
+/// Сетевой слой знает только то, что успело случиться до сбоя, а сайты проверяются
+/// одновременно: недоступный по адресу сайт отказывает раньше, чем ответят другие.
+pub fn explain_unreachable(reports: &mut BTreeMap<String, SourceRunReport>) {
+    let visits: Vec<Visit> = reports
+        .values()
+        .map(|report| Visit {
+            answered: report.status == SourceStatus::Ok
+                && (report.feed_pages_fetched > 0 || report.cards_fetched > 0),
+            reach: report.reach,
+        })
+        .collect();
+    let verdicts = bmm_sources::reach::verdicts(&visits);
+    for (report, others) in reports.values_mut().zip(verdicts) {
+        let (Some(reach), Some(others)) = (report.reach, others) else {
+            continue;
+        };
+        // Без сведений о других — подпись сетевого слоя: он видел и прошлые ответы.
+        if others != Others::Unknown || report.note.is_none() {
+            report.note = Some(bmm_sources::reach::explain(reach, others));
+        }
     }
 }
 
@@ -1633,6 +1672,7 @@ mod tests {
         x.set_feed_failure(Some(SourceError {
             status: SourceStatus::NeedsHumanCheck,
             message: "challenge".to_string(),
+            reach: None,
         }));
         let y = Site::new("y").with_feed(vec![l("y", "b", Some("1.5"), None)]);
         y.set_card(l("y", "b", Some("1.5"), None));
@@ -1898,6 +1938,107 @@ mod tests {
             SourceStatus::Unavailable
         );
         assert_eq!(report.findings[0].mod_id, "b");
+    }
+
+    fn report_of<'a>(report: &'a UpdateRunReport, source: &str) -> &'a SourceRunReport {
+        report
+            .sources
+            .iter()
+            .find(|item| item.source == source)
+            .unwrap()
+    }
+
+    #[test]
+    fn site_cut_off_while_others_answer_looks_blocked() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        add(&store, "b", "y", "b", Some("1.0"), Some("1.0"), Some(old));
+        let x = Site::new("x");
+        // Сетевой слой не знал о других сайтах: x отказал раньше, чем y ответил.
+        x.set_feed_failure(Some(SourceError::unreachable(
+            Reach::Reset,
+            "Не открывается: соединение обрывается. Если другие сайты открываются…",
+        )));
+        let y = Site::new("y").with_feed(vec![l("y", "b", Some("1.0"), None)]);
+        y.set_card(l("y", "b", Some("1.0"), None));
+        let all: Vec<Arc<dyn ModSource>> = vec![
+            Arc::clone(&x) as Arc<dyn ModSource>,
+            Arc::clone(&y) as Arc<dyn ModSource>,
+        ];
+        let report = run_simple(&store, &all, now(), UpdateCheckOptions::default());
+        let blocked = report_of(&report, "x");
+        assert_eq!(blocked.status, SourceStatus::Unavailable);
+        assert_eq!(blocked.reach, Some(Reach::Reset));
+        let note = blocked.note.as_deref().unwrap();
+        assert!(note.contains("похоже на блокировку"), "{note}");
+        assert!(note.contains("соединение обрывается"), "{note}");
+        assert_eq!(report_of(&report, "y").reach, None);
+        assert_eq!(report_of(&report, "y").note, None);
+    }
+
+    #[test]
+    fn every_site_cut_off_looks_like_no_internet() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        add(&store, "b", "y", "b", Some("1.0"), Some("1.0"), Some(old));
+        let x = Site::new("x");
+        x.set_feed_failure(Some(SourceError::unreachable(Reach::NoAddress, "x")));
+        let y = Site::new("y");
+        y.set_feed_failure(Some(SourceError::unreachable(Reach::NoAddress, "y")));
+        let all: Vec<Arc<dyn ModSource>> = vec![
+            Arc::clone(&x) as Arc<dyn ModSource>,
+            Arc::clone(&y) as Arc<dyn ModSource>,
+        ];
+        let report = run_simple(&store, &all, now(), UpdateCheckOptions::default());
+        for source in ["x", "y"] {
+            let note = report_of(&report, source).note.clone().unwrap();
+            assert!(note.contains("нет интернета"), "{note}");
+        }
+    }
+
+    #[test]
+    fn lone_cut_off_site_keeps_the_network_note() {
+        // Другие сайты в этой проверке не спрашивали: сетевой слой мог видеть их
+        // ответы раньше — его подпись и остаётся.
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        let x = Site::new("x");
+        x.set_feed_failure(Some(SourceError::unreachable(
+            Reach::Secure,
+            "подпись сетевого слоя",
+        )));
+        let all: Vec<Arc<dyn ModSource>> = vec![Arc::clone(&x) as Arc<dyn ModSource>];
+        let report = run_simple(&store, &all, now(), UpdateCheckOptions::default());
+        assert_eq!(
+            report_of(&report, "x").note.as_deref(),
+            Some("подпись сетевого слоя")
+        );
+        assert_eq!(report_of(&report, "x").reach, Some(Reach::Secure));
+    }
+
+    #[test]
+    fn site_failing_by_itself_is_not_called_blocked() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        add(&store, "b", "y", "b", Some("1.0"), Some("1.0"), Some(old));
+        let x = Site::new("x");
+        x.set_feed_failure(Some(SourceError::unavailable("Сайт вернул ошибку 502.")));
+        let y = Site::new("y").with_feed(vec![l("y", "b", Some("1.0"), None)]);
+        y.set_card(l("y", "b", Some("1.0"), None));
+        let all: Vec<Arc<dyn ModSource>> = vec![
+            Arc::clone(&x) as Arc<dyn ModSource>,
+            Arc::clone(&y) as Arc<dyn ModSource>,
+        ];
+        let report = run_simple(&store, &all, now(), UpdateCheckOptions::default());
+        assert_eq!(
+            report_of(&report, "x").note.as_deref(),
+            Some("Сайт вернул ошибку 502.")
+        );
+        assert_eq!(report_of(&report, "x").reach, None);
     }
 
     #[test]

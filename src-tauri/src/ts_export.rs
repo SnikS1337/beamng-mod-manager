@@ -28,6 +28,7 @@ import type {
   SearchPrice,
   SearchPriceSummary,
   SearchSourceStatus,
+  SiteReach,
   UiMode,
   UpdateSiteStatus,
   UpdateSourceStatus,
