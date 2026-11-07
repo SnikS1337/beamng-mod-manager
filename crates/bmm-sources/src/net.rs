@@ -1363,7 +1363,9 @@ impl PoliteFetcher {
             let inner = lock(&entry.inner);
             inner.last_request
         };
-        if let Some(last) = last {
+        if let Some(last) = last
+            && !quick_host(url)
+        {
             let jitter = jitter_for(url, self.options.jitter);
             let target = last + self.options.pause + jitter;
             let now = Instant::now();
@@ -1635,6 +1637,19 @@ fn cache_key(url: &Url, form: Option<&[(String, String)]>) -> String {
         }
         None => format!("GET {url}"),
     }
+}
+
+/// Сайты без вежливой паузы между запросами: веб-версия Telegram отдаёт страницы
+/// каналов быстро и сама говорит, когда хватит (429 и `Retry-After` соблюдаем как
+/// у всех).
+const QUICK_HOSTS: &[&str] = &["t.me"];
+
+fn quick_host(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        QUICK_HOSTS
+            .iter()
+            .any(|quick| host.eq_ignore_ascii_case(quick))
+    })
 }
 
 fn jitter_for(url: &Url, jitter: Duration) -> Duration {
@@ -2073,6 +2088,30 @@ mod tests {
             "следующая страница ждёт картинку"
         );
         assert_eq!(fake.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn telegram_pages_go_without_the_polite_pause() {
+        let fake = FakeFetcher::new(vec![
+            Ok(response(200, "<html>1</html>")),
+            Ok(response(200, "<html>2</html>")),
+            Ok(response(200, "<html>3</html>")),
+            Ok(response(200, "<html>4</html>")),
+        ]);
+        let mut polite_options = options();
+        polite_options.pause = Duration::from_millis(300);
+        let polite = PoliteFetcher::new(fake.clone(), polite_options);
+        let started = Instant::now();
+        let _ = polite.get("telegram", &url("https://t.me/s/m0dsbeamng"));
+        let _ = polite.get("telegram", &url("https://t.me/s/m0dsbeamng?before=10"));
+        assert!(started.elapsed() < Duration::from_millis(250), "без паузы");
+        // Остальные сайты — с паузой, как раньше; и `t.me` в пути чужого сайта не в счёт.
+        let started = Instant::now();
+        let _ = polite.get("site", &url("https://example.org/t.me"));
+        let _ = polite.get("site", &url("https://example.org/t.me/2"));
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(!quick_host(&url("https://t.me.example.org/")));
+        assert!(quick_host(&url("https://T.ME/s/x")));
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub mod modhub;
 pub mod modland;
 pub mod modsgaming;
 pub mod stmods;
+pub mod telegram;
 
 use std::sync::atomic::AtomicBool;
 
@@ -100,6 +101,7 @@ pub fn all_sources(fetcher: std::sync::Arc<PoliteFetcher>) -> Vec<std::sync::Arc
         std::sync::Arc::new(stmods::StModsSource::new(fetcher.clone())),
         std::sync::Arc::new(modsgaming::ModsGamingSource::new(fetcher.clone())),
         std::sync::Arc::new(modhub::ModHubSource::new(fetcher.clone())),
+        std::sync::Arc::new(telegram::TelegramSource::new(fetcher.clone())),
         std::sync::Arc::new(beamng::BeamNgRepoSource::new(fetcher)),
     ]
 }
