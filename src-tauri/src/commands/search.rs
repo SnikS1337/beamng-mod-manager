@@ -88,6 +88,9 @@ pub struct SearchSourceDto {
     pub count: usize,
     pub note: Option<String>,
     pub pending: bool,
+    /// Сайт не открылся из-за соединения: как именно.
+    #[ts(type = "SiteReach | null")]
+    pub reach: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -233,12 +236,14 @@ pub async fn search_start(
     reset_challenged(&fetcher, &sources);
     let options = runtime.service.options().clone();
     let decisions: Arc<dyn MatchDecisions + Send + Sync> = runtime.matches.clone();
+    let notes = fetcher.notes();
     let service = SearchService::new(
         sources,
         Arc::new(move |source| fetcher.status_of(source)),
         options,
         Some(decisions),
-    );
+    )
+    .with_notes(notes);
     let installed = Arc::new(InstalledIndex::build(&state));
     // Новый текстовый поиск закрывает раздел: старые страницы больше не нужны.
     *state.browse.lock().unwrap() = None;
@@ -331,7 +336,8 @@ pub async fn search_browse(
         Arc::new(move |source| status_source.status_of(source)),
         runtime.service.options().clone(),
         Some(runtime.matches.clone()),
-    );
+    )
+    .with_notes(runtime.fetcher.notes());
     let installed = InstalledIndex::build(&state);
     let from_page = from_page.max(1);
     if from_page > 1 {
@@ -474,7 +480,8 @@ pub async fn search_retry_source(
         Arc::new(move |source| status_source.status_of(source)),
         runtime.service.options().clone(),
         Some(runtime.matches.clone()),
-    );
+    )
+    .with_notes(runtime.fetcher.notes());
     let installed = InstalledIndex::build(&state);
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -853,6 +860,7 @@ fn source_dto(report: &SourceReport) -> SearchSourceDto {
         count: report.count,
         note: report.note.clone(),
         pending: report.pending,
+        reach: report.reach.map(|reach| reach.code().to_string()),
     }
 }
 
@@ -1032,6 +1040,7 @@ mod tests {
                 count: 1,
                 note: None,
                 pending: false,
+                reach: None,
             }],
             listings: Vec::new(),
         };
@@ -1094,6 +1103,7 @@ mod tests {
                     count,
                     note: None,
                     pending: false,
+                    reach: None,
                 },
             );
         }
@@ -1135,6 +1145,7 @@ mod tests {
                 count: 1,
                 note: None,
                 pending: false,
+                reach: None,
             }],
             listings: Vec::new(),
         };

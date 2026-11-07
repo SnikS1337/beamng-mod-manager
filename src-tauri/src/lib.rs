@@ -176,12 +176,15 @@ pub fn run() {
     let source_list: Arc<Vec<Arc<dyn ModSource>>> = Arc::new(all_sources(fetcher.clone()));
     let status_fetcher = fetcher.clone();
     let decisions: Arc<dyn MatchDecisions + Send + Sync> = matches.clone();
-    let search_service = Arc::new(SearchService::new(
-        source_list.as_ref().to_vec(),
-        Arc::new(move |source| status_fetcher.status_of(source)),
-        SearchOptions::default(),
-        Some(decisions),
-    ));
+    let search_service = Arc::new(
+        SearchService::new(
+            source_list.as_ref().to_vec(),
+            Arc::new(move |source| status_fetcher.status_of(source)),
+            SearchOptions::default(),
+            Some(decisions),
+        )
+        .with_notes(fetcher.notes()),
+    );
     let enabled_sources = Arc::new(Mutex::new(HashSet::new()));
     let factory_sources = source_list.clone();
     let factory_enabled = enabled_sources.clone();

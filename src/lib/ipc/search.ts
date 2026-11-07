@@ -150,8 +150,8 @@ let mockModlandNeedsCheck = true;
 
 function mockSourceReports(): SearchSource[] {
   return [
-    { id: "modland", displayName: "Modland", status: "ok", count: 0, note: null, pending: true },
-    { id: "stmods", displayName: "STMods", status: "ok", count: 0, note: null, pending: true },
+    { id: "modland", displayName: "Modland", status: "ok", count: 0, note: null, pending: true, reach: null },
+    { id: "stmods", displayName: "STMods", status: "ok", count: 0, note: null, pending: true, reach: null },
     {
       id: "modsgaming",
       displayName: "ModsGaming",
@@ -159,6 +159,7 @@ function mockSourceReports(): SearchSource[] {
       count: 0,
       note: null,
       pending: true,
+      reach: null,
     },
   ];
 }

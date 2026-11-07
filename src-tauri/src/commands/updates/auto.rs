@@ -58,6 +58,7 @@ pub(crate) fn source_dto(
         unreadable: report.unreadable_mods.len(),
         layout_changed: report.layout_changed,
         note: report.note.clone(),
+        reach: report.reach.map(|reach| reach.code().to_string()),
     }
 }
 

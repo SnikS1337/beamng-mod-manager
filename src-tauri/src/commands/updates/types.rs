@@ -113,6 +113,9 @@ pub struct UpdateSourceDto {
     pub unreadable: usize,
     pub layout_changed: bool,
     pub note: Option<String>,
+    /// Сайт не открылся из-за соединения: как именно.
+    #[ts(type = "SiteReach | null")]
+    pub reach: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

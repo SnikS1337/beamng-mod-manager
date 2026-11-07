@@ -1582,6 +1582,7 @@ mod tests {
             Err(SourceError {
                 status: SourceStatus::NeedsHumanCheck,
                 message: "Cloudflare".to_string(),
+                reach: None,
             })
         });
         let search = search(site);
@@ -1731,6 +1732,7 @@ mod tests {
             Err(SourceError {
                 status: SourceStatus::NeedsHumanCheck,
                 message: "Cloudflare".to_string(),
+                reach: None,
             })
         });
         let report = find_page_of(
@@ -1930,6 +1932,7 @@ mod tests {
             Err(SourceError {
                 status: SourceStatus::NeedsHumanCheck,
                 message: "Cloudflare".to_string(),
+                reach: None,
             })
         });
         let search = search(Arc::clone(&blocked));

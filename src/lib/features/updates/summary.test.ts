@@ -26,6 +26,7 @@ function source(patch: Partial<UpdateSource>): UpdateSource {
         unreadable: 0,
         layoutChanged: false,
         note: null,
+        reach: null,
         ...patch,
     };
 }

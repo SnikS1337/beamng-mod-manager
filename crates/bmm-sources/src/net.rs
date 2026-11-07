@@ -17,6 +17,8 @@ use reqwest::header::{
 };
 use url::Url;
 
+use crate::reach::{self, Others, Reach};
+
 pub const USER_AGENT: &str = concat!(
     "BeamModManager/",
     env!("CARGO_PKG_VERSION"),
@@ -52,6 +54,9 @@ pub enum FetchError {
     Timeout,
     #[error("нет соединения с сайтом")]
     Network,
+    /// Соединение не установилось — и известно, как именно.
+    #[error("{}", .0.detail())]
+    Unreachable(Reach),
     #[error("ответ сайта слишком большой")]
     TooLarge,
     #[error("запрос отменён")]
@@ -714,7 +719,9 @@ fn ensure_public(_: &Url) -> Result<(), FetchError> {
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> FetchError {
-    if error.is_timeout() {
+    if let Some(reach) = reach::from_error(error.is_timeout(), error.is_connect(), &error) {
+        FetchError::Unreachable(reach)
+    } else if error.is_timeout() {
         FetchError::Timeout
     } else if error.is_connect() || error.is_request() {
         FetchError::Network
@@ -847,6 +854,8 @@ pub struct FetchResult {
     pub status: SourceStatus,
     pub response: Option<RawResponse>,
     pub message: Option<String>,
+    /// Сайт не открылся — как именно (см. [`crate::reach`]).
+    pub reach: Option<Reach>,
 }
 
 impl FetchResult {
@@ -855,6 +864,7 @@ impl FetchResult {
             status: SourceStatus::Ok,
             response: Some(response),
             message: None,
+            reach: None,
         }
     }
 
@@ -863,6 +873,7 @@ impl FetchResult {
             status,
             response: None,
             message: Some(message.into()),
+            reach: None,
         }
     }
 }
@@ -879,6 +890,12 @@ struct HostInner {
     human_until: Option<Instant>,
     status: SourceStatus,
     message: Option<String>,
+    /// Как не открылся сайт в последний раз (пока он не ответил снова).
+    reach: Option<Reach>,
+    /// Когда сайт в последний раз ответил хоть чем-то: значит, сеть до него есть.
+    last_answer: Option<Instant>,
+    /// Когда соединение с сайтом в последний раз не установилось.
+    last_unreachable: Option<Instant>,
 }
 
 impl Default for HostInner {
@@ -891,6 +908,9 @@ impl Default for HostInner {
             human_until: None,
             status: SourceStatus::Ok,
             message: None,
+            reach: None,
+            last_answer: None,
+            last_unreachable: None,
         }
     }
 }
@@ -922,6 +942,8 @@ struct SourceState {
     /// Какая страница показала «вы человек?». Сайт может проверять не главную, а
     /// поиск: проходить проверку нужно там, где она стоит, иначе пропуск не выдадут.
     challenged_url: Option<Url>,
+    /// Сайт не открылся — как и когда: подпись уточняется, когда ответят другие сайты.
+    reach: Option<(Reach, String, Instant)>,
 }
 
 impl Default for SourceState {
@@ -931,6 +953,7 @@ impl Default for SourceState {
             message: None,
             cooldown_until: None,
             challenged_url: None,
+            reach: None,
         }
     }
 }
@@ -983,10 +1006,65 @@ impl PoliteFetcher {
     }
 
     pub fn message_of(&self, source: &str) -> Option<String> {
+        let (message, reach) = {
+            let mut sources = lock(&self.sources);
+            let state = sources.get_mut(source)?;
+            refresh_source(state);
+            (state.message.clone(), state.reach.clone())
+        };
+        // Подпись по свежим сведениям: пока сайт не открылся, другие могли ответить.
+        match reach {
+            Some((reach, host, at)) if message.is_some() => {
+                Some(reach::explain(reach, self.others(&host, at)))
+            }
+            _ => message,
+        }
+    }
+
+    /// Подписи сайтов на паузе — для поиска (см. [`crate::search::SearchService::with_notes`]).
+    pub fn notes(self: &Arc<Self>) -> crate::search::NoteFn {
+        let fetcher = Arc::clone(self);
+        Arc::new(move |source| {
+            fetcher
+                .message_of(source)
+                .map(|message| (message, fetcher.reach_of(source)))
+        })
+    }
+
+    /// Как не открылся сайт источника, если он сейчас недоступен из-за соединения.
+    pub fn reach_of(&self, source: &str) -> Option<Reach> {
         let mut sources = lock(&self.sources);
         let state = sources.get_mut(source)?;
         refresh_source(state);
-        state.message.clone()
+        (state.status == SourceStatus::Unavailable)
+            .then(|| state.reach.as_ref().map(|(reach, _, _)| *reach))
+            .flatten()
+    }
+
+    /// Что известно о других сайтах рядом по времени с моментом `at`.
+    fn others(&self, host: &str, at: Instant) -> Others {
+        let since = at.checked_sub(reach::EVIDENCE_WINDOW);
+        let recent = |moment: Option<Instant>| {
+            moment.is_some_and(|moment| since.is_none_or(|since| moment >= since))
+        };
+        let entries: Vec<Arc<HostEntry>> = lock(&self.hosts)
+            .iter()
+            .filter(|(name, _)| name.as_str() != host)
+            .map(|(_, entry)| entry.clone())
+            .collect();
+        let mut silent = false;
+        for entry in entries {
+            let inner = lock(&entry.inner);
+            if recent(inner.last_answer) {
+                return Others::Answer;
+            }
+            silent |= recent(inner.last_unreachable);
+        }
+        if silent {
+            Others::Silent
+        } else {
+            Others::Unknown
+        }
     }
 
     /// Общая очередь сайта для картинок: у них свой HTTP-клиент, но они не должны
@@ -1124,6 +1202,15 @@ impl PoliteFetcher {
                     .message
                     .clone()
                     .unwrap_or_else(|| format!("Сайт отдыхает ещё {}.", wait_text(wait)));
+                // Пауза после сбоев соединения: подпись — по ним, а не «отдыхает».
+                let unreachable = inner
+                    .reach
+                    .filter(|_| !inner.blocked_by_site)
+                    .map(|reach| (reach, inner.last_unreachable.unwrap_or_else(Instant::now)));
+                drop(inner);
+                if let Some((reach, at)) = unreachable {
+                    return self.unreachable(source, url, reach, at, Some(until));
+                }
                 self.remember(
                     source,
                     SourceStatus::Unavailable,
@@ -1179,6 +1266,7 @@ impl PoliteFetcher {
         }
 
         let mut last_message = "Сайт не ответил.".to_string();
+        let mut last_reach: Option<Reach> = None;
         let mut next_attempt = 0;
         while next_attempt <= self.options.retries {
             let attempt = next_attempt;
@@ -1216,6 +1304,23 @@ impl PoliteFetcher {
                     if cancel.load(Ordering::Relaxed) {
                         return cancelled();
                     }
+                    // Провайдер подменил сайт страницей о блокировке: это не ответ сайта,
+                    // и повтор не поможет.
+                    if reach::is_block_page(
+                        url,
+                        response.status,
+                        &response.final_url,
+                        &response.text,
+                    ) {
+                        last_reach = Some(Reach::BlockPage);
+                        break;
+                    }
+                    {
+                        let mut inner = lock(&entry.inner);
+                        inner.last_answer = Some(Instant::now());
+                        inner.reach = None;
+                    }
+                    last_reach = None;
                     if response.status == 304 {
                         if let Some(cached) = self.use_cached_not_modified(&key, &response) {
                             let mut inner = lock(&entry.inner);
@@ -1261,6 +1366,7 @@ impl PoliteFetcher {
                             status: SourceStatus::NeedsHumanCheck,
                             response: Some(response),
                             message: Some(message),
+                            reach: None,
                         };
                     }
                     if matches!(response.status, 429 | 503) {
@@ -1340,10 +1446,18 @@ impl PoliteFetcher {
                         return cancelled();
                     }
                     last_message = error.user_message();
+                    last_reach = match &error {
+                        FetchError::Unreachable(reach) => Some(*reach),
+                        _ => None,
+                    };
                     // Повторяем и таймаут, и обрыв соединения. Прочие ошибки (слишком большой ответ,
-                    // неверный адрес) повтором не лечатся.
+                    // неверный адрес) повтором не лечатся. Без сети повторять незачем.
                     if attempt < self.options.retries
-                        && matches!(error, FetchError::Timeout | FetchError::Network)
+                        && matches!(
+                            error,
+                            FetchError::Timeout | FetchError::Network | FetchError::Unreachable(_)
+                        )
+                        && !matches!(error, FetchError::Unreachable(Reach::Offline))
                     {
                         if !pause(self.retry_backoff(attempt), cancel) {
                             return cancelled();
@@ -1354,7 +1468,10 @@ impl PoliteFetcher {
                 }
             }
         }
-        self.mark_failure(&entry, source, last_message)
+        match last_reach {
+            Some(reach) => self.mark_unreachable(&entry, source, url, reach),
+            None => self.mark_failure(&entry, source, last_message),
+        }
     }
 
     /// Вежливая пауза между запросами к сайту. `false` — пока ждали, пришла отмена.
@@ -1424,6 +1541,65 @@ impl PoliteFetcher {
         FetchResult::failed(SourceStatus::Unavailable, message)
     }
 
+    /// Соединение с сайтом не установилось (или вместо него — страница о блокировке).
+    /// Считается сбоем, как и прочие, но подпись говорит, что случилось, и
+    /// уточняется по другим сайтам.
+    fn mark_unreachable(
+        &self,
+        entry: &HostEntry,
+        source: &str,
+        url: &Url,
+        reach: Reach,
+    ) -> FetchResult {
+        let now = Instant::now();
+        {
+            let mut inner = lock(&entry.inner);
+            inner.reach = Some(reach);
+            if reach != Reach::BlockPage {
+                inner.last_unreachable = Some(now);
+            }
+        }
+        let host = url.host_str().unwrap_or_default().to_lowercase();
+        let message = reach::explain(reach, self.others(&host, now));
+        let failed = self.mark_failure(entry, source, message);
+        let until = lock(&entry.inner).blocked_until;
+        let mut sources = lock(&self.sources);
+        if let Some(state) = sources.get_mut(source) {
+            state.reach = Some((reach, host, now));
+            state.cooldown_until = until.or(state.cooldown_until);
+        }
+        FetchResult {
+            reach: Some(reach),
+            ..failed
+        }
+    }
+
+    /// Сайт на паузе после сбоев соединения: тот же ответ, что и при сбое.
+    fn unreachable(
+        &self,
+        source: &str,
+        url: &Url,
+        reach: Reach,
+        at: Instant,
+        until: Option<Instant>,
+    ) -> FetchResult {
+        let host = url.host_str().unwrap_or_default().to_lowercase();
+        let message = reach::explain(reach, self.others(&host, at));
+        self.remember(
+            source,
+            SourceStatus::Unavailable,
+            Some(message.clone()),
+            until,
+        );
+        if let Some(state) = lock(&self.sources).get_mut(source) {
+            state.reach = Some((reach, host, at));
+        }
+        FetchResult {
+            reach: Some(reach),
+            ..FetchResult::failed(SourceStatus::Unavailable, message)
+        }
+    }
+
     fn mark_failure(&self, entry: &HostEntry, source: &str, message: String) -> FetchResult {
         let mut inner = lock(&entry.inner);
         inner.failures += 1;
@@ -1476,6 +1652,7 @@ impl PoliteFetcher {
                 message,
                 cooldown_until,
                 challenged_url,
+                reach: None,
             },
         );
     }
@@ -2672,6 +2849,163 @@ mod tests {
         }
         assert_eq!(polite.status_of("site"), SourceStatus::Unavailable);
         assert!(polite.message_of("site").is_some());
+    }
+
+    #[test]
+    fn unreachable_site_says_how_and_asks_about_other_sites() {
+        let fake = FakeFetcher::new(vec![Err(FetchError::Unreachable(Reach::Reset))]);
+        let mut opts = options();
+        opts.retries = 0;
+        // Один сбой сайт не закрывает: подпись держится, пока он на паузе.
+        opts.failure_limit = 1;
+        let polite = PoliteFetcher::new(fake, opts);
+        let result = polite.get("site", &url("https://blocked.example/mod"));
+        assert_eq!(result.status, SourceStatus::Unavailable);
+        assert_eq!(result.reach, Some(Reach::Reset));
+        let message = result.message.unwrap();
+        assert!(message.contains("соединение обрывается"), "{message}");
+        assert!(
+            message.contains("Если другие сайты открываются"),
+            "{message}"
+        );
+        assert_eq!(polite.reach_of("site"), Some(Reach::Reset));
+    }
+
+    #[test]
+    fn other_site_answering_turns_the_note_into_a_block() {
+        // Заблокированный сайт не ответил раньше, чем другой, — подпись уточняется
+        // позже, когда другой ответит.
+        let fake = FakeFetcher::new(vec![
+            Err(FetchError::Unreachable(Reach::NoAddress)),
+            Ok(response(200, "<html>ok</html>")),
+        ]);
+        let mut opts = options();
+        opts.retries = 0;
+        // Один сбой сайт не закрывает: подпись держится, пока он на паузе.
+        opts.failure_limit = 1;
+        let polite = PoliteFetcher::new(fake, opts);
+        let blocked = polite.get("blocked", &url("https://blocked.example/mod"));
+        assert!(!blocked.message.unwrap().contains("похоже на блокировку"));
+        assert_eq!(
+            polite.get("open", &url("https://open.example/mod")).status,
+            SourceStatus::Ok
+        );
+        let message = polite.message_of("blocked").unwrap();
+        assert!(message.contains("похоже на блокировку"), "{message}");
+        assert!(message.contains("адрес сайта не находится"), "{message}");
+        assert_eq!(polite.message_of("open"), None);
+    }
+
+    #[test]
+    fn every_site_silent_means_no_internet() {
+        let fake = FakeFetcher::new(vec![
+            Err(FetchError::Unreachable(Reach::NoAddress)),
+            Err(FetchError::Unreachable(Reach::NoAddress)),
+        ]);
+        let mut opts = options();
+        opts.retries = 0;
+        // Один сбой сайт не закрывает: подпись держится, пока он на паузе.
+        opts.failure_limit = 1;
+        let polite = PoliteFetcher::new(fake, opts);
+        polite.get("a", &url("https://a.example/mod"));
+        let second = polite.get("b", &url("https://b.example/mod"));
+        assert!(second.message.unwrap().contains("нет интернета"));
+        assert!(polite.message_of("a").unwrap().contains("нет интернета"));
+    }
+
+    #[test]
+    fn connection_failures_are_retried_but_not_without_network() {
+        let fake = FakeFetcher::new(vec![
+            Err(FetchError::Unreachable(Reach::Reset)),
+            Ok(response(200, "<html>ok</html>")),
+        ]);
+        let polite = PoliteFetcher::new(fake.clone(), options());
+        let page = url("https://flaky.example/mod");
+        let result = polite.get("site", &page);
+        assert_eq!(result.status, SourceStatus::Ok, "обрыв — повтор помог");
+        assert_eq!(result.reach, None);
+        assert_eq!(polite.reach_of("site"), None);
+
+        let offline = FakeFetcher::new(vec![
+            Err(FetchError::Unreachable(Reach::Offline)),
+            Ok(response(200, "<html>ok</html>")),
+        ]);
+        let polite = PoliteFetcher::new(offline.clone(), options());
+        let result = polite.get("site", &page);
+        assert_eq!(result.reach, Some(Reach::Offline));
+        assert_eq!(
+            offline.calls.lock().unwrap().len(),
+            1,
+            "без сети не повторяем"
+        );
+    }
+
+    #[test]
+    fn block_page_is_a_failure_not_a_page() {
+        let stub = RawResponse {
+            final_url: url("http://warning.isp.example/"),
+            ..response(
+                200,
+                "<h1>Доступ к запрашиваемому ресурсу ограничен</h1> Роскомнадзор",
+            )
+        };
+        let fake = FakeFetcher::new(vec![Ok(stub), Ok(response(451, "Unavailable"))]);
+        let polite = PoliteFetcher::new(fake.clone(), options());
+        let result = polite.get("site", &url("http://modsite.example/mod"));
+        assert_eq!(result.status, SourceStatus::Unavailable);
+        assert!(
+            result.response.is_none(),
+            "заглушку не отдаём за страницу мода"
+        );
+        assert_eq!(result.reach, Some(Reach::BlockPage));
+        assert!(result.message.unwrap().contains("страница о блокировке"));
+        assert_eq!(
+            fake.calls.lock().unwrap().len(),
+            1,
+            "заглушку не перезапрашиваем"
+        );
+        polite.clear_cache();
+        let coded = polite.get("site", &url("https://modsite.example/mod2"));
+        assert_eq!(coded.reach, Some(Reach::BlockPage), "код 451");
+    }
+
+    #[test]
+    fn site_resting_after_connection_failures_keeps_the_reason() {
+        let fake = FakeFetcher::new(vec![
+            Err(FetchError::Unreachable(Reach::Reset)),
+            Err(FetchError::Unreachable(Reach::Reset)),
+            Err(FetchError::Unreachable(Reach::Reset)),
+        ]);
+        let mut opts = options();
+        opts.retries = 0;
+        let polite = PoliteFetcher::new(fake.clone(), opts);
+        let page = url("https://blocked.example/mod");
+        for _ in 0..3 {
+            polite.clear_cache();
+            polite.get("site", &page);
+        }
+        // Пауза: без запроса, но с той же причиной.
+        let resting = polite.get("site", &page);
+        assert_eq!(fake.calls.lock().unwrap().len(), 3);
+        assert_eq!(resting.reach, Some(Reach::Reset));
+        assert!(resting.message.unwrap().contains("соединение обрывается"));
+        assert_eq!(polite.status_of("site"), SourceStatus::Unavailable);
+        assert_eq!(polite.reach_of("site"), Some(Reach::Reset));
+    }
+
+    #[test]
+    fn site_failing_by_itself_has_no_connection_reason() {
+        let fake = FakeFetcher::new(vec![Ok(response(502, "Bad gateway"))]);
+        let mut opts = options();
+        opts.retries = 0;
+        let polite = PoliteFetcher::new(fake, opts);
+        let result = polite.get("site", &url("https://down.example/mod"));
+        assert_eq!(result.status, SourceStatus::Unavailable);
+        assert_eq!(
+            result.reach, None,
+            "сайт ответил ошибкой — сеть до него есть"
+        );
+        assert_eq!(polite.reach_of("site"), None);
     }
 
     #[test]

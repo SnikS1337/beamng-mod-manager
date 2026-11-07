@@ -162,6 +162,7 @@ function mockSourceReports(): UpdateSource[] {
       unreadable: 0,
       layoutChanged: false,
       note: mockModlandNeedsCheck ? "Сайт просит подтвердить, что вы человек." : null,
+      reach: null,
     },
     {
       id: "stmods",
@@ -174,6 +175,7 @@ function mockSourceReports(): UpdateSource[] {
       unreadable: 0,
       layoutChanged: false,
       note: null,
+      reach: null,
     },
     {
       id: "modsgaming",
@@ -186,6 +188,7 @@ function mockSourceReports(): UpdateSource[] {
       unreadable: 0,
       layoutChanged: false,
       note: null,
+      reach: null,
     },
     {
       id: "beamng",
@@ -198,6 +201,7 @@ function mockSourceReports(): UpdateSource[] {
       unreadable: 0,
       layoutChanged: false,
       note: null,
+      reach: null,
     },
   ];
 }

@@ -1124,6 +1124,7 @@ mod tests {
         site.set_feed_failure(Some(bmm_sources::sources::SourceError {
             status: SourceStatus::NeedsHumanCheck,
             message: "challenge".to_string(),
+            reach: None,
         }));
         let clock = clock_at(t0());
         let reset = Arc::new(Mutex::new(Vec::<String>::new()));

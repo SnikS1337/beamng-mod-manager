@@ -19,6 +19,15 @@ export type BindErrorCode =
 export type UpdateStatusText = "none" | "likely" | "possible";
 export type UpdateSiteStatus = "ok" | "human_check" | "unavailable" | "off";
 export type UpdateSourceStatus = "ok" | "needsHumanCheck" | "unavailable";
+/** Как не открылся сайт (соединение): см. `bmm_sources::reach::Reach::code`. */
+export type SiteReach =
+  | "noAddress"
+  | "refused"
+  | "reset"
+  | "secure"
+  | "noAnswer"
+  | "offline"
+  | "blockPage";
 export type UpdatesPhase = "progress" | "done" | "pages" | "error" | "auto";
 
 export type IncomingKind = "new" | "update" | "alreadyInstalled";

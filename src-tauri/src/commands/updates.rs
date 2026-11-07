@@ -69,12 +69,16 @@ fn page_search_service(state: &AppState) -> Option<Arc<bmm_sources::search::Sear
     let options = runtime.service.options().clone();
     let decisions: Arc<dyn bmm_domain::matches::MatchDecisions + Send + Sync> =
         runtime.matches.clone();
-    Some(Arc::new(bmm_sources::search::SearchService::new(
-        sources,
-        Arc::new(move |source| fetcher.status_of(source)),
-        options,
-        Some(decisions),
-    )))
+    let notes = fetcher.notes();
+    Some(Arc::new(
+        bmm_sources::search::SearchService::new(
+            sources,
+            Arc::new(move |source| fetcher.status_of(source)),
+            options,
+            Some(decisions),
+        )
+        .with_notes(notes),
+    ))
 }
 
 struct PageBusyGuard(Arc<AtomicBool>);
@@ -989,8 +993,17 @@ mod tests {
                 unreadable_mods: Vec::new(),
                 layout_changed: false,
                 note: None,
+                reach: None,
             };
             assert!(sources.contains(&source_dto(&report, &names).status));
+        }
+        let reaches = ts_union("unions.ts", "SiteReach");
+        for reach in bmm_sources::reach::Reach::ALL {
+            assert!(
+                reaches.contains(reach.code()),
+                "окно не знает причину {}",
+                reach.code()
+            );
         }
     }
 
@@ -1188,6 +1201,7 @@ mod tests {
             unreadable_mods: Vec::new(),
             layout_changed: false,
             note: None,
+            reach: None,
         }
     }
 

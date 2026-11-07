@@ -17,6 +17,7 @@ import type {
   SearchPrice,
   SearchPriceSummary,
   SearchSourceStatus,
+  SiteReach,
   UiMode,
   UpdateSiteStatus,
   UpdateSourceStatus,
@@ -110,7 +111,11 @@ export type SearchCard = { id: string, title: string, price: SearchPriceSummary,
  */
 kind: ModRole | null, listings: Array<SearchListing>, };
 
-export type SearchSource = { id: string, displayName: string, status: SearchSourceStatus, count: number, note: string | null, pending: boolean, };
+export type SearchSource = { id: string, displayName: string, status: SearchSourceStatus, count: number, note: string | null, pending: boolean, 
+/**
+ * Сайт не открылся из-за соединения: как именно.
+ */
+reach: SiteReach | null, };
 
 export type SearchEvent = { requestId: number, phase: SearchPhase, cards: Array<SearchCard>, sources: Array<SearchSource>, error: string | null, };
 
@@ -220,7 +225,11 @@ export type PageMatch = { source: string, title: string, url: string, version: s
 
 export type PageVerification = { pageSource: string, pageTitle: string, pageUrl: string, pageSize: number | null, matches: Array<PageMatch>, };
 
-export type UpdateSource = { id: string, displayName: string, status: UpdateSourceStatus, cardsFetched: number, feedPagesFetched: number, postponed: number, missing: number, unreadable: number, layoutChanged: boolean, note: string | null, };
+export type UpdateSource = { id: string, displayName: string, status: UpdateSourceStatus, cardsFetched: number, feedPagesFetched: number, postponed: number, missing: number, unreadable: number, layoutChanged: boolean, note: string | null, 
+/**
+ * Сайт не открылся из-за соединения: как именно.
+ */
+reach: SiteReach | null, };
 
 export type UpdateProgress = { source: string, stage: string, done: number, total: number, };
 
