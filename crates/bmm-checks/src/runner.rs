@@ -840,6 +840,12 @@ impl Worker<'_, '_> {
                                 &current,
                                 self.request.now,
                             );
+                            move_to_newest_page(
+                                self.request.store,
+                                adapter.as_ref(),
+                                &current_binding,
+                                &current,
+                            );
                             self.note_file(adapter, binding, &current);
                         }
                     }
@@ -958,6 +964,30 @@ impl Default for UpdateRunReport {
     }
 }
 
+/// Сайт, где каждая версия — своя страница (Telegram-канал): привязка переезжает на
+/// страницу новой версии. Иначе «Обновить» открывал бы пост прежней версии, и
+/// человек скачал бы то, что у него уже стоит.
+fn move_to_newest_page(
+    store: &dyn bmm_domain::library::LibraryStore,
+    adapter: &dyn ModSource,
+    binding: &bmm_domain::library::ModBinding,
+    current: &bmm_domain::models::Listing,
+) {
+    if !adapter.page_per_version()
+        || current.url == binding.url
+        || !adapter.owns(&current.url)
+        || !adapter.is_mod_page(&current.url)
+    {
+        return;
+    }
+    let mut moved = binding.clone();
+    moved.url = current.url.clone();
+    if !current.source_id.is_empty() {
+        moved.source_id = current.source_id.clone();
+    }
+    let _ = store.upsert_binding(moved);
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1006,6 +1036,8 @@ mod tests {
         file: Mutex<Option<FileSnapshot>>,
         /// Какие страницы просили проверить файл и можно ли было открыть страницу.
         probes: Mutex<Vec<(String, bool)>>,
+        /// Каждая версия — своя страница, как в Telegram-канале.
+        per_version: AtomicBool,
     }
 
     impl Site {
@@ -1023,7 +1055,13 @@ mod tests {
                 pages: Mutex::new(Vec::new()),
                 file: Mutex::new(None),
                 probes: Mutex::new(Vec::new()),
+                per_version: AtomicBool::new(false),
             })
+        }
+
+        /// Карточка по адресу `url` — запись с другим адресом (новый пост).
+        fn set_card_at(&self, url: &str, listing: Listing) {
+            self.cards.lock().unwrap().insert(url.to_string(), listing);
         }
 
         fn set_file(&self, file: Option<FileSnapshot>) {
@@ -1124,6 +1162,9 @@ mod tests {
         }
         fn probes_files(&self) -> bool {
             true
+        }
+        fn page_per_version(&self) -> bool {
+            self.per_version.load(Ordering::SeqCst)
         }
         fn probe_file(
             &self,
@@ -1236,6 +1277,78 @@ mod tests {
             Some("1.1"),
             "снимок привязан к подписи, при которой его сделали"
         );
+    }
+
+    #[test]
+    fn binding_moves_to_the_post_of_the_new_version() {
+        // Telegram: v1.1 — новый пост. «Обновить» должен вести к нему, а не к посту v1.0.
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        let site = Site::new("x").with_feed(vec![l("x", "a", Some("1.1"), None)]);
+        site.per_version.store(true, Ordering::SeqCst);
+        site.set_card_at(&u("x", "a"), l("x", "a-new", Some("1.1"), None));
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        let binding = store
+            .bindings()
+            .into_iter()
+            .find(|item| item.mod_id == "a")
+            .unwrap();
+        assert_eq!(binding.url.as_str(), u("x", "a-new"));
+        assert_eq!(binding.source_id, "a-new");
+        assert!(binding.confirmed);
+        assert_eq!(
+            store.get_check("a", "x").unwrap().last_version.as_deref(),
+            Some("1.1")
+        );
+    }
+
+    #[test]
+    fn ordinary_site_keeps_its_page_even_if_the_card_says_otherwise() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        let site = Site::new("x").with_feed(vec![l("x", "a", Some("1.1"), None)]);
+        site.set_card_at(&u("x", "a"), l("x", "a-new", Some("1.1"), None));
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        let binding = store
+            .bindings()
+            .into_iter()
+            .find(|item| item.mod_id == "a")
+            .unwrap();
+        assert_eq!(binding.url.as_str(), u("x", "a"));
+    }
+
+    #[test]
+    fn page_of_another_site_is_never_taken() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        let site = Site::new("x").with_feed(vec![l("x", "a", Some("1.1"), None)]);
+        site.per_version.store(true, Ordering::SeqCst);
+        site.set_card_at(&u("x", "a"), l("y", "a", Some("1.1"), None));
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        let binding = store
+            .bindings()
+            .into_iter()
+            .find(|item| item.mod_id == "a")
+            .unwrap();
+        assert_eq!(binding.url.as_str(), u("x", "a"));
     }
 
     #[test]
