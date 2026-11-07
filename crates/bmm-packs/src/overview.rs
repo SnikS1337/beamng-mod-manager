@@ -226,6 +226,37 @@ pub fn archive_info_from_index(path: &Path, index: &zip_index::ZipIndex) -> Arch
     ArchiveInfo { title, author }
 }
 
+/// Поле `Type` из `info.json` каждой машины архива («Car», «Truck», «Prop», «Trailer»):
+/// по нему видно, что манекен Crash Test Dummy — предмет, а не машина. Пусто — машин
+/// нет или тип не указан.
+pub fn vehicle_types_from_index(path: &Path, index: &zip_index::ZipIndex) -> Vec<String> {
+    let prefix = wrapper_prefix(&index.entries);
+    let mut folders = BTreeSet::new();
+    for entry in &index.entries {
+        let name = entry.name.strip_prefix(&prefix).unwrap_or(&entry.name);
+        let parts: Vec<&str> = name.split('/').collect();
+        if let [root, folder, file] = parts.as_slice()
+            && root.eq_ignore_ascii_case("vehicles")
+            && !folder.is_empty()
+            && !folder.eq_ignore_ascii_case("common")
+            && file.eq_ignore_ascii_case("info.json")
+        {
+            folders.insert(format!("{prefix}{root}/{folder}/{file}"));
+        }
+    }
+    folders
+        .iter()
+        .filter_map(|entry| info_value(path, entry))
+        .filter_map(|value| {
+            ["Type", "type"]
+                .iter()
+                .find_map(|key| value.get(*key).and_then(Value::as_str))
+                .map(|kind| kind.trim().to_string())
+        })
+        .filter(|kind| !kind.is_empty() && kind.chars().count() <= 32)
+        .collect()
+}
+
 /// `mod_info/<ID>/info.json` из архива: так помечает мод репозиторий BeamNG (с номером
 /// страницы и версией), а иногда и сам автор. То же самое игра потом пишет в db.json,
 /// но читать архив можно сразу, не дожидаясь запуска игры. `None` — такой записи нет.

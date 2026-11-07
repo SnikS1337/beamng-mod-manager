@@ -13,6 +13,7 @@ const TITLES_FILE: &str = "titles.json";
 const PROBLEMS_FILE: &str = "problems.json";
 const CONTENTS_FILE: &str = "contents.json";
 const MOD_INFO_FILE: &str = "mod_info.json";
+const VEHICLE_TYPES_FILE: &str = "vehicle_types.json";
 const TITLES_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const CONTENTS_MAX_BYTES: u64 = 32 * 1024 * 1024;
 /// `mod_info` хранит только нужные поля; 64 МБ хватает большой библиотеке.
@@ -44,6 +45,8 @@ pub struct PreviewCache {
     problems: MapFile<String>,
     contents: MapFile<Vec<String>>,
     mod_infos: MapFile<serde_json::Value>,
+    /// Типы машин архива из их `info.json` через запятую; пусто — машин или типа нет.
+    vehicle_types: MapFile<String>,
     write: Mutex<()>,
     /// Уже найденные картинки: не делаем 4 `metadata` на каждую карточку.
     present: Mutex<HashMap<String, CachedPreview>>,
@@ -57,6 +60,7 @@ impl PreviewCache {
             problems: MapFile::new(None),
             contents: MapFile::new(None),
             mod_infos: MapFile::new(None),
+            vehicle_types: MapFile::new(None),
             write: Mutex::new(()),
             present: Mutex::new(HashMap::new()),
         }
@@ -240,6 +244,29 @@ impl PreviewCache {
         self.prune_maps(live_keys);
     }
 
+    pub fn vehicle_types(&self) -> BTreeMap<String, String> {
+        self.vehicle_types
+            .load(&self.root.join(VEHICLE_TYPES_FILE), TITLES_MAX_BYTES)
+    }
+
+    pub fn vehicle_types_shared(&self) -> Arc<BTreeMap<String, String>> {
+        self.vehicle_types
+            .shared(&self.root.join(VEHICLE_TYPES_FILE), TITLES_MAX_BYTES)
+    }
+
+    pub fn put_vehicle_types(&self, entries: &[(String, Vec<String>)]) -> std::io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let _write = self.write_gate();
+        let mut types = self.vehicle_types();
+        for (key, kinds) in entries {
+            types.insert(key.clone(), kinds.join(","));
+        }
+        self.vehicle_types
+            .save(&self.root, VEHICLE_TYPES_FILE, types)
+    }
+
     /// Что не так с упаковкой архива (`PackagingProblem::code`), по ключу превью;
     /// пустая строка — проверено, всё в порядке.
     pub fn problems(&self) -> BTreeMap<String, String> {
@@ -370,6 +397,12 @@ impl PreviewCache {
         let mut problems = self.problems();
         if retain_changed(&mut problems, keep) {
             let _ = self.problems.save(&self.root, PROBLEMS_FILE, problems);
+        }
+        let mut types = self.vehicle_types();
+        if retain_changed(&mut types, keep) {
+            let _ = self
+                .vehicle_types
+                .save(&self.root, VEHICLE_TYPES_FILE, types);
         }
         let mut contents = self.contents();
         if retain_changed(&mut contents, keep) {
