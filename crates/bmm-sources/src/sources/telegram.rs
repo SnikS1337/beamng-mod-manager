@@ -203,20 +203,32 @@ impl ModSource for TelegramSource {
     }
 
     fn search(&self, query: &str, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
-        let Some(url) = Self::search_url(query) else {
-            return Ok(Vec::new());
-        };
-        let page = self.load_page(&url, cancel)?;
-        let mut listings: Vec<Listing> = parser::search_releases(&page.messages)
-            .iter()
-            .rev()
-            .map(parser::to_listing)
-            .collect();
-        let mut seen = std::collections::HashSet::new();
-        listings.retain(|listing| {
-            !listing.source_id.is_empty() && seen.insert(listing.source_id.clone())
-        });
-        Ok(listings)
+        // Поиск Telegram требует все слова: «hustle traffic rotation» не находит ничего,
+        // если в посте нет хоть одного. Пусто — пробуем первые два слова.
+        let words: Vec<&str> = query.split_whitespace().collect();
+        let mut queries = vec![query.trim().to_string()];
+        if words.len() > 2 {
+            queries.push(words[..2].join(" "));
+        }
+        for query in queries {
+            let Some(url) = Self::search_url(&query) else {
+                continue;
+            };
+            let page = self.load_page(&url, cancel)?;
+            let mut listings: Vec<Listing> = parser::search_releases(&page.messages)
+                .iter()
+                .rev()
+                .map(parser::to_listing)
+                .collect();
+            let mut seen = std::collections::HashSet::new();
+            listings.retain(|listing| {
+                !listing.source_id.is_empty() && seen.insert(listing.source_id.clone())
+            });
+            if !listings.is_empty() {
+                return Ok(listings);
+            }
+        }
+        Ok(Vec::new())
     }
 
     fn feed_page(&self, page: u32, cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
@@ -554,6 +566,27 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn long_query_that_finds_nothing_is_retried_with_two_words() {
+        let channel = Channel::new(&[("q=Audi+A4", "search-a4-real.html")]);
+        let telegram = source(&channel);
+        let found = telegram
+            .search("Audi A4 Avant Quattro", &AtomicBool::new(false))
+            .unwrap();
+        assert!(!found.is_empty());
+        assert_eq!(channel.calls(), ["q=Audi+A4+Avant+Quattro", "q=Audi+A4"]);
+        // Два слова и меньше — второй попытки нет.
+        let channel = Channel::new(&[]);
+        let telegram = source(&channel);
+        assert!(
+            telegram
+                .search("ничего такого", &AtomicBool::new(false))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(channel.calls().len(), 1);
     }
 
     #[test]

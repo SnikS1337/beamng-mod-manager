@@ -348,8 +348,11 @@ fn collect(messages: &[Message], loose: bool) -> (Vec<Release>, Option<i64>) {
                     if let Some(release) = open.as_mut() {
                         release.files.extend(message.files.iter().cloned());
                     }
-                } else if !seen_text && found.is_empty() && open.is_none() {
-                    // Начало страницы: описание — на более старой.
+                } else if !loose && !seen_text && found.is_empty() && open.is_none() {
+                    // Начало страницы ленты: описание — на более старой. В поиске
+                    // такого нет: поиск часто находит только пост с архивом по имени
+                    // файла («hawaii» → hawaii_haleakala_maui_v1.2.1_tg_m0dsbeamng.zip),
+                    // и это выпуск — с названием из имени файла.
                     orphan = Some(message.id);
                 } else {
                     close(&mut open, &mut found);
@@ -745,6 +748,27 @@ mod tests {
             identity("Audi A4/S4 B8 v1.9"),
             "цена — не часть названия"
         );
+    }
+
+    #[test]
+    fn search_hit_on_the_archive_alone_is_a_release() {
+        let messages = vec![file_post(
+            17000,
+            "2026-08-01T10:00:00+00:00",
+            "hawaii_haleakala_maui_v1.2.1_tg_m0dsbeamng.zip",
+            Some(300_000_000),
+        )];
+        let found = search_releases(&messages);
+        assert_eq!(found.len(), 1);
+        let listing = to_listing(&found[0]);
+        assert_eq!(listing.title, "hawaii haleakala maui v1.2.1");
+        assert_eq!(listing.mod_version.as_deref(), Some("1.2.1"));
+        assert_eq!(listing.url.as_str(), "https://t.me/m0dsbeamng/17000");
+        assert_eq!(listing.size_bytes, Some(300_000_000));
+        // В ленте тот же пост в начале страницы — ждёт описания со следующей.
+        let (strict, orphan) = releases(&messages);
+        assert!(strict.is_empty());
+        assert_eq!(orphan, Some(17000));
     }
 
     #[test]
