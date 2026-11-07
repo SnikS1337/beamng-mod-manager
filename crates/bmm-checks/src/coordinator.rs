@@ -475,6 +475,7 @@ fn merge_source_report(sources: &mut Vec<SourceRunReport>, source: SourceRunRepo
         sources.push(source);
         return;
     };
+    let keep = keeps_reason(known, &source);
     known.feed_pages_fetched += source.feed_pages_fetched;
     known.cards_fetched += source.cards_fetched;
     // Отложенное считается в каждой пачке заново: последняя пачка знает, что
@@ -494,9 +495,20 @@ fn merge_source_report(sources: &mut Vec<SourceRunReport>, source: SourceRunRepo
     if source.status != SourceStatus::Ok {
         known.status = source.status;
     }
-    if source.note.is_some() {
+    if !keep && source.note.is_some() {
         known.note = source.note;
+        known.reach = source.reach;
     }
+}
+
+/// Сайт не открылся в прошлой части, а в этой его не спрашивали («повторим после
+/// 14:30»): подпись с причиной — блокировка, нет интернета — остаётся.
+pub fn keeps_reason(known: &SourceRunReport, again: &SourceRunReport) -> bool {
+    known.reach.is_some()
+        && again.reach.is_none()
+        && again.status == SourceStatus::Unavailable
+        && again.feed_pages_fetched == 0
+        && again.cards_fetched == 0
 }
 
 /// Снимает «идёт проверка» даже при панике внутри проверки.
@@ -539,6 +551,7 @@ mod tests {
 
     use super::*;
     use crate::runner::UpdateRunReport;
+    use bmm_sources::reach::Reach;
 
     fn t0() -> DateTime<FixedOffset> {
         DateTime::parse_from_rfc3339("2026-10-13T12:00:00+00:00").unwrap()
@@ -1378,6 +1391,75 @@ mod tests {
         assert_eq!(site.feed_calls(), 8 + 3 + 3);
     }
 
+    fn site_report(
+        status: SourceStatus,
+        note: &str,
+        reach: Option<Reach>,
+        cards: u32,
+    ) -> SourceRunReport {
+        SourceRunReport {
+            source: "x".to_string(),
+            status,
+            feed_pages_fetched: 0,
+            cards_fetched: cards,
+            postponed: 0,
+            missing_mods: Vec::new(),
+            unreadable_mods: Vec::new(),
+            layout_changed: false,
+            note: Some(note.to_string()),
+            reach,
+        }
+    }
+
+    #[test]
+    fn site_held_in_a_later_part_keeps_the_reason_it_failed() {
+        // Вторая часть проверки сайт уже не спрашивает («повторим после 14:30»):
+        // «похоже на блокировку» из первой части не должно смениться на это.
+        let blocked = site_report(
+            SourceStatus::Unavailable,
+            "похоже на блокировку",
+            Some(Reach::Reset),
+            0,
+        );
+        let held = site_report(
+            SourceStatus::Unavailable,
+            "сайт недавно не отвечал, повторим после 14:30",
+            None,
+            0,
+        );
+        let mut merged = vec![blocked.clone()];
+        merge_source_report(&mut merged, held.clone());
+        assert_eq!(merged[0].note.as_deref(), Some("похоже на блокировку"));
+        assert_eq!(merged[0].reach, Some(Reach::Reset));
+        // Сайт спросили снова, и он ответил ошибкой — новая подпись.
+        let failed = site_report(
+            SourceStatus::Unavailable,
+            "Сайт вернул ошибку 502.",
+            None,
+            1,
+        );
+        assert!(!keeps_reason(&blocked, &failed));
+        // Новая причина соединения — новая подпись.
+        let offline = site_report(
+            SourceStatus::Unavailable,
+            "нет интернета",
+            Some(Reach::NoAddress),
+            0,
+        );
+        let mut merged = vec![blocked.clone()];
+        merge_source_report(&mut merged, offline);
+        assert_eq!(merged[0].note.as_deref(), Some("нет интернета"));
+        assert_eq!(merged[0].reach, Some(Reach::NoAddress));
+        // Без причины в первой части — как раньше.
+        let plain = site_report(
+            SourceStatus::Unavailable,
+            "Сайт вернул ошибку 502.",
+            None,
+            0,
+        );
+        assert!(!keeps_reason(&plain, &held));
+    }
+
     #[test]
     fn batches_keep_the_site_that_finished_in_the_first_one() {
         // У сайта a пустая лента: он успевает всё проверить в первой пачке и во вторую
@@ -1388,7 +1470,21 @@ mod tests {
         busy.set_card(l("m1", "1.0"));
         let tick = clock_at(t0());
         let tick_for_card = Arc::clone(&tick);
+        // Сайты идут одновременно, а часы общие: пока a не открыл свою карточку, b
+        // часы не двигает. Иначе a под нагрузкой не успевал в первую пачку и читал
+        // ленту ещё раз во второй (тест падал через раз: 9 запросов вместо 8).
+        let quiet_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let quiet_flag = Arc::clone(&quiet_done);
+        quiet.on_card(Arc::new(move || {
+            quiet_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }));
         busy.on_card(Arc::new(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !quiet_done.load(std::sync::atomic::Ordering::SeqCst)
+                && std::time::Instant::now() < deadline
+            {
+                thread::sleep(Duration::from_millis(1));
+            }
             *tick_for_card.lock().unwrap() += TimeDelta::minutes(4);
         }));
         let options = UpdateCoordinatorOptions {

@@ -20,6 +20,8 @@ use crate::runner::UpdateProgress;
 
 /// Подбор страниц не должен затягивать проверку: сеть вежливая, а модов много.
 const PAGE_SEARCH_BUDGET: Duration = Duration::from_secs(3 * 60);
+/// Мод, чей сайт не открывается, ищем на других сайтах не чаще раза в сутки.
+pub const FALLBACK_RETRY: chrono::TimeDelta = chrono::TimeDelta::hours(24);
 
 /// Итог подбора страниц.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -635,9 +637,8 @@ pub fn find_extra_pages(
     include_disabled: bool,
     title_of: &dyn Fn(&str) -> Option<String>,
     author_of: &dyn Fn(&str) -> Option<String>,
-    mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+    progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
-    let mut result = PageSearchReport::default();
     let sites: Vec<&'static str> = search
         .sources()
         .iter()
@@ -678,6 +679,92 @@ pub fn find_extra_pages(
         })
         .collect();
 
+    search_more_pages(
+        store, search, &due, now, cancel, title_of, author_of, progress,
+    )
+}
+
+/// Сайт мода не открывается (блокировка, сайт лежит) — ищем тот же мод на других
+/// сайтах, чтобы узнать об обновлении там. Мод, у которого есть страница на сайте,
+/// который открывается, не трогаем: он и так проверяется.
+///
+/// Чаще раза в сутки один и тот же мод не ищем: сайт может быть недоступен неделями,
+/// а проверка идёт каждые несколько часов. Берём только уверенные совпадения — как
+/// у вторых страниц. `only` — один мод («Обновить» у мода с недоступным сайтом).
+#[allow(clippy::too_many_arguments)]
+pub fn find_fallback_pages(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    now: DateTime<FixedOffset>,
+    cancel: &AtomicBool,
+    down: &[String],
+    include_disabled: bool,
+    only: Option<&str>,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
+    progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+) -> PageSearchReport {
+    let is_down = |site: &str| down.iter().any(|item| item.eq_ignore_ascii_case(site));
+    let sites: Vec<&'static str> = search
+        .sources()
+        .iter()
+        .filter(|source| source.supports_search() && !is_down(source.id()))
+        .map(|source| source.id())
+        .collect();
+    if down.is_empty() || sites.is_empty() {
+        return PageSearchReport::default();
+    }
+    let bindings = store.bindings();
+    let due: Vec<(InstalledMod, Vec<&'static str>)> = store
+        .mods()
+        .into_iter()
+        .filter(|installed| only.is_none_or(|only| only == installed.id))
+        .filter(|installed| include_disabled || installed.enabled || only.is_some())
+        .filter(|installed| !store.is_checking_declined(&installed.id))
+        .filter(|installed| match store.get_page_search(&installed.id) {
+            None => true,
+            Some(search) => {
+                !search.rejected && (now - search.at >= FALLBACK_RETRY || search.at > now)
+            }
+        })
+        .filter_map(|installed| {
+            let own: Vec<&ModBinding> = bindings
+                .iter()
+                .filter(|binding| binding.mod_id == installed.id)
+                .collect();
+            // Страница, предложенная человеку, ждёт его ответа — её и предложат.
+            if own.is_empty() || own.iter().any(|binding| !binding.confirmed) {
+                return None;
+            }
+            if !own.iter().all(|binding| is_down(&binding.source)) {
+                return None;
+            }
+            let missing: Vec<&'static str> = sites
+                .iter()
+                .copied()
+                .filter(|site| !own.iter().any(|binding| binding.source == *site))
+                .collect();
+            (!missing.is_empty()).then_some((installed, missing))
+        })
+        .collect();
+    search_more_pages(
+        store, search, &due, now, cancel, title_of, author_of, progress,
+    )
+}
+
+/// Ищет моды на перечисленных сайтах и берёт под наблюдение уверенные совпадения.
+#[allow(clippy::too_many_arguments)]
+fn search_more_pages(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    due: &[(InstalledMod, Vec<&'static str>)],
+    now: DateTime<FixedOffset>,
+    cancel: &AtomicBool,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
+    mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+) -> PageSearchReport {
+    let mut result = PageSearchReport::default();
     let deadline = Instant::now() + PAGE_SEARCH_BUDGET;
     // Сайт, который просит проверку, отвечает отказом сразу, без запроса: заглушку
     // помнит сам загрузчик, и только до конца паузы. Старую отметку в библиотеке здесь
@@ -1569,6 +1656,229 @@ mod tests {
             None,
         );
         assert_eq!(again.searched, 0);
+    }
+
+    fn maserati(store: &InMemoryLibraryStore, id: &str, source: &str) {
+        let mut car = installed(id, &format!("{id}_maserati_granturismo.zip"));
+        car.name = "Maserati GranTurismo".to_string();
+        car.size_bytes = Some(100_000_000);
+        store.upsert_mod(car);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: id.to_string(),
+                source: source.to_string(),
+                source_id: id.to_string(),
+                url: Url::parse(&format!("https://{source}.test/{id}")).unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+    }
+
+    fn three_sites() -> SearchService {
+        sites(vec![
+            VerifySite::new(
+                "stmods",
+                None,
+                vec![on_site("stmods", "st", "Maserati GranTurismo")],
+            ),
+            VerifySite::new(
+                "modsgaming",
+                None,
+                vec![on_site("modsgaming", "mg", "Maserati GranTurismo")],
+            ),
+            VerifySite::new(
+                "modland",
+                None,
+                vec![on_site("modland", "ml", "Maserati GranTurismo")],
+            ),
+        ])
+    }
+
+    fn fallback(
+        store: &InMemoryLibraryStore,
+        search: &SearchService,
+        at: DateTime<FixedOffset>,
+        down: &[&str],
+        only: Option<&str>,
+    ) -> PageSearchReport {
+        let down: Vec<String> = down.iter().map(|site| site.to_string()).collect();
+        find_fallback_pages(
+            store,
+            search,
+            at,
+            &AtomicBool::new(false),
+            &down,
+            false,
+            only,
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+            None,
+        )
+    }
+
+    fn sources_of(store: &InMemoryLibraryStore, mod_id: &str) -> Vec<String> {
+        let mut found: Vec<String> = store
+            .bindings()
+            .into_iter()
+            .filter(|binding| binding.mod_id == mod_id)
+            .map(|binding| binding.source)
+            .collect();
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn mod_whose_site_is_down_is_found_on_a_site_that_opens() {
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "car", "stmods");
+        // ModsGaming тоже не открывается: там не ищем, хоть мод там и есть.
+        let report = fallback(
+            &store,
+            &three_sites(),
+            now(),
+            &["stmods", "modsgaming"],
+            None,
+        );
+        assert_eq!(report.followed, 1);
+        assert_eq!(sources_of(&store, "car"), ["modland", "stmods"]);
+        let modland = store
+            .bindings()
+            .into_iter()
+            .find(|binding| binding.source == "modland")
+            .unwrap();
+        assert!(modland.confirmed, "уверенное совпадение — под наблюдение");
+        // Мод уже проверяется на открытом сайте: снова не ищем.
+        let later = now() + FALLBACK_RETRY + TimeDelta::hours(1);
+        assert_eq!(
+            fallback(&store, &three_sites(), later, &["stmods"], None).searched,
+            0
+        );
+    }
+
+    #[test]
+    fn fallback_leaves_mods_that_open_somewhere_alone() {
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "up", "modland");
+        maserati(&store, "both", "stmods");
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "both".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "both".to_string(),
+                url: Url::parse("https://modsgaming.test/both").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        let report = fallback(&store, &three_sites(), now(), &["stmods"], None);
+        assert_eq!(
+            report.searched, 0,
+            "сайт мода открывается — он и так проверяется"
+        );
+        assert_eq!(sources_of(&store, "up"), ["modland"]);
+        assert_eq!(sources_of(&store, "both"), ["modsgaming", "stmods"]);
+        // Ничего не недоступно — ничего не ищем.
+        maserati(&store, "down", "stmods");
+        assert_eq!(
+            fallback(&store, &three_sites(), now(), &[], None).searched,
+            0
+        );
+        // Недоступны все сайты, где искать, — тоже.
+        assert_eq!(
+            fallback(
+                &store,
+                &three_sites(),
+                now(),
+                &["stmods", "modsgaming", "modland"],
+                None
+            )
+            .searched,
+            0
+        );
+    }
+
+    #[test]
+    fn fallback_respects_the_persons_choices() {
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "declined", "stmods");
+        store.set_checking_declined("declined", true);
+        maserati(&store, "refused", "stmods");
+        store.set_page_search(
+            "refused",
+            Some(PageSearch {
+                at: now() - TimeDelta::days(30),
+                rejected: true,
+            }),
+        );
+        maserati(&store, "asked", "stmods");
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "asked".to_string(),
+                source: "modland".to_string(),
+                source_id: "x".to_string(),
+                url: Url::parse("https://modland.test/x").unwrap(),
+                confirmed: false,
+            })
+            .unwrap();
+        let mut off = installed("off", "off_maserati_granturismo.zip");
+        off.name = "Maserati GranTurismo".to_string();
+        off.enabled = false;
+        store.upsert_mod(off);
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "off".to_string(),
+                source: "stmods".to_string(),
+                source_id: "off".to_string(),
+                url: Url::parse("https://stmods.test/off").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        let report = fallback(&store, &three_sites(), now(), &["stmods"], None);
+        assert_eq!(report.searched, 0, "{report:?}");
+        assert_eq!(sources_of(&store, "asked"), ["modland", "stmods"]);
+        // Выключенный мод человек обновляет сам — по кнопке у него ищем.
+        let one = fallback(&store, &three_sites(), now(), &["stmods"], Some("off"));
+        assert_eq!(one.followed, 2, "ModsGaming и Modland открываются");
+        assert_eq!(
+            sources_of(&store, "off"),
+            ["modland", "modsgaming", "stmods"]
+        );
+        assert_eq!(
+            sources_of(&store, "declined"),
+            ["stmods"],
+            "от проверки отказались"
+        );
+    }
+
+    #[test]
+    fn fallback_search_waits_a_day_not_two_weeks() {
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "car", "stmods");
+        let nothing = sites(vec![VerifySite::new("modland", None, Vec::new())]);
+        // Поиск вторых страниц был три дня назад — для запасного сайта это давно.
+        store.set_page_search(
+            "car",
+            Some(PageSearch {
+                at: now() - TimeDelta::days(3),
+                rejected: false,
+            }),
+        );
+        let first = fallback(&store, &nothing, now(), &["stmods"], None);
+        assert_eq!((first.searched, first.followed), (1, 0));
+        let soon = now() + TimeDelta::hours(5);
+        assert_eq!(
+            fallback(&store, &nothing, soon, &["stmods"], None).searched,
+            0
+        );
+        let tomorrow = now() + FALLBACK_RETRY;
+        assert_eq!(
+            fallback(&store, &nothing, tomorrow, &["stmods"], None).searched,
+            1
+        );
+        // `only` — только этот мод.
+        maserati(&store, "other", "stmods");
+        let later = tomorrow + FALLBACK_RETRY;
+        let one = fallback(&store, &nothing, later, &["stmods"], Some("other"));
+        assert_eq!(one.searched, 1);
     }
 
     #[test]
