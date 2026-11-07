@@ -27,10 +27,7 @@ pub async fn updates_find_pages(
             let mut report = run_page_search(&app, &state_for_task, request_id, &cancel, true);
             if !report.cancelled {
                 let extra = run_extra_page_search(&app, &state_for_task, request_id, &cancel);
-                report.found += extra.found;
-                report.followed += extra.followed;
-                report.searched += extra.searched;
-                report.cancelled = extra.cancelled;
+                report = merge_page_reports(report, extra);
             }
             report
         }))

@@ -113,8 +113,9 @@ fn run_page_search(
     let mut progress = |progress: &UpdateProgress| {
         let _ = app_for_progress.emit("updates://event", progress_event(request_id, progress));
     };
-    let include_disabled = state.settings.load().settings.check_disabled_mods;
-    bmm_checks::find_pages_until(
+    let settings = state.settings.load().settings;
+    let include_disabled = settings.check_disabled_mods;
+    let mut report = bmm_checks::find_pages_until(
         store.as_ref(),
         service.as_ref(),
         Utc::now().fixed_offset(),
@@ -125,7 +126,51 @@ fn run_page_search(
         &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
         Some(&mut progress),
         bmm_checks::PAGE_SEARCH_TOTAL_BUDGET,
-    )
+    );
+    // Сайты по выбору (Telegram-канал) выкладывают обновления тех же модов, что уже
+    // прослеживаются на других сайтах: ищем там и модам со страницей. Было — канал
+    // включили, а «Telegram не проверялся»: ни у одного мода не было его страницы.
+    let opt_in = enabled_opt_in(&settings);
+    if !report.cancelled && !opt_in.is_empty() {
+        let extra = bmm_checks::find_extra_pages_on(
+            store.as_ref(),
+            service.as_ref(),
+            Utc::now().fixed_offset(),
+            cancel,
+            include_disabled,
+            Some(&opt_in),
+            &|mod_id| page_title(state, mod_id),
+            &|mod_id| crate::commands::library::archive_author_of(state, mod_id),
+            Some(&mut progress),
+        );
+        report = merge_page_reports(report, extra);
+    }
+    report
+}
+
+/// Включённые сайты из тех, что включают сами.
+fn enabled_opt_in(settings: &bmm_domain::settings::AppSettings) -> Vec<&'static str> {
+    bmm_domain::settings::OPT_IN_SOURCES
+        .iter()
+        .copied()
+        .filter(|id| !settings.source_off(id))
+        .collect()
+}
+
+fn merge_page_reports(
+    mut report: bmm_checks::PageSearchReport,
+    extra: bmm_checks::PageSearchReport,
+) -> bmm_checks::PageSearchReport {
+    report.found += extra.found;
+    report.followed += extra.followed;
+    report.searched += extra.searched;
+    report.cancelled |= extra.cancelled;
+    for site in extra.skipped_sites {
+        if !report.skipped_sites.contains(&site) {
+            report.skipped_sites.push(site);
+        }
+    }
+    report
 }
 
 /// Взятые под наблюдение страницы проверяем сразу — но не после «Остановить»:

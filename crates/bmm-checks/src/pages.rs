@@ -635,6 +635,58 @@ pub fn find_extra_pages(
     include_disabled: bool,
     title_of: &dyn Fn(&str) -> Option<String>,
     author_of: &dyn Fn(&str) -> Option<String>,
+    progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+) -> PageSearchReport {
+    find_extra_pages_on(
+        store,
+        search,
+        now,
+        cancel,
+        include_disabled,
+        None,
+        title_of,
+        author_of,
+        progress,
+    )
+}
+
+/// Пора ли искать мод на сайте `site`. У каждого сайта своя отметка: сайт, который
+/// включили недавно (Telegram-канал), ищется сразу, а не через две недели после
+/// прошлого поиска на остальных. Пока отметки нет, у прежних сайтов действует общая.
+fn site_due(
+    store: &dyn LibraryStore,
+    mod_id: &str,
+    site: &str,
+    global: Option<&PageSearch>,
+    now: DateTime<FixedOffset>,
+) -> bool {
+    let fresh = |search: &PageSearch| {
+        now - search.at >= crate::page_guesser::RETRY_AFTER || search.at > now
+    };
+    match store.get_source_search(mod_id, site) {
+        Some(search) => !search.rejected && fresh(&search),
+        None if bmm_domain::settings::OPT_IN_SOURCES
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(site)) =>
+        {
+            true
+        }
+        None => global.is_none_or(fresh),
+    }
+}
+
+/// Как [`find_extra_pages`], но только на сайтах `only` (если заданы): при каждой
+/// проверке ищем страницы на быстрых сайтах, включённых по выбору.
+#[allow(clippy::too_many_arguments)]
+pub fn find_extra_pages_on(
+    store: &dyn LibraryStore,
+    search: &SearchService,
+    now: DateTime<FixedOffset>,
+    cancel: &AtomicBool,
+    include_disabled: bool,
+    only: Option<&[&str]>,
+    title_of: &dyn Fn(&str) -> Option<String>,
+    author_of: &dyn Fn(&str) -> Option<String>,
     mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
     let mut result = PageSearchReport::default();
@@ -643,6 +695,7 @@ pub fn find_extra_pages(
         .iter()
         .filter(|source| source.supports_search())
         .map(|source| source.id())
+        .filter(|id| only.is_none_or(|only| only.iter().any(|site| site.eq_ignore_ascii_case(id))))
         .collect();
     let bindings = store.bindings();
     let due: Vec<(InstalledMod, Vec<&'static str>)> = store
@@ -650,15 +703,11 @@ pub fn find_extra_pages(
         .into_iter()
         .filter(|installed| include_disabled || installed.enabled)
         .filter(|installed| !store.is_checking_declined(&installed.id))
-        // Вторые страницы ищем не чаще раза в две недели: каждый поиск — запрос на
-        // каждый недостающий сайт, а Modland и ModHub отвечают по несколько секунд.
-        // По журналу: повторное нажатие «Найти страницы» тратило на это пять минут.
-        .filter(|installed| match store.get_page_search(&installed.id) {
-            None => true,
-            Some(search) => {
-                !search.rejected
-                    && (now - search.at >= crate::page_guesser::RETRY_AFTER || search.at > now)
-            }
+        // «Это другой мод» — сам больше не ищем нигде.
+        .filter(|installed| {
+            !store
+                .get_page_search(&installed.id)
+                .is_some_and(|search| search.rejected)
         })
         .filter_map(|installed| {
             let own: Vec<&ModBinding> = bindings
@@ -669,10 +718,15 @@ pub fn find_extra_pages(
             if own.is_empty() || own.iter().any(|binding| !binding.confirmed) {
                 return None;
             }
+            // Вторые страницы ищем не чаще раза в две недели на каждом сайте: каждый поиск —
+            // запрос, а Modland и ModHub отвечают по несколько секунд. По журналу:
+            // повторное нажатие «Найти страницы» тратило на это пять минут.
+            let global = store.get_page_search(&installed.id);
             let missing: Vec<&'static str> = sites
                 .iter()
                 .copied()
                 .filter(|site| !own.iter().any(|binding| binding.source == *site))
+                .filter(|site| site_due(store, &installed.id, site, global.as_ref(), now))
                 .collect();
             (!missing.is_empty()).then_some((installed, missing))
         })
@@ -719,6 +773,14 @@ pub fn find_extra_pages(
                 Ok(found) => {
                     answered = true;
                     listings.extend(found);
+                    store.set_source_search(
+                        &installed.id,
+                        site,
+                        Some(PageSearch {
+                            at: now,
+                            rejected: false,
+                        }),
+                    );
                     // Ответил — значит, пускает: снимаем старую отметку «просит проверку».
                     if answered_sites.insert(site)
                         && store.source_status(site)
@@ -1001,6 +1063,8 @@ pub struct Unfollowed {
     pub binding: ModBinding,
     pub check: Option<CheckState>,
     pub search: Option<PageSearch>,
+    /// Отметка поиска на сайте этой страницы.
+    pub site_search: Option<PageSearch>,
     pub dismissed: Option<String>,
 }
 
@@ -1021,18 +1085,19 @@ pub fn unfollow_page(
     let saved = Unfollowed {
         check: store.get_check(mod_id, source),
         search: store.get_page_search(mod_id),
+        site_search: store.get_source_search(mod_id, source),
         dismissed: store.get_dismissed_update(mod_id),
         binding,
     };
     store.remove_binding(mod_id, source);
     store.set_dismissed_update(mod_id, None);
-    store.set_page_search(
-        mod_id,
-        Some(PageSearch {
-            at: now,
-            rejected: true,
-        }),
-    );
+    let rejected = Some(PageSearch {
+        at: now,
+        rejected: true,
+    });
+    store.set_page_search(mod_id, rejected.clone());
+    // И на этом сайте отдельно: у него своя отметка поиска.
+    store.set_source_search(mod_id, source, rejected);
     Some(saved)
 }
 
@@ -1058,6 +1123,7 @@ pub fn refollow_page(store: &dyn LibraryStore, saved: &Unfollowed) -> bool {
         store.save_check(check.clone());
     }
     store.set_page_search(&binding.mod_id, saved.search.clone());
+    store.set_source_search(&binding.mod_id, &binding.source, saved.site_search.clone());
     store.set_dismissed_update(&binding.mod_id, saved.dismissed.as_deref());
     true
 }

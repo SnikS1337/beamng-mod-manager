@@ -162,6 +162,18 @@ impl LibraryStore for InMemoryLibraryStore {
     fn set_page_search(&self, mod_id: &str, state: Option<PageSearch>) {
         self.inner.lock().unwrap().set_page_search(mod_id, state);
     }
+
+    fn get_source_search(&self, mod_id: &str, source: &str) -> Option<PageSearch> {
+        self.inner.lock().unwrap().get_source_search(mod_id, source)
+    }
+
+    fn set_source_search(&self, mod_id: &str, source: &str, state: Option<PageSearch>) {
+        let _ = self
+            .inner
+            .lock()
+            .unwrap()
+            .set_source_search(mod_id, source, state);
+    }
 }
 
 #[cfg(test)]
