@@ -6,6 +6,7 @@ pub mod modland;
 pub mod modsfire;
 pub mod modsgaming;
 pub mod stmods;
+pub mod telegram;
 
 use std::sync::LazyLock;
 
