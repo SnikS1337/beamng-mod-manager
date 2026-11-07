@@ -30,6 +30,12 @@ export async function downloadOpen(request: DownloadRequest): Promise<void> {
   await invoke("download_open", { request });
 }
 
+/** Пост Telegram-канала — в приложении Telegram; программа ждёт скачанный архив. */
+export async function telegramOpen(url: string): Promise<void> {
+  if (!isTauri()) throw new Error("Открыть Telegram можно в приложении.");
+  await invoke("telegram_open", { url });
+}
+
 export async function downloadClose(): Promise<void> {
   if (isTauri()) await invoke("download_close");
 }

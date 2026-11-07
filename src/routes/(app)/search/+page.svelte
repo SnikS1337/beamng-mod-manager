@@ -18,7 +18,8 @@
   import { parseSearchInput } from "#lib/features/search/queryInput.js";
   import { suggest } from "#lib/features/search/suggest.js";
   import { libraryLoad } from "#lib/ipc/library.js";
-  import { downloadOpen } from "#lib/ipc/download.js";
+  import { downloadOpen, telegramOpen } from "#lib/ipc/download.js";
+  import { isTelegramPost, TELEGRAM_OPENED } from "#lib/features/telegram/telegram.js";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
@@ -507,6 +508,15 @@
   }
 
   async function downloadListing(card: SearchCard, listing: SearchListing): Promise<void> {
+    if (isTelegramPost(listing.url)) {
+      try {
+        await telegramOpen(listing.url);
+        toasts.show(TELEGRAM_OPENED);
+      } catch {
+        await openLink(listing.url);
+      }
+      return;
+    }
     try {
       await downloadOpen({
         modName: card.title,
@@ -1226,7 +1236,7 @@
         {/each}
       </div>
     {:else}
-      <p class="sub">Modland, STMods, ModsGaming и ModHub — сразу, одним запросом.</p>
+      <p class="sub">Modland, STMods, ModsGaming и ModHub (и Telegram-канал, если включён) — сразу, одним запросом.</p>
     {/if}
     {#if !searching && sources.some((source) => !source.pending && (source.status !== "ok" || (source.note ?? "").includes("не загрузилась")))}
       <button class="btn-glass pass" type="button" onclick={retryAll}>

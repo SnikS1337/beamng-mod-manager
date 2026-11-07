@@ -57,12 +57,7 @@ fn page_search_service(state: &AppState) -> Option<Arc<bmm_sources::search::Sear
         .service
         .sources()
         .iter()
-        .filter(|source| {
-            !settings
-                .disabled_sources
-                .iter()
-                .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
-        })
+        .filter(|source| !settings.source_off(source.id()))
         .cloned()
         .collect();
     let fetcher = runtime.fetcher.clone();
@@ -235,11 +230,7 @@ async fn start_updates(
             .unwrap_or_else(|poison| poison.into_inner());
         enabled.clear();
         for source in runtime.sources.iter() {
-            if !settings
-                .disabled_sources
-                .iter()
-                .any(|disabled| disabled.eq_ignore_ascii_case(source.id()))
-            {
+            if !settings.source_off(source.id()) {
                 enabled.insert(source.id().to_string());
             }
         }
@@ -349,11 +340,7 @@ fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, 
         .find(|binding| binding.mod_id == mod_id && binding.confirmed)
         .ok_or_else(|| AppError::new("updates", "У мода нет страницы для проверки обновлений."))?;
     let settings = state.settings.load().settings;
-    if settings
-        .disabled_sources
-        .iter()
-        .any(|source| source.eq_ignore_ascii_case(&binding.source))
-    {
+    if settings.source_off(&binding.source) {
         return Err(AppError::new(
             "updates",
             "Сайт этого мода выключен в настройках.",

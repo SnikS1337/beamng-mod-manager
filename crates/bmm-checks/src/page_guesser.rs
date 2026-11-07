@@ -82,6 +82,8 @@ pub fn site_hint(file_name: &str) -> Option<&'static str> {
         ("modhub", "modhub"),
         ("stmods", "stmods"),
         ("modsgaming", "modsgaming"),
+        // «Audi_A4_S8_B8_tg_m0dsbeamng.zip» — из Telegram-канала.
+        ("m0dsbeamng", "telegram"),
     ]
     .into_iter()
     .find(|(word, _)| words.contains(word))
@@ -898,7 +900,12 @@ mod tests {
             Some("modland")
         );
         assert_eq!(site_hint("weather_fx_modland.zip"), Some("modland"));
-        assert_eq!(site_hint("Sumner_Road_tg_m0dsbeamng.zip"), None);
+        // Telegram-канал теперь тоже источник: его метка в имени — подсказка.
+        assert_eq!(site_hint("Sumner_Road_tg_m0dsbeamng.zip"), Some("telegram"));
+        assert_eq!(
+            site_hint("Audi A4 B6 & tg_@m0dsbeamng.zip"),
+            Some("telegram")
+        );
         assert_eq!(site_hint("bmw_m8_modhub.zip"), Some("modhub"));
         assert_eq!(
             site_hint("modlandia_cars.zip"),
