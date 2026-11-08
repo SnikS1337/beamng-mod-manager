@@ -542,16 +542,6 @@ input[type="checkbox"]:checked::after {
   background-clip: content-box;
 }
 
-.spin {
-  animation: spin 0.9s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* Появление: короткий подъём с проявлением. Карточкам — с небольшой задержкой по порядку. */
 @keyframes rise-in {
   from {
@@ -603,10 +593,43 @@ input[type="checkbox"]:checked::after {
   animation: shimmer 1.4s linear infinite;
 }
 
-.no-motion .spin,
 .no-motion .rise-in,
 .no-motion .skeleton {
   animation: none;
+}
+
+/* «Установлен»: отметка на только что поставленном моде. Появляется пружиной,
+   держится и тает за то же время, что живёт `installedFlash` (1,8 с). В «Быстро»
+   стоит без движения, пока её не снимет таймер: иначе общее правило ниже сразу
+   промотало бы её до последнего, прозрачного кадра. */
+.installed-life {
+  animation: installed-life 1800ms both;
+}
+
+@keyframes installed-life {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.85);
+    animation-timing-function: var(--ease-snap);
+  }
+  20% {
+    opacity: 1;
+    transform: none;
+    animation-timing-function: linear;
+  }
+  80% {
+    opacity: 1;
+    transform: none;
+    animation-timing-function: var(--ease-out);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+}
+
+.no-motion .installed-life {
+  animation-name: none;
 }
 
 /* «Быстро» должно убирать движение целиком, а не только длительности из токенов:

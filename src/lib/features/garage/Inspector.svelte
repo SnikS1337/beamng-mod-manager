@@ -1,6 +1,8 @@
 <script lang="ts">
+  import SiteMark from "#lib/shell/SiteMark.svelte";
   import { ModPreview } from "./modPreview.svelte";
   import { coverTint } from "./coverTint";
+  import { kindIcon } from "./tagIcons";
   import { untrack } from "svelte";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -16,7 +18,6 @@
   import type { AppError } from "#lib/ipc/types.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import X from "phosphor-svelte/lib/X";
-  import Car from "phosphor-svelte/lib/Car";
   import { formatDate, formatSize, groupDigits, plural } from "./format";
   import { typeLabel, type TypeTag } from "./view";
   import VersionsBlock from "./VersionsBlock.svelte";
@@ -225,6 +226,9 @@
     };
   });
 
+  // Заглушка без картинки — значок типа, а не всегда машина (у звука был автомобиль).
+  const KindIcon = $derived(kindIcon(tag));
+
   const hasUpdate = $derived(update !== "none" && !!details?.binding);
 
   async function openPage() {
@@ -264,9 +268,9 @@
       {#if coverHint && !addon}
         <img src={coverHint} alt="" />
       {:else}
-        <span class="hero-icon"><Car size={56} weight="thin" /></span>
+        <span class="hero-icon"><KindIcon size={56} weight="thin" /></span>
       {/if}
-      <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+      <span class="kind-tag {tag}"><KindIcon size={12} weight="bold" />{typeLabel(tag)}</span>
     </div>
     <div class="skeleton line-skeleton"></div>
   {:else if details}
@@ -275,9 +279,9 @@
         {#if heroPreview.url}
           <img src={heroPreview.url} alt="" />
         {:else}
-          <span class="hero-icon"><Car size={56} weight="thin" /></span>
+          <span class="hero-icon"><KindIcon size={56} weight="thin" /></span>
         {/if}
-        <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+        <span class="kind-tag {tag}"><KindIcon size={12} weight="bold" />{typeLabel(tag)}</span>
       </div>
     {/key}
 
@@ -364,7 +368,7 @@
         </div>
       {/if}
       {#if details.binding}
-        <div><span>Страница</span><b>{sourceName(details.binding.source)}</b></div>
+        <div><span>Страница</span><b class="with-mark"><SiteMark id={details.binding.source} size={14} />{sourceName(details.binding.source)}</b></div>
       {:else}
         <div><span>Обновления</span><b title="Укажите страницу мода — и программа будет проверять обновления">нет страницы</b></div>
       {/if}
@@ -541,6 +545,12 @@
       color-mix(in oklab, var(--tint, transparent) 10%, transparent),
       transparent
     );
+  }
+
+  .with-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 
   @keyframes panel-in {

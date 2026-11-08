@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { kindIcon, statusIcon } from "./tagIcons";
+  import Copy from "phosphor-svelte/lib/Copy";
   import { arrival } from "#lib/shell/arrival.svelte.js";
   import { toggleLabel } from "./a11y";
   import type { ClickKeys } from "./selection";
-  import Car from "phosphor-svelte/lib/Car";
   import Check from "phosphor-svelte/lib/Check";
   import { Switch } from "#lib/components/ui/switch/index.js";
   import type { ModCardDto } from "#lib/ipc/library.js";
@@ -15,6 +16,8 @@
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
   import { coverFlight } from "./coverFlight.svelte";
+  import { installedFlash } from "./conflictFlash.svelte";
+  import DrawCheck from "#lib/shell/DrawCheck.svelte";
 
   let {
     items,
@@ -116,6 +119,7 @@
     <div style={`height:${items.length * ROW}px; position:relative`}>
       {#each visible as mod, offset (mod.id)}
         {@const tag = typeTag(mod)}
+        {@const KindIcon = kindIcon(tag)}
         {@const status = modStatus(mod)}
         {@const copies = copiesBadge(mod)}
         {@const version = versionLine(mod)}
@@ -163,21 +167,32 @@
             {#if mod.previewUrl && mod.role !== "addon"}
               <img src={mod.previewUrl} alt="" loading="lazy" decoding="async" />
             {:else}
-              <Car size={16} weight="thin" />
+              <KindIcon size={16} weight="thin" />
             {/if}
           </span>
           <span class="name">
-            <b>{mod.name}</b>
+            <span class="title">
+              <b>{mod.name}</b>
+              {#if installedFlash.id === mod.id}
+                <!-- Только что поставлен: галочка дорисовывается и тает. -->
+                <span class="installed installed-life" aria-hidden="true"><DrawCheck size={14} /></span>
+              {/if}
+            </span>
             <small>{mod.fileName}</small>
           </span>
-          <span class="type-cell"><span class="kind-tag {tag}">{typeLabel(tag)}</span></span>
+          <span class="type-cell"><span class="kind-tag {tag}"><KindIcon size={12} weight="bold" />{typeLabel(tag)}</span></span>
           <span class="version-cell mono" class:fresh={version?.fresh}>
             {#key version?.text}<span class="roll" in:rollIn>{version?.text ?? "—"}</span>{/key}
           </span>
           <span class="size-cell muted">{formatSize(mod.sizeBytes)}</span>
           <span class="states">
-            {#if status}<span class="status {status.tone}">{status.text}</span>{/if}
-            {#if copies}<span class="status copies" class:conflict={mod.groupConflict}>{copies}</span>{/if}
+            {#if status}
+              {@const StatusIcon = statusIcon(status.tone)}
+              <span class="status {status.tone}"><StatusIcon size={12} weight="bold" />{status.text}</span>
+            {/if}
+            {#if copies}
+              <span class="status copies" class:conflict={mod.groupConflict}><Copy size={12} weight="bold" />{copies}</span>
+            {/if}
           </span>
           <span class="end">
             {#if !mod.deleted}
@@ -340,7 +355,21 @@
     white-space: nowrap;
   }
 
+  .title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .installed {
+    display: inline-flex;
+    flex: none;
+    color: var(--ok);
+  }
+
   .name b {
+    min-width: 0;
     font-weight: 700;
     transition: color var(--dur-2) var(--ease-out);
   }
@@ -363,6 +392,7 @@
   .status {
     display: inline-flex;
     align-items: center;
+    gap: 5px;
     height: 22px;
     padding: 0 8px;
     border: 1px solid var(--border-strong);

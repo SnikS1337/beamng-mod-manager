@@ -88,7 +88,7 @@
       </b>
       {#if view.stage === "available" || view.stage === "failed"}
         <button class="close" type="button" aria-label="Позже" onclick={later}>
-          <X size={14} />
+          <X size={14} weight="bold" />
         </button>
       {/if}
     </div>

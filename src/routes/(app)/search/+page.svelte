@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SiteMark from "#lib/shell/SiteMark.svelte";
   import { errorText } from "#lib/shell/errorText.js";
   import { passButton, rerunAfterPass } from "#lib/shell/siteCheck.js";
   import { anyOverlay } from "#lib/shell/overlays.js";
@@ -10,7 +11,6 @@
   import Funnel from "phosphor-svelte/lib/Funnel";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import X from "phosphor-svelte/lib/X";
-  import Car from "phosphor-svelte/lib/Car";
   import { formatSize, plural, shownOfLabel } from "#lib/features/garage/format.js";
   import { categoryIntent, type BrowseKind } from "#lib/features/search/category.js";
   import { searchKindLabel } from "#lib/features/search/kind.js";
@@ -21,6 +21,7 @@
   import { downloadOpen } from "#lib/ipc/download.js";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { softFade } from "#lib/shell/transitions.js";
+  import { kindIcon } from "#lib/features/garage/tagIcons.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
     listenSearch,
@@ -1034,7 +1035,8 @@
             {#if preview}
               <img src={preview} alt="" loading="lazy" decoding="async" />
             {:else}
-              <span class="glyph"><Car size={44} weight="thin" /></span>
+              {@const Glyph = kindIcon(card.kind)}
+              <span class="glyph"><Glyph size={44} weight="thin" /></span>
             {/if}
             {#if card.price === "paid" || card.price === "mixed"}
               <span class="price {card.price}">{priceLabel(card.price)}</span>
@@ -1043,7 +1045,8 @@
               <span class="installed">У вас стоит</span>
             {/if}
             {#if searchKindLabel(card)}
-              <span class="kind-tag {card.kind === "map" ? "map" : card.kind}">{searchKindLabel(card)}</span>
+              {@const KindIcon = kindIcon(card.kind)}
+              <span class="kind-tag {card.kind === "map" ? "map" : card.kind}"><KindIcon size={12} weight="bold" />{searchKindLabel(card)}</span>
             {/if}
           </div>
 
@@ -1053,7 +1056,7 @@
               {#each card.listings as listing (listing.source + listing.sourceId)}
                 <div class="listing">
                   <div class="listing-main">
-                    <span class="site-name">{sourceName(listing.source)}</span>
+                    <span class="site-name"><SiteMark id={listing.source} size={14} />{sourceName(listing.source)}</span>
                     <span class="listing-title" title={listing.title}>{listing.name || listing.title}</span>
                     {#if versionText(listing)}
                       <span class="version mono">{versionText(listing)}</span>
@@ -1216,6 +1219,7 @@
               class:bad={source.status === "unavailable"}
               class:zero={source.status === "ok" && !source.pending && source.count === 0}
             ></span>
+            <SiteMark id={source.id} size={16} />
             <b>{source.displayName}</b>
             <span class="state-text">
               {#if source.pending}
@@ -1797,6 +1801,9 @@
   }
 
   .site-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     color: var(--muted-foreground);
     font-size: 10.5px;
     font-weight: 800;

@@ -57,7 +57,13 @@ describe("окно скачивания для экранного диктора
     );
     const icons = page.match(/<[A-Z][A-Za-z]* size=\{[^>]*\/>/g) ?? [];
     expect(icons.length).toBeGreaterThan(0);
-    for (const icon of icons) expect(icon, icon).toContain('aria-hidden="true"');
+    for (const icon of icons) {
+      // Своя галочка прячется от диктора сама — проверяем в её файле.
+      if (icon.startsWith("<DrawCheck")) continue;
+      expect(icon, icon).toContain('aria-hidden="true"');
+    }
+    const check: string = readFileSync(new URL("../../shell/DrawCheck.svelte", import.meta.url), "utf8");
+    expect(check).toMatch(/<svg[^>]*aria-hidden="true"/);
     expect(page).toMatch(/class="urlbar" role="region" aria-label="Адрес страницы"/);
   });
 });

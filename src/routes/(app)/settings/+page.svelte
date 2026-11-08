@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SiteMark from "#lib/shell/SiteMark.svelte";
   import { releaseNoteItems } from "#lib/shell/appUpdateNotice.js";
   import { errorText } from "#lib/shell/errorText.js";
   import { SaveQueue } from "#lib/features/settings/saveQueue.js";
@@ -767,7 +768,7 @@
               >
                 <span class="backdrop-tone" style={`background:${item.gradient}`}>
                   {#if draft.background === item.id}
-                    <Check size={14} weight="bold" />
+                    <Check size={13} weight="bold" />
                   {/if}
                 </span>
                 <span class="backdrop-text">
@@ -799,7 +800,7 @@
         <div class="path-row">
           <input id="mods-folder" readonly value={draft.modsFolder ?? ""} placeholder="не выбрана" title={draft.modsFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("modsFolder")}>
-            <FolderOpen size={13} />
+            <FolderOpen size={13} weight="bold" />
             Выбрать
           </button>
           <button
@@ -820,7 +821,7 @@
         <div class="path-row">
           <input id="user-folder" readonly value={draft.userFolder ?? ""} placeholder="определяется автоматически" title={draft.userFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("userFolder")}>
-            <FolderOpen size={13} />
+            <FolderOpen size={13} weight="bold" />
             Выбрать
           </button>
           <button
@@ -908,7 +909,7 @@
             title={draft.downloadsFolder ?? "Системные «Загрузки»"}
           />
           <button type="button" onclick={() => void pickFolder("downloadsFolder")}>
-            <FolderOpen size={13} />
+            <FolderOpen size={13} weight="bold" />
             Выбрать
           </button>
           <button type="button" disabled={!draft.downloadsFolder} onclick={resetDownloadsFolder}>
@@ -947,12 +948,12 @@
             <div class="watch-row">
               <span>{folder}</span>
               <button type="button" aria-label="Убрать папку" onclick={() => removeWatchFolder(folder)}>
-                <X size={12} />
+                <X size={12} weight="bold" />
               </button>
             </div>
           {/each}
           <button class="add" type="button" onclick={() => void addWatchFolder()}>
-            <Plus size={13} />
+            <Plus size={13} weight="bold" />
             Добавить папку
           </button>
         </div>
@@ -1085,7 +1086,8 @@
       <div class="switch-list">
         {#each SOURCES as source (source.id)}
           <div class="switch-row">
-            <div>
+            <SiteMark id={source.id} size={22} />
+            <div class="site-text">
               <b>{source.label}</b>
               <small>{source.note}</small>
             </div>
@@ -1126,14 +1128,14 @@
             <div class="update-actions">
               {#if appUpdate?.state.stage === "available"}
                 <button class="primary-small" type="button" disabled={updateBusy} onclick={() => void downloadAppUpdate()}>
-                  <Download size={13} />
+                  <Download size={13} weight="bold" />
                   Скачать
                 </button>
               {:else if appUpdate?.state.stage === "downloading"}
                 <button type="button" onclick={() => void cancelAppUpdate()}>Отменить</button>
               {:else if appUpdate?.state.stage === "readyToRestart"}
                 <button class="primary-small" type="button" onclick={() => restartAppUpdate()}>
-                  <RotateCcw size={13} />
+                  <RotateCcw size={13} weight="bold" />
                   Перезапустить
                 </button>
               {:else if appUpdate?.state.stage === "checking"}
@@ -1409,6 +1411,11 @@
     justify-content: space-between;
     gap: 16px;
     padding: 12px 14px;
+  }
+
+  .site-text {
+    flex: 1;
+    min-width: 0;
   }
 
   .switch-row + .switch-row {

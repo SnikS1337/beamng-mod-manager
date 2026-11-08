@@ -1,16 +1,20 @@
 import { tick } from "svelte";
 
-/** Сколько держать вспышку: столько же длится анимация в карточке. */
+/** Сколько держать вспышку копий: столько же длится анимация в карточке. */
 export const FLASH_MS = 900;
+/** Сколько держать «Установлен» на только что поставленной карточке. */
+export const INSTALLED_MS = 1800;
 
 /**
- * Карточка, у которой только что включились две копии сразу: метка «копии»
- * коротко вздрагивает и подсвечивается. Повтор на той же карточке перезапускает
- * анимацию, а не теряется.
+ * Короткая отметка на одной карточке: «вторая копия включена», «только что
+ * установлен». Повтор на той же карточке перезапускает анимацию, а не теряется;
+ * другая карточка перехватывает отметку.
  */
-class ConflictFlash {
+export class Flash {
   id = $state<string | null>(null);
   #timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(private readonly duration: number) {}
 
   async flash(id: string): Promise<void> {
     if (this.#timer) clearTimeout(this.#timer);
@@ -23,8 +27,9 @@ class ConflictFlash {
     this.#timer = setTimeout(() => {
       if (this.id === id) this.id = null;
       this.#timer = undefined;
-    }, FLASH_MS);
+    }, this.duration);
   }
 }
 
-export const conflictFlash = new ConflictFlash();
+export const conflictFlash = new Flash(FLASH_MS);
+export const installedFlash = new Flash(INSTALLED_MS);

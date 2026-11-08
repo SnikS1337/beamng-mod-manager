@@ -7,7 +7,7 @@
   import { isTauri } from "@tauri-apps/api/core";
   import { emit } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import Check from "phosphor-svelte/lib/Check";
+  import DrawCheck from "#lib/shell/DrawCheck.svelte";
   import Lock from "phosphor-svelte/lib/Lock";
   import Package from "phosphor-svelte/lib/Package";
   import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
@@ -757,13 +757,13 @@
     </div>
     <button class="close" type="button" aria-label="Закрыть" onclick={() => void close()}>
       <span>Закрыть</span>
-      <X size={16} aria-hidden="true" />
+      <X size={16} weight="bold" aria-hidden="true" />
     </button>
   </header>
 
   <!-- Адрес страницы — отдельная область с именем: иначе он висел вне разметки. -->
   <div class="urlbar" role="region" aria-label="Адрес страницы">
-    <Lock size={13} aria-hidden="true" />
+    <Lock size={13} weight="bold" aria-hidden="true" />
     <span>{address}</span>
   </div>
 
@@ -841,7 +841,7 @@
       <div class="step {state}">
         <span class="marker">
           {#if state === "done"}
-            <Check size={13} weight="bold" aria-hidden="true" />
+            <DrawCheck size={13} ring={false} />
           {:else}
             <span class="dot"></span>
           {/if}
@@ -1231,6 +1231,10 @@
 
   .marker {
     z-index: 1;
+    transition:
+      background-color var(--dur-2) var(--ease-out),
+      border-color var(--dur-2) var(--ease-out),
+      box-shadow var(--dur-2) var(--ease-out);
     display: grid;
     place-items: center;
     width: 27px;
@@ -1262,6 +1266,14 @@
     border-color: var(--accent-brand);
     background: var(--accent-brand);
     color: var(--accent-brand-contrast);
+    animation: marker-done var(--dur-3) var(--ease-snap) both;
+  }
+
+  /* Этап закрылся: кружок заливается и чуть «щёлкает», галочка дорисовывается в нём. */
+  @keyframes marker-done {
+    from {
+      scale: 0.86;
+    }
   }
 
   .step b {

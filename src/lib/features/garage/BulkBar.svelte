@@ -44,7 +44,7 @@
     <!-- Кнопки без работы не показываем: «Включить» у включённых только сбивает. -->
     {#if plan.enable.length > 0}
       <button class="btn-primary" type="button" disabled={busy} onclick={onEnable}>
-        <Power size={16} weight="bold" />
+        <Power size={16} />
         Включить {plan.enable.length}
       </button>
     {/if}

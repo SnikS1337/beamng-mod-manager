@@ -1,14 +1,9 @@
 <script lang="ts">
+  import { kindIcon, statusIcon } from "./tagIcons";
   import { arrival } from "#lib/shell/arrival.svelte.js";
   import { toggleLabel } from "./a11y";
   import type { ClickKeys } from "./selection";
-  import Car from "phosphor-svelte/lib/Car";
   import Check from "phosphor-svelte/lib/Check";
-  import MapTrifold from "phosphor-svelte/lib/MapTrifold";
-  import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
-  import FileCode from "phosphor-svelte/lib/FileCode";
-  import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
-  import Package from "phosphor-svelte/lib/Package";
   import Copy from "phosphor-svelte/lib/Copy";
   import { Switch } from "#lib/components/ui/switch/index.js";
   import { modPreview, type ModCardDto } from "#lib/ipc/library.js";
@@ -22,7 +17,8 @@
   import { flowName } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
   import { coverFlight } from "./coverFlight.svelte";
-  import { conflictFlash } from "./conflictFlash.svelte";
+  import { conflictFlash, installedFlash } from "./conflictFlash.svelte";
+  import DrawCheck from "#lib/shell/DrawCheck.svelte";
   import { liveDownloads } from "#lib/features/download/live.svelte.js";
   import { modProgress } from "#lib/features/download/jobs.js";
 
@@ -101,19 +97,8 @@
     coverFlight.remember(mod.id, preview && preview !== brokenPreview ? preview : null);
   });
 
-  const icon = $derived(
-    tag === "vehicle"
-      ? Car
-      : tag === "map"
-        ? MapTrifold
-        : tag === "script"
-          ? FileCode
-          : tag === "sound"
-            ? SpeakerHigh
-            : tag === "addon"
-              ? PuzzlePiece
-              : Package,
-  );
+  const icon = $derived(kindIcon(tag));
+  const KindIcon = $derived(icon);
 
   function select(event: MouseEvent) {
     onselect(mod.id, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
@@ -162,7 +147,7 @@
     {#if addon}
       {@const Icon = icon}
       <span class="addon-label">
-        <Icon size={34} weight="duotone" />
+        <Icon size={34} weight="thin" />
         {#if caption}<span>{caption}</span>{/if}
       </span>
     {:else if preview && preview !== brokenPreview}
@@ -184,9 +169,10 @@
          Тип не прячется ни при наведении, ни пока выбрано несколько: выбирая
          галочками, видно, машина это или карта. -->
     <span class="tags">
-      <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+      <span class="kind-tag {tag}"><KindIcon size={12} weight="bold" />{typeLabel(tag)}</span>
       {#if status}
-        <span class="status {status.tone}">{status.text}</span>
+        {@const StatusIcon = statusIcon(status.tone)}
+        <span class="status {status.tone}"><StatusIcon size={12} weight="bold" />{status.text}</span>
       {/if}
     </span>
     {#if download}
@@ -228,10 +214,15 @@
             title="Открыть сайт мода"
             onclick={() => onopenpage(mod)}
           >
-            <ArrowSquareOut size={14} weight="bold" />
+            <ArrowSquareOut size={13} weight="bold" />
           </button>
         {/if}
       </span>
+    {/if}
+    {#if installedFlash.id === mod.id}
+      <!-- Только что поставлен: отметка сама тает. Читалкам экрана об установке
+           уже сказал тост. -->
+      <span class="installed installed-life" aria-hidden="true"><DrawCheck size={15} />Установлен</span>
     {/if}
     {#if copies}
       <span
@@ -583,6 +574,7 @@
   .status {
     display: inline-flex;
     align-items: center;
+    gap: 5px;
     height: 22px;
     max-width: 100%;
     overflow: hidden;
@@ -618,6 +610,29 @@
     border: 1px solid var(--border-strong);
     background: color-mix(in oklab, var(--background) 82%, transparent);
     color: var(--muted-foreground);
+  }
+
+  .installed {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    margin: -14px 0 0;
+    padding: 0 12px 0 8px;
+    border: 1px solid color-mix(in oklab, var(--ok) 45%, transparent);
+    border-radius: 999px;
+    background: var(--background);
+    color: var(--ok);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    translate: -50% 0;
+    pointer-events: none;
+    box-shadow: 0 6px 18px -8px color-mix(in oklab, var(--ok) 60%, transparent);
   }
 
   .copies {

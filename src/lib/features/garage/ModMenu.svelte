@@ -86,7 +86,7 @@
       {#if many}
         <div class="menu-title">Выбрано: {selectedIds.length}</div>
         <ContextMenu.Item class="menu-item" onSelect={() => onBulk?.("enable")}>
-          <Power size={16} weight="bold" />Включить выбранные
+          <Power size={16} />Включить выбранные
         </ContextMenu.Item>
         <ContextMenu.Item class="menu-item" onSelect={() => onBulk?.("disable")}>
           <Power size={16} />Выключить выбранные
