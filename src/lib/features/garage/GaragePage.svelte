@@ -582,7 +582,7 @@
       await load(true);
       const verb = target ? "Включено" : "Выключено";
       const parts = [`${verb}: ${result.changed.length}`];
-      if (result.queued.length > 0) parts.push(`после игры: ${result.queued.length}`);
+      if (result.queued.length > 0) parts.push(`игра применит позже: ${result.queued.length}`);
       if (result.failed.length > 0) parts.push(`не получилось: ${result.failed.length}`);
       showToast(parts.join(" · "), {
         undo:
