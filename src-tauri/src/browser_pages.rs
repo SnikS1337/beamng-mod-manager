@@ -52,7 +52,7 @@ impl BrowserPages {
 
     /// Приложение создано — теперь можно открыть скрытое окно браузера.
     pub fn attach(&self, app: AppHandle) {
-        *self.app.lock().unwrap() = Some(app);
+        *crate::state::lock(&self.app) = Some(app);
     }
 
     fn window(&self) -> Result<WebviewWindow, FetchError> {

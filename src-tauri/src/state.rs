@@ -103,10 +103,25 @@ pub struct AppState {
     pub browse: Mutex<Option<BrowseSession>>,
 }
 
+/// Замок, переживший панику держателя. Паника в одной команде (битый архив и т.п.)
+/// отравляла замок, и все следующие команды библиотеки отвечали «не удалось
+/// заблокировать» до перезапуска. Данные под нашими замками целостны и после паники:
+/// их меняют одной записью.
+pub fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 impl AppState {
+    /// Очередь к библиотеке: скан, установка, удаление, переключение.
+    pub fn load_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        lock(&self.load_lock)
+    }
+
     pub fn save_pending(&self) -> std::io::Result<()> {
         let path = self.paths.root().join("pending.json");
-        let pending = self.pending.lock().unwrap().clone();
+        let pending = crate::state::lock(&self.pending).clone();
         let json = serde_json::to_string_pretty(&pending).map_err(std::io::Error::other)?;
         bmm_domain::atomic::write_atomic(&path, json.as_bytes())
     }
@@ -119,6 +134,6 @@ impl AppState {
         let Ok(map) = serde_json::from_str::<HashMap<String, bool>>(&text) else {
             return;
         };
-        *self.pending.lock().unwrap() = map;
+        *crate::state::lock(&self.pending) = map;
     }
 }

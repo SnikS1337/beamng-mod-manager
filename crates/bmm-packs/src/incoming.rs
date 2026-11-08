@@ -354,42 +354,55 @@ fn from_folder(
         items.push(overflow_item(source, options.max_mods, skipped));
     }
 
-    // Рядом с zip-ами может лежать и распакованная папка мода: раньше любой zip
-    // в архиве (даже «extras.zip» без мода) прятал её, и архив отклонялся целиком.
-    let Some(mod_folder) = find_mod_folder(folder, 3) else {
-        if items.is_empty() {
-            return Err(
-                "В архиве нет мода BeamNG: нет папок vehicles, levels и других, которые ждёт игра."
-                    .to_string(),
-            );
+    // Рядом с zip-ами могут лежать и распакованные папки модов: раньше любой zip
+    // в архиве (даже «extras.zip» без мода) прятал их, и архив отклонялся целиком.
+    // Папок может быть несколько («PackA/vehicles», «PackB/levels»): раньше бралась
+    // первая, остальные моды молча пропадали — а с «удалять архив после установки»
+    // насовсем.
+    let folders = find_mod_folders(folder, 3);
+    if folders.is_empty() && items.is_empty() {
+        return Err(
+            "В архиве нет мода BeamNG: нет папок vehicles, levels и других, которые ждёт игра."
+                .to_string(),
+        );
+    }
+    let room = options.max_mods.saturating_sub(items.len());
+    let over = folders.len().saturating_sub(room);
+    for mod_folder in folders.into_iter().take(room) {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("отменено".to_string());
         }
-        return Ok(items);
-    };
-    let zip_path = work_dir.join(format!("folder-{}.zip", short_unique()));
-    zip_folder(&mod_folder, &zip_path, budget, cancel)?;
-    let index = read_index(&zip_path).map_err(|_| "Архив повреждён и не читается.".to_string())?;
-    let overview = read_overview(&zip_path);
-    let file_name = if mod_folder == folder {
-        clean_name(source)
-    } else {
-        let name = mod_folder
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "mod".to_string());
-        format!("{}.zip", clean_stem(&name))
-    };
-    let inspection = inspect_zip(&zip_path, &ArchiveLimits::default());
-    items.push(build_item(
-        &zip_path,
-        file_name,
-        &index,
-        overview.title,
-        inspection,
-        installed,
-        work_dir,
-        &[],
-        true,
-    ));
+        let zip_path = work_dir.join(format!("folder-{}.zip", short_unique()));
+        zip_folder(&mod_folder, &zip_path, budget, cancel)?;
+        let index =
+            read_index(&zip_path).map_err(|_| "Архив повреждён и не читается.".to_string())?;
+        let overview = read_overview(&zip_path);
+        let file_name = if mod_folder == folder {
+            clean_name(source)
+        } else {
+            let name = mod_folder
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "mod".to_string());
+            format!("{}.zip", clean_stem(&name))
+        };
+        let inspection = inspect_zip(&zip_path, &ArchiveLimits::default());
+        let item = build_item(
+            &zip_path,
+            file_name,
+            &index,
+            overview.title,
+            inspection,
+            installed,
+            work_dir,
+            &items,
+            true,
+        );
+        items.push(item);
+    }
+    if over > 0 {
+        items.push(overflow_item(source, options.max_mods, over));
+    }
     Ok(items)
 }
 
@@ -1182,9 +1195,13 @@ fn collect_zips(
     Ok(())
 }
 
-fn find_mod_folder(root: &Path, max_depth: usize) -> Option<PathBuf> {
-    let mut queue = vec![(root.to_path_buf(), 0)];
-    while let Some((dir, depth)) = queue.pop() {
+/// Все папки модов: папка, в которой лежат `vehicles`, `levels` и другие, что ждёт
+/// игра. Внутрь найденной не спускаемся — её подпапки и есть мод. Порядок — по
+/// имени, ближние раньше.
+fn find_mod_folders(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut queue = std::collections::VecDeque::from([(root.to_path_buf(), 0)]);
+    while let Some((dir, depth)) = queue.pop_front() {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
@@ -1207,15 +1224,15 @@ fn find_mod_folder(root: &Path, max_depth: usize) -> Option<PathBuf> {
             }
         }
         if has_known {
-            return Some(dir);
+            found.push(dir);
+            continue;
         }
         if depth < max_depth {
-            for child in children {
-                queue.insert(0, (child, depth + 1));
-            }
+            children.sort_by_key(|path| path.to_string_lossy().to_lowercase());
+            queue.extend(children.into_iter().map(|child| (child, depth + 1)));
         }
     }
-    None
+    found
 }
 
 fn copy_entry(
@@ -1554,6 +1571,105 @@ mod tests {
         .unwrap();
         assert_eq!(items.len(), 1);
         assert!(items[0].content.contains("vehicles/car"));
+    }
+
+    fn folder_items(
+        folder: &Path,
+        temp: &tempfile::TempDir,
+        options: IncomingOptions,
+    ) -> Vec<IncomingItem> {
+        let work = temp.path().join("work");
+        fs::create_dir_all(&work).unwrap();
+        let mut budget = ExtractBudget::new(options.budget_bytes);
+        from_folder(
+            folder,
+            &temp.path().join("Pack.7z"),
+            &[],
+            &work,
+            options,
+            &mut budget,
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn every_unpacked_mod_folder_in_a_pack_is_found() {
+        // 7z/RAR с несколькими распакованными модами: раньше брался первый, а
+        // остальные пропадали — с «удалять архив после установки» насовсем.
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("unpacked");
+        fs::create_dir_all(folder.join("PackA/vehicles/car")).unwrap();
+        fs::write(folder.join("PackA/vehicles/car/a.jbeam"), b"x").unwrap();
+        fs::create_dir_all(folder.join("PackB/levels/town")).unwrap();
+        fs::write(folder.join("PackB/levels/town/info.json"), b"{}").unwrap();
+        fs::create_dir_all(folder.join("More/Deep/PackC/vehicles/truck")).unwrap();
+        fs::write(folder.join("More/Deep/PackC/vehicles/truck/t.jbeam"), b"x").unwrap();
+        fs::create_dir_all(folder.join("docs")).unwrap();
+        fs::write(folder.join("docs/readme.txt"), b"hi").unwrap();
+        let items = folder_items(&folder, &temp, IncomingOptions::default());
+        let names: Vec<&str> = items.iter().map(|item| item.file_name.as_str()).collect();
+        assert_eq!(names, ["PackA.zip", "PackB.zip", "PackC.zip"]);
+        assert!(items[0].content.contains("vehicles/car"));
+        assert!(items[1].content.contains("levels/town"));
+        assert!(items[2].content.contains("vehicles/truck"));
+        assert!(
+            !items[0].content.contains("levels/town"),
+            "моды не слиплись"
+        );
+    }
+
+    #[test]
+    fn mod_folder_is_not_split_into_its_own_subfolders() {
+        // Внутрь найденного мода не спускаемся: его vehicles/… — часть мода.
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("unpacked");
+        fs::create_dir_all(folder.join("Car/vehicles/car/levels")).unwrap();
+        fs::write(folder.join("Car/vehicles/car/a.jbeam"), b"x").unwrap();
+        fs::create_dir_all(folder.join("Car/levels/x")).unwrap();
+        fs::write(folder.join("Car/levels/x/info.json"), b"{}").unwrap();
+        let items = folder_items(&folder, &temp, IncomingOptions::default());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].file_name, "Car.zip");
+    }
+
+    #[test]
+    fn same_named_mod_folders_get_different_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("unpacked");
+        for side in ["a", "b"] {
+            let path = folder.join(format!("{side}/mod/vehicles/{side}"));
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("x.jbeam"), b"x").unwrap();
+        }
+        let items = folder_items(&folder, &temp, IncomingOptions::default());
+        assert_eq!(items.len(), 2);
+        assert_ne!(items[0].file_name, items[1].file_name);
+    }
+
+    #[test]
+    fn too_many_mod_folders_are_reported_not_dropped() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("unpacked");
+        for index in 0..3 {
+            let path = folder.join(format!("Pack{index}/vehicles/car{index}"));
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("x.jbeam"), b"x").unwrap();
+        }
+        let options = IncomingOptions {
+            max_mods: 2,
+            ..IncomingOptions::default()
+        };
+        let items = folder_items(&folder, &temp, options);
+        assert_eq!(items.len(), 3, "два мода и строка «ещё 1 не разобран»");
+        assert!(
+            items[2]
+                .findings
+                .iter()
+                .any(|finding| finding.message.contains("ещё 1 не разобраны")),
+            "{:?}",
+            items[2].findings
+        );
     }
 
     #[test]

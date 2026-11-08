@@ -246,10 +246,10 @@ pub async fn search_start(
     .with_notes(notes);
     let installed = Arc::new(InstalledIndex::build(&state));
     // Новый текстовый поиск закрывает раздел: старые страницы больше не нужны.
-    *state.browse.lock().unwrap() = None;
+    *crate::state::lock(&state.browse) = None;
     let cancel = Arc::new(AtomicBool::new(false));
     {
-        let mut slot = state.search_cancel.lock().unwrap();
+        let mut slot = crate::state::lock(&state.search_cancel);
         if let Some((_, previous)) = slot.take() {
             previous.store(true, Ordering::Relaxed);
         }
@@ -275,7 +275,7 @@ pub async fn search_start(
         match result {
             Ok(response) => {
                 if !cancel.load(Ordering::Relaxed) {
-                    *state_for_task.last_search.lock().unwrap() = Some(response.clone());
+                    *crate::state::lock(&state_for_task.last_search) = Some(response.clone());
                     let event = to_event(&response, request_id, "done", &installed, None);
                     let _ = app.emit("search://event", event);
                 }
@@ -291,7 +291,7 @@ pub async fn search_start(
                 let _ = app.emit("search://event", event);
             }
         }
-        let mut slot = state_for_task.search_cancel.lock().unwrap();
+        let mut slot = crate::state::lock(&state_for_task.search_cancel);
         if slot
             .as_ref()
             .is_some_and(|(current, _)| *current == request_id)
@@ -341,7 +341,7 @@ pub async fn search_browse(
     let installed = InstalledIndex::build(&state);
     let from_page = from_page.max(1);
     if from_page > 1 {
-        let session = state.browse.lock().unwrap();
+        let session = crate::state::lock(&state.browse);
         if !session.as_ref().is_some_and(|session| session.kind == kind) {
             return Err(AppError::new(
                 "search",
@@ -351,7 +351,7 @@ pub async fn search_browse(
     }
     let cancel = Arc::new(AtomicBool::new(false));
     {
-        let mut slot = state.search_cancel.lock().unwrap();
+        let mut slot = crate::state::lock(&state.search_cancel);
         if slot.is_some() {
             return Err(AppError::new(
                 "search",
@@ -366,7 +366,7 @@ pub async fn search_browse(
     })
     .await;
     let superseded = {
-        let mut slot = state.search_cancel.lock().unwrap();
+        let mut slot = crate::state::lock(&state.search_cancel);
         let ours = slot
             .as_ref()
             .is_some_and(|(current, _)| *current == request_id);
@@ -383,7 +383,7 @@ pub async fn search_browse(
         ));
     }
 
-    let mut session_lock = state_for_task.browse.lock().unwrap();
+    let mut session_lock = crate::state::lock(&state_for_task.browse);
     let mut session = if from_page <= 1 {
         BrowseSession {
             kind,
@@ -422,7 +422,7 @@ pub async fn search_browse(
     let built = assemble_browse(&runtime.service, &session);
     session.pages = from_page.saturating_add(BROWSE_PAGES - 1);
     session.response = built.clone();
-    *state_for_task.last_search.lock().unwrap() = Some(built.clone());
+    *crate::state::lock(&state_for_task.last_search) = Some(built.clone());
     *session_lock = Some(session);
     Ok(to_event(&built, request_id, "done", &installed, None))
 }
@@ -487,7 +487,7 @@ pub async fn search_retry_source(
     {
         // Повтор занимает тот же слот, что и обычный поиск: новый поиск отменит
         // повтор, а не станет с ним наперегонки за `last_search`.
-        let mut slot = state.search_cancel.lock().unwrap();
+        let mut slot = crate::state::lock(&state.search_cancel);
         if slot.is_some() {
             return Err(AppError::new(
                 "search",
@@ -508,7 +508,7 @@ pub async fn search_retry_source(
     })
     .await;
     let superseded = {
-        let mut slot = state.search_cancel.lock().unwrap();
+        let mut slot = crate::state::lock(&state.search_cancel);
         let ours = slot
             .as_ref()
             .is_some_and(|(current, _)| *current == request_id);
@@ -527,7 +527,7 @@ pub async fn search_retry_source(
         ));
     }
     if let Some((kind, _)) = browse {
-        let mut session_lock = state_for_task.browse.lock().unwrap();
+        let mut session_lock = crate::state::lock(&state_for_task.browse);
         let Some(session) = session_lock.as_mut() else {
             return Err(AppError::new(
                 "search",
@@ -548,10 +548,10 @@ pub async fn search_retry_source(
         }
         let built = assemble_browse(&runtime.service, session);
         session.response = built.clone();
-        *state_for_task.last_search.lock().unwrap() = Some(built.clone());
+        *crate::state::lock(&state_for_task.last_search) = Some(built.clone());
         return Ok(to_event(&built, request_id, "done", &installed, None));
     }
-    *state_for_task.last_search.lock().unwrap() = Some(response.clone());
+    *crate::state::lock(&state_for_task.last_search) = Some(response.clone());
     Ok(to_event(&response, request_id, "done", &installed, None))
 }
 
@@ -560,7 +560,7 @@ pub async fn search_cancel(
     state: tauri::State<'_, Arc<AppState>>,
     request_id: Option<u64>,
 ) -> Result<(), AppError> {
-    let slot = state.search_cancel.lock().unwrap();
+    let slot = crate::state::lock(&state.search_cancel);
     if let Some((current, cancel)) = slot.as_ref()
         && request_id.is_none_or(|request| request == *current)
     {
@@ -747,13 +747,13 @@ pub async fn search_decide(
             },
         )
         .map_err(|error| AppError::new("matches", error.to_string()))?;
-    let browsing = state.browse.lock().unwrap().is_some();
+    let browsing = crate::state::lock(&state.browse).is_some();
     let response = if browsing {
         runtime.service.regroup_site_order(&previous)
     } else {
         runtime.service.regroup(&previous, &query)
     };
-    *state.last_search.lock().unwrap() = Some(response.clone());
+    *crate::state::lock(&state.last_search) = Some(response.clone());
     let installed = InstalledIndex::build(&state);
     Ok(to_event(&response, 0, "regroup", &installed, None))
 }

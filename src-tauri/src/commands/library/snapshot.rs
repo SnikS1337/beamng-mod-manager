@@ -3,10 +3,7 @@
 use super::*;
 
 pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать загрузку"))?;
+    let _guard = state.load_guard();
 
     let settings_load = state.settings.load();
     let settings = settings_load.settings;
@@ -62,7 +59,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
 
     // Пока тост удаления жив, запись библиотеки должна пережить сверку: подставляем фиктивный файл,
     // как старый GarageBackend, но саму карточку не показываем.
-    let tickets_before = state.deleted.lock().unwrap().clone();
+    let tickets_before = crate::state::lock(&state.deleted).clone();
     for ticket in tickets_before.values() {
         if scan_result
             .mods
@@ -153,7 +150,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         .into_iter()
         .map(|check| ((check.mod_id.clone(), check.source.clone()), check))
         .collect();
-    let pending_snapshot = state.pending.lock().unwrap().clone();
+    let pending_snapshot = crate::state::lock(&state.pending).clone();
     let update_findings: HashMap<String, (String, Option<String>)> =
         bmm_checks::UpdateCheckService::pending(state.library.as_ref(), false)
             .into_iter()
@@ -173,7 +170,8 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
             })
             .collect();
 
-    state.previews_by_id.lock().unwrap().clear();
+    // Карту меняем целиком в конце, а не очищаем сначала: превью и детали, которые
+    // читают её без очереди к библиотеке, не видят пустую карту во время сборки.
     let mut targets: HashMap<String, PreviewTarget> = HashMap::new();
     let mut preview_keys: HashMap<String, String> = HashMap::new();
     for installed in &installed_list {
@@ -196,7 +194,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
             },
         );
     }
-    *state.previews_by_id.lock().unwrap() = targets;
+    *crate::state::lock(&state.previews_by_id) = targets;
     let archive_titles = state.previews.titles_shared();
     let archive_problems = state.previews.problems_shared();
     let archive_infos = state.previews.mod_infos_shared();
