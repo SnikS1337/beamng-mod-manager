@@ -51,7 +51,7 @@
 CI на `windows-2025` (`.github/workflows/ci.yml`) на каждый push и PR: `svelte-check`,
 Vitest, сборка фронтенда, `cargo fmt`, `clippy -D warnings`, `cargo test`; на `main`
 ещё и полная release-сборка exe. На 2026-11-08:
-**1040 тестов Rust** (`--all-targets` на Windows, 3 из них пропущены намеренно) плюс 1 пример в
+**1043 теста Rust** (`--all-targets` на Windows, 3 из них пропущены намеренно) плюс 1 пример в
 документации и **462 теста интерфейса** (76 файлов).
 
 Отдельно проверяется связка окна и Rust: каждый `invoke()` попадает в команду с теми
