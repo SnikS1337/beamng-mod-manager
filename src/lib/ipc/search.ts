@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  ImageCache,
   SearchCard,
   SearchEvent,
   SearchListing,
@@ -10,6 +11,7 @@ import type {
 import type { SearchPriceSummary } from "./unions.js";
 
 export type {
+  ImageCache,
   SearchCard,
   SearchEvent,
   SearchListing,
@@ -93,6 +95,23 @@ export async function searchPagePreview(
   if (!isTauri()) return null;
   return invoke<string | null>("search_page_preview", { source, page });
 }
+
+/** Сколько места занимают картинки сайтов и сколько можно. */
+export async function imageCacheInfo(): Promise<ImageCache> {
+  if (!isTauri()) return { ...mockImageCache };
+  return invoke<ImageCache>("image_cache_info");
+}
+
+/** Удалить скачанные картинки сайтов: понадобятся — скачаются заново. */
+export async function imageCacheClear(): Promise<ImageCache> {
+  if (!isTauri()) {
+    mockImageCache.bytes = 0;
+    return { ...mockImageCache };
+  }
+  return invoke<ImageCache>("image_cache_clear");
+}
+
+const mockImageCache: ImageCache = { bytes: 87 * 1024 * 1024, limitBytes: 300 * 1024 * 1024 };
 
 /** «Пройти проверку» сайта из поиска: окно открывает выдачу этого сайта. */
 export async function searchOpenCheck(source: string, query: string): Promise<boolean> {

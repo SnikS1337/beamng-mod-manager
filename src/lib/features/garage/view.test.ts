@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  QUERY_PAUSE_MS,
+  queryStep,
   applyLoaded,
   loadViewMode,
   matchesType,
@@ -152,5 +154,20 @@ describe("перечитанная библиотека", () => {
     const r = recorder();
     await applyLoaded({ isCurrent: () => true, set: r.set, smooth: false, run: r.run });
     expect(r.log).toEqual(["set"]);
+  });
+});
+
+describe("поиск по гаражу", () => {
+  it("пустой — сразу, тот же — ничего, новый — после паузы", () => {
+    expect(queryStep("", "bmw")).toBe("clear");
+    expect(queryStep("   ", "")).toBe("clear");
+    expect(queryStep("bmw", "bmw")).toBe("same");
+    expect(queryStep("bmw m", "bmw")).toBe("wait");
+    expect(queryStep("a", "")).toBe("wait");
+  });
+
+  it("пауза короче, чем человек ждёт ответа, но длиннее промежутка между буквами", () => {
+    expect(QUERY_PAUSE_MS).toBeGreaterThanOrEqual(80);
+    expect(QUERY_PAUSE_MS).toBeLessThanOrEqual(250);
   });
 });

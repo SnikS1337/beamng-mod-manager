@@ -1,3 +1,5 @@
+// @ts-expect-error — тесты идут в Node, а типов Node в проекте нет.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { canFlow, flowName } from "./motion.svelte";
 
@@ -118,5 +120,57 @@ describe("motion.run и settled", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("своё появление элемента внутри перехода", () => {
+  it("родился в переходе — помечен, вне перехода — нет", async () => {
+    const { bornInFlow } = await import("./motion.svelte");
+    const inside = { dataset: {} as Record<string, string> } as unknown as HTMLElement;
+    bornInFlow(inside, () => true);
+    expect("flowed" in inside.dataset).toBe(true);
+    const outside = { dataset: {} as Record<string, string> } as unknown as HTMLElement;
+    bornInFlow(outside, () => false);
+    expect("flowed" in outside.dataset).toBe(false);
+  });
+
+  it("анимации настоящих элементов не выключаются классом области перехода", () => {
+    // Было: `html.flow-garage .flow-body > aside { animation: none }`. Класс снимают
+    // после перехода — и панель мода проигрывала своё появление заново, на миг пропадая.
+    const css = readFileSync(new URL("../../app.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+    const blocks = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+    const wrong = blocks
+      .filter(([, selector, body]) => /html\.flow-/.test(selector) && !/::view-transition/.test(selector))
+      .filter(([, , body]) => /(^|\s|;)animation(-name)?\s*:/.test(body))
+      .map(([, selector]) => selector.trim());
+    expect(wrong).toEqual([]);
+  });
+});
+
+describe("далёкий переезд карточки — перескок", () => {
+  const card = (left: number, top: number) => ({ left, top, width: 240, height: 200 });
+
+  it("сдвиг в своём ряду и на соседнее место — обычный переезд", async () => {
+    const { isHop } = await import("./motion.svelte");
+    expect(isHop(card(0, 0), card(256, 0))).toBe(false);
+    expect(isHop(card(256, 0), card(800, 0)), "далеко, но в своём ряду").toBe(false);
+    expect(isHop(card(0, 0), card(0, 216)), "ряд вниз, та же колонка").toBe(false);
+    expect(isHop(card(0, 0), card(10, 60)), "почти на месте").toBe(false);
+  });
+
+  it("перенос на другую строку вбок и прыжок через ряды — перескок", async () => {
+    const { isHop } = await import("./motion.svelte");
+    // Панель открылась: 4 колонки → 3, последняя карточка ряда уходит в начало следующего.
+    expect(isHop(card(768, 0), card(0, 216))).toBe(true);
+    expect(isHop(card(0, 1080), card(0, 0)), "фильтр поднял карточку на пять рядов").toBe(true);
+    // Строки списка: высота маленькая — сравнение по высоте строки.
+    const row = (top: number) => ({ left: 0, top, width: 900, height: 56 });
+    expect(isHop(row(56), row(0))).toBe(false);
+    expect(isHop(row(560), row(0))).toBe(true);
+  });
+
+  it("нулевая карточка не делит на ноль", async () => {
+    const { isHop } = await import("./motion.svelte");
+    expect(isHop({ left: 0, top: 0, width: 0, height: 0 }, card(0, 0))).toBe(false);
   });
 });

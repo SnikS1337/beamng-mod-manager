@@ -34,6 +34,45 @@ export function flowName(id: string): string {
   return `m-${(first >>> 0).toString(36)}-${(second >>> 0).toString(36)}`;
 }
 
+/** Место карточки на экране. */
+export type Box = { left: number; top: number; width: number; height: number };
+
+/**
+ * Карточка переезжает далеко — через ряд и вбок (перенос строки сетки) или больше
+ * чем на полтора ряда: такой полёт идёт поверх соседей, и карточки на миг закрывают
+ * друг друга (было — казалось, что нажатая карточка пропадает). Тогда не летим, а
+ * «перескакиваем»: на старом месте тает, на новом проявляется. Сдвиг в своём ряду
+ * или на соседнее место — обычный переезд.
+ */
+export function isHop(from: Box, to: Box): boolean {
+  const height = Math.max(from.height, 1);
+  const width = Math.max(from.width, 1);
+  const dy = Math.abs(to.top - from.top);
+  const dx = Math.abs(to.left - from.left);
+  const otherRow = dy > height * 0.5;
+  return (otherRow && dx > width * 0.5) || dy > height * 1.5;
+}
+
+/** Имя карточки для перехода (переменная `--flow` в её стиле). */
+function cardName(node: HTMLElement): string {
+  return node.style.getPropertyValue("--flow").trim();
+}
+
+function cardBoxes(root: ParentNode): Map<string, Box> {
+  const boxes = new Map<string, Box>();
+  for (const node of root.querySelectorAll<HTMLElement>(".flow-card")) {
+    const name = cardName(node);
+    if (!name) continue;
+    const rect = node.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    boxes.set(name, { left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+  }
+  return boxes;
+}
+
+/** Области, где двигаются карточки: для них считаем «перескоки». */
+const CARD_SCOPES = new Set(["flow-garage", "flow-search", "flow-list"]);
+
 class Motion {
   /** Идёт переход: карточкам не нужно своё «появление» поверх него. */
   active = $state(false);
@@ -103,11 +142,28 @@ class Motion {
     this.#scopes.set(scope, (this.#scopes.get(scope) ?? 0) + 1);
     root.classList.add(scope);
     this.active = true;
+    // Где карточки стояли до изменения: по этому решаем, кому лететь, а кому
+    // «перескочить» (isHop).
+    const before = CARD_SCOPES.has(scope) ? cardBoxes(document) : null;
+    const hopped: HTMLElement[] = [];
     const transition = document.startViewTransition(async () => {
       await update();
       await tick();
       for (const fn of this.#measures) fn();
       await tick();
+      if (before && before.size > 0) {
+        for (const node of document.querySelectorAll<HTMLElement>(".flow-card")) {
+          const name = cardName(node);
+          const from = before.get(name);
+          if (!from) continue;
+          const rect = node.getBoundingClientRect();
+          if (rect.width === 0 || !isHop(from, rect)) continue;
+          // Новое имя — значит, старое место и новое разные слои: там тает, тут появляется.
+          node.style.setProperty("view-transition-name", `${name}-hop`);
+          node.style.setProperty("view-transition-class", "card hop");
+          hopped.push(node);
+        }
+      }
     });
     this.#current = transition;
     this.settled = transition.finished.then(
@@ -118,6 +174,10 @@ class Motion {
     // ждём, но без обработчика WebView пишет «Uncaught (in promise)» в консоль.
     transition.ready.catch(() => undefined);
     const done = () => {
+      for (const node of hopped) {
+        node.style.removeProperty("view-transition-name");
+        node.style.removeProperty("view-transition-class");
+      }
       const left = (this.#scopes.get(scope) ?? 1) - 1;
       if (left > 0) {
         this.#scopes.set(scope, left);
@@ -137,3 +197,13 @@ class Motion {
 }
 
 export const motion = new Motion();
+
+/**
+ * Элемент со своим появлением (CSS-анимацией), который родился внутри перехода:
+ * его уже ведёт переход, и своё появление не нужно — ни во время перехода, ни
+ * после. Было: панель мода выезжала переходом, а когда класс области снимался,
+ * её собственная анимация запускалась заново — панель на миг пропадала.
+ */
+export function bornInFlow(node: HTMLElement, active: () => boolean = () => motion.active) {
+  if (active()) node.dataset.flowed = "";
+}

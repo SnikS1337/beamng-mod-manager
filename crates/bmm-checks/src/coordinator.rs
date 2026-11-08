@@ -20,7 +20,7 @@ use bmm_sources::reach::Reach;
 use bmm_sources::sources::{ModSource, SourceStatus};
 
 use crate::options::UpdateCheckOptions;
-use crate::planner::UpdateCheckPlanner;
+use crate::planner::{TrackedBinding, UpdateCheckPlanner};
 use crate::runner::{SourceRunReport, UpdateProgress, UpdateRun, UpdateRunReport};
 use crate::service::UpdateCheckService;
 
@@ -90,6 +90,8 @@ struct Running {
     id: u64,
     /// Полная проверка (по кнопке).
     forced: bool,
+    /// Проверка одного сайта ([`UpdateCoordinator::check_source`]); `None` — всех.
+    only: Option<String>,
     cancel: Arc<AtomicBool>,
     /// [`State::resolutions`] на момент старта.
     resolutions: u64,
@@ -179,7 +181,29 @@ impl UpdateCoordinator {
         force: bool,
         progress: Option<&mut dyn FnMut(&UpdateProgress)>,
     ) -> UpdateRunReport {
+        self.check_scoped(force, None, progress)
+    }
+
+    /// Полная проверка одного сайта — после того как человек прошёл на нём проверку
+    /// «вы человек?». Остальные сайты не трогаются: раньше «Пройти проверку» на одном
+    /// сайте запускала проверку всех.
+    pub fn check_source(
+        &self,
+        source: &str,
+        progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+    ) -> UpdateRunReport {
+        self.check_scoped(true, Some(source), progress)
+    }
+
+    fn check_scoped(
+        &self,
+        force: bool,
+        only: Option<&str>,
+        progress: Option<&mut dyn FnMut(&UpdateProgress)>,
+    ) -> UpdateRunReport {
+        let only = only.map(str::to_ascii_lowercase);
         let mut waited: Option<u64> = None;
+        let mut waited_scope: Option<String> = None;
         let mut waited_resolutions = 0u64;
         loop {
             let mut state = self.lock();
@@ -192,6 +216,7 @@ impl UpdateCoordinator {
             if let Some(running) = &state.running {
                 let id = running.id;
                 waited = Some(id);
+                waited_scope = running.only.clone();
                 waited_resolutions = running.resolutions;
                 // Дожидаемся конца идущей; после пробуждения решаем, отдавать её
                 // отчёт или (если её отменили) запускать свежую.
@@ -208,7 +233,9 @@ impl UpdateCoordinator {
 
             // Пока шла чужая проверка, человек прошёл проверку сайта: та проверка сайт
             // пропустила, поэтому её отчёт не отдаём — «Проверяем снова» значит снова.
+            // И не проверку другого охвата: проверка одного сайта — не ответ на «все».
             if let Some(id) = waited
+                && waited_scope == only
                 && state.last_completed_run == Some(id)
                 && state.last_cancelled_run != Some(id)
                 && state.resolutions == waited_resolutions
@@ -224,6 +251,7 @@ impl UpdateCoordinator {
             // И не после прохождения проверки сайта: тот отчёт сайт пропустил. Было —
             // «Пройти проверку ModHub» сколько ни проходи, ModHub «просит проверку».
             if force
+                && only.is_none()
                 && state.last_forced
                 && state.last_resolutions == state.resolutions
                 && let Some(last) = &state.last_report
@@ -246,6 +274,7 @@ impl UpdateCoordinator {
             state.running = Some(Running {
                 id,
                 forced: force,
+                only: only.clone(),
                 cancel: Arc::clone(&cancel),
                 resolutions: state.resolutions,
             });
@@ -256,7 +285,7 @@ impl UpdateCoordinator {
                 id,
                 armed: true,
             };
-            let report = self.run_batches(force, &cancel, progress);
+            let report = self.run_batches(force, only.as_deref(), &cancel, progress);
             self.finish_run(id, &report);
             guard.armed = false;
             return report;
@@ -300,17 +329,25 @@ impl UpdateCoordinator {
     fn finish_run(&self, id: u64, report: &UpdateRunReport) {
         {
             let mut state = self.lock();
-            if let Some((forced, resolutions)) = state
+            let mut scoped = false;
+            if let Some((forced, resolutions, only)) = state
                 .running
                 .as_ref()
                 .filter(|running| running.id == id)
-                .map(|running| (running.forced, running.resolutions))
+                .map(|running| (running.forced, running.resolutions, running.only.is_some()))
             {
-                state.last_forced = forced;
+                // Проверка одного сайта — не полная: повтор «Проверить всё» сразу после
+                // неё не должен получить её отчёт вместо настоящей проверки.
+                state.last_forced = forced && !only;
                 state.last_resolutions = resolutions;
                 state.running = None;
+                scoped = only;
             }
-            state.last_report = Some(report.clone());
+            state.last_report = Some(if scoped {
+                with_source_replaced(state.last_report.take(), report)
+            } else {
+                report.clone()
+            });
             state.last_completed_run = Some(id);
             if report.cancelled {
                 state.last_cancelled_run = Some(id);
@@ -329,6 +366,7 @@ impl UpdateCoordinator {
     fn run_batches(
         &self,
         force: bool,
+        only: Option<&str>,
         cancel: &AtomicBool,
         progress: Option<&mut dyn FnMut(&UpdateProgress)>,
     ) -> UpdateRunReport {
@@ -357,7 +395,7 @@ impl UpdateCoordinator {
             // ничего нового не скажут, а запросы стоят времени.
             options.deep_feed = options.deep_feed && batch == 0;
             let due_before = UpdateCheckPlanner::plan_feeds(
-                &UpdateCheckService::tracked(&*self.store),
+                &in_scope(UpdateCheckService::tracked(&*self.store), only),
                 &UpdateCheckService::source_statuses(&*self.store),
                 now,
                 &options,
@@ -369,7 +407,12 @@ impl UpdateCoordinator {
                 let mut state = self.lock();
                 // Принудительная проверка отменяет паузу после сбоя: пользователь настаивает.
                 if batch_force {
-                    state.retry_after.clear();
+                    match only {
+                        Some(only) => state
+                            .retry_after
+                            .retain(|source, _| !source.eq_ignore_ascii_case(only)),
+                        None => state.retry_after.clear(),
+                    }
                 }
                 // Пауза не может быть дольше FailureBackoff: иначе часы переводили назад.
                 state
@@ -391,7 +434,10 @@ impl UpdateCoordinator {
             };
 
             // Фабрика вызывается на каждую часть: настройки сайтов могли поменяться.
-            let sources = (self.sources)();
+            let sources: Vec<_> = (self.sources)()
+                .into_iter()
+                .filter(|source| only.is_none_or(|only| source.id().eq_ignore_ascii_case(only)))
+                .collect();
             let run = UpdateRun {
                 store: &*self.store,
                 sources: &sources,
@@ -434,7 +480,7 @@ impl UpdateCoordinator {
                 break;
             }
             let due_after = UpdateCheckPlanner::plan_feeds(
-                &UpdateCheckService::tracked(&*self.store),
+                &in_scope(UpdateCheckService::tracked(&*self.store), only),
                 &UpdateCheckService::source_statuses(&*self.store),
                 self.now(),
                 &options_snapshot.check.clone().with_force(false),
@@ -463,6 +509,42 @@ impl UpdateCoordinator {
             sources: merged_sources,
             ..final_report
         }
+    }
+}
+
+/// Привязки только проверяемого сайта (для проверки одного сайта).
+fn in_scope(tracked: Vec<TrackedBinding>, only: Option<&str>) -> Vec<TrackedBinding> {
+    match only {
+        Some(only) => tracked
+            .into_iter()
+            .filter(|binding| binding.source.eq_ignore_ascii_case(only))
+            .collect(),
+        None => tracked,
+    }
+}
+
+/// Отчёт проверки одного сайта поверх прошлого полного: остальные сайты в «последнем
+/// отчёте» остаются как были (по нему решается, какой сайт сейчас не отвечает), а
+/// проверенный сайт — свежий.
+fn with_source_replaced(
+    previous: Option<UpdateRunReport>,
+    scoped: &UpdateRunReport,
+) -> UpdateRunReport {
+    // Проверенный сайт встаёт на своё прежнее место, порядок остальных не меняется.
+    let mut sources: Vec<SourceRunReport> =
+        previous.map(|report| report.sources).unwrap_or_default();
+    for fresh in &scoped.sources {
+        match sources
+            .iter_mut()
+            .find(|source| source.source.eq_ignore_ascii_case(&fresh.source))
+        {
+            Some(slot) => *slot = fresh.clone(),
+            None => sources.push(fresh.clone()),
+        }
+    }
+    UpdateRunReport {
+        sources,
+        ..scoped.clone()
     }
 }
 
@@ -1595,5 +1677,118 @@ mod tests {
         assert_eq!(report.requests, 8, "{:?}", report.sources);
         assert!(!report.stopped_by_time);
         assert!(!report.complete(), "заметка сайта a видна в итоге");
+    }
+
+    fn two_sites() -> (Arc<UpdateCoordinator>, Arc<Site>, Arc<Site>) {
+        let a = Site::named("a");
+        a.set_card(l("m0", "1.0"));
+        let b = Site::named("b");
+        b.set_card(l("m1", "1.0"));
+        let coordinator = coordinator_many(
+            store_with(&[("a", 1), ("b", 1)]),
+            vec![Arc::clone(&a), Arc::clone(&b)],
+            clock_of(&clock_at(t0())),
+            UpdateCoordinatorOptions::default(),
+        );
+        (coordinator, a, b)
+    }
+
+    #[test]
+    fn checking_one_site_leaves_the_others_alone() {
+        // Было: «Пройти проверку» на одном сайте запускала проверку всех сайтов.
+        let (coordinator, a, b) = two_sites();
+        let report = coordinator.check_source("B", None);
+        assert_eq!(a.feed_calls.load(Ordering::SeqCst), 0, "сайт a не трогали");
+        assert!(b.feed_calls.load(Ordering::SeqCst) > 0, "сайт b проверили");
+        assert_eq!(
+            report
+                .sources
+                .iter()
+                .map(|s| s.source.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
+    }
+
+    #[test]
+    fn full_check_after_one_site_is_a_real_full_check() {
+        // Проверка одного сайта по кнопке «полная», но «Проверить всё» сразу после неё
+        // не должно получить её отчёт вместо проверки всех.
+        let (coordinator, a, _b) = two_sites();
+        let _ = coordinator.check_source("b", None);
+        let report = coordinator.check(true, None);
+        assert!(!report.reused);
+        assert!(a.feed_calls.load(Ordering::SeqCst) > 0, "сайт a проверили");
+    }
+
+    #[test]
+    fn one_site_check_keeps_other_sites_in_the_last_report() {
+        // По «последнему отчёту» решается, какой сайт сейчас не отвечает: проверка
+        // одного сайта не должна стирать остальные.
+        let (coordinator, _a, _b) = two_sites();
+        let _ = coordinator.check(true, None);
+        let _ = coordinator.check_source("b", None);
+        let last = coordinator.last_report().unwrap();
+        let mut names: Vec<_> = last.sources.iter().map(|s| s.source.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn replacing_a_site_report_keeps_the_rest() {
+        let mut old_a = site_report(SourceStatus::Unavailable, "не ответил", None, 0);
+        old_a.source = "a".into();
+        let mut old_b = site_report(SourceStatus::NeedsHumanCheck, "проверка", None, 0);
+        old_b.source = "b".into();
+        let previous = UpdateRunReport {
+            sources: vec![old_a.clone(), old_b],
+            requests: 9,
+            ..UpdateRunReport::default()
+        };
+        let mut fresh_b = site_report(SourceStatus::Ok, "", None, 2);
+        fresh_b.source = "B".into();
+        let scoped = UpdateRunReport {
+            sources: vec![fresh_b],
+            requests: 2,
+            ..UpdateRunReport::default()
+        };
+        let merged = with_source_replaced(Some(previous), &scoped);
+        assert_eq!(merged.requests, 2, "итог — проверки одного сайта");
+        assert_eq!(merged.sources.len(), 2);
+        assert_eq!(merged.sources[0], old_a);
+        assert_eq!(merged.sources[1].status, SourceStatus::Ok);
+        let alone = with_source_replaced(None, &scoped);
+        assert_eq!(alone.sources.len(), 1);
+    }
+
+    #[test]
+    fn waiting_full_check_does_not_take_a_one_site_report() {
+        // «Проверить всё», нажатое, пока идёт проверка одного сайта, ждёт её и
+        // запускает свою, а не отдаёт отчёт одного сайта.
+        let (gated, gate, started) = Site::gated();
+        gated.set_card(l("m0", "1.0"));
+        let other = Site::named("y");
+        other.set_card(l("m1", "1.0"));
+        let coordinator = coordinator_many(
+            store_with(&[("x", 1), ("y", 1)]),
+            vec![Arc::clone(&gated), Arc::clone(&other)],
+            clock_of(&clock_at(t0())),
+            UpdateCoordinatorOptions::default(),
+        );
+        let scoped = {
+            let coordinator = Arc::clone(&coordinator);
+            thread::spawn(move || coordinator.check_source("x", None))
+        };
+        wait_started(&started);
+        let full = spawn_check(Arc::clone(&coordinator), true);
+        wait_for_waiter(&coordinator);
+        gate.open();
+        let _ = scoped.join().unwrap();
+        let report = full.join().unwrap();
+        assert!(
+            report.sources.iter().any(|source| source.source == "y"),
+            "{:?}",
+            report.sources
+        );
     }
 }

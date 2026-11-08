@@ -34,7 +34,7 @@
         }}
       >
         <!-- Сколько ещё можно отменить: кольцо убывает и стоит, пока курсор на тосте. -->
-        <svg class="ring" class:paused={!toast.timer} viewBox="0 0 16 16" aria-hidden="true">
+        <svg class="undo-ring" class:paused={!toast.timer} viewBox="0 0 16 16" aria-hidden="true">
           <circle cx="8" cy="8" r="6" />
           <circle
             class="left"
@@ -96,20 +96,20 @@
     gap: 6px;
   }
 
-  .ring {
+  .undo-ring {
     width: 14px;
     height: 14px;
     transform: rotate(-90deg);
   }
 
-  .ring circle {
+  .undo-ring circle {
     fill: none;
     stroke: currentColor;
     stroke-width: 2;
     opacity: 0.25;
   }
 
-  .ring .left {
+  .undo-ring .left {
     opacity: 1;
     stroke-dasharray: 100;
     stroke-linecap: round;
@@ -118,7 +118,7 @@
     animation-fill-mode: both;
   }
 
-  .ring.paused .left {
+  .undo-ring.paused .left {
     animation-play-state: paused;
   }
 
@@ -132,7 +132,7 @@
   }
 
   /* «Быстро» оборвал бы кольцо в пустое: без движения его просто нет. */
-  :global(.no-motion) .ring {
+  :global(.no-motion) .undo-ring {
     display: none;
   }
 

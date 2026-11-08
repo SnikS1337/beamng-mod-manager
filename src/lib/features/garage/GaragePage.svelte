@@ -76,6 +76,8 @@
     type RevealRequest,
     type TypeGroup,
     type ViewMode,
+    QUERY_PAUSE_MS,
+    queryStep,
   } from "./view";
   import { palette } from "#lib/shell/palette.svelte.js";
   import {
@@ -113,6 +115,28 @@
   let typeFilter = $state<TypeGroup | "all">("all");
   let view = $state<ViewMode>(loadViewMode());
   let query = $state("");
+  /**
+   * Поиск по гаражу применяется с короткой паузой и одним движением, как фильтр:
+   * карточки переезжают, а не перерисовываются на каждую букву. Пустой поиск —
+   * сразу: сброс из палитры или после установки не должен ждать.
+   */
+  let typedQuery = $state("");
+  const appliedQuery = $derived(query.trim() === "" ? "" : typedQuery);
+  $effect(() => {
+    const next = query;
+    const step = queryStep(next, untrack(() => typedQuery));
+    if (step === "clear") {
+      typedQuery = "";
+      return;
+    }
+    if (step === "same") return;
+    const timer = setTimeout(() => {
+      void motion.run(() => {
+        typedQuery = next;
+      }, "flow-garage");
+    }, QUERY_PAUSE_MS);
+    return () => clearTimeout(timer);
+  });
   /** Выбранные моды; ровно один — его панель справа, несколько — панель действий. */
   let picked = $state<Selection>(EMPTY);
   /** Какую карточку показать и сфокусировать после перехода стрелками (разово). */
@@ -171,7 +195,7 @@
       if (filter !== "deleted" && !matchesType(mod, typeFilter)) return false;
       if (filter === "updates" && mod.update === "none") return false;
       if (filter === "unchecked" && !mod.unchecked) return false;
-      return matchesQuery(mod, query);
+      return matchesQuery(mod, appliedQuery);
     });
   });
   let selected = $derived(allCards.find((mod) => mod.id === selectedId) ?? null);
@@ -507,6 +531,13 @@
     }
     void motion.run(() => {
       picked = next;
+    }, "flow-garage");
+  }
+
+  /** «×» в поиске и «Сбросить поиск»: карточки возвращаются одним движением. */
+  function clearQuery() {
+    void motion.run(() => {
+      query = "";
     }, "flow-garage");
   }
 
@@ -975,7 +1006,7 @@
 
   function emptyTitle(): string {
     if (snapshot?.folderError) return "Не нашли папку с модами";
-    if (query) return "Нет такого мода";
+    if (appliedQuery) return "Нет такого мода";
     if (filter === "updates") return "Всё актуально";
     if (filter === "unchecked") return "Все моды проверяются";
     if (filter === "disabled") return "Выключенных нет";
@@ -988,7 +1019,7 @@
     if (snapshot?.folderError) {
       return snapshot.folderError;
     }
-    if (query) return "Проверьте написание. Ищем только среди ваших модов.";
+    if (appliedQuery) return "Проверьте написание. Ищем только среди ваших модов.";
     if (filter === "updates") return "Обновлений нет. Проверить снова можно в разделе «Обновления».";
     if (filter === "unchecked") return "У всех модов есть страница — обновления проверяются.";
     if (filter === "disabled") return "Все моды включены.";
@@ -1024,7 +1055,7 @@
         aria-label="Найти мод"
       />
       {#if query}
-        <button class="clear" type="button" aria-label="Очистить" onclick={() => (query = "")}>
+        <button class="clear" type="button" aria-label="Очистить" onclick={clearQuery}>
           <X size={13} weight="bold" />
         </button>
       {:else}
@@ -1147,10 +1178,10 @@
           <span>{emptyText()}</span>
           {#if snapshot.folderError}
             <a class="btn-primary" href="/settings?section=folders">Выбрать папку</a>
-          {:else if query}
+          {:else if appliedQuery}
             <div class="state-actions">
               <a class="btn-primary" href={`/search?q=${encodeURIComponent(query)}`}>Искать на сайтах</a>
-              <button type="button" class="btn-glass" onclick={() => (query = "")}>Сбросить поиск</button>
+              <button type="button" class="btn-glass" onclick={clearQuery}>Сбросить поиск</button>
             </div>
           {:else if filter !== "all" || typeFilter !== "all"}
             <button
@@ -1183,7 +1214,7 @@
               ontoggle={(mod) => {
                 if (!mod.deleted) void toggle(mod);
               }}
-              resetKey={`${filter}|${typeFilter}|${query}`}
+              resetKey={`${filter}|${typeFilter}|${appliedQuery}`}
               {reveal}
             />
           {:else}
@@ -1197,7 +1228,7 @@
               }}
               onupdate={(mod) => void updateFromCard(mod)}
               onopenpage={(mod) => void openPageOf(mod)}
-              resetKey={`${filter}|${typeFilter}|${query}`}
+              resetKey={`${filter}|${typeFilter}|${appliedQuery}`}
               appearKey={`${filter}|${typeFilter}`}
               {reveal}
             />

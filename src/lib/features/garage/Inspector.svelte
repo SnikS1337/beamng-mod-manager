@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { bornInFlow } from "#lib/shell/motion.svelte.js";
   import SiteMark from "#lib/shell/SiteMark.svelte";
   import { ModPreview } from "./modPreview.svelte";
   import { coverTint } from "./coverTint";
@@ -252,6 +253,7 @@
 </script>
 
 <aside
+  use:bornInFlow
   class="inspector scroll-area"
   class:tinted={tint !== null}
   style={tint ? `--tint:${tint}` : undefined}
@@ -264,7 +266,7 @@
   {#if loading && !details}
     <!-- Пока грузятся данные — уже известная обложка с карточки, а не серая заглушка:
          в неё и «прилетает» картинка карточки. -->
-    <div class="hero" class:addon class:cover-to={flying}>
+    <div class="hero flow-intro" class:addon class:cover-to={flying}>
       {#if coverHint && !addon}
         <img src={coverHint} alt="" />
       {:else}
@@ -275,7 +277,7 @@
     <div class="skeleton line-skeleton"></div>
   {:else if details}
     {#key details.id}
-      <div class="hero" class:addon class:cover-to={flying}>
+      <div class="hero flow-intro" class:addon class:cover-to={flying}>
         {#if heroPreview.url}
           <img src={heroPreview.url} alt="" />
         {:else}
@@ -522,10 +524,12 @@
     content: "";
     position: absolute;
     inset: 0 0 auto;
-    height: 340px;
+    /* Обложка закрывает верх панели — свет идёт ниже неё, иначе его не видно. */
+    height: 620px;
     background: linear-gradient(
       180deg,
-      color-mix(in oklab, var(--tint, transparent) 16%, transparent),
+      color-mix(in oklab, var(--tint, transparent) 30%, transparent),
+      color-mix(in oklab, var(--tint, transparent) 12%, transparent) 55%,
       transparent
     );
     opacity: 0;
@@ -539,10 +543,20 @@
     opacity: 1;
   }
 
+  /* Кромка панели и тень обложки — в цвет обложки, как кант у карточки. */
+  .inspector.tinted {
+    border-left-color: color-mix(in oklab, var(--tint) 45%, var(--border));
+  }
+
+  .inspector.tinted .hero {
+    box-shadow: 0 18px 40px -20px color-mix(in oklab, var(--tint) 80%, transparent);
+  }
+
   :global(html:not(.dark)) .inspector::before {
     background: linear-gradient(
       180deg,
-      color-mix(in oklab, var(--tint, transparent) 10%, transparent),
+      color-mix(in oklab, var(--tint, transparent) 20%, transparent),
+      color-mix(in oklab, var(--tint, transparent) 8%, transparent) 55%,
       transparent
     );
   }

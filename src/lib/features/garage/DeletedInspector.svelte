@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { bornInFlow } from "#lib/shell/motion.svelte.js";
   import type { ModCardDto } from "#lib/ipc/library.js";
   import { formatDateTime, formatSize } from "./format";
 
@@ -13,7 +14,7 @@
   } = $props();
 </script>
 
-<aside class="inspector scroll-area" aria-label="Удалённый мод">
+<aside use:bornInFlow class="inspector scroll-area" aria-label="Удалённый мод">
   <div class="top">
     <span class="eyebrow">Удалённый мод</span>
     <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>×</button>

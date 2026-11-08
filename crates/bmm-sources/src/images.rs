@@ -80,6 +80,19 @@ impl RemoteImageCache {
 
     /// Оставляет в папке не больше `max_bytes`: первыми уходят давно не нужные
     /// (время изменения обновляется при каждом показе картинки). Возвращает, сколько удалено.
+    /// Сколько места занимают скачанные картинки, байт.
+    pub fn size(&self) -> u64 {
+        let Ok(entries) = std::fs::read_dir(&self.root) else {
+            return 0;
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.metadata().ok())
+            .filter(std::fs::Metadata::is_file)
+            .map(|metadata| metadata.len())
+            .sum()
+    }
+
     pub fn trim(&self, max_bytes: u64) -> usize {
         let Ok(entries) = std::fs::read_dir(&self.root) else {
             return 0;
@@ -361,11 +374,14 @@ mod tests {
             file.set_modified(old + Duration::from_secs(index as u64 * 60))
                 .unwrap();
         }
+        assert_eq!(cache.size(), 300);
         assert_eq!(cache.trim(1000), 0, "под пределом ничего не трогаем");
         assert_eq!(cache.trim(200), 1);
+        assert_eq!(cache.size(), 200);
         assert!(!temp.path().join("a.jpg").exists(), "ушла самая старая");
         assert!(temp.path().join("c.jpg").exists());
         assert_eq!(RemoteImageCache::new(temp.path().join("нет")).trim(0), 0);
+        assert_eq!(RemoteImageCache::new(temp.path().join("нет")).size(), 0);
     }
 
     #[test]

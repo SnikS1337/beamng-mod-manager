@@ -10,6 +10,7 @@ import {
   queuePass,
   runStarted,
   sitesAfterPass,
+  withSources,
   wasPassed,
 } from "./passes";
 
@@ -127,10 +128,13 @@ describe("что делать после прохождения", () => {
     expect(queue).toEqual(["modhub", "modland"]);
   });
 
-  it("после проверки — проверка, поиск страниц остаётся на потом", () => {
+  it("сайты с модами — каждый своей проверкой, поиск страниц — после них", () => {
+    // Было: прохождение одного сайта запускало проверку всех сайтов.
     const first = nextFromQueue(["modland", "modhub", "stmods"], trackedOf);
-    expect(first).toEqual({ run: "check", rest: ["modland"] });
-    expect(nextFromQueue(first.rest, trackedOf)).toEqual({ run: "findPages", rest: [] });
+    expect(first).toEqual({ run: { kind: "site", site: "modhub" }, rest: ["modland", "stmods"] });
+    const second = nextFromQueue(first.rest, trackedOf);
+    expect(second).toEqual({ run: { kind: "site", site: "stmods" }, rest: ["modland"] });
+    expect(nextFromQueue(second.rest, trackedOf)).toEqual({ run: { kind: "findPages" }, rest: [] });
     expect(nextFromQueue([], trackedOf)).toEqual({ run: null, rest: [] });
   });
 
@@ -140,11 +144,38 @@ describe("что делать после прохождения", () => {
     expect(coveredBy(queue, "check", trackedOf)).toEqual(["modland"]);
     expect(coveredBy(queue, "findPages", trackedOf)).toEqual(["modhub"]);
     expect(coveredBy(queue, "retry", trackedOf)).toEqual(queue);
+    expect(coveredBy(queue, { site: "modhub" }, trackedOf), "проверка сайта снимает только его").toEqual([
+      "modland",
+    ]);
+    expect(coveredBy(["stmods", "modhub"], { site: "modhub" }, trackedOf)).toEqual(["stmods"]);
   });
 
   it("сайт, за которым начали следить, уже проверяется, а не ищется", () => {
     // Прошли сайт без модов, а пока шла проверка, на нём нашли страницу.
     const later = (site: string) => (site === "modland" ? 1 : trackedOf(site));
-    expect(nextFromQueue(["modland"], later)).toEqual({ run: "check", rest: [] });
+    expect(nextFromQueue(["modland"], later)).toEqual({ run: { kind: "site", site: "modland" }, rest: [] });
+  });
+});
+
+describe("проверка одного сайта", () => {
+  it("свежий сайт встаёт на своё место, остальные остаются", () => {
+    // Было: после проверки одного сайта список сайтов заменялся одним этим сайтом.
+    const before = [source("modhub", "needsHumanCheck"), source("modland", "unavailable", "таймаут"), source("stmods", "ok")];
+    const after = withSources(before, [source("modhub", "ok")]);
+    expect(after.map((item) => [item.id, item.status])).toEqual([
+      ["modhub", "ok"],
+      ["modland", "unavailable"],
+      ["stmods", "ok"],
+    ]);
+    expect(before[0].status, "исходный список не меняется").toBe("needsHumanCheck");
+  });
+
+  it("сайта ещё не было в списке — добавляется в конец; пустой ответ ничего не меняет", () => {
+    expect(withSources([source("stmods", "ok")], [source("modhub", "ok")]).map((item) => item.id)).toEqual([
+      "stmods",
+      "modhub",
+    ]);
+    const list = [source("stmods", "ok")];
+    expect(withSources(list, [])).toEqual(list);
   });
 });

@@ -372,6 +372,8 @@ pub fn run() {
             commands::search::search_retry_source,
             commands::search::search_decide,
             commands::search::search_preview,
+            commands::search::image_cache_info,
+            commands::search::image_cache_clear,
             commands::search::search_page_preview,
             commands::search::search_open_check,
             commands::updates::updates_snapshot,
@@ -513,6 +515,8 @@ fn preview_protocol(
         tauri::http::Response::builder()
             .status(404)
             .header("Content-Type", "text/plain")
+            // Картинки ещё нет — её могут положить позже: «нет» не запоминаем.
+            .header("Cache-Control", "no-store")
             .body(Cow::Borrowed(&b"not found"[..]))
             .expect("static response")
     };
@@ -537,7 +541,7 @@ fn preview_protocol(
             return tauri::http::Response::builder()
                 .status(200)
                 .header("Content-Type", mime)
-                .header("Cache-Control", "no-cache")
+                .header("Cache-Control", PREVIEW_CACHE)
                 .body(Cow::Owned(bytes))
                 .expect("preview response");
         }
@@ -559,7 +563,7 @@ fn preview_protocol(
     let mut response = tauri::http::Response::builder()
         .status(200)
         .header("Content-Type", mime)
-        .header("Cache-Control", "no-cache")
+        .header("Cache-Control", PREVIEW_CACHE)
         .header("Vary", "Origin");
     if let Some(origin) = request
         .headers()
@@ -571,6 +575,12 @@ fn preview_protocol(
     }
     response.body(Cow::Owned(bytes)).expect("preview response")
 }
+
+/// Картинки в кеше программы не меняются под тем же именем: имя обложки мода — от
+/// имени, размера и времени файла (новый архив — новое имя), имя картинки выдачи —
+/// от её адреса на сайте. WebView держит их в памяти и не просит заново, когда
+/// карточка снова появляется при прокрутке или при возврате в раздел.
+const PREVIEW_CACHE: &str = "public, max-age=31536000, immutable";
 
 /// Текст, если окно программы не создалось.
 fn startup_failure(error: &str) -> String {
@@ -675,8 +685,33 @@ mod tests {
     }
 
     #[test]
+    fn previews_are_kept_by_the_webview() {
+        // Было `no-cache`: карточка, снова появившаяся при прокрутке, и картинки
+        // выдачи при возврате в поиск запрашивались заново.
+        let source = include_str!("lib.rs").replace("\r\n", "\n");
+        let start = source.find("fn preview_protocol(").unwrap();
+        let end = start + source[start..].find("\n}\n").unwrap();
+        let handler = &source[start..end];
+        assert_eq!(
+            handler.matches("PREVIEW_CACHE)").count(),
+            2,
+            "обе картинки — из кеша"
+        );
+        assert!(!handler.contains("\"no-cache\""));
+        assert!(
+            handler.contains("\"no-store\""),
+            "«нет картинки» не запоминается"
+        );
+        assert!(PREVIEW_CACHE.contains("immutable"));
+    }
+
+    #[test]
     fn closing_main_window_closes_hidden_ones() {
-        let open = vec!["modland-pages".to_string(), "site-check".to_string()];
+        let open = vec![
+            "modland-pages".to_string(),
+            "site-check-modland".to_string(),
+            "site-check-modhub".to_string(),
+        ];
         assert_eq!(windows_to_close("main", &open), open);
         let with_main = vec![
             "main".to_string(),
@@ -692,7 +727,7 @@ mod tests {
     #[test]
     fn closing_a_service_window_keeps_the_rest() {
         let open = vec!["main".to_string(), "modland-pages".to_string()];
-        assert!(windows_to_close("site-check", &open).is_empty());
+        assert!(windows_to_close("site-check-modhub", &open).is_empty());
     }
 
     #[test]

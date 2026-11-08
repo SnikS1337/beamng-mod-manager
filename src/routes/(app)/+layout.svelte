@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { routeDirection } from "#lib/shell/routeDirection.js";
   import { onMount } from "svelte";
   import { onNavigate } from "$app/navigation";
   import { IconContext } from "phosphor-svelte";
@@ -33,6 +34,11 @@
   onNavigate((navigation) => {
     if (!canFlow(document)) return;
     if (navigation.from?.url.pathname === navigation.to?.url.pathname) return;
+    // Раздел ниже в меню въезжает снизу, выше — сверху.
+    document.documentElement.style.setProperty(
+      "--route-dir",
+      String(routeDirection(navigation.from?.url.pathname, navigation.to?.url.pathname)),
+    );
     return new Promise<void>((resolve) => {
       void motion.run(async () => {
         resolve();

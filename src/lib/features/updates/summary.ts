@@ -82,7 +82,14 @@ type Done = Pick<
  * только фоновая проверка), поэтому «проверены недавно — завтра» тут не бывает.
  * Было: «Новых версий нет» рядом с «Доступные 4» — непонятно, куда делись четыре.
  */
-export function checkSummary(event: Done): CheckSummary {
+export function checkSummary(event: Done, site?: string): CheckSummary {
+    // Проверка одного сайта: тот же итог, но видно, о каком сайте он.
+    if (site !== undefined) {
+        // Охват библиотеки («у 2 модов нет страницы») к одному сайту не относится.
+        const whole = checkSummary({ ...event, coverage: undefined, findings: undefined });
+        if (!whole.text) return whole;
+        return { ...whole, text: `${site}: ${whole.text.charAt(0).toLowerCase()}${whole.text.slice(1)}` };
+    }
     // Остановили сами — говорить нечего.
     if (event.cancelled) return { text: null };
     if (event.sources.length === 0 && event.requests === 0) {

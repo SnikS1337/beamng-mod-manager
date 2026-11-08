@@ -53,6 +53,19 @@ describe("checkSummary", () => {
         );
     });
 
+    it("после проверки одного сайта видно, о каком сайте итог", () => {
+        expect(checkSummary(base, "ModHub")).toEqual({ text: "ModHub: новых обновлений нет" });
+        expect(checkSummary({ ...base, cancelled: true }, "ModHub").text).toBeNull();
+        // Охват всей библиотеки к одному сайту не относится.
+        const waiting = Array.from({ length: 4 }, () => ({}) as never);
+        expect(
+            checkSummary(
+                { ...base, findings: waiting, coverage: { mods: 10, tracked: 8, withoutPage: 2, declined: 0 } },
+                "ModHub",
+            ).text,
+        ).toBe("ModHub: новых обновлений нет");
+    });
+
     it("не пишет «проверены недавно — завтра»: кнопка проверяет все моды", () => {
         const text = checkSummary({
             ...base,

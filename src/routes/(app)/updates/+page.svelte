@@ -1,7 +1,7 @@
 <script lang="ts">
   import SiteMark from "#lib/shell/SiteMark.svelte";
   import { errorText } from "#lib/shell/errorText.js";
-  import { needsPassButton, passButton } from "#lib/shell/siteCheck.js";
+  import { needsPassButton, passButton, startPassing, stopPassing } from "#lib/shell/siteCheck.js";
   import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
@@ -18,6 +18,11 @@
   import { page } from "$app/state";
   import Package from "phosphor-svelte/lib/Package";
   import DotsThree from "phosphor-svelte/lib/DotsThree";
+  import CheckCircle from "phosphor-svelte/lib/CheckCircle";
+  import ArrowCircleUp from "phosphor-svelte/lib/ArrowCircleUp";
+  import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+  import { pop } from "#lib/shell/transitions.js";
+  import { outcomeOf, outcomeText } from "#lib/features/updates/outcome.js";
   import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
   import { downloadOpen, downloadOpenBatch } from "#lib/ipc/download.js";
@@ -43,8 +48,10 @@
     runStarted,
     sitesAfterPass,
     wasPassed,
+    withSources,
+    type RunKind,
   } from "#lib/features/updates/passes.js";
-  import { motion } from "#lib/shell/motion.svelte.js";
+  import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { looksLikeOtherMod, reason, sizeChange } from "#lib/features/updates/reason.js";
   import {
     applyBatch,
@@ -101,8 +108,8 @@
   });
   let sources = $state<UpdateSource[]>([]);
   let loading = $state(true);
-  /** Сайт, проверку которого сейчас проходят; `null` — окна проверки нет. */
-  let passing = $state<string | null>(null);
+  /** Сайты, чьи окна проверки сейчас открыты (у каждого сайта своё окно). */
+  let passing = $state<string[]>([]);
   let filter = $state<Filter>("available");
   let verifying = $state<string | null>(null);
   let verifications = $state<Record<string, PageVerification | null>>({});
@@ -120,9 +127,10 @@
 
   function setTab(next: Filter) {
     if (next === filter) return;
+    // Вкладки — те же фильтры: карточки уходят и приходят, как в гараже.
     void motion.run(() => {
       filter = next;
-    }, "flow-section");
+    }, "flow-list");
   }
   /** Ход проверки при запуске (она идёт сама, без нажатия). */
   /** Полоса проверки доходит до конца и только потом уступает кнопкам. */
@@ -130,7 +138,7 @@
   /** Ход идущей проверки по сайтам: значок каждого красится, как только сайт закончил. */
   let siteLive = $state<Record<string, SiteLive>>({});
   /** Своя проверка всех сайтов: тогда ещё не начатые сайты «ждут очереди». */
-  let liveKind = $state<"check" | "findPages" | "retry" | null>(null);
+  let liveKind = $state<RunKind | null>(null);
   let finishTimer: ReturnType<typeof setTimeout> | undefined;
   /** Номер запроса проверки при запуске (`AUTO_REQUEST_ID` в окне). */
   let error = $state<string | null>(null);
@@ -267,6 +275,7 @@
       return;
     }
     if (event.phase === "auto") {
+      run.outcome = outcomeOf(event, { background: true }) ?? run.outcome;
       const hadProgress = run.autoProgress !== null;
       run.autoProgress = null;
       void refreshSites();
@@ -298,7 +307,10 @@
       if (event.progress) siteLive = trackSite(siteLive, event.progress);
       // «Сайт закончил» общую строку хода не меняет: другие сайты ещё идут.
       if (!isSiteFinish(event.progress)) run.progress = event.progress;
-      if (event.sources.length > 0) sources = freshSources(event.sources, passes, runEpoch);
+      if (event.sources.length > 0) {
+        const fresh = freshSources(event.sources, passes, runEpoch);
+        sources = typeof liveKind === "object" && liveKind !== null ? withSources(sources, fresh) : fresh;
+      }
       return;
     }
     if (event.phase === "error") {
@@ -322,14 +334,17 @@
       suggestions: event.suggestions,
       coverage: event.coverage ?? snapshot.coverage,
     };
-    if (event.sources.length > 0) sources = event.sources;
+    // Проверка одного сайта приносит только его: остальные сайты остаются как были.
+    const scope = typeof liveKind === "object" && liveKind !== null ? liveKind.site : null;
+    if (event.sources.length > 0) sources = scope ? withSources(sources, event.sources) : event.sources;
     run.checking = false;
     run.progress = null;
     finishProgress();
     startQueuedRecheck();
     if (event.phase === "done" || event.phase === "pages") void refreshSites();
     if (event.phase === "done") {
-      const summary = checkSummary(event);
+      run.outcome = outcomeOf(event, { site: scope ? (CHECK_SITES[scope] ?? scope) : undefined }) ?? run.outcome;
+      const summary = checkSummary(event, scope ? (CHECK_SITES[scope] ?? scope) : undefined);
       if (summary.text) toasts.show(summary.text);
     }
     // На «Страницы» переводим, только если там появилось что проверить.
@@ -386,7 +401,7 @@
   }
 
   /** Номер начала своей проверки — см. `passes.ts`. */
-  function startRun(kind: "check" | "findPages" | "retry") {
+  function startRun(kind: RunKind) {
     siteLive = {};
     liveKind = kind;
     const started = runStarted(passes);
@@ -443,8 +458,14 @@
     const token = ++readToken;
     const result = await settle(load);
     if (token === readToken) {
-      if (result.ok) snapshot = result.value;
-      else error = errorText(result.error);
+      // Ответ уже есть — применяем одним движением: ушедшая карточка тает, соседи
+      // съезжают на её место, как в гараже.
+      if (result.ok) {
+        const next = result.value;
+        await motion.run(() => {
+          if (token === readToken) snapshot = next;
+        }, "flow-list");
+      } else error = errorText(result.error);
     }
     return result.ok;
   }
@@ -541,10 +562,12 @@
   let queued: string[] = [];
 
   async function openCheck(source: string) {
-    if (passing !== null) return;
-    passing = source;
+    if (passing.includes(source)) return;
+    passing = startPassing(passing, source);
+    const name = CHECK_SITES[source] ?? source;
     try {
       const passed = await updatesOpenCheck(source);
+      passing = stopPassing(passing, source);
       if (passed) {
         passes = markPassed(passes, source);
         // Панель сайтов — сразу: «просит проверку» уходит не после проверки, а как
@@ -552,28 +575,45 @@
         snapshot = { ...snapshot, sites: sitesAfterPass(snapshot.sites, source) };
         sources = freshSources(sources, passes, runEpoch);
         void refreshSites();
-        const name = CHECK_SITES[source] ?? source;
-        passing = null;
         if (run.checking) {
           queued = queuePass(queued, source);
-          toasts.show(`${name} пускает программу — проверим, когда закончится текущая проверка`);
+          toasts.show(`${name} пускает программу — проверим его, когда закончится текущая проверка`);
         } else if (followupOf(trackedOn(source)) === "findPages") {
           // За сайтом ещё не следит ни один мод — проверять на нём нечего, а вот
           // страницы модов на нём теперь можно найти.
           toasts.show(`${name} пускает программу — ищем на нём страницы модов`);
           await findPages();
         } else {
-          toasts.show(`${name} пускает программу — проверяем снова`);
-          await check();
+          // Проверяем только этот сайт: остальные проверку не просили.
+          toasts.show(`${name} пускает программу — проверяем его моды`);
+          await checkSite(source);
         }
       } else {
         // Как в поиске: без ответа человек не понимает, почему кнопка осталась.
-        toasts.show("Проверка не завершена. Пройдите её в окне и попробуйте снова");
+        toasts.show(`${name}: проверка не завершена. Пройдите её в окне и попробуйте снова`);
       }
     } catch (reason) {
       error = errorText(reason);
     } finally {
-      passing = null;
+      passing = stopPassing(passing, source);
+    }
+  }
+
+  /** Своя проверка одного сайта — после того как его прошли. */
+  async function checkSite(source: string) {
+    if (run.checking) {
+      queued = queuePass(queued, source);
+      return;
+    }
+    stopFinishing();
+    startRun({ site: source });
+    const id = run.begin();
+    error = null;
+    try {
+      await updatesStart(true, id, source);
+    } catch (reason) {
+      error = errorText(reason);
+      run.checking = false;
     }
   }
 
@@ -586,8 +626,8 @@
     if (run.checking) return;
     const next = nextFromQueue(queued, trackedOn);
     queued = next.rest;
-    if (next.run === "check") void check();
-    else if (next.run === "findPages") void findPages();
+    if (next.run?.kind === "site") void checkSite(next.run.site);
+    else if (next.run?.kind === "findPages") void findPages();
   }
 
   async function openLink(url: string) {
@@ -866,7 +906,7 @@
   <div class="body">
     <div
       id="updates-panel"
-      class="list scroll-area flow-section-body"
+      class="list scroll-area flow-section-body flow-mods"
       role="tabpanel"
       aria-labelledby={`updates-tab-${filter}`}
     >
@@ -921,7 +961,7 @@
         {/if}
         {#each filter === "available" ? snapshot.findings : snapshot.hidden as finding (finding.modId)}
           {@const possible = finding.status !== "likely"}
-          <article class="card" data-finding-id={finding.modId}>
+          <article class="card flow-card" data-finding-id={finding.modId} style:--flow={flowName(`f:${finding.modId}`)}>
             <div class="photo">
               {#if finding.previewUrl && finding.role !== "addon"}
                 <img src={finding.previewUrl} alt="" loading="lazy" />
@@ -1003,7 +1043,7 @@
         {/each}
       {:else}
         {#each snapshot.lost ?? [] as page (page.modId + page.source)}
-          <article class="card compact">
+          <article class="card compact flow-card" style:--flow={flowName(`l:${page.modId}:${page.source}`)}>
             <div class="photo">
               {#if page.previewUrl && page.role !== "addon"}
                 <img src={page.previewUrl} alt="" loading="lazy" />
@@ -1029,7 +1069,7 @@
         {/each}
         {#each snapshot.suggestions as suggestion (suggestion.modId + suggestion.source)}
           {@const verification = verifications[suggestion.modId]}
-          <article class="card compact">
+          <article class="card compact flow-card" style:--flow={flowName(`s:${suggestion.modId}:${suggestion.source}`)}>
             <div class="photo"><Package size={48} weight="thin" /></div>
             <div class="content">
               <div class="head"><h2>{suggestion.modName}</h2><span class="chip possible">Это его страница?</span></div>
@@ -1115,6 +1155,16 @@
           Ещё не проверяли. Проверим моды, за которыми следим на сайтах.
         {/if}
       </p>
+      {#if run.outcome && !run.checking && !run.autoProgress}
+        {@const OutcomeIcon = run.outcome.tone === "ok" ? CheckCircle : run.outcome.tone === "new" ? ArrowCircleUp : WarningCircle}
+        {#key run.outcome.at}
+          <p class="outcome {run.outcome.tone}" role="status" in:pop={{ duration: 260, y: 4 }}>
+            <OutcomeIcon size={16} weight="fill" />
+            <span>{outcomeText(run.outcome)}</span>
+            <time>{new Date(run.outcome.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</time>
+          </p>
+        {/key}
+      {/if}
       {#if run.checking || run.autoProgress || finishing}
         {@const shown = run.checking ? run.progress : run.autoProgress}
         <div class="track" class:complete={finishing}>
@@ -1479,6 +1529,46 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-top: 6px;
+  }
+
+  .outcome {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -4px 0 14px;
+    padding: 9px 12px;
+    border: 1px solid color-mix(in oklab, var(--outcome) 35%, transparent);
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--outcome) 9%, transparent);
+    color: var(--foreground);
+    font-size: 13px;
+    font-weight: 600;
+    --outcome: var(--ok);
+  }
+
+  .outcome.new {
+    --outcome: var(--accent-brand);
+  }
+
+  .outcome.warn {
+    --outcome: var(--warning);
+  }
+
+  .outcome > :global(svg) {
+    flex: none;
+    color: var(--outcome);
+  }
+
+  .outcome span {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .outcome time {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
   }
 
   .verify-note {

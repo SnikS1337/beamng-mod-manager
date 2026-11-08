@@ -246,11 +246,25 @@ export async function modDetails(id: string): Promise<ModDetails> {
 
 const previewRequests = new Map<string, Promise<string | null>>();
 
+/** Демо: у двух модов из трёх — цветная «обложка», чтобы видеть оттенки и перелёт обложки. */
+function mockPreview(id: string): string | null {
+  const number = Number(id.replace(/\D/g, ""));
+  if (!Number.isFinite(number) || number % 3 === 2) return null;
+  const hue = (number * 47) % 360;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180'>` +
+    `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
+    `<stop offset='0' stop-color='hsl(${hue} 70% 46%)'/><stop offset='1' stop-color='hsl(${(hue + 40) % 360} 60% 22%)'/>` +
+    `</linearGradient></defs><rect width='320' height='180' fill='url(#g)'/>` +
+    `<circle cx='228' cy='118' r='62' fill='hsl(${hue} 85% 62%)' opacity='.45'/></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
 export function modPreview(id: string, key = id): Promise<string | null> {
   const existing = previewRequests.get(key);
   if (existing) return existing;
   const request = (async () => {
-    if (!isTauri()) return null;
+    if (!isTauri()) return mockPreview(id);
     return invoke<string | null>("mod_preview", { id });
   })();
   previewRequests.set(key, request);

@@ -1,5 +1,8 @@
 <script lang="ts">
   import SiteMark from "#lib/shell/SiteMark.svelte";
+  import { themeWave } from "#lib/shell/themeWave.js";
+  import { imageCacheClear, imageCacheInfo, type ImageCache } from "#lib/ipc/search.js";
+  import { clearPreviewMemory } from "#lib/features/search/previewCache.js";
   import { releaseNoteItems } from "#lib/shell/appUpdateNotice.js";
   import { errorText } from "#lib/shell/errorText.js";
   import { SaveQueue } from "#lib/features/settings/saveQueue.js";
@@ -476,38 +479,31 @@
     mark();
   }
 
-  function selectBackdrop(id: Backdrop) {
+  function selectBackdrop(id: Backdrop, event: MouseEvent) {
     if (!draft || draft.background === id) return;
-    draft.background = id;
-    mark();
+    void themeWave(event, () => {
+      if (!draft) return;
+      draft.background = id;
+      mark();
+    });
   }
 
   function selectMode(id: Mode, event: MouseEvent) {
     if (!draft || draft.mode === id) return;
-    const root = document.documentElement;
-    const x = event.clientX > 0 ? event.clientX : window.innerWidth / 2;
-    const y = event.clientY > 0 ? event.clientY : window.innerHeight / 2;
-    root.style.setProperty("--theme-x", `${x}px`);
-    root.style.setProperty("--theme-y", `${y}px`);
-    void motion.run(() => {
+    void themeWave(event, () => {
       if (!draft) return;
       draft.mode = id;
       mark();
-    }, "flow-theme");
+    });
   }
 
   function selectTheme(id: Theme, event: MouseEvent) {
     if (!draft || draft.theme === id) return;
-    const root = document.documentElement;
-    const x = event.clientX > 0 ? event.clientX : window.innerWidth / 2;
-    const y = event.clientY > 0 ? event.clientY : window.innerHeight / 2;
-    root.style.setProperty("--theme-x", `${x}px`);
-    root.style.setProperty("--theme-y", `${y}px`);
-    void motion.run(() => {
+    void themeWave(event, () => {
       if (!draft) return;
       draft.theme = id;
       mark();
-    }, "flow-theme");
+    });
   }
 
   function setFlag(
@@ -517,6 +513,35 @@
     if (!draft) return;
     draft[key] = value;
     mark();
+  }
+
+  function megabytes(bytes: number): string {
+    return `${Math.round(bytes / (1024 * 1024))} МБ`;
+  }
+
+  /** Кеш картинок сайтов: размер и «Очистить». */
+  let imageCache = $state<ImageCache | null>(null);
+  let clearingImages = $state(false);
+
+  $effect(() => {
+    if (activeSection !== "sites" || imageCache) return;
+    void imageCacheInfo()
+      .then((info) => (imageCache = info))
+      .catch(() => {});
+  });
+
+  async function clearImages() {
+    clearingImages = true;
+    try {
+      imageCache = await imageCacheClear();
+      // Адреса удалённых файлов больше не годятся — поиск запросит картинки заново.
+      clearPreviewMemory();
+      toasts.show("Картинки сайтов удалены");
+    } catch (reason) {
+      toasts.show(errorText(reason));
+    } finally {
+      clearingImages = false;
+    }
   }
 
   function sourceEnabled(id: string): boolean {
@@ -764,7 +789,7 @@
                 class="backdrop-swatch"
                 class:active={draft.background === item.id}
                 aria-pressed={draft.background === item.id}
-                onclick={() => selectBackdrop(item.id)}
+                onclick={(event) => selectBackdrop(item.id, event)}
               >
                 <span class="backdrop-tone" style={`background:${item.gradient}`}>
                   {#if draft.background === item.id}
@@ -1101,6 +1126,28 @@
         {/each}
       </div>
       <p class="hint">Поиск использует включённые каталоги; BeamNG нужен для обновлений и страниц модов.</p>
+
+      <div class="row">
+        <div class="row-text">
+          <span class="label">Картинки сайтов</span>
+          <small>
+            {#if imageCache}
+              {megabytes(imageCache.bytes)} из {megabytes(imageCache.limitBytes)}. Скачанные картинки поиска
+              хранятся, чтобы не грузить их заново; давно не нужные уходят сами.
+            {:else}
+              Скачанные картинки поиска хранятся, чтобы не грузить их заново.
+            {/if}
+          </small>
+        </div>
+        <button
+          class="btn-glass"
+          type="button"
+          disabled={clearingImages || !imageCache || imageCache.bytes === 0}
+          onclick={() => void clearImages()}
+        >
+          {clearingImages ? "Очищаем…" : "Очистить"}
+        </button>
+      </div>
     </section>
         {/if}
         {#if activeSection === "program"}
