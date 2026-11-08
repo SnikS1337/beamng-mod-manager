@@ -24,6 +24,9 @@ pub enum Reach {
     Secure,
     /// На подключение нет ответа.
     NoAnswer,
+    /// Сайт подключился, страница начала грузиться и встала: так чаще всего и
+    /// выглядит блокировка — сайт «бесконечно грузится» и отваливается.
+    Stalled,
     /// Компьютер не подключён к сети (так пишет встроенный браузер).
     Offline,
     /// Вместо сайта — страница о блокировке или код 451.
@@ -31,12 +34,13 @@ pub enum Reach {
 }
 
 impl Reach {
-    pub const ALL: [Reach; 7] = [
+    pub const ALL: [Reach; 8] = [
         Reach::NoAddress,
         Reach::Refused,
         Reach::Reset,
         Reach::Secure,
         Reach::NoAnswer,
+        Reach::Stalled,
         Reach::Offline,
         Reach::BlockPage,
     ];
@@ -49,6 +53,7 @@ impl Reach {
             Reach::Reset => "reset",
             Reach::Secure => "secure",
             Reach::NoAnswer => "noAnswer",
+            Reach::Stalled => "stalled",
             Reach::Offline => "offline",
             Reach::BlockPage => "blockPage",
         }
@@ -62,6 +67,7 @@ impl Reach {
             Reach::Reset => "соединение обрывается",
             Reach::Secure => "не устанавливается защищённое соединение",
             Reach::NoAnswer => "сайт не отвечает на подключение",
+            Reach::Stalled => "страница грузится и обрывается по времени",
             Reach::Offline => "компьютер не подключён к сети",
             Reach::BlockPage => "вместо сайта открывается страница о блокировке",
         }
@@ -244,14 +250,13 @@ const BLOCK_MARKERS: &[&str] = &[
     "доступ к ресурсу ограничен",
     "доступ ограничен по решению",
 ];
-/// Ссылки на реестр — страница о блокировке на любом адресе.
-const REGISTRY: &[&str] = &["eais.rkn.gov.ru", "blocklist.rkn.gov.ru"];
-/// Страницы о блокировке короткие; длинная страница сайта, где в комментариях
-/// упомянули Роскомнадзор, — не она.
+/// Страницы о блокировке короткие; длинная страница — не она.
 const BLOCK_PAGE_MAX: usize = 64 * 1024;
 
-/// Ответ — не сайт, а страница о блокировке: код 451 или страница провайдера
-/// (на другом адресе, с приметами реестра).
+/// Ответ — не сайт, а страница о блокировке: код 451 или короткая страница
+/// провайдера на чужом адресе с приметами реестра. Страница самого сайта не в счёт,
+/// даже если в ней ссылка на реестр (новость о блокировках). Чаще провайдер ничего
+/// не подсовывает, а сайт просто бесконечно грузится — это [`Reach::Stalled`].
 pub fn is_block_page(requested: &Url, status: u16, final_url: &Url, text: &str) -> bool {
     if status == 451 {
         return true;
@@ -259,20 +264,15 @@ pub fn is_block_page(requested: &Url, status: u16, final_url: &Url, text: &str) 
     if text.len() > BLOCK_PAGE_MAX {
         return false;
     }
-    let lower = text.to_lowercase();
-    if REGISTRY.iter().any(|marker| lower.contains(marker)) {
-        return true;
-    }
     let moved = match (requested.host_str(), final_url.host_str()) {
         (Some(asked), Some(got)) => base_domain(asked) != base_domain(got),
         _ => false,
     };
-    moved
-        && BLOCK_MARKERS
-            .iter()
-            .filter(|marker| lower.contains(*marker))
-            .count()
-            >= 1
+    if !moved {
+        return false;
+    }
+    let lower = text.to_lowercase();
+    BLOCK_MARKERS.iter().any(|marker| lower.contains(marker))
 }
 
 fn base_domain(host: &str) -> String {
@@ -470,14 +470,20 @@ mod tests {
             "<h1>Доступ к запрашиваемому ресурсу ограничен</h1> по решению Роскомнадзора"
         ));
         assert!(
-            is_block_page(
+            !is_block_page(
                 &site,
                 200,
                 &site,
                 "<a href=\"https://eais.rkn.gov.ru/\">реестр</a>"
             ),
-            "ссылка на реестр — блокировка и на адресе сайта"
+            "новость о блокировках на самом сайте — не заглушка"
         );
+        assert!(is_block_page(
+            &site,
+            200,
+            &isp,
+            "<a href=\"https://eais.rkn.gov.ru/\">реестр</a>"
+        ));
         assert!(
             !is_block_page(
                 &site,
@@ -498,7 +504,7 @@ mod tests {
         );
         let long = format!("{}eais.rkn.gov.ru", "x".repeat(BLOCK_PAGE_MAX));
         assert!(
-            !is_block_page(&site, 200, &site, &long),
+            !is_block_page(&site, 200, &isp, &long),
             "длинная страница сайта"
         );
         assert!(!is_block_page(&site, 403, &site, "Forbidden"));
@@ -536,6 +542,19 @@ mod tests {
             reach: Some(Reach::Reset),
         };
         assert_eq!(verdicts(&[both]), [Some(Others::Unknown)]);
+    }
+
+    #[test]
+    fn hanging_page_is_explained_like_other_connection_failures() {
+        let blocked = explain(Reach::Stalled, Others::Answer);
+        assert!(
+            blocked.contains("страница грузится и обрывается"),
+            "{blocked}"
+        );
+        assert!(blocked.contains("похоже на блокировку"), "{blocked}");
+        assert!(explain(Reach::Stalled, Others::Silent).contains("нет интернета"));
+        assert!(Reach::ALL.contains(&Reach::Stalled));
+        assert_eq!(Reach::Stalled.code(), "stalled");
     }
 
     #[test]

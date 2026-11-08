@@ -296,6 +296,11 @@ pub fn secure_redirect_allowed(url: &Url) -> bool {
     url.scheme() == "https" && redirect_allowed(url)
 }
 
+/// Переход с защищённого адреса на незащищённый.
+fn is_downgrade(from: &Url, to: &Url) -> bool {
+    from.scheme() == "https" && to.scheme() != "https"
+}
+
 /// Старые http-адреса из базы поднимаем до https до запроса: ходить по ним
 /// незашифрованными нельзя, а ломать старые ссылки незачем.
 pub fn secure_url(url: &Url) -> Url {
@@ -626,7 +631,13 @@ impl PageFetcher for HttpPageFetcher {
                     return Err(FetchError::Message("переход без адреса".to_string()));
                 };
                 // Каждый следующий шаг — под тем же запретом локальной сети (проверка
-                // в начале цикла).
+                // в начале цикла). С https на http не уходим: по http подменят и
+                // адрес архива, а загрузчик берёт его отсюда.
+                if is_downgrade(&current, &next) {
+                    return Err(FetchError::Message(
+                        "Сайт уводит на незащищённый адрес (http).".to_string(),
+                    ));
+                }
                 current = next;
                 continue;
             }
@@ -719,11 +730,27 @@ fn ensure_public(_: &Url) -> Result<(), FetchError> {
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> FetchError {
-    if let Some(reach) = reach::from_error(error.is_timeout(), error.is_connect(), &error) {
+    fetch_error_of(
+        error.is_timeout(),
+        error.is_connect(),
+        error.is_request(),
+        &error,
+    )
+}
+
+/// Ошибка клиента — в ошибку загрузки. Таймаут после подключения — страница начала
+/// грузиться и встала: так обычно и выглядит блокировка, а не «сайт медленный».
+fn fetch_error_of(
+    timeout: bool,
+    connect: bool,
+    request: bool,
+    error: &(dyn std::error::Error + 'static),
+) -> FetchError {
+    if let Some(reach) = reach::from_error(timeout, connect, error) {
         FetchError::Unreachable(reach)
-    } else if error.is_timeout() {
-        FetchError::Timeout
-    } else if error.is_connect() || error.is_request() {
+    } else if timeout {
+        FetchError::Unreachable(Reach::Stalled)
+    } else if connect || request {
         FetchError::Network
     } else {
         FetchError::Message(error.to_string())
@@ -1257,7 +1284,7 @@ impl PoliteFetcher {
         }
         let passes_at_start = entry.passes.load(Ordering::SeqCst);
         let mut retried_after_pass = false;
-        let conditional = form
+        let mut conditional = form
             .is_none()
             .then(|| self.cache_validators(&key))
             .flatten();
@@ -1329,6 +1356,12 @@ impl PoliteFetcher {
                             inner.message = None;
                             self.remember(source, SourceStatus::Ok, None, None);
                             return FetchResult::ok(cached);
+                        }
+                        // Сохранённую страницу вытеснили, пока шёл запрос: сайт не виноват.
+                        // Просим страницу целиком — той же попыткой, без сбоя.
+                        if conditional.take().is_some() {
+                            next_attempt = attempt;
+                            continue;
                         }
                         last_message =
                             "Сайт ответил «не изменилось» без сохранённой страницы.".to_string();
@@ -2852,6 +2885,111 @@ mod tests {
     }
 
     #[test]
+    fn page_that_starts_loading_and_hangs_is_a_connection_failure() {
+        // Блокировка чаще выглядит так: сайт подключается и «бесконечно грузится».
+        // Раньше это было «сайт не ответил вовремя» без подсказки.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut buffer);
+            std::thread::sleep(Duration::from_millis(1500));
+        });
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .unwrap();
+        let error = client
+            .get(format!("http://{address}/mod"))
+            .send()
+            .unwrap_err();
+        server.join().unwrap();
+        assert!(matches!(
+            map_reqwest_error(error),
+            FetchError::Unreachable(Reach::Stalled)
+        ));
+        // Таймаут на подключении — «не отвечает на подключение».
+        let plain = std::io::Error::other("timed out");
+        assert!(matches!(
+            fetch_error_of(true, true, false, &plain),
+            FetchError::Unreachable(Reach::NoAnswer)
+        ));
+        assert!(matches!(
+            fetch_error_of(true, false, false, &plain),
+            FetchError::Unreachable(Reach::Stalled)
+        ));
+        assert!(matches!(
+            fetch_error_of(false, false, true, &plain),
+            FetchError::Network
+        ));
+    }
+
+    /// Загрузчик, который выкидывает сохранённые страницы прямо во время запроса.
+    struct EvictingFetcher {
+        inner: Arc<FakeFetcher>,
+        polite: Mutex<Option<std::sync::Weak<PoliteFetcher>>>,
+        conditional: Mutex<u32>,
+    }
+
+    impl PageFetcher for EvictingFetcher {
+        fn get(&self, url: &Url) -> Result<RawResponse, FetchError> {
+            self.inner.get(url)
+        }
+
+        fn get_conditional(
+            &self,
+            url: &Url,
+            _etag: Option<&str>,
+            _last_modified: Option<&str>,
+        ) -> Result<RawResponse, FetchError> {
+            *self.conditional.lock().unwrap() += 1;
+            if let Some(polite) = self
+                .polite
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                polite.clear_cache();
+            }
+            self.inner.get(url)
+        }
+    }
+
+    #[test]
+    fn not_modified_after_the_page_was_evicted_asks_for_the_whole_page() {
+        // Страницу вытеснили из кэша, пока шёл запрос «изменилась ли?»: раньше ответ
+        // «нет» считался сбоем сайта, и три таких ставили здоровый сайт на паузу.
+        let mut first = response(200, "<html>old</html>");
+        first.etag = Some("\"v1\"".to_string());
+        let fake = FakeFetcher::new(vec![
+            Ok(first),
+            Ok(response(304, "")),
+            Ok(response(200, "<html>new</html>")),
+        ]);
+        let evicting = Arc::new(EvictingFetcher {
+            inner: fake.clone(),
+            polite: Mutex::new(None),
+            conditional: Mutex::new(0),
+        });
+        let mut opts = options();
+        opts.cache_ttl = Duration::ZERO;
+        opts.failure_limit = 1;
+        let polite = Arc::new(PoliteFetcher::new(evicting.clone(), opts));
+        *evicting.polite.lock().unwrap() = Some(Arc::downgrade(&polite));
+        let page = url("https://site.example/mod");
+        assert_eq!(polite.get("site", &page).status, SourceStatus::Ok);
+        let again = polite.get("site", &page);
+        assert_eq!(again.status, SourceStatus::Ok, "{:?}", again.message);
+        assert_eq!(again.response.unwrap().text, "<html>new</html>");
+        assert_eq!(*evicting.conditional.lock().unwrap(), 1);
+        assert_eq!(fake.calls.lock().unwrap().len(), 3);
+        assert_eq!(polite.status_of("site"), SourceStatus::Ok, "не сбой");
+    }
+
+    #[test]
     fn unreachable_site_says_how_and_asks_about_other_sites() {
         let fake = FakeFetcher::new(vec![Err(FetchError::Unreachable(Reach::Reset))]);
         let mut opts = options();
@@ -3092,6 +3230,20 @@ mod tests {
             seen
         });
         (address, handle)
+    }
+
+    #[test]
+    fn download_link_may_not_drop_to_plain_http() {
+        // Основной клиент понижение схемы запрещал, а проба ссылки «Скачать» — нет:
+        // по http подменят и адрес архива, который потом возьмёт загрузчик.
+        let secure = url("https://site.example/download");
+        assert!(is_downgrade(&secure, &url("http://files.example/a.zip")));
+        assert!(!is_downgrade(&secure, &url("https://files.example/a.zip")));
+        assert!(!is_downgrade(
+            &url("http://old.example/download"),
+            &url("http://files.example/a.zip")
+        ));
+        assert!(is_downgrade(&secure, &url("ftp://files.example/a.zip")));
     }
 
     #[test]

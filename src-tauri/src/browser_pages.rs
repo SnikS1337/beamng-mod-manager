@@ -384,7 +384,9 @@ fn wait_loaded(
             return Err(FetchError::Cancelled);
         }
         if Instant::now() >= deadline {
-            return Err(FetchError::Timeout);
+            // Страница так и не догрузилась: «бесконечно грузится» — частый вид
+            // блокировки.
+            return Err(FetchError::Unreachable(bmm_sources::reach::Reach::Stalled));
         }
         let script = r#"(() => {
             const root = document.documentElement;
