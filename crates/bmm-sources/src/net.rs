@@ -164,12 +164,13 @@ fn host_in(url: &Url, hosts: &[&str]) -> bool {
 /// Имя файла из `Content-Disposition`: `filename*=UTF-8''…` важнее `filename="…"`.
 pub fn disposition_name(value: &str) -> Option<String> {
     let mut plain = None;
-    for part in value.split(';').map(str::trim) {
+    for part in disposition_parts(value).iter().map(|part| part.trim()) {
         let Some((key, raw)) = part.split_once('=') else {
             continue;
         };
         let key = key.trim().to_ascii_lowercase();
-        let raw = raw.trim().trim_matches('"');
+        let unquoted = unquote(raw.trim());
+        let raw = unquoted.as_str();
         if key == "filename*" {
             let encoded = raw.split_once("''").map_or(raw, |(_, rest)| rest);
             let decoded = percent_decode(encoded);
@@ -181,6 +182,59 @@ pub fn disposition_name(value: &str) -> Option<String> {
         }
     }
     plain
+}
+
+/// Значение в кавычках — без кавычек и с раскрытыми `\"` (иначе «\» принимался
+/// за разделитель папок и от имени оставался хвост).
+fn unquote(value: &str) -> String {
+    let Some(inner) = value
+        .strip_prefix('"')
+        .map(|rest| rest.strip_suffix('"').unwrap_or(rest))
+    else {
+        return value.to_string();
+    };
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Части `Content-Disposition` через «;», но не внутри кавычек:
+/// `filename="a;b.zip"` раньше давал имя «a».
+fn disposition_parts(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    for ch in value.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if quoted => {
+                current.push(ch);
+                escaped = true;
+            }
+            '"' => {
+                quoted = !quoted;
+                current.push(ch);
+            }
+            ';' if !quoted => parts.push(std::mem::take(&mut current)),
+            _ => current.push(ch),
+        }
+    }
+    parts.push(current);
+    parts
 }
 
 /// Имя файла из адреса: последний кусок пути, если это архив. Страница файла на
@@ -791,12 +845,16 @@ pub fn decode_body(bytes: &[u8], content_type: Option<&str>) -> String {
     text.into_owned()
 }
 
+/// Кодировка из `Content-Type`: имя параметра в любом регистре и с пробелами
+/// вокруг «=» («CHARSET = utf-8»). Раньше узнавались только `charset=` и `Charset=`,
+/// остальное читалось как WIN1251.
 fn charset_of(content_type: &str) -> Option<&str> {
     content_type.split(';').find_map(|part| {
-        let part = part.trim();
-        part.strip_prefix("charset=")
-            .or_else(|| part.strip_prefix("Charset="))
-            .map(|value| value.trim().trim_matches(['"', '\'']))
+        let (name, value) = part.split_once('=')?;
+        name.trim()
+            .eq_ignore_ascii_case("charset")
+            .then(|| value.trim().trim_matches(['"', '\'']).trim())
+            .filter(|value| !value.is_empty())
     })
 }
 
@@ -2990,6 +3048,36 @@ mod tests {
     }
 
     #[test]
+    fn charset_parameter_is_read_in_any_spelling() {
+        for header in [
+            "text/html; charset=utf-8",
+            "text/html; Charset=UTF-8",
+            "text/html; CHARSET=utf-8",
+            "text/html;charset = \"utf-8\"",
+            "text/html; boundary=x; charset='utf-8'",
+        ] {
+            assert_eq!(
+                charset_of(header).map(str::to_ascii_lowercase).as_deref(),
+                Some("utf-8"),
+                "{header}"
+            );
+        }
+        assert_eq!(charset_of("text/html"), None);
+        assert_eq!(charset_of("text/html; charset="), None);
+        // Кириллица в UTF-8 с заголовком в верхнем регистре — без кракозябр.
+        let bytes = "Привет".as_bytes();
+        assert_eq!(
+            decode_body(bytes, Some("text/html; CHARSET=UTF-8")),
+            "Привет"
+        );
+        let cp1251 = encoding_rs::WINDOWS_1251.encode("Привет").0;
+        assert_eq!(
+            decode_body(&cp1251, Some("text/html; CHARSET=windows-1251")),
+            "Привет"
+        );
+    }
+
+    #[test]
     fn unreachable_site_says_how_and_asks_about_other_sites() {
         let fake = FakeFetcher::new(vec![Err(FetchError::Unreachable(Reach::Reset))]);
         let mut opts = options();
@@ -3362,6 +3450,16 @@ mod tests {
             Some("evil.zip")
         );
         assert_eq!(disposition_name("inline"), None);
+        assert_eq!(
+            disposition_name(r#"attachment; filename="a;b.zip"; size=10"#).as_deref(),
+            Some("a;b.zip"),
+            "«;» в кавычках — часть имени"
+        );
+        assert_eq!(
+            disposition_name(r#"attachment; filename="say \"hi\".zip""#).as_deref(),
+            Some(r#"say "hi".zip"#),
+            "экранированная кавычка не рвёт имя"
+        );
         assert_eq!(
             name_from_url(&url("https://s.example/mods/X/1/my%20car.zip?sig=1")).as_deref(),
             Some("my car.zip")

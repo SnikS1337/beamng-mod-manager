@@ -43,9 +43,11 @@ pub fn variants(query: &str) -> Vec<String> {
 fn push_unique(out: &mut Vec<String>, value: String) {
     let value = value.trim().to_string();
     if value.chars().count() >= 2
+        // Регистр сравниваем и у кириллицы: «Лада» и «лада» — один вариант запроса,
+        // а eq_ignore_ascii_case различал их и тратил на повтор лишний запрос.
         && !out
             .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&value))
+            .any(|existing| existing.to_lowercase() == value.to_lowercase())
     {
         out.push(value);
     }
@@ -147,7 +149,7 @@ fn transliterate_ru(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::variants;
+    use super::{push_unique, variants};
 
     #[test]
     fn keeps_original_and_transliterates_russian() {
@@ -178,5 +180,15 @@ mod tests {
             variants("TrafficReborn")[..2],
             ["TrafficReborn".to_string(), "Traffic Reborn".to_string()]
         );
+    }
+
+    #[test]
+    fn variants_differing_only_in_cyrillic_case_are_one() {
+        let mut out = vec!["Лада Нива".to_string()];
+        push_unique(&mut out, "лада нива".to_string());
+        push_unique(&mut out, "ЛАДА НИВА".to_string());
+        assert_eq!(out, ["Лада Нива"]);
+        push_unique(&mut out, "lada niva".to_string());
+        assert_eq!(out.len(), 2);
     }
 }
