@@ -7,6 +7,8 @@
   import SlidersHorizontal from "phosphor-svelte/lib/SlidersHorizontal";
   import { page } from "$app/state";
   import { updatesBadge } from "#lib/shell/updatesBadge.svelte.js";
+  import { updatesRun } from "#lib/features/updates/run.svelte.js";
+  import { spinWhile } from "#lib/shell/spin.js";
   import { plural } from "#lib/features/garage/format.js";
 
   const nav = [
@@ -25,6 +27,8 @@
   });
 
   const settingsActive = $derived(page.url.pathname === "/settings");
+  /** Иконка «Обновлений» крутится, пока идёт проверка — своя или фоновая. */
+  const checking = $derived(updatesRun.checking || updatesRun.autoProgress !== null);
 </script>
 
 <aside class="rail" data-tauri-drag-region>
@@ -41,7 +45,12 @@
       >
         {#if active}<span class="bar" aria-hidden="true"></span>{/if}
         <span class="icon">
-          <Icon size={23} weight={active ? "fill" : "regular"} />
+          <!-- Обе толщины лежат друг на друге: смена раздела — плавная смена
+               контура на заливку, а не скачок картинки. -->
+          <span class="glyph" class:on={active} use:spinWhile={item.href === "/updates" && checking}>
+            <Icon size={23} weight="regular" class="line" />
+            <Icon size={23} weight="fill" class="solid" />
+          </span>
           {#if item.href === "/updates" && updatesBadge.available > 0}
             <span class="badge" aria-hidden="true">
               {updatesBadge.available > 99 ? "99+" : updatesBadge.available}
@@ -66,7 +75,12 @@
     aria-current={settingsActive ? "page" : undefined}
   >
     {#if settingsActive}<span class="bar" aria-hidden="true"></span>{/if}
-    <span class="icon"><SlidersHorizontal size={23} weight={settingsActive ? "fill" : "regular"} /></span>
+    <span class="icon">
+      <span class="glyph" class:on={settingsActive}>
+        <SlidersHorizontal size={23} weight="regular" class="line" />
+        <SlidersHorizontal size={23} weight="fill" class="solid" />
+      </span>
+    </span>
     <span class="label">Настройки</span>
   </a>
   {#if version}
@@ -183,6 +197,39 @@
   .icon {
     position: relative;
     display: inline-flex;
+  }
+
+  .glyph {
+    display: grid;
+    transition: scale var(--dur-2) var(--ease-spring);
+  }
+
+  .glyph > :global(svg) {
+    grid-area: 1 / 1;
+    transition:
+      opacity var(--dur-2) var(--ease-out),
+      scale var(--dur-3) var(--ease-spring);
+  }
+
+  /* Заливка вырастает из чуть меньшего размера, контур тает чуть крупнее —
+     глаз видит, что значок «наполнился», а не подменился. */
+  .glyph > :global(.solid) {
+    opacity: 0;
+    scale: 0.82;
+  }
+
+  .glyph.on > :global(.solid) {
+    opacity: 1;
+    scale: 1;
+  }
+
+  .glyph.on > :global(.line) {
+    opacity: 0;
+    scale: 1.12;
+  }
+
+  .nav:active .glyph {
+    scale: 0.9;
   }
 
   .badge {

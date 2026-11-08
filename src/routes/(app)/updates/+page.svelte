@@ -1,10 +1,12 @@
 <script lang="ts">
+  import SiteMark from "#lib/shell/SiteMark.svelte";
   import { errorText } from "#lib/shell/errorText.js";
   import { needsPassButton, passButton } from "#lib/shell/siteCheck.js";
   import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { tabByKey } from "#lib/shell/keys.js";
+  import { kindIcon } from "#lib/features/garage/tagIcons.js";
   import {
     isSiteFinish,
     progressLine,
@@ -15,7 +17,6 @@
   } from "#lib/features/updates/siteLive.js";
   import { page } from "$app/state";
   import Package from "phosphor-svelte/lib/Package";
-  import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
@@ -788,7 +789,7 @@
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class="btn-ghost more" aria-label="Ещё действия">
       <span>Ещё</span>
-      <DotsThree size={16} weight="bold" />
+      <DotsThree size={16} />
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>
       <DropdownMenu.Content class="updates-menu" sideOffset={6} align="end">
@@ -924,10 +925,9 @@
             <div class="photo">
               {#if finding.previewUrl && finding.role !== "addon"}
                 <img src={finding.previewUrl} alt="" loading="lazy" />
-              {:else if finding.role === "addon"}
-                <PuzzlePiece size={48} weight="thin" />
               {:else}
-                <Package size={48} weight="thin" />
+                {@const Glyph = kindIcon(finding.role)}
+                <Glyph size={48} weight="thin" />
               {/if}
             </div>
             <div class="content">
@@ -951,7 +951,7 @@
                 <p class="versions mono"><b>→ {finding.latestVersion}</b></p>
               {/if}
               <p class="why">{reason(finding)}</p>
-              <p class="where">{whereText(finding)}</p>
+              <p class="where"><SiteMark id={finding.source} size={14} />{whereText(finding)}</p>
               <div class="actions">
                 {#if finding.fileVerdict === "same_file"}
                   <!-- Не пропуск человека, а вывод программы: возвращать в список нечего. -->
@@ -1007,10 +1007,9 @@
             <div class="photo">
               {#if page.previewUrl && page.role !== "addon"}
                 <img src={page.previewUrl} alt="" loading="lazy" />
-              {:else if page.role === "addon"}
-                <PuzzlePiece size={48} weight="thin" />
               {:else}
-                <Package size={48} weight="thin" />
+                {@const Glyph = kindIcon(page.role)}
+                <Glyph size={48} weight="thin" />
               {/if}
             </div>
             <div class="content">
@@ -1150,6 +1149,7 @@
             title={site.when ? `${site.text} · ${site.when}` : site.text}
           >
             <span class="dot {site.tone}"></span>
+            <SiteMark id={site.id} size={16} />
             {#if site.share !== undefined}
               <!-- Ход сайта по низу строки: двигается только transform. -->
               <span class="site-track {site.tone}" class:unknown={site.share === null} aria-hidden="true">
@@ -1460,6 +1460,9 @@
   }
 
   .where {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin: 0;
     color: var(--faint-foreground);
     font-size: 12.5px;

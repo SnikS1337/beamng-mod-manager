@@ -29,6 +29,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
+  import { spinWhile } from "#lib/shell/spin.js";
   import Plus from "phosphor-svelte/lib/Plus";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import SquaresFour from "phosphor-svelte/lib/SquaresFour";
@@ -93,7 +94,7 @@
   import { motion } from "#lib/shell/motion.svelte.js";
   import { arrival } from "#lib/shell/arrival.svelte.js";
   import { coverFlight } from "./coverFlight.svelte";
-  import { conflictFlash } from "./conflictFlash.svelte";
+  import { conflictFlash, installedFlash } from "./conflictFlash.svelte";
   import BulkBar from "./BulkBar.svelte";
 
   type Filter = "all" | "disabled" | "updates" | "unchecked" | "deleted";
@@ -765,6 +766,10 @@
       await tick();
       await tick();
       arrival.landed(card.fileName);
+      // Отметка «Установлен» — когда карточка уже приземлилась: в снимок
+      // перехода она не попадает и не летит вместе со строкой.
+      const id = card.id;
+      void motion.settled.then(() => installedFlash.flash(id));
     } finally {
       // Не нашли карточку — переход не ждёт её до тайм-аута.
       arrival.landed();
@@ -1059,7 +1064,7 @@
       aria-label="Перечитать папку модов"
       title="Перечитать папку модов"
     >
-      <ArrowsClockwise size={16} class={refreshing ? "spin" : ""} />
+      <span class="spinner" use:spinWhile={refreshing}><ArrowsClockwise size={16} /></span>
     </button>
     <button
       class="btn-primary add-archive"
@@ -1069,7 +1074,7 @@
       title="Установить моды из архива"
       aria-label="Установить моды из архива"
     >
-      <Plus size={16} weight="bold" />
+      <Plus size={16} />
       <span class="add-label">Из архива</span>
     </button>
   </header>
@@ -1272,6 +1277,10 @@
 </div>
 
 <style>
+  .spinner {
+    display: inline-flex;
+  }
+
   .archive-input {
     display: none;
   }
