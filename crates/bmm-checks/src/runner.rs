@@ -441,8 +441,9 @@ impl Runner<'_, '_, '_> {
                         .name(format!("bmm-check-{source}"))
                         .spawn_scoped(scope, move || {
                             let outcome = worker.run_source(source, pages, due, adapter);
-                            // Остановили — итог скажет сам, значок «проверен» был бы неправдой.
-                            if !outcome.cancelled {
+                            // Остановили или не хватило времени — итог скажет сам: значок
+                            // «проверен» был бы неправдой.
+                            if !outcome.cancelled && !outcome.stopped_by_time {
                                 worker.emit(&UpdateProgress {
                                     source: source.to_string(),
                                     stage: if outcome.failure.is_some() {
@@ -2408,9 +2409,17 @@ mod tests {
             clock: Some(&clock),
             hold_off: BTreeMap::new(),
         };
-        let report = UpdateRunner::run(&request, None);
+        let mut stages = Vec::new();
+        let report = UpdateRunner::run(
+            &request,
+            Some(&mut |progress: &UpdateProgress| stages.push(progress.stage.clone())),
+        );
         assert!(report.stopped_by_time);
         assert!(!report.complete());
+        assert!(
+            !stages.iter().any(|stage| stage == STAGE_SITE_DONE),
+            "не успели — не «проверен»: {stages:?}"
+        );
         let calls = site.card_calls();
         assert!(calls > 0 && calls < 6, "карточек {calls}");
 

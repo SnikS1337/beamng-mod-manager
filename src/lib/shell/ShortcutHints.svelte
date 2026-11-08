@@ -21,7 +21,13 @@
 />
 
 {#if hold.shown}
-  <div class="hints glass solid" role="note" aria-label="Горячие клавиши" transition:pop={{ duration: 200, y: 8 }}>
+  <div
+    class="hints glass solid"
+    class:above-toast={toasts.current !== null}
+    role="note"
+    aria-label="Горячие клавиши"
+    transition:pop={{ duration: 200, y: 8 }}
+  >
     {#each hints as hint (hint.keys)}
       <span><kbd>{hint.keys}</kbd>{hint.text}</span>
     {/each}
@@ -43,6 +49,11 @@
     color: var(--muted-foreground);
     font-size: 12.5px;
     pointer-events: none;
+  }
+
+  /* Тост внизу по центру: на узком окне подсказка встала бы на него. */
+  .hints.above-toast {
+    bottom: 76px;
   }
 
   .hints span {

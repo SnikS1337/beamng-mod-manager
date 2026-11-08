@@ -999,13 +999,14 @@ enum LiveReply {
 }
 
 /// Сколько ждать ответа: активация мода на сотни мегабайт занимает секунды,
-/// пачка — дольше.
+/// пачка — дольше. Но не больше 30 секунд: всё это время библиотека занята, а
+/// команда, на которую игра не успела ответить, у неё уже есть и применится сама.
 fn live_deadline(count: usize) -> Duration {
-    let extra = count.saturating_sub(1).min(16) as u32;
+    let extra = count.saturating_sub(1).min(6) as u32;
     Duration::from_secs(12) + Duration::from_secs(3) * extra
 }
 
-fn live_send(mods_dir: &Path, wanted: &[(&str, bool)]) -> LiveReply {
+fn live_send(mods_dir: &Path, wanted: &[(&str, bool)], wait: Duration) -> LiveReply {
     let bridge = bmm_game::bridge::GameBridge::with_system_clock(mods_dir);
     if !bridge.is_alive() {
         return LiveReply::Dead;
@@ -1013,7 +1014,7 @@ fn live_send(mods_dir: &Path, wanted: &[(&str, bool)]) -> LiveReply {
     let Some(id) = bridge.send(wanted) else {
         return LiveReply::Dead;
     };
-    let deadline = Instant::now() + live_deadline(wanted.len());
+    let deadline = Instant::now() + wait;
     loop {
         if let Some(answer) = bridge.read_answer()
             && answer.ack_id.as_deref() == Some(id.as_str())
@@ -1040,7 +1041,11 @@ fn try_live_toggle(
     disk: &DiskMod,
     enabled: bool,
 ) -> Option<ToggleResult> {
-    match live_send(mods_dir, &[(disk.file_name.as_str(), enabled)]) {
+    match live_send(
+        mods_dir,
+        &[(disk.file_name.as_str(), enabled)],
+        live_deadline(1),
+    ) {
         LiveReply::Answered(answer) => {
             let key = bmm_game::db::key_of(&disk.file_name);
             if answer.result(&key) != Some("ok") {
@@ -1079,6 +1084,16 @@ fn toggle_live_many(
     ids: &[String],
     enabled: bool,
 ) -> BulkToggleResult {
+    toggle_live_many_within(state, mods_dir, ids, enabled, live_deadline)
+}
+
+fn toggle_live_many_within(
+    state: &AppState,
+    mods_dir: &Path,
+    ids: &[String],
+    enabled: bool,
+    wait: impl Fn(usize) -> Duration,
+) -> BulkToggleResult {
     let mut changed = Vec::new();
     let mut queued = Vec::new();
     let mut failed = Vec::new();
@@ -1100,7 +1115,7 @@ fn toggle_live_many(
         .iter()
         .map(|(_, installed)| (installed.file_name.as_str(), enabled))
         .collect();
-    let reply = live_send(mods_dir, &wanted);
+    let reply = live_send(mods_dir, &wanted, wait(wanted.len()));
     let _batch = state.library.batch();
     match reply {
         LiveReply::Answered(answer) => {
@@ -2232,11 +2247,130 @@ mod tests {
         assert!(state.library.get_mod(&ids[0]).unwrap().enabled);
     }
 
+    fn three_mods(temp: &tempfile::TempDir) -> (std::path::PathBuf, AppState, Vec<String>) {
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        for name in ["a.zip", "b.zip", "c.zip"] {
+            std::fs::write(mods.join(name), b"zip").unwrap();
+        }
+        let state = test_state(temp, &mods);
+        let snapshot = load_snapshot(&state).unwrap();
+        let mut ids: Vec<(String, String)> = snapshot
+            .mods
+            .iter()
+            .map(|item| (item.file_name.clone(), item.id.clone()))
+            .collect();
+        ids.sort();
+        let ids = ids.into_iter().map(|(_, id)| id).collect();
+        (mods, state, ids)
+    }
+
+    fn mark_alive(mods: &Path, extra: serde_json::Value) {
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(mods);
+        std::fs::create_dir_all(bridge.state_path().parent().unwrap()).unwrap();
+        let mut state = serde_json::json!({ "alive": chrono::Utc::now().timestamp() });
+        if let (Some(target), Some(extra)) = (state.as_object_mut(), extra.as_object()) {
+            for (key, value) in extra {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        std::fs::write(bridge.state_path(), state.to_string()).unwrap();
+    }
+
+    #[test]
+    fn game_busy_with_the_batch_is_not_postponed_twice() {
+        // Помощник жив, но не успел ответить: команда у игры. Не откладываем её
+        // «до закрытия» — иначе после закрытия программа переключила бы ещё раз.
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        mark_alive(&mods, serde_json::json!({}));
+        let result =
+            toggle_live_many_within(&state, &mods, &ids, false, |_| Duration::from_millis(150));
+        assert!(result.changed.is_empty());
+        assert_eq!(result.queued, ids);
+        assert!(crate::state::lock(&state.pending).is_empty());
+        assert!(
+            ids.iter()
+                .all(|id| state.library.get_mod(id).unwrap().enabled)
+        );
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        assert!(bridge.command_path().is_file(), "команда у игры");
+    }
+
+    #[test]
+    fn answer_to_another_command_is_not_ours() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        mark_alive(
+            &mods,
+            serde_json::json!({ "ackId": "старая", "results": { "a": "ok", "b": "ok", "c": "ok" } }),
+        );
+        let result =
+            toggle_live_many_within(&state, &mods, &ids, false, |_| Duration::from_millis(150));
+        assert!(result.changed.is_empty(), "чужой ответ не считаем своим");
+        assert_eq!(result.queued.len(), 3);
+    }
+
+    #[test]
+    fn helper_error_postpones_the_whole_batch() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let game = fake_game(&mods, serde_json::json!({}));
+        let result = toggle_live_many(&state, &mods, &ids, true);
+        assert!(game.join().unwrap().is_some());
+        assert!(result.changed.is_empty());
+        assert_eq!(result.queued, ids);
+        assert_eq!(crate::state::lock(&state.pending).len(), 3);
+    }
+
+    #[test]
+    fn nothing_known_sends_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, _) = three_mods(&temp);
+        mark_alive(&mods, serde_json::json!({}));
+        let empty = toggle_live_many(&state, &mods, &[], false);
+        assert!(empty.changed.is_empty() && empty.queued.is_empty() && empty.failed.is_empty());
+        let unknown = toggle_live_many(&state, &mods, &["нет".to_string()], false);
+        assert_eq!(unknown.failed, vec!["нет".to_string()]);
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        assert!(!bridge.command_path().exists(), "в игру ничего не ушло");
+    }
+
+    #[test]
+    fn enabling_through_the_helper_records_enabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        for id in &ids {
+            let mut item = state.library.get_mod(id).unwrap();
+            item.enabled = false;
+            state.library.upsert_mod(item);
+        }
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), false);
+        let game = fake_game(&mods, serde_json::json!({"a": "ok", "b": "ok", "c": "ok"}));
+        let result = toggle_live_many(&state, &mods, &ids, true);
+        let command = game.join().unwrap().unwrap();
+        assert_eq!(
+            command["set"],
+            serde_json::json!({"a": true, "b": true, "c": true})
+        );
+        assert_eq!(result.changed, ids);
+        assert!(
+            ids.iter()
+                .all(|id| state.library.get_mod(id).unwrap().enabled)
+        );
+        assert!(
+            crate::state::lock(&state.pending).is_empty(),
+            "старое отложенное «выключить» больше не действует"
+        );
+    }
+
     #[test]
     fn big_batches_wait_longer_but_not_forever() {
+        assert_eq!(live_deadline(0), Duration::from_secs(12));
         assert_eq!(live_deadline(1), Duration::from_secs(12));
         assert_eq!(live_deadline(3), Duration::from_secs(18));
-        assert_eq!(live_deadline(500), live_deadline(17));
+        assert_eq!(live_deadline(7), Duration::from_secs(30));
+        assert_eq!(live_deadline(usize::MAX), Duration::from_secs(30));
     }
 
     #[test]

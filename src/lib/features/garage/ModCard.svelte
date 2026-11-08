@@ -434,8 +434,10 @@
     pointer-events: none;
   }
 
-  .card:hover .quick,
-  .card:focus-within .quick {
+  /* Только под курсором: с клавиатуры кнопки недоступны (tabindex -1), их
+     действия — в меню карточки, и показывать их по фокусу значило бы обещать
+     то, до чего Tab не дойдёт. */
+  .card:hover .quick {
     opacity: 1;
     transform: none;
     pointer-events: auto;
@@ -446,7 +448,7 @@
     transition: opacity var(--dur-2) var(--ease-out);
   }
 
-  .card:is(:hover, :focus-within):has(.quick) .copies {
+  .card:hover:has(.quick) .copies {
     opacity: 0;
   }
 
