@@ -105,6 +105,7 @@ export function mockAddInstalled(
       duplicateOf: null,
       group: [],
       groupConflict: false,
+      hasPage: false,
       role: null,
     });
   }
@@ -145,6 +146,8 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
       duplicateOf: index === 6 ? { id: "mock-1", name: TITLES[1], exact: true } : null,
       group: index === 1 ? ["mock-6"] : [],
       groupConflict: index === 1,
+      // Демо: у части модов есть страница — на карточке видна кнопка «Открыть сайт».
+      hasPage: index % 4 !== 3,
       role: index % 5 === 2 ? "addon" : index % 5 === 3 ? "map" : "vehicle",
     };
   });
@@ -226,7 +229,11 @@ export async function modDetails(id: string): Promise<ModDetails> {
       title: `${TITLES[index % TITLES.length]} · demo`,
     },
     previewUrl: null,
-    binding: null,
+    // Как у карточки демо (hasPage): у части модов страница есть.
+    binding:
+      index % 4 !== 3
+        ? { source: "modland", url: `https://example.com/mods/${index}`, confirmed: index % 2 === 0 }
+        : null,
     checkingDeclined: false,
   };
 }

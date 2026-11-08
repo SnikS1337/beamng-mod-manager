@@ -4,7 +4,7 @@
   import { findPageText } from "./findPageText";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
-  import { groupMembers, isShown, visibleCards } from "./duplicates";
+  import { groupConflictNow, groupMembers, isShown, visibleCards } from "./duplicates";
   import { libraryView, staleError } from "./libraryView";
   import { InFlight, liveCard } from "./inflight";
   import { onMount, tick, untrack } from "svelte";
@@ -49,7 +49,7 @@
     type ModDetails,
     type VersionRow,
   } from "#lib/ipc/library.js";
-  import { isArchivePath } from "#lib/ipc/incoming.js";
+  import { expectDownload, isArchivePath } from "#lib/ipc/incoming.js";
   import type { AppError } from "#lib/ipc/types.js";
   import { incomingQueue } from "#lib/features/incoming/queue.svelte.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
@@ -89,6 +89,7 @@
   import { motion } from "#lib/shell/motion.svelte.js";
   import { arrival } from "#lib/shell/arrival.svelte.js";
   import { coverFlight } from "./coverFlight.svelte";
+  import { conflictFlash } from "./conflictFlash.svelte";
   import BulkBar from "./BulkBar.svelte";
 
   type Filter = "all" | "disabled" | "updates" | "unchecked" | "deleted";
@@ -539,8 +540,22 @@
       if (details?.id === mod.id) {
         details = { ...details, enabled: target };
       }
+      // Копии: метку «включено несколько» правим сразу, не дожидаясь перечитывания.
+      // Только что стало две включённых — карточка вздрагивает.
+      const group = snapshot ? groupConflictNow(snapshot.mods, mod.id) : null;
+      const main = group ? snapshot?.mods.find((item) => item.id === group.mainId) : undefined;
+      let conflictStarted = false;
+      if (group && main) {
+        conflictStarted = group.conflict && !main.groupConflict;
+        main.groupConflict = group.conflict;
+        if (conflictStarted) void conflictFlash.flash(main.id);
+      }
       if (announce) {
-        const message = target ? `Включён «${trimName(mod.name)}»` : `Выключен «${trimName(mod.name)}»`;
+        const message = conflictStarted
+          ? `Включён «${trimName(mod.name)}» — и другая его копия тоже: игра загрузит обе`
+          : target
+            ? `Включён «${trimName(mod.name)}»`
+            : `Выключен «${trimName(mod.name)}»`;
         showToast(result.message ?? message, {
           undo:
             result.outcome === "queued"
@@ -566,10 +581,13 @@
     const main = snapshot?.mods.find((item) => item.id === card.id || item.group.includes(card.id));
     if (!main || !snapshot) return;
     const members = groupMembers(main, snapshot.mods);
+    // Сначала выключаем остальные, потом включаем нужную: иначе на миг включены
+    // две копии, и карточка зря вздрагивает «игра загрузит обе».
     for (const member of members) {
-      const target = member.id === card.id;
-      if (member.enabled !== target) await applyToggle(member, target, false);
+      if (member.id !== card.id && member.enabled) await applyToggle(member, false, false);
     }
+    const chosen = members.find((member) => member.id === card.id);
+    if (chosen && !chosen.enabled) await applyToggle(chosen, true, false);
     await load(true);
     showToast(`Включена только «${trimName(card.name)}» (${card.fileName})`);
   }
@@ -901,6 +919,22 @@
     }
   }
 
+  /** «Обновить» с карточки — как кнопка в панели мода: страница и наблюдение за загрузками. */
+  async function updateFromCard(mod: ModCardDto) {
+    try {
+      const found = await modDetails(mod.id);
+      if (!found.binding?.url) {
+        await openPageOf(mod);
+        return;
+      }
+      if (!(await openExternal(found.binding.url))) return;
+      await expectDownload();
+      showToast("Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить");
+    } catch (reason) {
+      showToast(errorText(reason));
+    }
+  }
+
   async function showFolderOf(mod: ModCardDto) {
     try {
       const found = await modDetails(mod.id);
@@ -1147,6 +1181,8 @@
               ontoggle={(mod) => {
                 if (!mod.deleted) void toggle(mod);
               }}
+              onupdate={(mod) => void updateFromCard(mod)}
+              onopenpage={(mod) => void openPageOf(mod)}
               resetKey={`${filter}|${typeFilter}|${query}`}
               appearKey={`${filter}|${typeFilter}`}
               {reveal}

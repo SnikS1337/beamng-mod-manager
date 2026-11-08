@@ -279,6 +279,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 duplicate_of: None,
                 group: Vec::new(),
                 group_conflict: false,
+                has_page: bindings_by_mod.contains_key(&installed.id),
                 role: None,
             }
         })
@@ -341,6 +342,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 duplicate_of: None,
                 group: Vec::new(),
                 group_conflict: false,
+                has_page: false,
                 role: None,
             }
         })

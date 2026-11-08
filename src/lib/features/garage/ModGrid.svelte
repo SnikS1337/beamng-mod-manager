@@ -12,6 +12,8 @@
     selecting = false,
     onselect,
     ontoggle,
+    onupdate,
+    onopenpage,
     resetKey = "",
     appearKey = resetKey,
     reveal = null,
@@ -23,6 +25,8 @@
     selecting?: boolean;
     onselect: (id: string, keys: ClickKeys) => void;
     ontoggle: (mod: ModCardDto) => void;
+    onupdate?: (mod: ModCardDto) => void;
+    onopenpage?: (mod: ModCardDto) => void;
     /** Когда сбросить прокрутку (фильтр, тип, поиск). */
     resetKey?: string;
     /** Когда карточки появляются заново. Поиск сюда не входит: иначе каждая буква перезапускает анимацию. */
@@ -138,6 +142,8 @@
         {selecting}
         {onselect}
         {ontoggle}
+        {onupdate}
+        {onopenpage}
       />
     {/each}
   </div>

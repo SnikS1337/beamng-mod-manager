@@ -3,6 +3,7 @@ import type { ModCardDto } from "#lib/ipc/library.js";
 import {
   copiesBadge,
   duplicateExplain,
+  groupConflictNow,
   groupMembers,
   isShown,
   visibleCards,
@@ -32,6 +33,7 @@ function card(id: string, patch: Partial<ModCardDto> = {}): ModCardDto {
     duplicateOf: null,
     group: [],
     groupConflict: false,
+    hasPage: false,
     role: null,
     ...patch,
   };
@@ -63,5 +65,42 @@ describe("группы копий", () => {
   it("подписи копий", () => {
     expect(duplicateExplain({ id: "w", name: "weather fx", exact: true }).text).toContain("«weather fx»");
     expect(duplicateExplain({ id: "w", name: "", exact: false }).text).toContain("другой мод");
+  });
+});
+
+describe("несколько включённых копий — сразу после переключения", () => {
+  const all = () => [
+    card("w", { group: ["w1", "w2"], enabled: true }),
+    card("w1", { enabled: false, duplicateOf: { id: "w", name: "W", exact: true } }),
+    card("w2", { enabled: false, duplicateOf: { id: "w", name: "W", exact: false } }),
+    card("solo", { enabled: true }),
+  ];
+
+  it("включили копию при включённом основном — конфликт", () => {
+    const mods = all();
+    mods[1]!.enabled = true;
+    expect(groupConflictNow(mods, "w1")).toEqual({ mainId: "w", conflict: true });
+  });
+
+  it("включили основной при включённой копии — тоже", () => {
+    const mods = all();
+    mods[0]!.enabled = false;
+    mods[2]!.enabled = true;
+    expect(groupConflictNow(mods, "w")).toEqual({ mainId: "w", conflict: false });
+    mods[0]!.enabled = true;
+    expect(groupConflictNow(mods, "w")).toEqual({ mainId: "w", conflict: true });
+  });
+
+  it("включена одна — конфликта нет; удалённая копия не считается", () => {
+    const mods = all();
+    expect(groupConflictNow(mods, "w")).toEqual({ mainId: "w", conflict: false });
+    mods[1]!.enabled = true;
+    mods[1]!.deleted = true;
+    expect(groupConflictNow(mods, "w1")?.conflict).toBe(false);
+  });
+
+  it("мод без копий и неизвестный мод — не группа", () => {
+    expect(groupConflictNow(all(), "solo")).toBeNull();
+    expect(groupConflictNow(all(), "нет")).toBeNull();
   });
 });

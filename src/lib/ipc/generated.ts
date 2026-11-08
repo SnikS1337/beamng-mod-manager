@@ -145,6 +145,11 @@ group: Array<string>,
  */
 groupConflict: boolean, 
 /**
+ * У мода есть страница на сайте (подтверждённая или предложенная): на карточке
+ * можно открыть её сразу, не заходя в панель.
+ */
+hasPage: boolean, 
+/**
  * «vehicle», «map», «addon»; `None` — архив ещё не прочитан.
  */
 role: ModRole | null, };

@@ -26,6 +26,7 @@ function mod(id: string, name: string, patch: Partial<ModCardDto> = {}): ModCard
     duplicateOf: null,
     group: [],
     groupConflict: false,
+    hasPage: false,
     role: "vehicle",
     ...patch,
   };
