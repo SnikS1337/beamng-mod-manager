@@ -77,6 +77,11 @@
     overflow: hidden;
     pointer-events: none;
     background: var(--background);
+    /* Свой слой: изменения страницы над фоном не перерисовывают его. Без этого после
+       «Развернуть» и в переходах фон рисовался заново целиком — на слабой видеокарте
+       это секунды чёрного окна. */
+    contain: strict;
+    isolation: isolate;
   }
 
   /* Цветная «погода» окна: три мягких пятна, без движения и перерисовки. */
@@ -203,7 +208,6 @@
     );
     opacity: 0;
     pointer-events: none;
-    mix-blend-mode: screen;
     will-change: transform, opacity;
   }
 
@@ -217,10 +221,6 @@
       color-mix(in oklab, var(--backdrop-b) 6%, transparent) 40%,
       transparent 70%
     );
-  }
-
-  :global(html:not(.dark)) .lantern {
-    mix-blend-mode: multiply;
   }
 
   .live .lantern {
@@ -242,12 +242,14 @@
     will-change: auto;
   }
 
-  /* Мелкое зерно убирает полосы на плавных переходах света. Картинка неподвижна. */
+  /* Мелкое зерно убирает полосы на плавных переходах света. Готовая картинка, а не
+     SVG-фильтр: фильтр шума заново считался при каждой перерисовке окна. */
   .grain {
     position: absolute;
     inset: 0;
     opacity: 0.035;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    background-image: url("/grain.png");
+    background-size: 128px 128px;
   }
 
   @keyframes drift-warm {

@@ -50,7 +50,8 @@ export function trackSite(
 
 /** Строка сайта в панели, пока идёт проверка. */
 export function siteLiveText(live: SiteLive | undefined): { tone: string; text: string } {
-  if (!live) return { tone: "wait", text: "ждёт очереди" };
+  // Сайты идут параллельно: ещё не начавший сайт вот-вот начнёт, ничего не ждёт.
+  if (!live) return { tone: "wait", text: "сейчас начнём" };
   if (live.state === "done") return { tone: "ok", text: "проверен" };
   // Причину подробно скажет итог проверки — здесь коротко, строка узкая.
   if (live.state === "failed") return { tone: "bad", text: "не проверен" };
@@ -76,7 +77,10 @@ export function progressLine(
 ): string {
   if (!shown) return "Проверяем сайты…";
   if (shown.source === "страницы") {
-    return shown.total > 0 ? `Ищем страницы: ${shown.done} из ${shown.total}` : "Ищем страницы…";
+    // «страницы · имя мода»: какой мод ищем сейчас — один мод ищется до полуминуты.
+    const name = shown.stage.startsWith("страницы · ") ? shown.stage.slice("страницы · ".length) : "";
+    const count = shown.total > 0 ? `Ищем страницы: ${Math.min(shown.done + (name ? 1 : 0), shown.total)} из ${shown.total}` : "Ищем страницы…";
+    return name ? `${count} · ${name}` : count;
   }
   const where = shown.source ? siteName(shown.source) : "проверка";
   // «Сайт закончил» — не «готово 1 из 1»: другие сайты ещё могут идти.
@@ -87,4 +91,14 @@ export function progressLine(
       ? shown.stage
       : "готово";
   return shown.total > 0 ? `${where} · ${stage} ${shown.done} из ${shown.total}` : `${where} · ${stage}`;
+}
+
+/**
+ * Доля общей полоски хода. Идущий шаг заполнен наполовину: иначе на первом моде
+ * поиска страниц полоса стояла пустой полминуты и казалось, что ничего не идёт.
+ */
+export function progressShare(shown: UpdateProgress | null): number | null {
+  if (!shown || shown.total <= 0) return null;
+  const working = shown.done < shown.total ? 0.5 : 0;
+  return Math.min(1, (shown.done + working) / shown.total);
 }

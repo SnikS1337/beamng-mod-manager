@@ -1,7 +1,7 @@
 <script lang="ts">
   import SiteMark from "#lib/shell/SiteMark.svelte";
   import { errorText } from "#lib/shell/errorText.js";
-  import { needsPassButton, passButton, startPassing, stopPassing } from "#lib/shell/siteCheck.js";
+  import { focusSiteCheck, needsPassButton, passButton, startPassing, stopPassing } from "#lib/shell/siteCheck.js";
   import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
@@ -10,6 +10,7 @@
   import {
     isSiteFinish,
     progressLine,
+    progressShare,
     siteLiveShare,
     siteLiveText,
     trackSite,
@@ -272,12 +273,15 @@
     if (event.requestId === AUTO_REQUEST && event.phase === "error") {
       stopFinishing();
       run.autoProgress = null;
+      queueMicrotask(startQueuedRecheck);
       return;
     }
     if (event.phase === "auto") {
       run.outcome = outcomeOf(event, { background: true }) ?? run.outcome;
       const hadProgress = run.autoProgress !== null;
       run.autoProgress = null;
+      // Сайты, пройденные во время проверки при запуске, — теперь, каждый отдельно.
+      queueMicrotask(startQueuedRecheck);
       void refreshSites();
       // Фоновая проверка закончилась. Найденное фоновой проверкой показываем, даже если идёт своя: раньше
       // значок на «Обновлениях» показывал 8, а список оставался прежним.
@@ -575,7 +579,9 @@
         snapshot = { ...snapshot, sites: sitesAfterPass(snapshot.sites, source) };
         sources = freshSources(sources, passes, runEpoch);
         void refreshSites();
-        if (run.checking) {
+        if (run.checking || run.autoProgress !== null) {
+          // Идёт проверка (своя или при запуске) — сайт проверим отдельно после неё:
+          // иначе казалось, что после прохождения снова проверяются все сайты.
           queued = queuePass(queued, source);
           toasts.show(`${name} пускает программу — проверим его, когда закончится текущая проверка`);
         } else if (followupOf(trackedOn(source)) === "findPages") {
@@ -601,7 +607,7 @@
 
   /** Своя проверка одного сайта — после того как его прошли. */
   async function checkSite(source: string) {
-    if (run.checking) {
+    if (run.checking || run.autoProgress !== null) {
       queued = queuePass(queued, source);
       return;
     }
@@ -623,7 +629,7 @@
 
   /** Своя проверка закончилась — запускаем отложенный повтор после прохождения сайта. */
   function startQueuedRecheck() {
-    if (run.checking) return;
+    if (run.checking || run.autoProgress !== null) return;
     const next = nextFromQueue(queued, trackedOn);
     queued = next.rest;
     if (next.run?.kind === "site") void checkSite(next.run.site);
@@ -767,7 +773,8 @@
       // Идёт проверка: у сайта свой ход. Не начатые «ждут» только в своей проверке
       // всех сайтов — в фоновой и при повторе одного сайта они могут и не начаться.
       const progress = siteLive[site.id];
-      const waits = run.checking && liveKind === "check" && site.tracked > 0;
+      // Сайт, который просит проверку «вы человек?», проверка пропустит — он не «ждёт».
+      const waits = run.checking && liveKind === "check" && site.tracked > 0 && !human;
       if (checkingNow && (progress || waits)) {
         const shown = siteLiveText(progress);
         return {
@@ -1167,15 +1174,9 @@
       {/if}
       {#if run.checking || run.autoProgress || finishing}
         {@const shown = run.checking ? run.progress : run.autoProgress}
+        {@const share = finishing ? 1 : progressShare(shown)}
         <div class="track" class:complete={finishing}>
-          <span
-            class="bar"
-            class:pulse={!finishing && !shown?.total}
-            style={finishing
-              ? "width:100%"
-              : shown?.total
-                ? `width:${Math.round((shown.done / shown.total) * 100)}%`
-                : undefined}
+          <span class="bar" class:pulse={share === null} style={share === null ? undefined : `--share:${share}`}
           ></span>
         </div>
         {#if !finishing}
@@ -1227,7 +1228,7 @@
             <!-- Окно проверки одно: пока идёт проверка одного сайта, кнопка другого
                  недоступна, но «Проходим проверку…» пишет только та, что нажата. -->
             {@const pass = passButton(passing, site.id, CHECK_SITES[site.id] ?? site.name)}
-            <button class="btn-glass pass" type="button" disabled={pass.disabled} onclick={() => void openCheck(site.id)}>
+            <button class="btn-glass pass" class:open={pass.open} type="button" onclick={() => void (pass.open ? focusSiteCheck(site.id) : openCheck(site.id))}>
               {pass.text}
             </button>
           {/if}
@@ -1407,7 +1408,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     background: var(--surface);
-    animation: rise-in var(--dur-3) var(--ease-out) both;
+    animation: var(--enter);
   }
 
   .photo {
@@ -1770,17 +1771,23 @@
     background: var(--surface-3);
   }
 
+  /* Доля — масштабом, а не шириной: на композиторе, без перерасчёта раскладки. */
   .bar {
     display: block;
-    width: 30%;
+    width: 100%;
     height: 100%;
     border-radius: 3px;
     background: var(--accent-brand);
-    transition: width var(--dur-3) var(--ease-out);
+    transform: scaleX(var(--share, 0));
+    transform-origin: left center;
+    transition: transform 520ms var(--ease-spring);
   }
 
   .bar.pulse {
-    animation: indeterminate 1.3s var(--ease-in-out) infinite;
+    width: 30%;
+    transform: none;
+    transition: none;
+    animation: var(--run);
   }
 
   /* «Быстро» обрывает анимацию на последнем кадре — полоса уезжала за край, и шла
@@ -1792,14 +1799,6 @@
     opacity: 0.45;
   }
 
-  @keyframes indeterminate {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(340%);
-    }
-  }
 
   .sites {
     display: flex;
@@ -1816,11 +1815,15 @@
     font-size: 13.5px;
   }
 
+  /* Имя сайта не рвётся посреди слова («ModsGamin / g»): длинное — переносится по
+     словам («BeamNG (официальный)»), одно слово — целиком. */
   .site-name {
     min-width: 0;
     font-weight: 700;
     line-height: 1.2;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
+    word-break: keep-all;
+    hyphens: none;
   }
 
   .site-meta {
@@ -1932,7 +1935,7 @@
   .site-track.unknown > span {
     width: 30%;
     transform: none;
-    animation: site-run 1.2s var(--ease-in-out) infinite;
+    animation: var(--run);
   }
 
   /* Без движения — как у общей полосы: во всю ширину, бледнее; точка не «дышит». */
@@ -1946,14 +1949,6 @@
     animation: none;
   }
 
-  @keyframes site-run {
-    from {
-      translate: -100% 0;
-    }
-    to {
-      translate: 340% 0;
-    }
-  }
 
   .state-text {
     color: var(--muted-foreground);

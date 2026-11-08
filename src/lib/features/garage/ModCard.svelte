@@ -17,7 +17,6 @@
   import { flowName } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
   import { coverFlight } from "./coverFlight.svelte";
-  import { coverTint, knownTint } from "./coverTint";
   import { conflictFlash, installedFlash } from "./conflictFlash.svelte";
   import DrawCheck from "#lib/shell/DrawCheck.svelte";
   import { liveDownloads } from "#lib/features/download/live.svelte.js";
@@ -93,25 +92,6 @@
       .catch(() => {});
   });
 
-  /** Цвет обложки — тонкий кант карточки; под курсором он ярче. */
-  let tint = $state<string | null>(null);
-  $effect(() => {
-    const url = preview && preview !== brokenPreview ? preview : null;
-    const known = knownTint(url);
-    if (known !== undefined) {
-      tint = known;
-      return;
-    }
-    tint = null;
-    let current = true;
-    void coverTint(url).then((value) => {
-      if (current) tint = value;
-    });
-    return () => {
-      current = false;
-    };
-  });
-
   // Панель мода покажет эту же обложку сразу, пока грузятся данные мода.
   $effect(() => {
     coverFlight.remember(mod.id, preview && preview !== brokenPreview ? preview : null);
@@ -137,8 +117,7 @@
   class:appear
   class:sleeping={!mod.enabled && !mod.deleted}
   class:deleted={mod.deleted}
-  class:tinted={tint !== null}
-  style={`--i:${Math.min(index, 14)}; --flow:${flowName(mod.id)}${tint ? `; --tint:${tint}` : ""}`}
+  style={`--i:${Math.min(index, 14)}; --flow:${flowName(mod.id)}`}
   data-mod-id={mod.id}
 >
   <!-- Выбор — отдельной кнопкой поверх карточки: переключатель не вложен в кнопку. -->
@@ -308,7 +287,7 @@
   }
 
   .card.appear {
-    animation: rise-in var(--dur-3) var(--ease-out) both;
+    animation: var(--enter);
     animation-delay: calc(var(--i) * 18ms);
   }
 
@@ -337,21 +316,21 @@
     box-shadow: var(--shadow-1);
   }
 
-  /* Кант в цвет обложки: тонкий всегда, под курсором — ярче и с мягким свечением. */
-  .card.tinted {
-    border-color: color-mix(in oklab, var(--tint) 34%, var(--border));
+  /* Кант в цвет акцента темы: тонкий всегда, под курсором — ярче и с мягким
+     свечением. От темы, а не от обложки: так он одинаково виден на любой карточке. */
+  .card {
+    border-color: color-mix(in oklab, var(--accent-brand) 16%, var(--border));
   }
 
-  /* Выключенный мод — обложка серая, и кант лишь намёком. */
-  .card.tinted.sleeping {
-    border-color: color-mix(in oklab, var(--tint) 14%, var(--border));
+  .card.sleeping {
+    border-color: var(--border);
   }
 
-  .card.tinted:not(.selected):hover {
-    border-color: color-mix(in oklab, var(--tint) 70%, var(--border));
+  .card:not(.selected):hover {
+    border-color: color-mix(in oklab, var(--accent-brand) 55%, var(--border));
     box-shadow:
-      0 0 0 1px color-mix(in oklab, var(--tint) 28%, transparent),
-      0 16px 34px -16px color-mix(in oklab, var(--tint) 75%, transparent);
+      0 0 0 1px color-mix(in oklab, var(--accent-brand) 22%, transparent),
+      0 14px 32px -16px color-mix(in oklab, var(--accent-brand) 55%, transparent);
   }
 
   /* Нажатие по карточке (её кнопка выбора .select на всю площадь): она чуть
@@ -539,7 +518,7 @@
   .loading.unknown > span {
     width: 35%;
     transform: none;
-    animation: loading-run 1.2s var(--ease-in-out) infinite;
+    animation: var(--run);
   }
 
   /* «Быстро» оборвал бы бегущую полоску на последнем кадре — за краем обложки.
@@ -550,14 +529,6 @@
     opacity: 0.45;
   }
 
-  @keyframes loading-run {
-    from {
-      translate: -100% 0;
-    }
-    to {
-      translate: 290% 0;
-    }
-  }
 
   .thumb img {
     width: 100%;

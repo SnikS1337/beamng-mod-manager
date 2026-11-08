@@ -3,27 +3,39 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * В режиме «Быстро» любая анимация обрывается на последнем кадре. Бегущая полоса
- * («идёт работа, сколько — неизвестно») на последнем кадре уезжает за край и не видна.
- * У каждой такой полосы должен быть свой вид без движения.
+ * Бегущие полосы («идёт работа, сколько — неизвестно») — одни на всю программу:
+ * общие ключевые кадры и шаг (`--run` в app.css). В режиме «Быстро» любая анимация
+ * обрывается на последнем кадре — полоса уехала бы за край, поэтому у каждой полосы
+ * свой вид без движения.
  */
 const FILES = [
   "../../routes/(app)/updates/+page.svelte",
   "../../routes/download/+page.svelte",
-  "../features/incoming/IncomingHost.svelte",
+  "../features/garage/ModCard.svelte",
 ];
 
-describe("бегущие полосы без анимаций", () => {
+const read = (file: string): string => readFileSync(new URL(file, import.meta.url), "utf8");
+
+describe("бегущие полосы", () => {
+  it("общие кадры уводят полосу вбок, шаг один", () => {
+    const css = read("../../app.css");
+    expect(css).toMatch(/--run: bar-run 1\.3s var\(--ease-in-out\) infinite;/);
+    expect(css).toMatch(/@keyframes bar-run \{\s*from \{\s*translate: -100% 0;/);
+  });
+
   for (const file of FILES) {
     it(file, () => {
-      const text: string = readFileSync(new URL(file, import.meta.url), "utf8");
-      // Полоса бежит: бесконечная анимация, ключевые кадры уводят её вбок.
-      const runs = /animation:\s*([\w-]+)[^;]*infinite/.exec(text);
-      expect(runs, "в файле есть бегущая полоса").not.toBeNull();
-      const name = runs![1]!;
-      expect(text).toMatch(new RegExp(`@keyframes ${name}[^}]*translateX`));
-      const still = /:global\(\.no-motion\)[^{]*\{[^}]*animation:\s*none[^}]*transform:\s*none/;
+      const text = read(file);
+      expect(text, "полоса — общая").toMatch(/animation: var\(--run\);/);
+      expect(text, "своих кадров у полосы нет").not.toMatch(/@keyframes [\w-]*run\b/);
+      const still = /:global\(\.no-motion\)[^{]*\{[^}]*animation:\s*none/;
       expect(text, "есть неподвижный вид для режима «Быстро»").toMatch(still);
     });
   }
+
+  it("отблеск в окне установки без анимаций стоит", () => {
+    const text = read("../features/incoming/IncomingHost.svelte");
+    expect(text).toMatch(/@keyframes sheen[^}]*translateX/);
+    expect(text).toMatch(/:global\(\.no-motion\)[^{]*\{[^}]*animation:\s*none/);
+  });
 });

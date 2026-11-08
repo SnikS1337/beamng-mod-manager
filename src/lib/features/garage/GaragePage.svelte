@@ -1516,7 +1516,7 @@
     background: var(--warning-soft);
     color: var(--warning);
     font-size: 13px;
-    animation: rise-in var(--dur-3) var(--ease-out) both;
+    animation: var(--enter);
   }
 
   .banner.many {

@@ -2,7 +2,6 @@
   import { bornInFlow } from "#lib/shell/motion.svelte.js";
   import SiteMark from "#lib/shell/SiteMark.svelte";
   import { ModPreview } from "./modPreview.svelte";
-  import { coverTint } from "./coverTint";
   import { kindIcon } from "./tagIcons";
   import { untrack } from "svelte";
   import { openExternal } from "#lib/shell/openExternal.js";
@@ -210,23 +209,6 @@
     untrack(() => void heroPreview.update(source));
   });
 
-  // Лёгкий оттенок панели по обложке. Ответ для прежнего мода на новый не ложится.
-  let tint = $state<string | null>(null);
-  $effect(() => {
-    const url = addon ? null : (heroPreview.url ?? (!details ? coverHint : null));
-    if (!url) {
-      tint = null;
-      return;
-    }
-    let current = true;
-    void coverTint(url).then((value) => {
-      if (current) tint = value;
-    });
-    return () => {
-      current = false;
-    };
-  });
-
   // Заглушка без картинки — значок типа, а не всегда машина (у звука был автомобиль).
   const KindIcon = $derived(kindIcon(tag));
 
@@ -255,8 +237,6 @@
 <aside
   use:bornInFlow
   class="inspector scroll-area"
-  class:tinted={tint !== null}
-  style={tint ? `--tint:${tint}` : undefined}
   aria-label="Выбранный мод"
 >
   <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>
@@ -519,44 +499,31 @@
     isolation: isolate;
   }
 
-  /* Оттенок по обложке: мягкий свет сверху панели, текст остаётся на обычном фоне. */
+  /* Мягкий свет акцента сверху панели и кромка в цвет темы — как кант у карточки.
+     От темы, а не от обложки: цвет обложки читался не везде и прыгал от мода к моду. */
   .inspector::before {
     content: "";
     position: absolute;
     inset: 0 0 auto;
-    /* Обложка закрывает верх панели — свет идёт ниже неё, иначе его не видно. */
-    height: 620px;
+    height: 520px;
     background: linear-gradient(
       180deg,
-      color-mix(in oklab, var(--tint, transparent) 30%, transparent),
-      color-mix(in oklab, var(--tint, transparent) 12%, transparent) 55%,
+      color-mix(in oklab, var(--accent-brand) 12%, transparent),
       transparent
     );
-    opacity: 0;
-    transition: opacity var(--dur-3) var(--ease-out);
     pointer-events: none;
     /* Под содержимым, но над фоном панели (isolation у .inspector). */
     z-index: -1;
   }
 
-  .inspector.tinted::before {
-    opacity: 1;
-  }
-
-  /* Кромка панели и тень обложки — в цвет обложки, как кант у карточки. */
-  .inspector.tinted {
-    border-left-color: color-mix(in oklab, var(--tint) 45%, var(--border));
-  }
-
-  .inspector.tinted .hero {
-    box-shadow: 0 18px 40px -20px color-mix(in oklab, var(--tint) 80%, transparent);
+  .inspector {
+    border-left-color: color-mix(in oklab, var(--accent-brand) 30%, var(--border));
   }
 
   :global(html:not(.dark)) .inspector::before {
     background: linear-gradient(
       180deg,
-      color-mix(in oklab, var(--tint, transparent) 20%, transparent),
-      color-mix(in oklab, var(--tint, transparent) 8%, transparent) 55%,
+      color-mix(in oklab, var(--accent-brand) 8%, transparent),
       transparent
     );
   }

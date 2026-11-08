@@ -21,6 +21,19 @@ use crate::runner::UpdateProgress;
 /// Подбор страниц не должен затягивать проверку: сеть вежливая, а модов много.
 const PAGE_SEARCH_BUDGET: Duration = Duration::from_secs(3 * 60);
 /// Мод, чей сайт не открывается, ищем на других сайтах не чаще раза в сутки.
+/// Ход поиска страниц: «страницы · имя мода». Один мод ищется на всех сайтах по
+/// полминуты — без имени казалось, что поиск стоит («0 из 2» и пустая полоса).
+pub const PAGE_STAGE: &str = "страницы";
+
+pub fn page_stage(name: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        PAGE_STAGE.to_string()
+    } else {
+        format!("{PAGE_STAGE} · {name}")
+    }
+}
+
 pub const FALLBACK_RETRY: chrono::TimeDelta = chrono::TimeDelta::hours(24);
 
 /// Итог подбора страниц.
@@ -303,7 +316,7 @@ fn search_pages_of(
         if let Some(callback) = progress.as_mut() {
             (*callback)(&UpdateProgress {
                 source: "страницы".to_string(),
-                stage: "страницы".to_string(),
+                stage: page_stage(&installed.name),
                 done: index,
                 total: due.len(),
             });
@@ -819,7 +832,7 @@ fn search_more_pages(
         if let Some(callback) = progress.as_mut() {
             (*callback)(&UpdateProgress {
                 source: "страницы".to_string(),
-                stage: "страницы".to_string(),
+                stage: page_stage(&installed.name),
                 done: index,
                 total: due.len(),
             });
@@ -3247,5 +3260,14 @@ mod tests {
             BindErrorCode::UnknownSite
         );
         assert!(store.bindings().is_empty());
+    }
+
+    #[test]
+    fn page_progress_names_the_mod() {
+        assert_eq!(
+            page_stage("Nissan Silvia S14"),
+            "страницы · Nissan Silvia S14"
+        );
+        assert_eq!(page_stage("  "), "страницы");
     }
 }

@@ -1457,7 +1457,7 @@
   /* Размер неизвестен: полоса бежит, показывая, что загрузка идёт. */
   .bar.indeterminate span {
     width: 35% !important;
-    animation: bar-run 1.4s var(--ease-in-out) infinite;
+    animation: var(--run);
   }
 
   /* «Быстро» обрывает анимацию на последнем кадре — полоса уезжала за край, и шла
@@ -1469,14 +1469,6 @@
     opacity: 0.45;
   }
 
-  @keyframes bar-run {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(290%);
-    }
-  }
 
   .status .progress-line {
     color: var(--foreground);
