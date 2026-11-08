@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { toasts } from "./toasts.svelte";
+  import { ringTiming, toasts } from "./toasts.svelte";
   import { pop, softFade } from "./transitions";
 
   const OUT = 140;
@@ -26,12 +26,27 @@
   >
     <span>{toast.message}</span>
     {#if toast.undo}
+      {@const ring = ringTiming(toast.total ?? 1, toast.left ?? toast.total ?? 1)}
       <button
         type="button"
         onclick={() => {
           if (toasts.current?.message === toast.message) void toasts.undo();
         }}
-      >Отменить</button>
+      >
+        <!-- Сколько ещё можно отменить: кольцо убывает и стоит, пока курсор на тосте. -->
+        <svg class="ring" class:paused={!toast.timer} viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6" />
+          <circle
+            class="left"
+            cx="8"
+            cy="8"
+            r="6"
+            pathLength="100"
+            style={`animation-duration:${ring.duration}ms; animation-delay:${ring.delay}ms`}
+          />
+        </svg>
+        Отменить
+      </button>
     {/if}
   </div>
 {/each}
@@ -73,6 +88,52 @@
     font-size: 12.5px;
     font-weight: 700;
     cursor: default;
+  }
+
+  .toast button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .ring {
+    width: 14px;
+    height: 14px;
+    transform: rotate(-90deg);
+  }
+
+  .ring circle {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    opacity: 0.25;
+  }
+
+  .ring .left {
+    opacity: 1;
+    stroke-dasharray: 100;
+    stroke-linecap: round;
+    animation-name: ring-drain;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+  }
+
+  .ring.paused .left {
+    animation-play-state: paused;
+  }
+
+  @keyframes ring-drain {
+    from {
+      stroke-dashoffset: 0;
+    }
+    to {
+      stroke-dashoffset: 100;
+    }
+  }
+
+  /* «Быстро» оборвал бы кольцо в пустое: без движения его просто нет. */
+  :global(.no-motion) .ring {
+    display: none;
   }
 
   .toast button:hover {

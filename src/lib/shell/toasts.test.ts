@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readingTime, toasts } from "./toasts.svelte";
+import { readingTime, ringTiming, toasts } from "./toasts.svelte";
 
 describe("тосты", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -132,5 +132,42 @@ describe("тосты", () => {
     expect(toasts.current?.message).toBe(long);
     vi.advanceTimersByTime(Math.round(readingTime(long) * 0.6));
     expect(toasts.current?.message).toBe("второе");
+  });
+
+  it("кольцо у «Отменить»: весь срок, после паузы — с того же места", () => {
+    toasts.show("Удалён мод", { undo: vi.fn(), commit: vi.fn() });
+    const total = toasts.current!.total!;
+    expect(toasts.current!.left).toBe(total);
+    vi.advanceTimersByTime(2000);
+    toasts.pause();
+    expect(toasts.current!.timer).toBeUndefined();
+    expect(toasts.current!.left).toBe(total - 2000);
+    toasts.resume();
+    expect(toasts.current!.total).toBe(total);
+    expect(toasts.current!.left).toBe(total - 2000);
+    expect(ringTiming(toasts.current!.total!, toasts.current!.left!)).toEqual({
+      duration: total,
+      delay: -2000,
+    });
+  });
+
+  it("после паузы у самого конца — не меньше полутора секунд, кольцо показывает настоящий остаток", () => {
+    toasts.show("Удалён мод", { undo: vi.fn(), commit: vi.fn() });
+    const total = toasts.current!.total!;
+    vi.advanceTimersByTime(total - 200);
+    toasts.pause();
+    toasts.resume();
+    expect(toasts.current!.left).toBe(1500);
+    const ring = ringTiming(toasts.current!.total!, toasts.current!.left!);
+    expect(ring.delay).toBeLessThanOrEqual(0);
+    expect(ring.duration + ring.delay).toBe(1500);
+  });
+});
+
+describe("кольцо: крайние значения", () => {
+  it("остаток больше срока и отрицательный — в пределах", () => {
+    expect(ringTiming(5000, 9000)).toEqual({ duration: 5000, delay: -0 });
+    expect(ringTiming(5000, -10)).toEqual({ duration: 5000, delay: -5000 });
+    expect(ringTiming(0, 0).duration).toBe(1);
   });
 });

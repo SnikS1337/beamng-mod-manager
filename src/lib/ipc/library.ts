@@ -46,6 +46,9 @@ const KINDS: ModKind[] = ["vehicle", "level", "sound", "script", "unknown"];
 
 let mockLibrary: LibrarySnapshot | null = null;
 const mockDeletedCards = new Map<string, ModCardDto>();
+/** Где стояла удалённая карточка: после какой (или с какого места) — как в программе,
+ *  где запись библиотеки живёт, пока тост удаления не закрыт. */
+const mockDeletedPlace = new Map<string, string[]>();
 
 function recount(snapshot: LibrarySnapshot): void {
   const visible = snapshot.mods.filter((mod) => !mod.duplicateOf);
@@ -256,6 +259,11 @@ export async function modDelete(id: string): Promise<DeletedTicket> {
   if (index < 0) throw new Error("Мод не найден.");
   const [card] = snapshot.mods.splice(index, 1);
   mockDeletedCards.set(id, card);
+  // Кто стоял следом: при отмене встаём перед первым из них, кто ещё на месте.
+  mockDeletedPlace.set(
+    id,
+    snapshot.mods.slice(index, index + 64).map((mod) => mod.id),
+  );
   recount(snapshot);
   return {
     id,
@@ -275,7 +283,17 @@ export async function modUndelete(id: string): Promise<void> {
   const card = mockDeletedCards.get(id);
   if (!card) return;
   mockDeletedCards.delete(id);
-  snapshot.mods.push(card);
+  const following = mockDeletedPlace.get(id) ?? [];
+  mockDeletedPlace.delete(id);
+  let at = snapshot.mods.length;
+  for (const next of following) {
+    const index = snapshot.mods.findIndex((mod) => mod.id === next);
+    if (index >= 0) {
+      at = index;
+      break;
+    }
+  }
+  snapshot.mods.splice(at, 0, card);
   recount(snapshot);
 }
 
@@ -288,6 +306,7 @@ export async function modForgetDeleted(id: string): Promise<void> {
   const card = mockDeletedCards.get(id);
   if (!card) return;
   mockDeletedCards.delete(id);
+  mockDeletedPlace.delete(id);
   snapshot.deleted.push({
     ...card,
     deleted: true,

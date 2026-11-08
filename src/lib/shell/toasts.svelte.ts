@@ -8,6 +8,20 @@ export interface ToastOptions {
 interface ToastItem extends ToastOptions {
   message: string;
   timer?: ReturnType<typeof setTimeout>;
+  /** Весь срок показа, мс: по нему кольцо у «Отменить» убывает. */
+  total?: number;
+  /** Сколько оставалось, когда таймер (пере)запустился, мс. */
+  left?: number;
+}
+
+/**
+ * Кольцо вокруг «Отменить»: CSS-анимация на весь срок, сдвинутая на прошедшее
+ * время. После паузы под курсором кольцо продолжает с того же места.
+ */
+export function ringTiming(total: number, left: number): { duration: number; delay: number } {
+  const duration = Math.max(1, total);
+  const done = Math.min(Math.max(duration - left, 0), duration);
+  return { duration, delay: -done };
 }
 
 /** Сколько держать тост: по длине текста, чтобы успеть прочитать. */
@@ -73,7 +87,7 @@ class Toasts {
     if (!current?.timer || this.#left !== null) return;
     clearTimeout(current.timer);
     this.#left = Math.max(this.#endsAt - Date.now(), 0);
-    this.current = { ...current, timer: undefined };
+    this.current = { ...current, timer: undefined, left: this.#left };
   }
 
   resume(): void {
@@ -94,7 +108,7 @@ class Toasts {
         ? Math.max(3000, Math.round(base * 0.6))
         : base;
     this.#left = null;
-    this.#start(item, duration);
+    this.#start({ ...item, total: duration }, duration);
   }
 
   #start(item: ToastItem, duration: number): void {
@@ -103,7 +117,10 @@ class Toasts {
       if (this.current?.timer !== timer) return;
       this.#finish();
     }, duration);
-    this.current = { ...item, timer };
+    // После паузы остаток бывает больше прошлого (не меньше полутора секунд) —
+    // кольцо честно показывает настоящий остаток. Весь срок не короче остатка.
+    const total = Math.max(item.total ?? duration, duration);
+    this.current = { ...item, timer, total, left: duration };
   }
 
   #hide(): void {

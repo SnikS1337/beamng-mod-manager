@@ -392,11 +392,7 @@ fn installed_archives(
             sub_folder: disk.sub_folder,
         });
     }
-    state
-        .content_cache
-        .lock()
-        .unwrap()
-        .retain(|path, _| seen.contains(path));
+    crate::state::lock(&state.content_cache).retain(|path, _| seen.contains(path));
     result
 }
 

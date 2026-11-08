@@ -61,6 +61,7 @@
   import ModMenu from "./ModMenu.svelte";
   import { groupDigits, headerNote, matchesQuery, trimText } from "./format";
   import {
+    applyLoaded,
     loadViewMode,
     matchesType,
     nextReveal,
@@ -284,23 +285,37 @@
       });
   });
 
-  async function load(force = false) {
+  /**
+   * Перечитать библиотеку. `smooth` — карточки разъезжаются плавно: удалённая
+   * уходит, соседи сдвигаются, вернувшаяся встаёт на место. Данные читаем до
+   * перехода: экран не замирает, пока идёт запрос.
+   */
+  async function load(force = false, smooth = false, change?: () => void) {
     const token = ++loadToken;
     loading = !force || snapshot === null;
     refreshing = force;
     error = null;
     try {
       const next = await libraryLoad();
-      if (token !== loadToken) return;
-      snapshot = next;
-      if (
-        selectedId &&
-        !next.mods.some((mod) => mod.id === selectedId) &&
-        !next.deleted.some((mod) => mod.id === selectedId)
-      ) {
-        picked = EMPTY;
-      }
+      await applyLoaded({
+        isCurrent: () => token === loadToken,
+        change,
+        smooth: smooth && snapshot !== null,
+        run: (update) => motion.run(update, "flow-garage"),
+        set: () => {
+          snapshot = next;
+          if (
+            selectedId &&
+            !next.mods.some((mod) => mod.id === selectedId) &&
+            !next.deleted.some((mod) => mod.id === selectedId)
+          ) {
+            picked = EMPTY;
+          }
+        },
+      });
     } catch (reason) {
+      // Удаление прошло, а перечитать не вышло — выбор всё равно снимаем.
+      change?.();
       // Фоновая перезагрузка не должна стирать уже показанную библиотеку:
       // ошибку видно баннером, а полный экран — только пока показывать нечего.
       if (token === loadToken) error = errorText(reason);
@@ -562,14 +577,15 @@
   async function deleteCard(card: ModCardDto) {
     if (card.deleted || card.fromGameRepo) return;
     try {
-      // Удаляют копию из панели группы — панель основного остаётся открытой.
-      if (picked.ids.includes(card.id)) picked = EMPTY;
       const ticket = await modDelete(card.id);
-      await load(true);
+      // Удаляют копию из панели группы — панель основного остаётся открытой.
+      await load(true, true, () => {
+        if (picked.ids.includes(card.id)) picked = EMPTY;
+      });
       showToast(`Удалён «${trimName(ticket.name)}»`, {
         undo: async () => {
           await modUndelete(card.id);
-          await load(true);
+          await load(true, true);
         },
         commit: async () => {
           await modForgetDeleted(card.id);
@@ -630,19 +646,20 @@
         failed += 1;
       }
     }
-    picked = afterBulk(
-      started,
-      picked,
-      removed.map((mod) => mod.id),
-    );
-    await load(true);
+    await load(true, true, () => {
+      picked = afterBulk(
+        started,
+        picked,
+        removed.map((mod) => mod.id),
+      );
+    });
     bulkBusy = false;
     const text = `Удалено: ${removed.length}${failed > 0 ? ` · не получилось: ${failed}` : ""}`;
     showToast(text, {
       undo: removed.length
         ? async () => {
             for (const mod of removed) await modUndelete(mod.id).catch(() => {});
-            await load(true);
+            await load(true, true);
           }
         : undefined,
       commit: removed.length
@@ -658,7 +675,7 @@
     try {
       await modRestoreDeleted(card.fileName);
       picked = EMPTY;
-      await load(true);
+      await load(true, true);
       showToast(`Возвращён «${trimName(card.name)}»`);
     } catch (reason) {
       showToast(errorText(reason));

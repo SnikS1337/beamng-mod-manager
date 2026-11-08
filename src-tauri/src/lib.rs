@@ -197,7 +197,7 @@ pub fn run() {
     let coordinator = UpdateCoordinator::new(
         library.clone(),
         Arc::new(move || {
-            let enabled = factory_enabled.lock().unwrap();
+            let enabled = crate::state::lock(&factory_enabled);
             factory_sources
                 .iter()
                 .filter(|source| enabled.contains(source.id()))
