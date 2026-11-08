@@ -5,6 +5,7 @@
   import { canFlow, motion } from "#lib/shell/motion.svelte.js";
   import IncomingHost from "#lib/features/incoming/IncomingHost.svelte";
   import DownloadsHost from "#lib/features/download/DownloadsHost.svelte";
+  import TaskbarProgress from "#lib/shell/TaskbarProgress.svelte";
   import CommandPalette from "#lib/shell/CommandPalette.svelte";
   import Background from "#lib/shell/Background.svelte";
   import NavRail from "#lib/shell/NavRail.svelte";
@@ -65,6 +66,7 @@
 
     <IncomingHost />
     <DownloadsHost />
+    <TaskbarProgress />
     <CommandPalette />
     <ToastHost />
     <AppUpdateNotice />

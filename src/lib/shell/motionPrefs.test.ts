@@ -13,4 +13,9 @@ describe("motionDuration", () => {
   it("«Быстро» обнуляет JS-анимации", () => {
     expect(motionDuration(240, root(["no-motion"]))).toBe(0);
   });
+
+  it("пока мод прилетает в гараж, окно уходит без своей анимации", () => {
+    expect(motionDuration(240, root(["flow-arrive"]))).toBe(0);
+    expect(motionDuration(240, root(["flow-garage"]))).toBe(240);
+  });
 });

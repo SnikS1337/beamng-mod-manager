@@ -21,6 +21,7 @@
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { incomingQueue } from "./queue.svelte";
   import { trapFocus } from "#lib/shell/focus.js";
+  import { arrival } from "#lib/shell/arrival.svelte.js";
   import { pop, softFade } from "#lib/shell/transitions.js";
   import { installable, preselected, suspiciousFiles, suspiciousText, undoAll } from "./selection";
 
@@ -41,6 +42,8 @@
   let busy = $state(false);
   let busyName = $state("");
   let selected = $state<boolean[]>([]);
+  /** Строка, которая сейчас «улетает» в гараж (см. arrival). */
+  let flyingItem = $state.raw<IncomingItemDto | null>(null);
   let installing = $state(false);
   let dragActive = $state(false);
   let installButton = $state<HTMLButtonElement | null>(null);
@@ -266,8 +269,10 @@
       const tickets: IncomingTicket[] = [];
       const failures: { title: string; message: string }[] = [];
       const warnings: string[] = [];
+      let lastInstalled: IncomingItemDto | null = null;
       results.forEach((result, index) => {
         if (result.success) {
+          lastInstalled = chosen[index] ?? lastInstalled;
           if (result.warning) warnings.push(result.warning);
           tickets.push({
             fileName: result.fileName,
@@ -290,16 +295,24 @@
       if (currentDownloaded && failures.length === 0 && !leftInArchive) {
         void incomingRemoveSource(archive.source).catch(() => {});
       }
-      session += 1;
-      current = null;
-      currentDownloaded = false;
-      selected = [];
+      // Последний поставленный мод «прилетает» из окна на место своей карточки:
+      // гараж выделяет именно его.
+      flyingItem = lastInstalled;
+      // Имя перехода должно стоять на строке до снимка старого вида.
+      await tick();
+      await arrival.fly(tickets.at(-1)?.fileName, () => {
+        session += 1;
+        current = null;
+        currentDownloaded = false;
+        selected = [];
+        window.dispatchEvent(
+          new CustomEvent("bmm:library-changed", {
+            detail: { fileNames: tickets.map((ticket) => ticket.fileName) },
+          }),
+        );
+      });
+      flyingItem = null;
       if (workDir) void incomingDiscard(workDir).catch(() => {});
-      window.dispatchEvent(
-        new CustomEvent("bmm:library-changed", {
-          detail: { fileNames: tickets.map((ticket) => ticket.fileName) },
-        }),
-      );
       const text = warnings.length > 0
         ? `${toastText(chosen, tickets.length, failures)} ${warnings[0]}`
         : toastText(chosen, tickets.length, failures);
@@ -503,14 +516,14 @@
 
 {#if dialogOpen}
   <button
-    class="backdrop"
+    class="backdrop incoming-backdrop"
     type="button"
     aria-label="Закрыть окно проверки"
     transition:softFade={{ duration: 160 }}
     onclick={close}
   ></button>
   <div
-    class="dialog glass"
+    class="dialog glass incoming-dialog"
     role="dialog"
     aria-modal="true"
     aria-labelledby="incoming-title"
@@ -551,7 +564,11 @@
       {:else}
         <div class="items scroll-area">
           {#each current.items as item, index (item.zipPath + index)}
-            <article class="item" class:blocked={item.blocked || item.locked}>
+            <article
+              class="item"
+              class:blocked={item.blocked || item.locked}
+              class:arrive-source={item === flyingItem}
+            >
               <div class="item-head">
                 <div class="titles">
                   <h3>{item.title}</h3>
