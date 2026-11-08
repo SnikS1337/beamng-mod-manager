@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { onDestroy, type Snippet } from "svelte";
+  import { enterOverlay } from "#lib/shell/overlays.js";
   import { ContextMenu } from "bits-ui";
   import Power from "phosphor-svelte/lib/Power";
   import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
@@ -52,9 +53,22 @@
     }
     target = found;
   }
+
+  // Открытое меню — окно поверх гаража: его горячие клавиши (Delete, Ctrl+A) в это
+  // время не работают. Раньше Delete при открытом меню удалял выбранный мод.
+  let overlay: { leave: () => void } | null = null;
+  function openChange(open: boolean) {
+    if (open && !overlay) {
+      overlay = enterOverlay();
+    } else if (!open && overlay) {
+      overlay.leave();
+      overlay = null;
+    }
+  }
+  onDestroy(() => openChange(false));
 </script>
 
-<ContextMenu.Root>
+<ContextMenu.Root onOpenChange={openChange}>
   <ContextMenu.Trigger>
     {#snippet child({ props })}
       <div {...props} class="menu-area" oncontextmenucapture={pick}>

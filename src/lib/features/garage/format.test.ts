@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   shownOfLabel,
+  trimText,
   formatAgo,
   formatSize,
   formatWhen,
@@ -115,5 +116,17 @@ describe("shownOfLabel", () => {
   it("все показаны — просто число модов", () => {
     expect(shownOfLabel(21, 21)).toBe("21 мод");
     expect(shownOfLabel(4, 4)).toBe("4 мода");
+  });
+});
+
+describe("обрезка названий", () => {
+  it("режет по знакам, не по половинкам эмодзи", () => {
+    expect(trimText("Короткое", 34)).toBe("Короткое");
+    const long = `${"а".repeat(32)}🚗🚗🚗`;
+    const cut = trimText(long, 34);
+    expect(cut).toBe(`${"а".repeat(32)}🚗…`);
+    expect(cut.includes("\uFFFD")).toBe(false);
+    expect(Array.from(cut).length).toBe(34);
+    expect(trimText("x".repeat(34), 34), "ровно по границе — без обрезки").toBe("x".repeat(34));
   });
 });

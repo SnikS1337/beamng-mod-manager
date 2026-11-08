@@ -42,6 +42,8 @@
   let preview = $state<string | null>(null);
   let requested = $state("");
   let loaded = $state(false);
+  /** Картинка не открылась (битый файл превью): показываем значок, а не пустое место. */
+  let brokenPreview = $state<string | null>(null);
 
   // Дополнение (детали для машин игры, погода, скрипт): картинки у таких модов
   // случайные — текстуры, шум, — поэтому карточка без картинки, с подписью.
@@ -137,7 +139,7 @@
         <Icon size={34} weight="duotone" />
         {#if caption}<span>{caption}</span>{/if}
       </span>
-    {:else if preview}
+    {:else if preview && preview !== brokenPreview}
       <img
         src={preview}
         alt=""
@@ -145,6 +147,7 @@
         decoding="async"
         class:loaded
         onload={() => (loaded = true)}
+        onerror={() => (brokenPreview = preview)}
       />
     {:else}
       {@const Icon = icon}

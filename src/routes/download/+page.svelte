@@ -1,6 +1,7 @@
 <script lang="ts">
   import { errorText } from "#lib/shell/errorText.js";
   import { onMount } from "svelte";
+  import { trapFocus } from "#lib/shell/focus.js";
   import { updatesDismiss } from "#lib/ipc/updates.js";
   import { StaleGuard } from "#lib/features/download/staleGuard.js";
   import { isTauri } from "@tauri-apps/api/core";
@@ -777,12 +778,28 @@
 
   <aside class="steps" aria-label="Этапы загрузки">
     {#if closeAsk}
-      <div class="close-ask" role="alertdialog" aria-label="Закрыть окно?" tabindex="-1">
-        <b>Закрыть окно?</b>
-        <span>{closeAsk}</span>
+      <!-- Вопрос держит фокус: Tab не уходит под него, сразу стоим на «Не закрывать»,
+           Escape отвечает «не закрывать». Раньше с клавиатуры до него было не добраться. -->
+      <div
+        class="close-ask"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="close-ask-title"
+        aria-describedby="close-ask-text"
+        tabindex="-1"
+        use:trapFocus={".keep"}
+        onkeydown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeAsk = null;
+          }
+        }}
+      >
+        <b id="close-ask-title">Закрыть окно?</b>
+        <span id="close-ask-text">{closeAsk}</span>
         <div class="batch-actions">
           <button class="danger" type="button" onclick={() => void closeNow()}>Прервать и закрыть</button>
-          <button class="ghost" type="button" onclick={() => (closeAsk = null)}>Не закрывать</button>
+          <button class="ghost keep" type="button" onclick={() => (closeAsk = null)}>Не закрывать</button>
         </div>
       </div>
     {/if}
