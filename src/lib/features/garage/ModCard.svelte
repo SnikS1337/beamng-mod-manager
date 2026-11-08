@@ -256,6 +256,14 @@
     box-shadow: var(--shadow-1);
   }
 
+  /* Нажатие по карточке (её кнопка выбора .select на всю площадь): она чуть
+     проседает, как кнопка. Не тогда, когда жмут галочку или переключатель на ней:
+     у них свой отклик. */
+  .card:has(.select:active) {
+    transform: scale(0.985);
+    transition-duration: var(--dur-1);
+  }
+
   .card.selected {
     border-color: var(--accent-brand);
     box-shadow: 0 0 0 1px var(--accent-brand);
@@ -364,6 +372,14 @@
     width: 35%;
     transform: none;
     animation: loading-run 1.2s var(--ease-in-out) infinite;
+  }
+
+  /* «Быстро» оборвал бы бегущую полоску на последнем кадре — за краем обложки.
+     Без движения она стоит во всю ширину, бледнее: видно, что идёт загрузка. */
+  :global(.no-motion) .loading.unknown > span {
+    width: 100%;
+    animation: none;
+    opacity: 0.45;
   }
 
   @keyframes loading-run {

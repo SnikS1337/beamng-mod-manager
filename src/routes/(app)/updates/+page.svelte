@@ -1836,6 +1836,17 @@
     animation: site-run 1.2s var(--ease-in-out) infinite;
   }
 
+  /* Без движения — как у общей полосы: во всю ширину, бледнее; точка не «дышит». */
+  :global(.no-motion) .site-track.unknown > span {
+    width: 100%;
+    animation: none;
+    opacity: 0.45;
+  }
+
+  :global(.no-motion) .dot.busy {
+    animation: none;
+  }
+
   @keyframes site-run {
     from {
       translate: -100% 0;
