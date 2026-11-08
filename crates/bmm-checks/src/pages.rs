@@ -72,10 +72,18 @@ pub fn verify_page(
     cancel: &AtomicBool,
     title_of: &dyn Fn(&str) -> Option<String>,
 ) -> Result<PageVerification, String> {
-    let binding = store
+    // Проверяют предложенную страницу: у мода может быть и подтверждённая на другом
+    // сайте — раньше бралась любая первая, и проверялась не та.
+    let own: Vec<ModBinding> = store
         .bindings()
         .into_iter()
-        .find(|binding| binding.mod_id == mod_id)
+        .filter(|binding| binding.mod_id == mod_id)
+        .collect();
+    let binding = own
+        .iter()
+        .find(|binding| !binding.confirmed)
+        .or_else(|| own.first())
+        .cloned()
         .ok_or_else(|| "У мода нет страницы для проверки.".to_string())?;
     let page_source = search
         .sources()
@@ -2639,6 +2647,53 @@ mod tests {
         assert!(result.matches[0].same_size);
         assert!(result.matches[0].same_version);
         assert!(result.matches[0].same_author);
+    }
+
+    #[test]
+    fn verification_opens_the_suggested_page_not_the_followed_one() {
+        // У мода есть подтверждённая страница на одном сайте и предложение на другом:
+        // проверяют предложение. Раньше бралась любая первая привязка.
+        let store = InMemoryLibraryStore::new();
+        store.upsert_mod(installed("car", "car.zip"));
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "car".to_string(),
+                source: "stmods".to_string(),
+                source_id: "followed".to_string(),
+                url: Url::parse("https://stmods.test/followed").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "car".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "suggested".to_string(),
+                url: Url::parse("https://modsgaming.test/suggested").unwrap(),
+                confirmed: false,
+            })
+            .unwrap();
+        let mut suggested = listing("suggested", "Suggested car");
+        suggested.url = Url::parse("https://modsgaming.test/suggested").unwrap();
+        let mut followed = listing("followed", "Followed car");
+        followed.source = "stmods".to_string();
+        followed.url = Url::parse("https://stmods.test/followed").unwrap();
+        let service = SearchService::new(
+            vec![
+                VerifySite::new("stmods", Some(followed), Vec::new()),
+                VerifySite::new("modsgaming", Some(suggested), Vec::new()),
+            ],
+            Arc::new(|_| SourceStatus::Ok),
+            SearchOptions::default(),
+            None,
+        );
+        let result =
+            verify_page(&store, &service, "car", &AtomicBool::new(false), &|_| None).unwrap();
+        assert_eq!(result.page_source, "modsgaming");
+        assert_eq!(
+            result.page_url.as_str(),
+            "https://modsgaming.test/suggested"
+        );
     }
 
     #[test]

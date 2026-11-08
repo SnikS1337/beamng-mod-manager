@@ -520,7 +520,10 @@ async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), Ap
                     return false;
                 };
                 crate::commands::downloads::expect_folder(&downloads);
-                let path = unique_path(&downloads, &name);
+                // Файл ещё не создан, пока качается: занятые имена — и у идущих загрузок,
+                // иначе две загрузки с одним именем писали в один файл.
+                let busy = jobs().downloading();
+                let path = unique_path(&downloads, &name, &busy);
                 if std::fs::create_dir_all(&downloads).is_err() {
                     emit_state(
                         &download_app,
@@ -863,9 +866,10 @@ fn avoid_reserved(name: String) -> String {
     }
 }
 
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
+fn unique_path(dir: &Path, name: &str, busy: &[PathBuf]) -> PathBuf {
+    let free = |path: &Path| !path.exists() && !busy.iter().any(|taken| taken == path);
     let candidate = dir.join(name);
-    if !candidate.exists() {
+    if free(&candidate) {
         return candidate;
     }
     let path = Path::new(name);
@@ -880,7 +884,7 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
         .unwrap_or_default();
     for index in 1..1000 {
         let next = dir.join(format!("{stem} ({index}){extension}"));
-        if !next.exists() {
+        if free(&next) {
             return next;
         }
     }
@@ -1163,8 +1167,24 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("mod.zip"), b"old").unwrap();
         assert_eq!(
-            unique_path(temp.path(), "mod.zip"),
+            unique_path(temp.path(), "mod.zip", &[]),
             temp.path().join("mod (1).zip")
+        );
+    }
+
+    #[test]
+    fn name_of_a_running_download_is_taken() {
+        // Файл появляется не сразу: две загрузки с одним именем писали в один файл.
+        let temp = tempfile::tempdir().unwrap();
+        let running = vec![temp.path().join("mod.zip")];
+        assert_eq!(
+            unique_path(temp.path(), "mod.zip", &running),
+            temp.path().join("mod (1).zip")
+        );
+        let both = vec![temp.path().join("mod.zip"), temp.path().join("mod (1).zip")];
+        assert_eq!(
+            unique_path(temp.path(), "mod.zip", &both),
+            temp.path().join("mod (2).zip")
         );
     }
 

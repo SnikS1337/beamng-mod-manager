@@ -34,10 +34,16 @@ static CAUGHT: LazyLock<Mutex<HashMap<PathBuf, bool>>> =
 static HANDLED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 pub(crate) fn note_caught(path: &Path) {
     let mut caught = CAUGHT.lock().unwrap_or_else(|error| error.into_inner());
-    if caught.len() >= 128 {
-        caught.clear();
-    }
+    trim_caught(&mut caught);
     caught.insert(path.to_path_buf(), false);
+}
+
+/// Список переполнен: убираем докачанные, а идущие загрузки оставляем. Раньше
+/// чистилось всё, и сторож «Загрузок» предлагал идущий файл второй раз.
+fn trim_caught(caught: &mut HashMap<PathBuf, bool>) {
+    if caught.len() >= 128 {
+        caught.retain(|_, finished| !*finished);
+    }
 }
 
 /// Размер и время докачанных окном файлов: если человек переименует или перенесёт
@@ -476,6 +482,20 @@ mod tests {
 
     /// Метки перехвата — общие на процесс; тесты, которые их трогают, идут по очереди.
     static CAUGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn full_list_keeps_running_downloads() {
+        let mut caught: HashMap<PathBuf, bool> = (0..128)
+            .map(|index| (PathBuf::from(format!("done{index}.zip")), true))
+            .collect();
+        caught.insert(PathBuf::from("running.zip"), false);
+        trim_caught(&mut caught);
+        assert_eq!(caught.len(), 1);
+        assert_eq!(caught.get(Path::new("running.zip")), Some(&false));
+        let mut small: HashMap<PathBuf, bool> = HashMap::from([(PathBuf::from("a.zip"), true)]);
+        trim_caught(&mut small);
+        assert_eq!(small.len(), 1, "пока список не полон, ничего не трогаем");
+    }
 
     /// Своё время изменения для файла теста. На Windows время идёт шагами около 15 мс:
     /// файлы параллельных тестов одного размера получали одно время, и сторож

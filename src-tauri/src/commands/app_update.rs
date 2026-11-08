@@ -823,20 +823,40 @@ impl StartedSignal {
 
 /// Ждём, пока прежний процесс действительно выйдет. `OpenProcess` в цикле не годится:
 /// дескриптор вышедшего процесса открывается, пока его держит кто-то ещё.
+///
+/// Не открылся — это ещё не «вышел»: процесса нет только при `ERROR_INVALID_PARAMETER`.
+/// Отказ в доступе и прочее — пробуем ещё раз, пока не истечёт время: иначе новая версия
+/// заменила бы файл при живой прежней.
 #[cfg(windows)]
 fn wait_for_exit(pid: u32, timeout: Duration) {
-    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
     use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
 
     const SYNCHRONIZE: u32 = 0x0010_0000;
-    let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
-    if handle.is_null() {
-        return; // уже вышел
+    let begin = Instant::now();
+    loop {
+        let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+        if !handle.is_null() {
+            let left = timeout.saturating_sub(begin.elapsed());
+            unsafe {
+                WaitForSingleObject(handle, left.as_millis().min(u32::MAX as u128) as u32);
+                CloseHandle(handle);
+            }
+            return;
+        }
+        let code = unsafe { GetLastError() };
+        if process_is_gone(code) || begin.elapsed() >= timeout {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
     }
-    unsafe {
-        WaitForSingleObject(handle, timeout.as_millis() as u32);
-        CloseHandle(handle);
-    }
+}
+
+/// Ошибка `OpenProcess`, которая значит «такого процесса нет».
+#[cfg_attr(not(windows), allow(dead_code))]
+fn process_is_gone(code: u32) -> bool {
+    const ERROR_INVALID_PARAMETER: u32 = 87;
+    code == ERROR_INVALID_PARAMETER
 }
 
 #[cfg(not(windows))]
@@ -859,6 +879,45 @@ mod tests {
 
     fn strings(args: &[&str]) -> Vec<String> {
         args.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[test]
+    fn only_a_missing_process_counts_as_exited() {
+        // 87 — процесса нет; 5 (отказ в доступе) и прочее — ждём дальше, а не пишем поверх живой программы.
+        assert!(process_is_gone(87));
+        assert!(!process_is_gone(5));
+        assert!(!process_is_gone(0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn waiting_for_a_finished_process_returns_at_once() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        drop(child);
+        let begin = Instant::now();
+        wait_for_exit(pid, Duration::from_secs(5));
+        assert!(begin.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn waiting_stops_when_the_process_exits() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "ping -n 2 127.0.0.1 >NUL"])
+            .spawn()
+            .unwrap();
+        let begin = Instant::now();
+        wait_for_exit(child.id(), Duration::from_secs(20));
+        assert!(
+            child.try_wait().unwrap().is_some(),
+            "вернулись раньше выхода"
+        );
+        assert!(begin.elapsed() < Duration::from_secs(15));
     }
 
     #[cfg(windows)]

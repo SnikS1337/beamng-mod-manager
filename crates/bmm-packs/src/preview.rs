@@ -102,7 +102,11 @@ fn pick_companions<R: Read + Seek>(
         .collect();
 
     for pc in pcs {
-        let stem = pc.name.trim_end_matches(".pc");
+        // «.PC» тоже конфиг: обрезаем расширение без оглядки на регистр.
+        let stem = pc
+            .name
+            .rsplit_once('.')
+            .map_or(pc.name.as_str(), |(stem, _)| stem);
         let candidates: Vec<&Entry> = entries
             .iter()
             .filter(|entry| {
@@ -432,6 +436,29 @@ mod tests {
         );
         let pick = pick(&path).unwrap().unwrap();
         assert_eq!(pick.raw_name, "cover.png");
+    }
+
+    #[test]
+    fn config_picture_is_found_whatever_the_case_of_pc() {
+        // Картинка конфига должна обогнать случайную картинку из корня архива.
+        for config in [
+            "vehicles/car/sport.pc",
+            "vehicles/car/sport.PC",
+            "vehicles/car/Sport.Pc",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("mod.zip");
+            build_zip(
+                &path,
+                &[
+                    (config, b"{}".to_vec()),
+                    ("vehicles/car/sport.jpg", jpeg(800, 450)),
+                    ("cover.jpg", jpeg(1920, 1080)),
+                ],
+            );
+            let pick = pick(&path).unwrap().unwrap();
+            assert_eq!(pick.raw_name, "vehicles/car/sport.jpg", "{config}");
+        }
     }
 
     #[test]
