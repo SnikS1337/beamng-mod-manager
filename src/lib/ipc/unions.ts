@@ -26,6 +26,7 @@ export type SiteReach =
   | "reset"
   | "secure"
   | "noAnswer"
+  | "stalled"
   | "offline"
   | "blockPage";
 export type UpdatesPhase = "progress" | "done" | "pages" | "error" | "auto";
