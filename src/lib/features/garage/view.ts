@@ -136,3 +136,27 @@ export function revealScroll(
   if (bottom > scrollTop + height) return Math.max(0, bottom - height);
   return null;
 }
+
+/**
+ * Применить перечитанную библиотеку. Своё изменение (`change`, например снять выбор
+ * с удалённого) делается всегда — даже если пока читали, началась новая загрузка;
+ * а данные кладём только свежие. `smooth` — одним плавным переходом.
+ */
+export async function applyLoaded(options: {
+  isCurrent: () => boolean;
+  set: () => void;
+  change?: () => void;
+  smooth: boolean;
+  run: (update: () => void) => Promise<void>;
+}): Promise<void> {
+  const apply = () => {
+    options.change?.();
+    if (options.isCurrent()) options.set();
+  };
+  if (!options.isCurrent()) {
+    options.change?.();
+    return;
+  }
+  if (options.smooth) await options.run(apply);
+  else apply();
+}

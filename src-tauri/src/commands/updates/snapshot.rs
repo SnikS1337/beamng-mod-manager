@@ -6,10 +6,7 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
     let store = state.library.as_ref();
     // Как на карточках модов: название и картинка из архива, если уже прочитаны.
     let titles = state.previews.titles_shared();
-    let keys: HashMap<String, String> = state
-        .previews_by_id
-        .lock()
-        .unwrap()
+    let keys: HashMap<String, String> = crate::state::lock(&state.previews_by_id)
         .iter()
         .map(|(id, target)| (id.clone(), target.key.clone()))
         .collect();
@@ -171,10 +168,7 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
 pub(crate) fn coverage(state: &AppState) -> CoverageDto {
     let store = state.library.as_ref();
     let mods = store.mods();
-    let keys: HashMap<String, String> = state
-        .previews_by_id
-        .lock()
-        .unwrap()
+    let keys: HashMap<String, String> = crate::state::lock(&state.previews_by_id)
         .iter()
         .map(|(id, target)| (id.clone(), target.key.clone()))
         .collect();

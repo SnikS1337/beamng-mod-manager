@@ -456,18 +456,12 @@ pub async fn search_retry_source(
         .cloned()
         .ok_or_else(|| AppError::new("search", "Сайт выключен или не поддерживает поиск."))?;
     runtime.fetcher.reset_source(source.id(), &source.home());
-    let browse = state
-        .browse
-        .lock()
-        .unwrap()
+    let browse = crate::state::lock(&state.browse)
         .as_ref()
         .map(|session| (session.kind, session.pages));
     let previous = if browse.is_none() {
         Some(
-            state
-                .last_search
-                .lock()
-                .unwrap()
+            crate::state::lock(&state.last_search)
                 .clone()
                 .ok_or_else(|| AppError::new("search", "Сначала выполните поиск."))?,
         )
@@ -725,10 +719,7 @@ pub async fn search_decide(
         .search
         .clone()
         .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
-    let previous = state
-        .last_search
-        .lock()
-        .unwrap()
+    let previous = crate::state::lock(&state.last_search)
         .clone()
         .ok_or_else(|| AppError::new("search", "Сначала выполните поиск."))?;
     let a = find_listing(&previous, &a_source, &a_id)

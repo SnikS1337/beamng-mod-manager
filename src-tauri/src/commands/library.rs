@@ -59,10 +59,7 @@ pub async fn mod_fix_packaging(
 
 fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard = state.load_guard();
-    let target = state
-        .previews_by_id
-        .lock()
-        .unwrap()
+    let target = crate::state::lock(&state.previews_by_id)
         .get(id)
         .cloned()
         .ok_or_else(|| AppError::new("fix", "Мод не найден. Обновите список."))?;
@@ -289,10 +286,7 @@ fn spawn_title_fill(app: tauri::AppHandle, state: Arc<AppState>) {
 /// Убирает из кэша картинки и сведения модов, которых больше нет на диске.
 /// Список ещё не построен (папка не найдена) — ничего не трогаем, иначе стёрли бы всё.
 pub(crate) fn prune_previews(state: &AppState) {
-    let live: std::collections::HashSet<String> = state
-        .previews_by_id
-        .lock()
-        .unwrap()
+    let live: std::collections::HashSet<String> = crate::state::lock(&state.previews_by_id)
         .values()
         .map(|target| target.key.clone())
         .collect();
@@ -303,10 +297,7 @@ pub(crate) fn prune_previews(state: &AppState) {
 
 /// Дочитывает названия, которых ещё нет в кэше. Возвращает, сколько записали.
 pub(crate) fn fill_titles(state: &AppState) -> usize {
-    let targets: Vec<PreviewTarget> = state
-        .previews_by_id
-        .lock()
-        .unwrap()
+    let targets: Vec<PreviewTarget> = crate::state::lock(&state.previews_by_id)
         .values()
         .cloned()
         .collect();
@@ -676,10 +667,7 @@ pub(crate) fn toggle_mod(
     let layout = ModLayout::in_app_folder(&mods_dir, state.paths.root());
     // Обычный путь берём из уже построенного снимка: полный scan_mods на каждый
     // toggle — это O(всех модов) на клик и минуты на массовых действиях.
-    let disk = state
-        .previews_by_id
-        .lock()
-        .unwrap()
+    let disk = crate::state::lock(&state.previews_by_id)
         .get(id)
         .filter(|target| target.file_name.eq_ignore_ascii_case(&installed.file_name))
         .and_then(|target| {

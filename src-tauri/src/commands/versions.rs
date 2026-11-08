@@ -119,10 +119,7 @@ fn delete_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), App
 /// Копия только что удалённого мода нужна кнопке «Отменить»: пока тост не ушёл, её
 /// нельзя ни стереть, ни вернуть под другим именем — иначе «Отменить» сломается.
 fn undo_needs(state: &AppState, backup_id: &str) -> Result<(), AppError> {
-    let held = state
-        .deleted
-        .lock()
-        .unwrap()
+    let held = crate::state::lock(&state.deleted)
         .values()
         .any(|ticket| ticket.backup_id == backup_id);
     if held {
@@ -200,11 +197,7 @@ fn delete_mod(state: &AppState, id: &str) -> Result<DeletedTicketDto, AppError> 
         was_in_disabled,
         was_enabled: installed.enabled,
     };
-    state
-        .deleted
-        .lock()
-        .unwrap()
-        .insert(installed.id.clone(), ticket);
+    crate::state::lock(&state.deleted).insert(installed.id.clone(), ticket);
 
     Ok(DeletedTicketDto {
         id: installed.id,
@@ -217,10 +210,7 @@ fn delete_mod(state: &AppState, id: &str) -> Result<DeletedTicketDto, AppError> 
 
 fn undelete_mod(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard = state.load_guard();
-    let ticket = state
-        .deleted
-        .lock()
-        .unwrap()
+    let ticket = crate::state::lock(&state.deleted)
         .get(id)
         .cloned()
         .ok_or_else(|| AppError::new("not_found", "Удаление уже подтверждено."))?;
@@ -287,10 +277,7 @@ fn versions_of(state: &AppState, id: &str) -> Result<Vec<VersionRowDto>, AppErro
         .library
         .get_mod(id)
         .ok_or_else(|| AppError::new("not_found", "Мод не найден."))?;
-    if state
-        .previews_by_id
-        .lock()
-        .unwrap()
+    if crate::state::lock(&state.previews_by_id)
         .get(id)
         .and_then(|target| target.sub_folder.as_ref())
         .is_some()
@@ -406,6 +393,49 @@ mod tests {
         let installer = installer_for(state).unwrap();
         let result = installer.install_from_path(source, name, InstallOptions::default());
         assert!(result.success, "{:?}", result.message);
+    }
+
+    #[test]
+    fn undone_deletion_puts_cards_back_in_their_places() {
+        let (temp, state) = setup();
+        let source = temp.path().join("source.zip");
+        make_zip(&source);
+        for name in ["a.zip", "b.zip", "c.zip", "d.zip", "e.zip"] {
+            install_direct(&state, &source, name);
+        }
+        let order = |state: &AppState| -> Vec<String> {
+            load_snapshot(state)
+                .unwrap()
+                .mods
+                .into_iter()
+                .map(|card| card.file_name)
+                .collect()
+        };
+        let before = order(&state);
+        assert_eq!(before.len(), 5);
+        let snapshot = load_snapshot(&state).unwrap();
+        let id_of = |file: &str| {
+            snapshot
+                .mods
+                .iter()
+                .find(|card| card.file_name == file)
+                .unwrap()
+                .id
+                .clone()
+        };
+        // Пачкой — две соседние и одна поодаль; отмена в обратном порядке.
+        let ids: Vec<String> = [&before[1], &before[2], &before[4]]
+            .into_iter()
+            .map(|file| id_of(file))
+            .collect();
+        for id in &ids {
+            delete_mod(&state, id).unwrap();
+        }
+        assert_eq!(order(&state).len(), 2);
+        for id in ids.iter().rev() {
+            undelete_mod(&state, id).unwrap();
+        }
+        assert_eq!(order(&state), before);
     }
 
     #[test]

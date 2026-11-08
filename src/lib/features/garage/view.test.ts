@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyLoaded,
   loadViewMode,
   matchesType,
   saveViewMode,
@@ -96,5 +97,60 @@ describe("показ карточки после стрелок — разовы
       expect(text, file).toMatch(/untrack\(\(\) => \{\s*const index = items\.findIndex/);
       expect(text, file).not.toContain("revealId");
     }
+  });
+});
+
+describe("перечитанная библиотека", () => {
+  const recorder = () => {
+    const log: string[] = [];
+    return {
+      log,
+      change: () => log.push("change"),
+      set: () => log.push("set"),
+      run: async (update: () => void) => {
+        log.push("run");
+        update();
+      },
+    };
+  };
+
+  it("своё изменение — до данных и в том же переходе", async () => {
+    const r = recorder();
+    await applyLoaded({ isCurrent: () => true, change: r.change, set: r.set, smooth: true, run: r.run });
+    expect(r.log).toEqual(["run", "change", "set"]);
+  });
+
+  it("без плавности — сразу, без перехода", async () => {
+    const r = recorder();
+    await applyLoaded({ isCurrent: () => true, change: r.change, set: r.set, smooth: false, run: r.run });
+    expect(r.log).toEqual(["change", "set"]);
+  });
+
+  it("пока читали, началась новая загрузка — данные не кладём, а выбор снимаем", async () => {
+    const r = recorder();
+    await applyLoaded({ isCurrent: () => false, change: r.change, set: r.set, smooth: true, run: r.run });
+    expect(r.log).toEqual(["change"]);
+  });
+
+  it("новая загрузка началась уже во время перехода — то же", async () => {
+    const r = recorder();
+    let current = true;
+    await applyLoaded({
+      isCurrent: () => current,
+      change: r.change,
+      set: r.set,
+      smooth: true,
+      run: async (update) => {
+        current = false;
+        update();
+      },
+    });
+    expect(r.log).toEqual(["change"]);
+  });
+
+  it("без своего изменения — только данные", async () => {
+    const r = recorder();
+    await applyLoaded({ isCurrent: () => true, set: r.set, smooth: false, run: r.run });
+    expect(r.log).toEqual(["set"]);
   });
 });

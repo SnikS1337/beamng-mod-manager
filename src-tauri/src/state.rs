@@ -137,3 +137,56 @@ impl AppState {
         *crate::state::lock(&self.pending) = map;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_survives_a_panicked_holder() {
+        let mutex = std::sync::Arc::new(Mutex::new(1));
+        let held = mutex.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            panic!("упали, держа замок");
+        })
+        .join();
+        assert!(mutex.is_poisoned());
+        *lock(&mutex) += 1;
+        assert_eq!(*lock(&mutex), 2);
+    }
+
+    /// Упавший поток не должен ронять всю программу при следующем обращении к
+    /// общему состоянию: в рабочем коде — только `crate::state::lock`.
+    #[test]
+    fn production_code_does_not_unwrap_locks() {
+        let unwraps_lock = |body: &str| {
+            body.match_indices(".lock()").any(|(at, found)| {
+                body[at + found.len()..]
+                    .trim_start()
+                    .starts_with(".unwrap()")
+            })
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![root];
+        let mut found = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                let body = text.split("#[cfg(test)]\nmod tests").next().unwrap_or("");
+                if unwraps_lock(body) {
+                    found.push(path.display().to_string());
+                }
+            }
+        }
+        assert!(found.is_empty(), "{found:?}");
+    }
+}
