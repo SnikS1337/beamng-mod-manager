@@ -39,10 +39,10 @@ pub use download::{
 };
 pub use install::{
     BAD_SUFFIX, EXE_NAME, InstallError, NEW_SUFFIX, NO_RIGHTS, OLD_SUFFIX, PrepareOptions,
-    PreparedUpdate, check_writable, cleanup, commit, commit_with, extract_exe,
-    is_temporary_location, looks_like_exe, overwrite_file, prepare_update, read_skipped,
-    restore_in_place, rollback, rollback_from_running, stage, swap, swap_with, write_in_place,
-    write_in_place_with, write_skipped,
+    PreparedUpdate, check_writable, cleanup, cleanup_leftovers, cleanup_update_dir, commit,
+    commit_with, extract_exe, is_temporary_location, looks_like_exe, overwrite_file,
+    prepare_update, read_skipped, restore_in_place, rollback, rollback_from_running, stage, swap,
+    swap_with, write_in_place, write_in_place_with, write_skipped,
 };
 pub use local_feed::LocalFeedTransport;
 pub use manifest::{

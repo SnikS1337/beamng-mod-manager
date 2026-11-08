@@ -174,7 +174,10 @@ fn check_update(runtime: &Mutex<AppUpdateRuntime>) -> AppUpdateDto {
         ) {
             return dto(guard.state.clone());
         }
-        guard.cancel.reset();
+        // Свой токен, а не reset() старого: старый держит отменённая загрузка, и
+        // reset() «оживлял» её — она докачивала и ставила «готово к перезапуску»
+        // вопреки отмене.
+        guard.cancel = bmm_app_release::CancelToken::new();
         guard.state.stage = UpdateStage::Checking;
         guard.state.error = None;
         (
@@ -365,6 +368,8 @@ pub async fn app_update_cancel(
         return Ok(dto(guard.state.clone()));
     };
     guard.cancel.cancel();
+    // Отменённая попытка больше не наша: её итог, если поток проснётся, не пишем.
+    guard.attempt = guard.attempt.wrapping_add(1);
     guard.prepared = None;
     guard.state.stage = UpdateStage::Failed;
     guard.state.error = Some(message.to_string());
@@ -703,7 +708,7 @@ pub fn remember_rolled_back(skipped_path: &std::path::Path) {
 
 /// Окно показалось: сказать установщику «запустилась» и убрать прежний exe и скачанное.
 /// До этого из них возвращали бы прежнюю версию.
-pub fn on_healthy(update_dir: PathBuf) {
+pub fn on_healthy(update_dir: PathBuf, runtime: Option<Arc<Mutex<AppUpdateRuntime>>>) {
     if let Some(parent) = after_update_parent() {
         StartedSignal::set(parent);
     }
@@ -717,8 +722,26 @@ pub fn on_healthy(update_dir: PathBuf) {
         }
         // Установщик выходит сразу после сигнала; даём ему отпустить свой exe.
         std::thread::sleep(Duration::from_secs(3));
-        bmm_app_release::cleanup(&exe, &update_dir);
+        bmm_app_release::cleanup_leftovers(&exe);
+        clean_update_dir(&update_dir, runtime.as_deref());
     });
+}
+
+/// Папку обновления убираем, только если в неё сейчас ничего не качается и не лежит
+/// готовое. Раньше уборка через 3 с после запуска удаляла и свежую загрузку, начатую
+/// сразу при старте. Замок держим на время уборки: загрузка не начнётся посреди неё.
+fn clean_update_dir(update_dir: &Path, runtime: Option<&Mutex<AppUpdateRuntime>>) -> bool {
+    let guard = runtime.map(lock_runtime);
+    if guard.as_ref().is_some_and(|guard| {
+        matches!(
+            guard.state.stage,
+            UpdateStage::Downloading | UpdateStage::ReadyToRestart
+        )
+    }) {
+        return false;
+    }
+    bmm_app_release::cleanup_update_dir(update_dir);
+    true
 }
 
 #[cfg(windows)]
@@ -1028,6 +1051,76 @@ mod tests {
             Some("Загрузка обновления отменена.")
         );
         assert!(result.state.manifest.is_some(), "описание не теряется");
+    }
+
+    #[test]
+    fn startup_cleanup_leaves_a_download_alone() {
+        // Уборка через 3 с после запуска удаляла и свежую загрузку обновления.
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = update_runtime(
+            &temp,
+            Arc::new(SlowTransport {
+                calls: Arc::new(AtomicUsize::new(0)),
+                stop: Arc::new(AtomicBool::new(true)),
+            }),
+        );
+        let dir = temp.path().join("update");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("update-1.zip.part"), b"x").unwrap();
+        for stage in [UpdateStage::Downloading, UpdateStage::ReadyToRestart] {
+            lock_runtime(&runtime).state.stage = stage;
+            assert!(!clean_update_dir(&dir, Some(&runtime)), "{stage:?}");
+            assert!(dir.join("update-1.zip.part").exists());
+        }
+        lock_runtime(&runtime).state.stage = UpdateStage::Available;
+        assert!(clean_update_dir(&dir, Some(&runtime)));
+        assert!(!dir.exists(), "старое скачанное убрано");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(
+            clean_update_dir(&dir, None),
+            "без обновления программы — как раньше"
+        );
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn cancelled_download_does_not_come_back_after_a_new_check() {
+        // Отменили загрузку, нажали «Проверить», пока старый поток ещё ждал сеть:
+        // раньше проверка сбрасывала общий токен, поток докачивал и ставил «готово
+        // к перезапуску» вопреки отмене.
+        let temp = tempfile::tempdir().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = update_runtime(
+            &temp,
+            Arc::new(SlowTransport {
+                calls: calls.clone(),
+                stop: stop.clone(),
+            }),
+        );
+        let old = {
+            let mut guard = lock_runtime(&runtime);
+            guard.attempt = 7;
+            guard.cancel.clone()
+        };
+        // Как команда «Отменить».
+        {
+            let mut guard = lock_runtime(&runtime);
+            guard.cancel.cancel();
+            guard.attempt = guard.attempt.wrapping_add(1);
+            guard.state.stage = UpdateStage::Failed;
+        }
+        // Проверка после отмены (сеть проверки упадёт — не важно).
+        let _ = check_update(&runtime);
+        assert!(
+            old.is_cancelled(),
+            "токен отменённой загрузки остаётся отменённым"
+        );
+        assert!(
+            !lock_runtime(&runtime).cancel.is_cancelled(),
+            "у новой проверки свой токен"
+        );
+        let _ = stop;
     }
 
     #[test]
