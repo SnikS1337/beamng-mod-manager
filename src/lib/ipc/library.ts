@@ -46,6 +46,10 @@ const KINDS: ModKind[] = ["vehicle", "level", "sound", "script", "unknown"];
 
 let mockLibrary: LibrarySnapshot | null = null;
 const mockDeletedCards = new Map<string, ModCardDto>();
+/** Демо: страница есть у большинства модов и у всех, для которых нашлось обновление. */
+function mockHasPage(index: number): boolean {
+  return index % 4 !== 3 || (index >= 1 && index <= 5);
+}
 /** Где стояла удалённая карточка: после какой (или с какого места) — как в программе,
  *  где запись библиотеки живёт, пока тост удаления не закрыт. */
 const mockDeletedPlace = new Map<string, string[]>();
@@ -134,8 +138,10 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
         text: index % 7 === 0 ? "0.38 — у вас 0.39, может не работать" : "0.39, как у вас",
         differs: index % 7 === 0,
       },
-      update: index % 17 === 0 ? "likely" : "none",
-      updateVersion: index % 17 === 0 ? `2.${index % 5}` : null,
+      // Демо: обновления — у тех же модов, что в демо-разделе «Обновления»
+      // (mock-1…mock-5; у mock-3 сайт «не открывается»).
+      update: index >= 1 && index <= 5 ? "likely" : "none",
+      updateVersion: index >= 1 && index <= 5 ? `2.${index}` : null,
       unchecked: index % 11 === 0,
       pending: "none",
       fromGameRepo: index % 13 === 0,
@@ -147,7 +153,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
       group: index === 1 ? ["mock-6"] : [],
       groupConflict: index === 1,
       // Демо: у части модов есть страница — на карточке видна кнопка «Открыть сайт».
-      hasPage: index % 4 !== 3,
+      hasPage: mockHasPage(index),
       role: index % 5 === 2 ? "addon" : index % 5 === 3 ? "map" : "vehicle",
     };
   });
@@ -231,7 +237,7 @@ export async function modDetails(id: string): Promise<ModDetails> {
     previewUrl: null,
     // Как у карточки демо (hasPage): у части модов страница есть.
     binding:
-      index % 4 !== 3
+      mockHasPage(index)
         ? { source: "modland", url: `https://example.com/mods/${index}`, confirmed: index % 2 === 0 }
         : null,
     checkingDeclined: false,

@@ -87,3 +87,30 @@ export function filterAndSort(cards: SearchCard[], filter: SearchFilter): Search
   }
   return result;
 }
+
+/** Что показать в результатах поиска. */
+export type ResultsView =
+  /** Ещё ничего не пришло — заготовки. */
+  | "loading"
+  /** Поиск закончен, ничего нет. */
+  | "nothing"
+  /** Под фильтр ничего, но сайты ещё отвечают — не «ничего не подошло», а «ждём». */
+  | "filteredWaiting"
+  /** Поиск закончен, а под фильтр ничего. */
+  | "filteredEmpty"
+  | "grid"
+  /** Ещё не искали. */
+  | "idle";
+
+export function resultsView(state: {
+  searching: boolean;
+  searched: boolean;
+  error: boolean;
+  total: number;
+  shown: number;
+}): ResultsView {
+  if (state.searching && state.total === 0) return "loading";
+  if (state.total === 0) return state.searched && !state.searching && !state.error ? "nothing" : "idle";
+  if (state.shown === 0) return state.searching ? "filteredWaiting" : "filteredEmpty";
+  return "grid";
+}

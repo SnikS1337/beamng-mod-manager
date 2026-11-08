@@ -19,8 +19,14 @@
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import { DropdownMenu } from "bits-ui";
   import { expectDownload } from "#lib/ipc/incoming.js";
-  import { downloadOpen, downloadOpenBatch, type DownloadRequest } from "#lib/ipc/download.js";
-  import { onDestroy, onMount } from "svelte";
+  import { downloadOpen, downloadOpenBatch } from "#lib/ipc/download.js";
+  import {
+    findingOf,
+    openUpdate as openUpdateShared,
+    requestOf,
+    type UpdateDeps,
+  } from "#lib/features/updates/startUpdate.js";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { sourceName } from "#lib/ipc/search.js";
   import { formatAgo, formatSize, formatWhen, plural } from "#lib/features/garage/format.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
@@ -142,6 +148,36 @@
     updateHeadline(counts.available, snapshot.sites, snapshot.lastChecked, snapshot.coverage),
   );
   const failed = $derived(failedSites(snapshot.sites));
+
+  // «Обновить» из гаража, когда сайт обновления не открывается: /updates?update=<мод>.
+  // Здесь тот же вопрос, что по кнопке в списке: скачать с другого сайта или поискать.
+  let askedUpdate: string | null = null;
+  $effect(() => {
+    const modId = page.url.searchParams.get("update");
+    if (!modId || modId === askedUpdate || loading) return;
+    askedUpdate = modId;
+    void untrack(() => askFromGarage(modId));
+  });
+
+  async function askFromGarage(modId: string) {
+    const finding = findingOf(snapshot, modId);
+    if (!finding) {
+      toasts.show("Обновления у этого мода уже нет");
+      return;
+    }
+    // Вопрос показывается у находки во вкладке «Доступны». Скрытую человек всё же
+    // решил обновить — открываем как есть.
+    if (!snapshot.findings.some((item) => item.modId === modId)) {
+      await openUpdate(finding);
+      return;
+    }
+    if (filter !== "available") setTab("available");
+    await update(finding);
+    await tick();
+    document
+      .querySelector(`[data-finding-id="${CSS.escape(modId)}"]`)
+      ?.scrollIntoView({ block: "center" });
+  }
 
   // «Проверить обновления сейчас» из палитры команд: /updates?check=1
   let askedCheck = false;
@@ -557,17 +593,6 @@
     await openExternal(url);
   }
 
-  function requestOf(finding: UpdateFinding): DownloadRequest {
-    return {
-      modName: finding.modName,
-      installedVersion: finding.installedVersion,
-      latestVersion: finding.latestVersion,
-      pageUrl: finding.url,
-      previewUrl: finding.previewUrl ?? null,
-      role: finding.role ?? null,
-      modId: finding.modId,
-    };
-  }
 
   // «Обновить все» — только уверенные обновления: «возможно» сначала смотрит человек.
   const sure = $derived(snapshot.findings.filter((finding) => finding.status === "likely"));
@@ -651,19 +676,16 @@
     }
   }
 
+  const updateDeps: UpdateDeps = {
+    openWindow: downloadOpen,
+    openBrowser: openExternal,
+    expectDownload,
+    toast: (text) => toasts.show(text),
+  };
+
   /** Окно загрузки; если оно недоступно — браузер и наблюдение за «Загрузками». */
   async function openUpdate(finding: UpdateFinding) {
-    try {
-      await downloadOpen(requestOf(finding));
-      return;
-    } catch {
-      // Ниже — прежний путь: системный браузер и «Загрузки».
-    }
-    if (!(await openExternal(finding.url))) return;
-    await expectDownload();
-    toasts.show(
-      "Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить",
-    );
+    await openUpdateShared(finding, updateDeps);
   }
 
   function progressText(current: UpdateProgress | null = run.progress): string {
@@ -898,7 +920,7 @@
         {/if}
         {#each filter === "available" ? snapshot.findings : snapshot.hidden as finding (finding.modId)}
           {@const possible = finding.status !== "likely"}
-          <article class="card">
+          <article class="card" data-finding-id={finding.modId}>
             <div class="photo">
               {#if finding.previewUrl && finding.role !== "addon"}
                 <img src={finding.previewUrl} alt="" loading="lazy" />
