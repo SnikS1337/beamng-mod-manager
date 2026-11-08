@@ -217,19 +217,32 @@ fn is_download_source(
 }
 
 #[tauri::command]
-pub async fn incoming_discard(work_dir: String) -> Result<(), AppError> {
+pub async fn incoming_discard(
+    state: tauri::State<'_, Arc<AppState>>,
+    work_dir: String,
+) -> Result<(), AppError> {
     let root = incoming_root();
     let path = PathBuf::from(&work_dir);
-    let safe = path.starts_with(&root)
+    if !discard_allowed(&root, &path) {
+        return Err(AppError::new("path", "Недопустимая временная папка."));
+    }
+    // В очереди к библиотеке: установка из этой папки, если идёт, сначала закончится —
+    // иначе папку стирали у неё из-под ног.
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = state.load_guard();
+        let _ = fs::remove_dir_all(path);
+    })
+    .await
+    .map_err(|error| AppError::new("task", error.to_string()))
+}
+
+fn discard_allowed(root: &Path, path: &Path) -> bool {
+    path.starts_with(root)
         && path != root
         && !path
             .components()
-            .any(|part| matches!(part, std::path::Component::ParentDir));
-    if !safe {
-        return Err(AppError::new("path", "Недопустимая временная папка."));
-    }
-    let _ = fs::remove_dir_all(path);
-    Ok(())
+            .any(|part| matches!(part, std::path::Component::ParentDir))
 }
 
 fn inspect_paths(state: &AppState, paths: &[String]) -> Result<Vec<IncomingArchiveDto>, AppError> {
@@ -759,6 +772,20 @@ fn unique_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_own_work_folders_are_discarded() {
+        let root = Path::new("/data/incoming");
+        assert!(discard_allowed(root, Path::new("/data/incoming/abc")));
+        assert!(!discard_allowed(root, root), "саму папку не стираем");
+        assert!(!discard_allowed(root, Path::new("/data/incoming/../mods")));
+        assert!(!discard_allowed(root, Path::new("/data/mods")));
+        // Стирание ждёт очереди к библиотеке: установка из папки сначала закончится.
+        let source = include_str!("incoming.rs");
+        let body = &source[source.find("pub async fn incoming_discard(").unwrap()..];
+        let body = &body[..body.find("fn discard_allowed").unwrap()];
+        assert!(body.find("load_guard()").unwrap() < body.find("remove_dir_all").unwrap());
+    }
 
     /// Архив прошёл проверку окна: только такой можно ставить.
     fn checked_source(path: &Path) {

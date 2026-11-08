@@ -63,6 +63,13 @@ describe("обновление с сайта, который не открыва
     expect(text.offer).toBe("Это обновление есть на STMods — версия 1.3. Скачать оттуда?");
   });
 
+  it("на другом сайте другая версия — так и говорим, а не «это обновление»", () => {
+    const plan = planUpdate(finding({ siteDown: blocked, alternatives: [alt("stmods", "1.2")] }));
+    expect(askText(finding({ siteDown: blocked }), plan, siteName).offer).toBe(
+      "На STMods есть версия 1.2 (здесь — 1.3). Скачать оттуда?",
+    );
+  });
+
   it("версия на другом сайте не подписана — без неё", () => {
     const plan = planUpdate(finding({ siteDown: blocked, alternatives: [alt("stmods", null)] }));
     expect(askText(finding({ siteDown: blocked }), plan, siteName).offer).toBe(

@@ -55,8 +55,18 @@ export function askText(
   const note = finding.siteDown?.note ?? "";
   switch (plan.kind) {
     case "askAlternative": {
-      const version = plan.alternative.latestVersion ? ` — версия ${plan.alternative.latestVersion}` : "";
-      return { title, note, offer: `Это обновление есть на ${siteName(plan.alternative.source)}${version}. Скачать оттуда?` };
+      const other = plan.alternative.latestVersion;
+      const site = siteName(plan.alternative.source);
+      // Другой сайт может держать другую версию: не называем её «этим обновлением».
+      if (other && finding.latestVersion && other !== finding.latestVersion) {
+        return {
+          title,
+          note,
+          offer: `На ${site} есть версия ${other} (здесь — ${finding.latestVersion}). Скачать оттуда?`,
+        };
+      }
+      const version = other ? ` — версия ${other}` : "";
+      return { title, note, offer: `Это обновление есть на ${site}${version}. Скачать оттуда?` };
     }
     case "askSearch":
       return { title, note, offer: "На других сайтах этот мод ещё не искали. Поискать?" };

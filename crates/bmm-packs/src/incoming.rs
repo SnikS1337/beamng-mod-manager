@@ -1063,6 +1063,10 @@ pub(crate) fn repack(
     // сжатия: переупаковка 36 МБ занимала ~40 с, теперь — доли секунды.
     let mut archive = crate::zip_index::open_archive(source).map_err(|error| error.to_string())?;
     let mut copied = 0usize;
+    // Одно имя — одна запись. Две записи могли прийти к одному имени («Wrapper/a» и
+    // «wrapper/a», или повтор в самом архиве): вторая копировала первую, а архив с
+    // повтором имени не собирался вовсе.
+    let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in &index.entries {
         if cancel.load(Ordering::Relaxed) {
             return Err("отменено".to_string());
@@ -1073,6 +1077,9 @@ pub(crate) fn repack(
         };
         let rest = rest.as_str();
         if rest.is_empty() || crate::inspect::is_unsafe_entry_path(rest) {
+            continue;
+        }
+        if !written.insert(rest.to_lowercase()) {
             continue;
         }
         budget.add(entry.size).map_err(|error| error.to_string())?;
@@ -1459,6 +1466,20 @@ mod tests {
             repacked_names(&[
                 ("./Wrapper/vehicles/car/a.jbeam", b"x"),
                 ("./Wrapper/vehicles/car/info.json", b"{}"),
+            ]),
+            vec!["vehicles/car/a.jbeam", "vehicles/car/info.json"]
+        );
+    }
+
+    #[test]
+    fn wrapper_in_two_cases_does_not_break_the_repack() {
+        // «Wrapper/…» и «wrapper/…» приходят к одному имени: раньше вторая запись
+        // ломала сборку архива (повтор имени), и мод не ставился.
+        assert_eq!(
+            repacked_names(&[
+                ("Wrapper/vehicles/car/a.jbeam", b"x"),
+                ("wrapper/vehicles/car/a.jbeam", b"y"),
+                ("Wrapper/vehicles/car/info.json", b"{}"),
             ]),
             vec!["vehicles/car/a.jbeam", "vehicles/car/info.json"]
         );
