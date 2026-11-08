@@ -131,3 +131,53 @@ export function chipText(
   }
   return `Скачиваются ${running.length} ${plural(running.length, "мод", "мода", "модов")}`;
 }
+
+/**
+ * Ход обновления для карточки мода: идёт ли загрузка для этого мода и сколько
+ * процентов. `percent: null` — сайт не сказал размер, полоска «бежит».
+ */
+export function modProgress(
+  jobs: DownloadJob[],
+  known: Record<string, Tracked>,
+  modId: string,
+): { percent: number | null } | null {
+  const job = downloading(jobs)
+    .filter((item) => item.request?.modId === modId)
+    .at(-1);
+  if (!job) return null;
+  const progress = known[job.path]?.progress;
+  const total = progress?.total && progress.total > 0 ? progress.total : null;
+  if (!progress || total === null) return { percent: null };
+  return { percent: Math.min(100, Math.floor((progress.received / total) * 100)) };
+}
+
+/**
+ * Общий ход всех загрузок — для кнопки на панели задач. Размер известен не у всех —
+ * процента нет (полоса «бежит»); все стоят — пауза.
+ */
+export function overallProgress(
+  jobs: DownloadJob[],
+  known: Record<string, Tracked>,
+  now: number,
+): { percent: number | null; stalled: boolean } | null {
+  const active = downloading(jobs);
+  if (active.length === 0) return null;
+  let received = 0;
+  let total = 0;
+  let sized = true;
+  let moving = false;
+  for (const job of active) {
+    const tracked = known[job.path];
+    const size = tracked?.progress.total;
+    if (!tracked || !size || size <= 0) sized = false;
+    else {
+      received += Math.min(tracked.progress.received, size);
+      total += size;
+    }
+    if (!tracked || !viewOf(job, known, now)?.stalled) moving = true;
+  }
+  return {
+    percent: sized && total > 0 ? Math.min(100, Math.floor((received / total) * 100)) : null,
+    stalled: !moving,
+  };
+}

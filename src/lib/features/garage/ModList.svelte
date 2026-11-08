@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { arrival } from "#lib/shell/arrival.svelte.js";
   import { toggleLabel } from "./a11y";
   import type { ClickKeys } from "./selection";
   import Car from "phosphor-svelte/lib/Car";
@@ -12,6 +13,7 @@
   import { freshReveal, revealScroll, typeLabel, typeTag, type RevealRequest } from "./view";
   import { tick, untrack } from "svelte";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
+  import { rollIn } from "#lib/shell/transitions.js";
 
   let {
     items,
@@ -120,6 +122,7 @@
              перетекает в строку, при фильтре строки переезжают. -->
         <div
           class="row flow-card"
+          class:arrive-target={arrival.isLanded(mod.fileName)}
           class:selected={selectedIds.includes(mod.id)}
           class:sleeping={!mod.enabled && !mod.deleted}
           style={`top:${(start + offset) * ROW}px; --flow:${flowName(mod.id)}`}
@@ -163,7 +166,9 @@
             <small>{mod.fileName}</small>
           </span>
           <span class="type-cell"><span class="kind-tag {tag}">{typeLabel(tag)}</span></span>
-          <span class="version-cell mono" class:fresh={version?.fresh}>{version?.text ?? "—"}</span>
+          <span class="version-cell mono" class:fresh={version?.fresh}>
+            {#key version?.text}<span class="roll" in:rollIn>{version?.text ?? "—"}</span>{/key}
+          </span>
           <span class="size-cell muted">{formatSize(mod.sizeBytes)}</span>
           <span class="states">
             {#if status}<span class="status {status.tone}">{status.text}</span>{/if}

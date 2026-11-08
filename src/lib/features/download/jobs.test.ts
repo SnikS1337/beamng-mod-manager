@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { DownloadJob, DownloadRequest } from "#lib/ipc/download.js";
-import { chipText, closeQuestion, jobForPage, jobRows, restarted, track, viewOf } from "./jobs";
+import {
+  chipText,
+  closeQuestion,
+  jobForPage,
+  jobRows,
+  modProgress,
+  overallProgress,
+  restarted,
+  track,
+  viewOf,
+} from "./jobs";
+import { STALL_AFTER_MS } from "./progress";
 
 function request(name: string): DownloadRequest {
   return {
@@ -137,5 +148,70 @@ describe("тот же файл скачали снова", () => {
     expect(restarted([again], [again]), "та же загрузка идёт дальше").toEqual([]);
     expect(restarted([], [again])).toEqual([again.path]);
     expect(restarted([again], [{ ...again, state: "done" }])).toEqual([]);
+  });
+});
+
+describe("ход обновления на карточке мода", () => {
+  const forMod = (name: string, modId: string): DownloadJob => ({
+    ...job(name),
+    request: { ...request(name), modId },
+  });
+
+  it("загрузка этого мода — проценты; чужая — ничего", () => {
+    const car = forMod("car", "car-id");
+    const known = track({}, progress(car.path, 250, 1000), 0);
+    expect(modProgress([car], known, "car-id")).toEqual({ percent: 25 });
+    expect(modProgress([car], known, "other")).toBeNull();
+  });
+
+  it("размер неизвестен или хода ещё нет — полоска «бежит»", () => {
+    const car = forMod("car", "car-id");
+    expect(modProgress([car], {}, "car-id")).toEqual({ percent: null });
+    const known = track({}, progress(car.path, 250, null), 0);
+    expect(modProgress([car], known, "car-id")).toEqual({ percent: null });
+  });
+
+  it("скачанная или упавшая загрузка полоску не держит", () => {
+    const done = { ...forMod("car", "car-id"), state: "done" as const };
+    const failed = { ...forMod("car", "car-id"), state: "failed" as const };
+    expect(modProgress([done, failed], {}, "car-id")).toBeNull();
+  });
+
+  it("больше размера файла полоска не растёт", () => {
+    const car = forMod("car", "car-id");
+    const known = track({}, progress(car.path, 1500, 1000), 0);
+    expect(modProgress([car], known, "car-id")).toEqual({ percent: 100 });
+  });
+});
+
+describe("общий ход загрузок для панели задач", () => {
+  it("складывает байты всех загрузок", () => {
+    const a = job("a");
+    const b = job("b");
+    let known = track({}, progress(a.path, 100, 1000), 0);
+    known = track(known, progress(b.path, 900, 1000), 0);
+    expect(overallProgress([a, b], known, 0)).toEqual({ percent: 50, stalled: false });
+  });
+
+  it("у одной размер неизвестен — без процента", () => {
+    const a = job("a");
+    const b = job("b");
+    let known = track({}, progress(a.path, 100, 1000), 0);
+    known = track(known, progress(b.path, 100, null), 0);
+    expect(overallProgress([a, b], known, 0)).toEqual({ percent: null, stalled: false });
+  });
+
+  it("стоят все — пауза; движется хоть одна — не пауза", () => {
+    const a = job("a");
+    const b = job("b");
+    let known = track({}, progress(a.path, 100, 1000), 0);
+    known = track(known, progress(b.path, 100, 1000), 0);
+    expect(overallProgress([a, b], known, STALL_AFTER_MS)?.stalled).toBe(true);
+    known = track(known, progress(b.path, 200, 1000), STALL_AFTER_MS - 1);
+    expect(overallProgress([a, b], known, STALL_AFTER_MS)?.stalled).toBe(false);
+  });
+
+  it("ничего не качается — ничего", () => {
+    expect(overallProgress([job("a", "done")], {}, 0)).toBeNull();
   });
 });

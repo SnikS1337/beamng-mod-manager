@@ -7,7 +7,7 @@
   import { groupMembers, isShown, visibleCards } from "./duplicates";
   import { libraryView, staleError } from "./libraryView";
   import { InFlight, liveCard } from "./inflight";
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import {
     listenUpdates,
@@ -86,6 +86,7 @@
     type Selection,
   } from "./selection";
   import { motion } from "#lib/shell/motion.svelte.js";
+  import { arrival } from "#lib/shell/arrival.svelte.js";
   import BulkBar from "./BulkBar.svelte";
 
   type Filter = "all" | "disabled" | "updates" | "unchecked" | "deleted";
@@ -175,6 +176,7 @@
 
   onMount(() => {
     void load();
+    const detachArrival = arrival.attach();
     const onLibraryChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ fileNames?: string[] }>).detail;
       void refreshAndSelect(detail?.fileNames ?? []);
@@ -206,6 +208,7 @@
       stopUpdates?.();
       stopTitles?.();
       window.removeEventListener("bmm:library-changed", onLibraryChanged);
+      detachArrival();
     };
   });
 
@@ -695,20 +698,29 @@
   }
 
   async function refreshAndSelect(fileNames: string[]) {
-    await load(true);
-    if (!snapshot) return;
-    const last = fileNames.at(-1);
-    if (!last) return;
-    const card = snapshot.mods.find(
-      (mod) => mod.fileName.toLowerCase() === last.toLowerCase(),
-    );
-    if (!card) return;
-    filter = "all";
-    query = "";
-    // Иначе машина, поставленная при фильтре «Карты», так и не видна.
-    if (typeFilter !== "all" && !matchesType(card, typeFilter)) typeFilter = "all";
-    picked = selectOnly(card.id);
-    reveal = nextReveal(reveal, card.id);
+    try {
+      await load(true);
+      if (!snapshot) return;
+      const last = fileNames.at(-1);
+      if (!last) return;
+      const card = snapshot.mods.find(
+        (mod) => mod.fileName.toLowerCase() === last.toLowerCase(),
+      );
+      if (!card) return;
+      filter = "all";
+      query = "";
+      // Иначе машина, поставленная при фильтре «Карты», так и не видна.
+      if (typeFilter !== "all" && !matchesType(card, typeFilter)) typeFilter = "all";
+      picked = selectOnly(card.id);
+      reveal = nextReveal(reveal, card.id);
+      // Сетка прокручивается к карточке и дорисовывает её ряд — тогда она на месте.
+      await tick();
+      await tick();
+      arrival.landed(card.fileName);
+    } finally {
+      // Не нашли карточку — переход не ждёт её до тайм-аута.
+      arrival.landed();
+    }
   }
 
   async function pickArchive() {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { arrival } from "#lib/shell/arrival.svelte.js";
   import { toggleLabel } from "./a11y";
   import type { ClickKeys } from "./selection";
   import Car from "phosphor-svelte/lib/Car";
@@ -17,6 +18,9 @@
   import { typeLabel, typeTag } from "./view";
   import { modStatus } from "./status";
   import { flowName } from "#lib/shell/motion.svelte.js";
+  import { rollIn } from "#lib/shell/transitions.js";
+  import { liveDownloads } from "#lib/features/download/live.svelte.js";
+  import { modProgress } from "#lib/features/download/jobs.js";
 
   let {
     mod,
@@ -42,6 +46,8 @@
   let preview = $state<string | null>(null);
   let requested = $state("");
   let loaded = $state(false);
+  /** Для этого мода качается обновление: полоска на обложке. */
+  const download = $derived(modProgress(liveDownloads.jobs, liveDownloads.tracked, mod.id));
   /** Картинка не открылась (битый файл превью): показываем значок, а не пустое место. */
   let brokenPreview = $state<string | null>(null);
 
@@ -101,6 +107,7 @@
 
 <div
   class="card flow-card"
+  class:arrive-target={arrival.isLanded(mod.fileName)}
   class:selected
   class:selecting
   class:appear
@@ -163,6 +170,20 @@
         <span class="status {status.tone}">{status.text}</span>
       {/if}
     </span>
+    {#if download}
+      <span
+        class="loading"
+        class:unknown={download.percent === null}
+        role="progressbar"
+        aria-label="Скачивается обновление"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={download.percent ?? undefined}
+        title={download.percent === null ? "Скачивается обновление" : `Скачивается: ${download.percent} %`}
+      >
+        <span style={`--p:${(download.percent ?? 0) / 100}`}></span>
+      </span>
+    {/if}
     {#if copies}
       <span
         class="copies"
@@ -181,7 +202,11 @@
       <p class="name">{mod.name}</p>
       <p class="meta">
         {#if version}
-          <span class="mono version" class:fresh={version.fresh}>{version.text}</span>
+          <!-- Версия сменилась (нашли обновление или поставили его) — новая
+               прокручивается снизу. При первом показе карточки не играет. -->
+          {#key version.text}
+            <span class="mono version" class:fresh={version.fresh} in:rollIn>{version.text}</span>
+          {/key}
         {/if}
         <span>{formatSize(mod.sizeBytes)}</span>
         {#if mod.deleted}
@@ -313,6 +338,41 @@
     height: 140px;
     overflow: hidden;
     background: var(--surface-2);
+  }
+
+  /* Полоска хода обновления по низу обложки. Двигается только transform —
+     перерисовки нет, пока файл качается. */
+  .loading {
+    position: absolute;
+    inset: auto 0 0;
+    height: 3px;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--background) 55%, transparent);
+    pointer-events: none;
+  }
+
+  .loading > span {
+    position: absolute;
+    inset: 0;
+    background: var(--accent-brand);
+    transform: scaleX(var(--p));
+    transform-origin: left;
+    transition: transform var(--dur-3) var(--ease-out);
+  }
+
+  .loading.unknown > span {
+    width: 35%;
+    transform: none;
+    animation: loading-run 1.2s var(--ease-in-out) infinite;
+  }
+
+  @keyframes loading-run {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 290% 0;
+    }
   }
 
   .thumb img {

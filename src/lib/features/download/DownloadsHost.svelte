@@ -9,19 +9,16 @@
     downloadJobs,
     listenDownloadJobs,
     listenDownloadProgress,
-    type DownloadJob,
   } from "#lib/ipc/download.js";
-  import { chipText, closeQuestion, downloading, type Tracked, track } from "./jobs.js";
+  import { chipText, closeQuestion, downloading, track } from "./jobs.js";
+  import { liveDownloads } from "./live.svelte.js";
   import { runCloseHooks } from "#lib/shell/closeGuard.js";
   import { trapFocus } from "#lib/shell/focus.js";
   import { enterOverlay, takeEscape } from "#lib/shell/overlays.js";
 
   // Главное окно должно видеть, что в окне скачивания идёт загрузка: было — файл
   // качался в «Загрузки», а в программе об этом ни слова.
-  let jobs = $state<DownloadJob[]>([]);
-  let tracked = $state<Record<string, Tracked>>({});
-  let now = $state(Date.now());
-  const chip = $derived(chipText(jobs, tracked, now));
+  const chip = $derived(chipText(liveDownloads.jobs, liveDownloads.tracked, liveDownloads.now));
 
   /** Выход при идущей загрузке: вопрос «Прервать и выйти?». */
   let exitAsk = $state<string | null>(null);
@@ -65,19 +62,19 @@
     };
     void downloadJobs()
       .then((value) => {
-        if (!disposed && jobs.length === 0) jobs = value;
+        if (!disposed && liveDownloads.jobs.length === 0) liveDownloads.jobs = value;
       })
       .catch(() => {});
     keep(
       listenDownloadJobs((value) => {
-        jobs = value;
-        if (downloading(value).length === 0) tracked = {};
+        liveDownloads.jobs = value;
+        if (downloading(value).length === 0) liveDownloads.tracked = {};
       }),
     );
     keep(
       listenDownloadProgress((value) => {
-        tracked = track(tracked, value, Date.now());
-        now = Date.now();
+        liveDownloads.tracked = track(liveDownloads.tracked, value, Date.now());
+        liveDownloads.now = Date.now();
       }),
     );
     // Единственный обработчик закрытия окна: дела разделов (сохранить настройки)
@@ -85,7 +82,7 @@
     keep(
       getCurrentWindow().onCloseRequested(async (event) => {
         if (!exitConfirmed) {
-          const list = await downloadJobs().catch(() => jobs);
+          const list = await downloadJobs().catch(() => liveDownloads.jobs);
           const question = closeQuestion(list, []);
           if (question) {
             event.preventDefault();

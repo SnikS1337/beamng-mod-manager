@@ -127,6 +127,11 @@
   /* Движение: короткое и с мягким торможением. `.no-motion` обнуляет длительности. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Пружины: движение «доезжает» с лёгким перелётом, как в системных интерфейсах.
+     linear() считает браузер, на скорость не влияет. --ease-spring — для переездов
+     (перелёт ~1.5%), --ease-snap — для мелочей вроде галочки (~12%). */
+  --ease-spring: linear(0, 0.0526, 0.1734, 0.3211, 0.4698, 0.6047, 0.7189, 0.8104, 0.8803, 0.9313, 0.9667, 0.9899, 1.004, 1.0115, 1.0147, 1.0151, 1.0138, 1.0118, 1.0095, 1.0073, 1.0054, 1.0038, 1.0025, 1.0015, 1.0008, 1.0004, 1.0001, 0.9999, 1);
+  --ease-snap: linear(0, 0.0518, 0.1797, 0.3472, 0.5256, 0.694, 0.8392, 0.9544, 1.0377, 1.0912, 1.1189, 1.1263, 1.1191, 1.1025, 1.0812, 1.0587, 1.0375, 1.0194, 1.0051, 0.9947, 0.9882, 0.9849, 0.9841, 0.9851, 0.9872, 0.9899, 0.9927, 0.9954, 0.9977, 0.9994, 1.0007, 1.0015, 1);
   --dur-1: 120ms;
   --dur-2: 200ms;
   --dur-3: 320ms;
@@ -474,7 +479,7 @@ kbd {
 }
 
 [data-slot="switch-thumb"] {
-  transition: transform var(--dur-2) var(--ease-out);
+  transition: transform var(--dur-2) var(--ease-spring);
 }
 
 input[type="checkbox"] {
@@ -503,7 +508,7 @@ input[type="checkbox"]::after {
   border: solid currentColor;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg) scale(0);
-  transition: transform var(--dur-1) var(--ease-out);
+  transition: transform var(--dur-2) var(--ease-snap);
 }
 
 input[type="checkbox"]:checked {
@@ -756,7 +761,9 @@ html.flow-garage::view-transition-new(mods) {
    Переезжающая карточка не «двоится»: старый снимок прячем, новый не растягиваем,
    а открываем от левого верхнего угла, пока карточка меняет ширину. */
 ::view-transition-group(*.card) {
-  animation-duration: calc(var(--dur-3) + 60ms);
+  /* Переезд «доезжает» пружиной; чуть дольше, чтобы перелёт успел улечься. */
+  animation-duration: calc(var(--dur-3) + 100ms);
+  animation-timing-function: var(--ease-spring);
 }
 
 ::view-transition-old(*.card) {
@@ -785,9 +792,48 @@ html.flow-garage::view-transition-new(mods) {
   animation: flow-fade-out var(--dur-2) var(--ease-out) both;
 }
 
+/* Установленный мод «прилетает» из окна установки на место своей карточки
+   (arrival.svelte.ts). Окно и подложка гаснут, гараж под ними не мигает,
+   панель мода выезжает как обычно. */
+html.flow-arrive .arrive-source,
+html.flow-arrive .arrive-target {
+  view-transition-name: arrive;
+}
+
+html.flow-arrive .incoming-dialog {
+  view-transition-name: incoming;
+}
+
+html.flow-arrive .incoming-backdrop {
+  view-transition-name: incoming-backdrop;
+}
+
+html.flow-arrive .flow-body > aside {
+  view-transition-name: side;
+}
+
+html.flow-arrive::view-transition-group(arrive) {
+  animation-duration: calc(var(--dur-3) + 180ms);
+  animation-timing-function: var(--ease-spring);
+}
+
+/* Строка широкая и низкая, карточка — наоборот: оба снимка заполняют рамку
+   целиком, а не растягиваются по ширине. */
+html.flow-arrive::view-transition-old(arrive),
+html.flow-arrive::view-transition-new(arrive) {
+  height: 100%;
+  object-fit: cover;
+  animation-duration: calc(var(--dur-3) + 180ms);
+}
+
+html.flow-arrive::view-transition-old(incoming),
+html.flow-arrive::view-transition-old(incoming-backdrop) {
+  animation: flow-fade-out var(--dur-2) var(--ease-out) both;
+}
+
 /* Панель мода выезжает справа и уезжает обратно. */
 ::view-transition-new(side):only-child {
-  animation: flow-side-in var(--dur-3) var(--ease-out) both;
+  animation: flow-side-in calc(var(--dur-3) + 80ms) var(--ease-spring) both;
 }
 
 ::view-transition-old(side):only-child {
