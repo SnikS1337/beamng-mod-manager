@@ -163,7 +163,7 @@ pub async fn updates_confirm_page(
 ) -> Result<UpdatesSnapshotDto, AppError> {
     bmm_checks::confirm_page(state.library.as_ref(), &mod_id)
         .ok_or_else(|| AppError::new("pages", "Предложение страницы не найдено."))?;
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -173,7 +173,7 @@ pub async fn updates_reject_page(
 ) -> Result<UpdatesSnapshotDto, AppError> {
     bmm_checks::reject_page(state.library.as_ref(), &mod_id, Utc::now().fixed_offset())
         .ok_or_else(|| AppError::new("pages", "Предложение страницы не найдено."))?;
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }
 
 /// Снятые «Это другой мод» страницы, которые ещё можно вернуть кнопкой «Отменить».
@@ -237,7 +237,7 @@ pub async fn updates_unfollow(
     source: String,
 ) -> Result<UpdatesSnapshotDto, AppError> {
     unfollow(&state, &mod_id, &source)?;
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -247,7 +247,7 @@ pub async fn updates_refollow(
     source: String,
 ) -> Result<UpdatesSnapshotDto, AppError> {
     refollow(&state, &mod_id, &source)?;
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }
 
 /// «Страница пропала»: перестать следить за ней. `search_again` — разрешить поиск
@@ -273,7 +273,7 @@ pub async fn updates_forget_lost(
     search_again: bool,
 ) -> Result<UpdatesSnapshotDto, AppError> {
     forget_lost(&state, &mod_id, &source, search_again)?;
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }
 
 /// «Указать страницу» из панели мода: ссылка, которую вставил человек.
@@ -328,5 +328,5 @@ pub async fn updates_undo_page(
             "Предложение страницы не вернуть: мод удалён или за ним уже следят по другой странице.",
         ));
     }
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }

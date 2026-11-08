@@ -14,7 +14,7 @@ use url::Url;
 
 use crate::error::AppError;
 
-const WINDOW_LABEL: &str = "download";
+pub(crate) const WINDOW_LABEL: &str = "download";
 pub(crate) const PANEL_LABEL: &str = "download-panel";
 const SITE_LABEL: &str = "download-site";
 const SITE_X: f64 = 24.0;
@@ -390,7 +390,14 @@ pub async fn download_batch_goto(app: AppHandle, index: usize) -> Result<(), App
     open_request(app, request).await
 }
 
+/// Открытия окна по очереди. Два «Обновить» подряд шли одновременно: второе
+/// записывало свой мод в контекст, пока первое ещё создавало окно со своей
+/// страницей, — архив первого мода приписывался второму, а само второе открытие
+/// падало на «окно уже есть».
+static OPEN_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn open_request(app: AppHandle, request: DownloadRequest) -> Result<(), AppError> {
+    let _gate = OPEN_GATE.lock().await;
     let url = Url::parse(&request.page_url)
         .map_err(|_| AppError::new("url", "Некорректный адрес страницы мода."))?;
     if !page_url_allowed(&url) {
@@ -883,6 +890,22 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_opens_one_request_at_a_time() {
+        // Два «Обновить» подряд шли одновременно, и архив первого мода приписывался
+        // второму. Очередь — первым делом, до записи контекста.
+        let source = include_str!("download_window.rs");
+        let body = &source[source.find("async fn open_request(").unwrap()..];
+        let gate = body.find("OPEN_GATE.lock().await").unwrap();
+        let context = body.find("*CONTEXT.lock()").unwrap();
+        assert!(gate < context, "очередь до записи контекста");
+        // Окно загрузки не восстанавливает прошлое место и видимость.
+        let lib = include_str!("../lib.rs");
+        let denylist = &lib[lib.find(".with_denylist(").unwrap()..];
+        let denylist = &denylist[..denylist.find("])").unwrap()];
+        assert!(denylist.contains("download_window::WINDOW_LABEL"));
+    }
 
     #[test]
     fn download_name_stays_a_plain_file_name() {
