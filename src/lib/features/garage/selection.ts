@@ -74,6 +74,19 @@ export function keepVisible(current: Selection, visible: string[]): Selection {
   return { ids, anchor, checking: current.checking };
 }
 
+/**
+ * После удаления пачки. Выбор тот же, что был при нажатии, — снимаем его. Пока удаляли,
+ * человек выбрал другое — оставляем, только без удалённых.
+ */
+export function afterBulk(started: Selection, now: Selection, gone: string[]): Selection {
+  if (now === started) return EMPTY;
+  const removed = new Set(gone);
+  return keepVisible(
+    now,
+    now.ids.filter((id) => !removed.has(id)),
+  );
+}
+
 /** Выбран ровно один — показываем его панель. */
 export function single(current: Selection): string | null {
   return current.ids.length === 1 && !current.checking ? current.ids[0] : null;

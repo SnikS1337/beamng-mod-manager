@@ -22,7 +22,7 @@
   import { incomingQueue } from "./queue.svelte";
   import { trapFocus } from "#lib/shell/focus.js";
   import { pop, softFade } from "#lib/shell/transitions.js";
-  import { installable, preselected, suspiciousFiles, suspiciousText } from "./selection";
+  import { installable, preselected, suspiciousFiles, suspiciousText, undoAll } from "./selection";
 
   type CheckLevel = "ok" | "attention" | "blocked";
   interface Check {
@@ -304,25 +304,10 @@
         ? `${toastText(chosen, tickets.length, failures)} ${warnings[0]}`
         : toastText(chosen, tickets.length, failures);
       toasts.show(text, {
-        undo:
-          tickets.length > 0
-            ? async () => {
-                let problem: string | null = null;
-                for (let index = tickets.length - 1; index >= 0; index -= 1) {
-                  try {
-                    await incomingUndo(tickets[index]);
-                  } catch (reason) {
-                    problem ??= errorText(reason, "Не удалось проверить архив.");
-                  }
-                }
-                window.dispatchEvent(new CustomEvent("bmm:library-changed"));
-                if (problem) throw new Error(problem);
-                toasts.show("Установка отменена");
-              }
-            : undefined,
+        undo: tickets.length > 0 ? () => undoTickets(tickets) : undefined,
       });
     } catch (reason) {
-      toasts.show(errorText(reason, "Не удалось проверить архив."));
+      toasts.show(errorText(reason, "Не удалось установить моды."));
     } finally {
       installing = false;
       void pump();
@@ -330,14 +315,9 @@
   }
 
   async function undoTickets(tickets: IncomingTicket[]): Promise<void> {
-    let problem: string | null = null;
-    for (let index = tickets.length - 1; index >= 0; index -= 1) {
-      try {
-        await incomingUndo(tickets[index]);
-      } catch (reason) {
-        problem ??= errorText(reason, "Не удалось проверить архив.");
-      }
-    }
+    const problem = await undoAll(tickets, incomingUndo, (reason) =>
+      errorText(reason, "Не удалось отменить установку."),
+    );
     window.dispatchEvent(new CustomEvent("bmm:library-changed"));
     if (problem) throw new Error(problem);
     toasts.show("Установка отменена");

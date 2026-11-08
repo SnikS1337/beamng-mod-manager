@@ -16,7 +16,6 @@ export interface PaletteItem {
   label: string;
   hint: string;
   tag?: { text: string; tone: string };
-  keys?: string;
   action: PaletteAction;
 }
 

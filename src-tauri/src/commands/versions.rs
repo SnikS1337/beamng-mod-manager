@@ -325,13 +325,8 @@ fn restore_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), Ap
         .find(|version| version.backup.id == backup_id)
         .ok_or_else(|| AppError::new("not_found", "Такой копии нет."))?;
     undo_needs(state, backup_id)?;
-    let result = versions::restore_version(
-        &installer,
-        state.library.as_ref(),
-        &installed,
-        &version,
-        Utc::now().fixed_offset(),
-    );
+    let result =
+        versions::restore_version(&installer, state.library.as_ref(), &installed, &version);
     if result.success {
         Ok(())
     } else {

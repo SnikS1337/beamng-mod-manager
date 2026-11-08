@@ -11,11 +11,6 @@ export class StaleGuard {
     return ++this.#current;
   }
 
-  /** Сменился мод (контекст окна): идущая проверка — уже про другой мод. */
-  invalidate(): void {
-    this.#current += 1;
-  }
-
   isCurrent(token: number): boolean {
     return token === this.#current;
   }

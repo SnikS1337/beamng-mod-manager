@@ -1,5 +1,5 @@
 //! Самообновление программы: описание версии, сеть (локальная подделка и локальный HTTP-сервер), распаковка,
-//! подмена/откат, Unicode-пути, отмена. Процессы не запускаются.
+//! запись на место прежней версии и возврат, Unicode-пути, отмена. Процессы не запускаются.
 
 use std::collections::HashMap;
 use std::fs;
@@ -13,10 +13,9 @@ use bmm_app_release::{
     AppVersion, BAD_SUFFIX, CancelToken, DEFAULT_USER_AGENT, DownloadError, EXE_NAME, HttpResponse,
     HttpTransport, InstallError, LocalFeedTransport, MAX_MANIFEST_BYTES, MIN_SIZE, ManifestInput,
     NEW_SUFFIX, OLD_SUFFIX, PrepareOptions, ReqwestTransport, TransportError, UpdateDownloader,
-    UpdateManifest, UpdateStage, check, check_bytes, check_json, check_url, cleanup, commit_with,
-    evaluate, extract_exe, is_temporary_location, prepare_update, read_skipped, rollback,
-    rollback_from_running, stage, swap, swap_with, write_in_place, write_in_place_with,
-    write_skipped,
+    UpdateManifest, UpdateStage, check, check_bytes, check_json, check_url, cleanup_leftovers,
+    cleanup_update_dir, evaluate, extract_exe, is_temporary_location, prepare_update, read_skipped,
+    stage, write_in_place, write_in_place_with, write_skipped,
 };
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -745,146 +744,56 @@ fn extract_rejects_symlink_entry() {
 }
 
 #[test]
-fn swap_rollback_and_cleanup() {
-    let rig = Rig::new();
-    let new = rig.write_new("новая");
-    fs::write(suffixed(&rig.exe, OLD_SUFFIX), "совсем старая").unwrap();
-    fs::write(suffixed(&rig.exe, NEW_SUFFIX), "обрывок").unwrap();
-
-    assert!(swap(&rig.exe, &new).is_ok(), "встала");
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "новая");
-    assert_eq!(
-        fs::read_to_string(suffixed(&rig.exe, OLD_SUFFIX)).unwrap(),
-        "старая версия"
-    );
-    assert!(rollback(&rig.exe), "откат");
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-
-    assert!(swap(&rig.exe, &rig.root.path().join("нет.exe")).is_err());
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-
-    fs::write(suffixed(&rig.exe, OLD_SUFFIX), "x").unwrap();
-    fs::create_dir_all(rig.update_dir.join("0.1.30")).unwrap();
-    cleanup(&rig.exe, &rig.update_dir);
-    assert!(!suffixed(&rig.exe, OLD_SUFFIX).exists());
-    assert!(!rig.update_dir.exists(), "папка обновления убрана");
-}
-
-#[test]
-fn swap_copies_next_to_program_and_renames_only_there() {
+fn stage_puts_a_copy_next_to_the_program_and_leaves_it_alone() {
     let rig = Rig::new();
     let elsewhere = rig.root.path().join("elsewhere").join(EXE_NAME);
     fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
     fs::write(&elsewhere, "новая").unwrap();
+    fs::write(suffixed(&rig.exe, NEW_SUFFIX), "обрывок").unwrap();
 
-    let mut moves = Vec::new();
-    let result = swap_with(&rig.exe, &elsewhere, &mut |from, to| {
-        moves.push((from.to_path_buf(), to.to_path_buf()));
-        fs::rename(from, to)
-    });
-    assert!(result.is_ok(), "{result:?}");
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "новая");
-    assert!(
-        !suffixed(&rig.exe, NEW_SUFFIX).exists(),
-        "копия стала программой"
-    );
-    assert_eq!(moves.len(), 2, "{moves:?}");
-    let parent = rig.exe.parent().unwrap();
-    assert!(
-        moves
-            .iter()
-            .all(|(from, to)| from.parent() == Some(parent) && to.parent() == Some(parent)),
-        "переименования только рядом с exe: {moves:?}"
-    );
-    assert_eq!(moves[0], (rig.exe.clone(), suffixed(&rig.exe, OLD_SUFFIX)));
-    assert_eq!(moves[1], (suffixed(&rig.exe, NEW_SUFFIX), rig.exe.clone()));
-    assert!(elsewhere.exists(), "подготовленный файл не тронут");
-}
-
-#[test]
-fn swap_failure_returns_previous_version_and_removes_new() {
-    let rig = Rig::new();
-    let new = rig.write_new("новая");
-    let result = swap_with(&rig.exe, &new, &mut |from, to| {
-        if from.to_string_lossy().ends_with(NEW_SUFFIX) {
-            return Err(io::Error::other("файл занят"));
-        }
-        fs::rename(from, to)
-    });
-    let error = result.unwrap_err();
-    assert!(error.to_string().contains("не установилась"), "{error}");
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-    assert!(!suffixed(&rig.exe, NEW_SUFFIX).exists(), "копия убрана");
-}
-
-#[test]
-fn swap_without_rights_leaves_no_traces() {
-    let rig = Rig::new();
-    let new = rig.write_new("новая");
-    let error = swap_with(&rig.exe, &new, &mut |_, _| {
-        Err(io::Error::from(ErrorKind::PermissionDenied))
-    })
-    .unwrap_err();
-    assert!(error.to_string().contains("нет прав"), "{error}");
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-    assert!(!suffixed(&rig.exe, NEW_SUFFIX).exists());
-    assert!(!suffixed(&rig.exe, OLD_SUFFIX).exists());
-}
-
-#[test]
-fn failed_swap_reports_how_to_rename_back() {
-    let rig = Rig::new();
-    let new = rig.write_new("новая");
-    let mut first = true;
-    let error = swap_with(&rig.exe, &new, &mut |from, to| {
-        if first {
-            first = false;
-            return fs::rename(from, to);
-        }
-        Err(io::Error::other("занято"))
-    })
-    .unwrap_err();
-    let message = error.to_string();
-    assert!(
-        message.contains("BeamModManager.exe.old") && message.contains("обратно"),
-        "{message}"
-    );
+    assert!(stage(&rig.exe, &elsewhere).is_ok(), "подготовлено");
     assert_eq!(
-        fs::read_to_string(suffixed(&rig.exe, OLD_SUFFIX)).unwrap(),
-        "старая версия"
+        fs::read_to_string(suffixed(&rig.exe, NEW_SUFFIX)).unwrap(),
+        "новая",
+        "прежний обрывок заменён"
     );
+    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
+    assert!(elsewhere.exists(), "исходник не тронут");
 }
 
 #[test]
-fn swap_refuses_when_staged_place_is_a_directory() {
+fn stage_refuses_when_staged_place_is_a_directory() {
     let rig = Rig::new();
     let new = rig.write_new("новая");
     fs::create_dir_all(suffixed(&rig.exe, NEW_SUFFIX)).unwrap();
 
-    let error = swap(&rig.exe, &new).unwrap_err();
+    let error = stage(&rig.exe, &new).unwrap_err();
     assert!(
         matches!(error, InstallError::NoRights | InstallError::StageFailed(_)),
         "{error}"
     );
     assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-    assert!(
-        !suffixed(&rig.exe, OLD_SUFFIX).exists(),
-        "текущую не отодвигали"
-    );
 }
 
 #[test]
-fn swap_refuses_when_current_program_is_missing() {
+fn stage_refuses_when_a_side_is_missing() {
     let rig = Rig::new();
+    assert_eq!(
+        stage(&rig.exe, &rig.root.path().join("нет.exe")).unwrap_err(),
+        InstallError::PreparedMissing
+    );
     let new = rig.write_new("новая");
     fs::remove_file(&rig.exe).unwrap();
-    assert!(swap(&rig.exe, &new).is_err());
+    assert_eq!(
+        stage(&rig.exe, &new).unwrap_err(),
+        InstallError::CurrentMissing
+    );
     assert!(!rig.exe.exists());
     assert!(!suffixed(&rig.exe, NEW_SUFFIX).exists());
 }
 
 #[test]
-fn unicode_paths_survive_swap_and_rollback() {
+fn unicode_paths_survive_write_and_restore() {
     let rig = Rig::new();
     let directory = rig
         .root
@@ -897,10 +806,12 @@ fn unicode_paths_survive_swap_and_rollback() {
     let new = rig.root.path().join("обновление").join(EXE_NAME);
     fs::create_dir_all(new.parent().unwrap()).unwrap();
     fs::write(&new, "новая").unwrap();
+    let backup = rig.root.path().join("обновление").join("прежняя.exe");
 
-    assert!(swap(&exe, &new).is_ok(), "встала");
+    assert!(stage(&exe, &new).is_ok(), "подготовлено");
+    assert!(write_in_place(&new, &exe, &backup).is_ok(), "записано");
     assert_eq!(fs::read_to_string(&exe).unwrap(), "новая");
-    assert!(rollback(&exe), "откат");
+    assert!(bmm_app_release::restore_in_place(&backup, &exe), "вернули");
     assert_eq!(fs::read_to_string(&exe).unwrap(), "старая");
     assert!(is_temporary_location(&exe), "путь лежит во временной папке");
 }
@@ -978,63 +889,19 @@ fn interrupted_write_restores_backup_and_permission_error_is_clear() {
 }
 
 #[test]
-fn commit_failure_keeps_previous_and_removes_staged() {
-    let rig = Rig::new();
-    let new = rig.write_new("новая");
-    assert!(stage(&rig.exe, &new).is_ok(), "подготовлено");
-    let error = commit_with(&rig.exe, &mut |from, to| {
-        if from.to_string_lossy().ends_with(NEW_SUFFIX) {
-            return Err(io::Error::other("занято"));
-        }
-        fs::rename(from, to)
-    })
-    .unwrap_err();
-    assert!(error.to_string().contains("не установилась"), "{error}");
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-    assert!(!suffixed(&rig.exe, NEW_SUFFIX).exists());
-}
-
-#[test]
-fn rollback_from_running_puts_itself_into_bad() {
-    let rig = Rig::new();
-    let new = rig.write_new("новая");
-    assert!(swap(&rig.exe, &new).is_ok(), "встала");
-    fs::write(suffixed(&rig.exe, BAD_SUFFIX), "старый мусор").unwrap();
-
-    assert!(rollback_from_running(&rig.exe), "вернула");
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-    assert_eq!(
-        fs::read_to_string(suffixed(&rig.exe, BAD_SUFFIX)).unwrap(),
-        "новая"
-    );
-    assert!(!suffixed(&rig.exe, OLD_SUFFIX).exists());
-
-    cleanup(&rig.exe, &rig.update_dir);
-    assert!(!suffixed(&rig.exe, BAD_SUFFIX).exists());
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-}
-
-#[test]
-fn rollback_without_old_files_does_nothing() {
-    let rig = Rig::new();
-    assert!(!rollback_from_running(&rig.exe));
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-    assert!(!suffixed(&rig.exe, BAD_SUFFIX).exists());
-    assert!(!rollback(&rig.exe));
-    assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
-}
-
-#[test]
 fn cleanup_removes_leftovers_and_update_folder() {
     let rig = Rig::new();
     for suffix in [OLD_SUFFIX, NEW_SUFFIX, BAD_SUFFIX] {
         fs::write(suffixed(&rig.exe, suffix), "x").unwrap();
     }
     fs::create_dir_all(rig.update_dir.join("0.1.30").join("exe")).unwrap();
-    cleanup(&rig.exe, &rig.update_dir);
+    cleanup_leftovers(&rig.exe);
+    cleanup_update_dir(&rig.update_dir);
     assert_eq!(fs::read_dir(rig.exe.parent().unwrap()).unwrap().count(), 1);
     assert!(!rig.update_dir.exists());
-    cleanup(&rig.exe, &rig.update_dir);
+    // Повторная уборка ничего не ломает.
+    cleanup_leftovers(&rig.exe);
+    cleanup_update_dir(&rig.update_dir);
     assert_eq!(fs::read_to_string(&rig.exe).unwrap(), "старая версия");
 }
 

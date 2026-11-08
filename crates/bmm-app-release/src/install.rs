@@ -1,11 +1,9 @@
 //! Файловая часть обновления: распаковка exe из архива, подготовка рядом с
 //! программой, подмена и откат.
 //!
-//! Работающий exe нельзя перезаписать на Windows, поэтому есть два пути:
-//! старый — [`stage`] + [`commit`] (переименования `*.old` / `*.new`), и
-//! текущий — [`write_in_place`] из новой версии, когда прежняя уже вышла:
-//! файл остаётся тем же, прежняя версия лежит в копии `previous.exe`.
-//! Оба пути проверяются по отдельности, процессы в тестах не запускаются.
+//! Работающий exe нельзя перезаписать на Windows, поэтому новая версия пишет себя
+//! ([`write_in_place`]), когда прежняя уже вышла: файл остаётся тем же, прежняя версия
+//! лежит в копии `previous.exe`. Процессы в тестах не запускаются.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -61,16 +59,6 @@ pub enum InstallError {
     StageFailed(String),
     #[error("новую версию держит другая программа (антивирус?): {0}")]
     StagedBusy(String),
-    #[error("не удалось убрать старую копию: {0}")]
-    OldCleanupFailed(String),
-    #[error("не удалось отодвинуть текущую версию: {0}")]
-    MoveCurrentFailed(String),
-    #[error(
-        "обновление не установилось, и прежняя версия не вернулась: переименуйте {old} обратно в {current}"
-    )]
-    RollbackFailed { old: String, current: String },
-    #[error("новая версия не установилась: {0}")]
-    CommitFailed(String),
     #[error("не удалось сохранить прежнюю версию: {0}")]
     BackupFailed(String),
     #[error("новая версия не записалась: {0}")]
@@ -237,125 +225,6 @@ fn exclusive_probe(path: &Path) -> io::Result<()> {
     }
     let _file = options.open(path)?;
     Ok(())
-}
-
-/// Подмена: два быстрых переименования на одном диске — текущий → `*.old`,
-/// `*.new` → на его место; если второе не удалось, текущий возвращается.
-pub fn swap(current_exe: &Path, new_exe: &Path) -> Result<(), InstallError> {
-    stage(current_exe, new_exe)?;
-    commit(current_exe)
-}
-
-/// [`swap`] с подстановкой переименования (для проверки сбоев).
-pub fn swap_with(
-    current_exe: &Path,
-    new_exe: &Path,
-    move_file: &mut dyn FnMut(&Path, &Path) -> io::Result<()>,
-) -> Result<(), InstallError> {
-    stage(current_exe, new_exe)?;
-    commit_with(current_exe, move_file)
-}
-
-/// Подмена уже подготовленного `*.new`.
-pub fn commit(current_exe: &Path) -> Result<(), InstallError> {
-    let mut move_file = |from: &Path, to: &Path| fs::rename(from, to);
-    commit_with(current_exe, &mut move_file)
-}
-
-/// [`commit`] с подстановкой переименования (для проверки отката).
-pub fn commit_with(
-    current_exe: &Path,
-    move_file: &mut dyn FnMut(&Path, &Path) -> io::Result<()>,
-) -> Result<(), InstallError> {
-    let old = with_suffix(current_exe, OLD_SUFFIX);
-    let staged = with_suffix(current_exe, NEW_SUFFIX);
-    if !staged.is_file() {
-        return Err(InstallError::PreparedMissing);
-    }
-
-    if old.exists()
-        && let Err(error) = fs::remove_file(&old)
-    {
-        let _ = fs::remove_file(&staged);
-        return Err(InstallError::OldCleanupFailed(error.to_string()));
-    }
-
-    if let Err(error) = move_file(current_exe, &old) {
-        let _ = fs::remove_file(&staged);
-        return Err(if is_no_rights(&error) {
-            InstallError::NoRights
-        } else {
-            InstallError::MoveCurrentFailed(error.to_string())
-        });
-    }
-
-    match retry(|| move_file(&staged, current_exe), RETRY_ATTEMPTS) {
-        Ok(()) => Ok(()),
-        Err(failed) => {
-            let current_missing = !current_exe.exists();
-            if current_missing && move_file(&old, current_exe).is_err() {
-                return Err(InstallError::RollbackFailed {
-                    old: file_name(&old),
-                    current: file_name(current_exe),
-                });
-            }
-            let _ = fs::remove_file(&staged);
-            Err(InstallError::CommitFailed(failed.to_string()))
-        }
-    }
-}
-
-/// Вернуть прежнюю версию из `*.old` (новая не запустилась и уже закрылась).
-pub fn rollback(current_exe: &Path) -> bool {
-    let old = with_suffix(current_exe, OLD_SUFFIX);
-    if !old.is_file() {
-        return false;
-    }
-    retry(
-        || {
-            if current_exe.exists() {
-                fs::remove_file(current_exe)?;
-            }
-            fs::rename(&old, current_exe)
-        },
-        6,
-    )
-    .is_ok()
-}
-
-/// Вернуть прежнюю версию из самой новой, которая не смогла запуститься.
-/// Работающий exe удалить нельзя, но можно переименовать: он уходит в `*.bad`.
-pub fn rollback_from_running(current_exe: &Path) -> bool {
-    let old = with_suffix(current_exe, OLD_SUFFIX);
-    let bad = with_suffix(current_exe, BAD_SUFFIX);
-    if !old.is_file() || !current_exe.is_file() {
-        return false;
-    }
-
-    let moved = (|| {
-        if bad.exists() {
-            fs::remove_file(&bad)?;
-        }
-        fs::rename(current_exe, &bad)
-    })();
-    if moved.is_err() {
-        return false;
-    }
-
-    match fs::rename(&old, current_exe) {
-        Ok(()) => true,
-        Err(_) => {
-            let _ = fs::rename(&bad, current_exe);
-            false
-        }
-    }
-}
-
-/// Убрать `*.old`, `*.new`, `*.bad` и папку подготовки. Зовётся, когда версия
-/// уже показала окно: до этого `*.old` нужен для отката.
-pub fn cleanup(current_exe: &Path, update_dir: &Path) {
-    cleanup_leftovers(current_exe);
-    cleanup_update_dir(update_dir);
 }
 
 /// Прежний exe и неудавшиеся копии рядом с программой.

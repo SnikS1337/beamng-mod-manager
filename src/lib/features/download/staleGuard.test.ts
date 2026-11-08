@@ -4,17 +4,6 @@ import { describe, expect, it } from "vitest";
 import { StaleGuard } from "./staleGuard";
 
 describe("проверка архива и смена мода", () => {
-  it("ответ по архиву прошлого мода больше не текущий", () => {
-    const guard = new StaleGuard();
-    const first = guard.begin();
-    expect(guard.isCurrent(first)).toBe(true);
-    guard.invalidate();
-    expect(guard.isCurrent(first)).toBe(false);
-    const second = guard.begin();
-    expect(guard.isCurrent(second)).toBe(true);
-    expect(guard.isCurrent(first)).toBe(false);
-  });
-
   it("новая проверка вытесняет старую", () => {
     const guard = new StaleGuard();
     const first = guard.begin();
@@ -35,7 +24,7 @@ describe("окно скачивания", () => {
     // первого терялся, а окно закрывалось после установки второго.
     const handler = page.slice(page.indexOf("listenDownloadContext((value) =>"));
     const body = handler.slice(0, handler.indexOf("})"));
-    expect(body).not.toContain("checks.invalidate()");
+    expect(body).not.toContain("checks.begin()");
     expect(body).not.toContain("resetArchive");
   });
 

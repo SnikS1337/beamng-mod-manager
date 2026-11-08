@@ -5,6 +5,7 @@ import {
   preselected,
   suspiciousFiles,
   suspiciousText,
+  undoAll,
   wholeArchiveInstalled,
 } from "./selection";
 
@@ -79,3 +80,25 @@ describe("удаление исходного архива", () => {
   });
 });
 
+
+describe("отмена установки", () => {
+  it("снимает все моды с конца, даже если один не снялся, и говорит о первой ошибке", async () => {
+    const done: string[] = [];
+    const problem = await undoAll(
+      ["a", "b", "c"],
+      async (ticket) => {
+        if (ticket === "b" || ticket === "a") throw new Error(`занят ${ticket}`);
+        done.push(ticket);
+      },
+      (reason) => (reason as Error).message,
+    );
+    expect(done).toEqual(["c"]);
+    expect(problem).toBe("занят b");
+  });
+
+  it("всё снялось — ошибки нет", async () => {
+    const done: number[] = [];
+    expect(await undoAll([1, 2], async (ticket) => void done.push(ticket), String)).toBeNull();
+    expect(done).toEqual([2, 1]);
+  });
+});

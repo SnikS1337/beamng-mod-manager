@@ -1,6 +1,7 @@
 <script lang="ts">
   import { errorText } from "#lib/shell/errorText.js";
   import { SaveQueue } from "#lib/features/settings/saveQueue.js";
+  import { wholeNumbers } from "#lib/features/settings/numbers.js";
   import { motion } from "#lib/shell/motion.svelte.js";
   import { onDestroy, onMount, untrack } from "svelte";
   import { page } from "$app/state";
@@ -438,7 +439,7 @@
     if (!draft || !dirty) return;
     if (!numbersValid && !useNumberFallbacks) return;
     const rev = revision;
-    const payload = useNumberFallbacks ? withNumberFallbacks(draft) : draft;
+    const payload = wholeNumbers(useNumberFallbacks ? withNumberFallbacks(draft) : draft);
     saving = true;
     error = null;
     try {
