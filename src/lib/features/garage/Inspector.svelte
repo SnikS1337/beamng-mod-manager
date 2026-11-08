@@ -923,11 +923,6 @@
     text-decoration: underline;
   }
 
-  .hero-skeleton {
-    height: 190px;
-    border-radius: 10px;
-  }
-
   .line-skeleton {
     height: 28px;
     width: 70%;

@@ -5,6 +5,7 @@
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
   import { groupConflictNow, groupMembers, isShown, visibleCards } from "./duplicates";
+  import { toggleMessage } from "./cardText";
   import { libraryView, staleError } from "./libraryView";
   import { InFlight, liveCard } from "./inflight";
   import { onMount, tick, untrack } from "svelte";
@@ -551,12 +552,7 @@
         if (conflictStarted) void conflictFlash.flash(main.id);
       }
       if (announce) {
-        const message = conflictStarted
-          ? `Включён «${trimName(mod.name)}» — и другая его копия тоже: игра загрузит обе`
-          : target
-            ? `Включён «${trimName(mod.name)}»`
-            : `Выключен «${trimName(mod.name)}»`;
-        showToast(result.message ?? message, {
+        showToast(toggleMessage(trimName(mod.name), target, conflictStarted, result.message), {
           undo:
             result.outcome === "queued"
               ? undefined
@@ -692,8 +688,10 @@
   async function restoreDeleted(card: ModCardDto) {
     try {
       await modRestoreDeleted(card.fileName);
-      picked = EMPTY;
-      await load(true, true);
+      // Панель удалённого закрывается в том же переходе, где карточка возвращается.
+      await load(true, true, () => {
+        picked = EMPTY;
+      });
       showToast(`Возвращён «${trimName(card.name)}»`);
     } catch (reason) {
       showToast(errorText(reason));

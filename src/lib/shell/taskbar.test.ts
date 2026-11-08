@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { sameTaskbar, taskbarState } from "./taskbar";
+import { ProgressBarStatus } from "@tauri-apps/api/window";
+import { sameTaskbar, taskbarState, toWindowProgress } from "./taskbar";
 
 describe("кнопка на панели задач", () => {
   it("ничего не идёт — полосы нет", () => {
@@ -25,5 +26,20 @@ describe("кнопка на панели задач", () => {
     expect(sameTaskbar(null, { status: "none" })).toBe(false);
     expect(sameTaskbar({ status: "normal", progress: 5 }, { status: "normal", progress: 5 })).toBe(true);
     expect(sameTaskbar({ status: "normal", progress: 5 }, { status: "normal", progress: 6 })).toBe(false);
+  });
+});
+
+describe("что уходит окну", () => {
+  it("целые проценты в пределах 0–100 и верный статус", () => {
+    expect(toWindowProgress({ status: "normal", progress: 42 })).toEqual({ status: ProgressBarStatus.Normal, progress: 42 });
+    expect(toWindowProgress({ status: "normal", progress: 42.6 }).progress).toBe(43);
+    expect(toWindowProgress({ status: "normal", progress: 140 }).progress).toBe(100);
+    expect(toWindowProgress({ status: "paused", progress: -3 })).toEqual({ status: ProgressBarStatus.Paused, progress: 0 });
+    expect(toWindowProgress({ status: "normal", progress: Number.NaN }).progress).toBe(0);
+  });
+
+  it("без процентов — только статус", () => {
+    expect(toWindowProgress({ status: "indeterminate" })).toEqual({ status: ProgressBarStatus.Indeterminate });
+    expect(toWindowProgress({ status: "none" })).toEqual({ status: ProgressBarStatus.None });
   });
 });

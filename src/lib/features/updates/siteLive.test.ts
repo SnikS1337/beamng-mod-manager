@@ -5,6 +5,7 @@ import {
   STAGE_SITE_DONE,
   STAGE_SITE_FAILED,
   isSiteFinish,
+  progressLine,
   siteLiveShare,
   siteLiveText,
   trackSite,
@@ -56,5 +57,23 @@ describe("ход проверки по сайтам", () => {
     const runner: string = readFileSync("crates/bmm-checks/src/runner.rs", "utf8");
     expect(runner).toContain(`pub const STAGE_SITE_DONE: &str = "${STAGE_SITE_DONE}";`);
     expect(runner).toContain(`pub const STAGE_SITE_FAILED: &str = "${STAGE_SITE_FAILED}";`);
+  });
+});
+
+describe("общая строка хода", () => {
+  const name = (id: string) => ({ modland: "Modland" })[id] ?? id;
+
+  it("этапы сайта, поиск страниц и пустой ход", () => {
+    expect(progressLine(null, name)).toBe("Проверяем сайты…");
+    expect(progressLine(step("modland", "лента", 1, 3), name)).toBe("Modland · лента 1 из 3");
+    expect(progressLine(step("modland", "карточки", 0, 0), name)).toBe("Modland · карточки");
+    expect(progressLine(step("страницы", "страницы", 2, 5), name)).toBe("Ищем страницы: 2 из 5");
+    expect(progressLine(step("страницы", "страницы", 0, 0), name)).toBe("Ищем страницы…");
+    expect(progressLine(step("", "готово", 1, 1), name)).toBe("проверка · готово 1 из 1");
+  });
+
+  it("сайт закончил — «проверен», а не «готово 1 из 1»", () => {
+    expect(progressLine(step("modland", STAGE_SITE_DONE, 1, 1), name)).toBe("Modland · проверен");
+    expect(progressLine(step("modland", STAGE_SITE_FAILED, 1, 1), name)).toBe("Modland · не проверен");
   });
 });

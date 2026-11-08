@@ -68,3 +68,23 @@ export function siteLiveShare(live: SiteLive | undefined): number | null {
   if (live.total <= 0) return null;
   return Math.min(1, live.done / live.total);
 }
+
+/** Общая строка хода проверки над списком. */
+export function progressLine(
+  shown: UpdateProgress | null,
+  siteName: (id: string) => string,
+): string {
+  if (!shown) return "Проверяем сайты…";
+  if (shown.source === "страницы") {
+    return shown.total > 0 ? `Ищем страницы: ${shown.done} из ${shown.total}` : "Ищем страницы…";
+  }
+  const where = shown.source ? siteName(shown.source) : "проверка";
+  // «Сайт закончил» — не «готово 1 из 1»: другие сайты ещё могут идти.
+  if (shown.stage === STAGE_SITE_DONE) return `${where} · проверен`;
+  if (shown.stage === STAGE_SITE_FAILED) return `${where} · не проверен`;
+  const stage =
+    shown.stage === "лента" || shown.stage === "карточки" || shown.stage === "страницы"
+      ? shown.stage
+      : "готово";
+  return shown.total > 0 ? `${where} · ${stage} ${shown.done} из ${shown.total}` : `${where} · ${stage}`;
+}

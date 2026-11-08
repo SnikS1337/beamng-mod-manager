@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addonCaption, compatNote, versionLine, cardActions } from "./cardText";
+import { addonCaption, compatNote, versionLine, cardActions, toggleMessage } from "./cardText";
 
 const compat = (over: Partial<{ modFor: string | null; game: string | null; differs: boolean }>) => ({
   compat: { modFor: "0.38", game: "0.40", text: null, differs: true, ...over },
@@ -64,5 +64,25 @@ describe("быстрые действия на карточке", () => {
   it("без страницы и у удалённых — ничего", () => {
     expect(cardActions({ deleted: false, hasPage: false, update: "likely" })).toEqual({ update: false, page: false });
     expect(cardActions({ deleted: true, hasPage: true, update: "likely" })).toEqual({ update: false, page: false });
+  });
+});
+
+describe("тост после переключения", () => {
+  it("две копии — главное, даже если программа ответила своим текстом", () => {
+    expect(toggleMessage("Car", true, true, "Включён.")).toBe(
+      "Включён «Car» — и другая его копия тоже: игра загрузит обе",
+    );
+  });
+
+  it("иначе — слова программы, а без них — своё", () => {
+    expect(toggleMessage("Car", true, false, "Игра занята: изменение отправлено")).toBe(
+      "Игра занята: изменение отправлено",
+    );
+    expect(toggleMessage("Car", true, false, null)).toBe("Включён «Car»");
+    expect(toggleMessage("Car", false, false, undefined)).toBe("Выключен «Car»");
+  });
+
+  it("выключение не говорит о двух копиях", () => {
+    expect(toggleMessage("Car", false, true, null)).toBe("Выключен «Car»");
   });
 });

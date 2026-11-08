@@ -47,3 +47,20 @@ export function cardActions(mod: {
   if (mod.deleted || !mod.hasPage) return { update: false, page: false };
   return { update: mod.update !== "none", page: true };
 }
+
+/**
+ * Тост после переключения. Про две включённые копии говорим в первую очередь:
+ * «Включён.» от помощника в игре не должен это перебивать. Иначе — слова
+ * программы (например, «Игра занята…»), а без них — своё.
+ */
+export function toggleMessage(
+  name: string,
+  enabled: boolean,
+  conflictStarted: boolean,
+  backend: string | null | undefined,
+): string {
+  if (conflictStarted && enabled) {
+    return `Включён «${name}» — и другая его копия тоже: игра загрузит обе`;
+  }
+  return backend ?? (enabled ? `Включён «${name}»` : `Выключен «${name}»`);
+}

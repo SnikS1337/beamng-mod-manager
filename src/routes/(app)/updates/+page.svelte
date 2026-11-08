@@ -7,6 +7,7 @@
   import { tabByKey } from "#lib/shell/keys.js";
   import {
     isSiteFinish,
+    progressLine,
     siteLiveShare,
     siteLiveText,
     trackSite,
@@ -667,24 +668,7 @@
 
   function progressText(current: UpdateProgress | null = run.progress): string {
     const shown = current;
-    if (!shown) return "Проверяем сайты…";
-    if (shown.source === "страницы") {
-      return shown.total > 0
-        ? `Ищем страницы: ${shown.done} из ${shown.total}`
-        : "Ищем страницы…";
-    }
-    const where = shown.source ? `${sourceName(shown.source)}` : "проверка";
-    const stage =
-      shown.stage === "лента"
-        ? "лента"
-        : shown.stage === "карточки"
-          ? "карточки"
-          : shown.stage === "страницы"
-            ? "страницы"
-            : "готово";
-    return shown.total > 0
-      ? `${where} · ${stage} ${shown.done} из ${shown.total}`
-      : `${where} · ${stage}`;
+    return progressLine(shown, sourceName);
   }
 
 

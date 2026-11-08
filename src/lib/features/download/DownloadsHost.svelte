@@ -11,7 +11,7 @@
     listenDownloadProgress,
   } from "#lib/ipc/download.js";
   import { chipText, closeQuestion, downloading, track } from "./jobs.js";
-  import { liveDownloads } from "./live.svelte.js";
+  import { STALL_TICK_MS, liveDownloads } from "./live.svelte.js";
   import { runCloseHooks } from "#lib/shell/closeGuard.js";
   import { trapFocus } from "#lib/shell/focus.js";
   import { enterOverlay, takeEscape } from "#lib/shell/overlays.js";
@@ -19,6 +19,17 @@
   // Главное окно должно видеть, что в окне скачивания идёт загрузка: было — файл
   // качался в «Загрузки», а в программе об этом ни слова.
   const chip = $derived(chipText(liveDownloads.jobs, liveDownloads.tracked, liveDownloads.now));
+
+  // Встала ли загрузка, видно только по часам: если байты не идут, событий нет,
+  // и без тика «стоит» не наступило бы никогда (значок, кнопка на панели задач).
+  const anyDownloading = $derived(downloading(liveDownloads.jobs).length > 0);
+  $effect(() => {
+    if (!anyDownloading) return;
+    const timer = setInterval(() => {
+      liveDownloads.now = Date.now();
+    }, STALL_TICK_MS);
+    return () => clearInterval(timer);
+  });
 
   /** Выход при идущей загрузке: вопрос «Прервать и выйти?». */
   let exitAsk = $state<string | null>(null);
