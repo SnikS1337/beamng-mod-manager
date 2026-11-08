@@ -654,10 +654,7 @@ pub async fn search_page_preview(
         let listing = mod_source.listing(&parsed, &cancel).ok().flatten()?;
         let preview = listing.preview_url.filter(preview_url_allowed)?;
         let image = previews.fetch(&preview).ok().flatten()?;
-        Some(format!(
-            "http://bmm.localhost/search-preview/{}.{}",
-            image.key, image.extension
-        ))
+        Some(search_preview_url(&image))
     })
     .await
     .map_err(|error| AppError::new("task", error.to_string()))?;
@@ -686,23 +683,88 @@ pub async fn search_preview(
             "Картинка с этого сайта не загружается.",
         ));
     }
+    let cache = runtime.previews.clone();
+    // Уже скачанная картинка — сразу, без очереди: раньше она ждала, пока скачаются
+    // чужие картинки (у каждой — пауза сайта 1,5–2,5 с), и при каждом заходе в поиск
+    // казалось, что картинки грузятся заново.
+    let probe = cache.clone();
+    let lookup = parsed.clone();
+    if let Some(image) = tauri::async_runtime::spawn_blocking(move || probe.cached(&lookup))
+        .await
+        .ok()
+        .flatten()
+    {
+        return Ok(Some(search_preview_url(&image)));
+    }
     // Выдача на 150 карточек раньше запускала 150 фоновых потоков сразу: каждый ждал
     // очереди сайта по 1,5–2,5 с и держал поток. Не больше нескольких одновременно.
     let _permit = SEARCH_PREVIEW_GATE
         .acquire()
         .await
         .map_err(|error| AppError::new("task", error.to_string()))?;
-    let cache = runtime.previews.clone();
     let result = tauri::async_runtime::spawn_blocking(move || cache.fetch(&parsed))
         .await
         .map_err(|error| AppError::new("task", error.to_string()))?;
     match result {
-        Ok(Some(image)) => Ok(Some(format!(
-            "http://bmm.localhost/search-preview/{}.{}",
-            image.key, image.extension
-        ))),
+        Ok(Some(image)) => Ok(Some(search_preview_url(&image))),
         Ok(None) | Err(_) => Ok(None),
     }
+}
+
+/// Кеш картинок с сайтов (поиск, страницы модов) для настроек.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "ImageCache")]
+pub struct ImageCacheDto {
+    pub bytes: u64,
+    /// Предел: сверх него при запуске уходят давно не нужные картинки.
+    pub limit_bytes: u64,
+}
+
+fn image_cache(runtime: &SearchRuntime) -> ImageCacheDto {
+    ImageCacheDto {
+        bytes: runtime.previews.size(),
+        limit_bytes: bmm_sources::images::DEFAULT_LIMIT_BYTES,
+    }
+}
+
+#[tauri::command]
+pub async fn image_cache_info(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<ImageCacheDto, AppError> {
+    let runtime = state
+        .search
+        .clone()
+        .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
+    tauri::async_runtime::spawn_blocking(move || image_cache(&runtime))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))
+}
+
+/// «Очистить» в настройках: картинки сайтов скачаются заново, когда понадобятся.
+/// Обложки установленных модов не трогаются — они в другом месте.
+#[tauri::command]
+pub async fn image_cache_clear(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<ImageCacheDto, AppError> {
+    let runtime = state
+        .search
+        .clone()
+        .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime.previews.trim(0);
+        image_cache(&runtime)
+    })
+    .await
+    .map_err(|error| AppError::new("task", error.to_string()))
+}
+
+/// Адрес скачанной картинки выдачи в кеше программы.
+fn search_preview_url(image: &bmm_sources::images::RemoteImage) -> String {
+    format!(
+        "http://bmm.localhost/search-preview/{}.{}",
+        image.key, image.extension
+    )
 }
 
 #[tauri::command]

@@ -299,8 +299,9 @@ pub async fn updates_start(
     state: tauri::State<'_, Arc<AppState>>,
     force: bool,
     request_id: u64,
+    only: Option<String>,
 ) -> Result<(), AppError> {
-    start_updates(app, state.inner().clone(), force, request_id).await
+    start_updates(app, state.inner().clone(), force, request_id, only).await
 }
 
 /// Повтор после сбоя одного сайта: снимаем паузу и запускаем обычную проверку.
@@ -316,14 +317,17 @@ pub async fn updates_retry_source(
     if let Some(runtime) = &state.update {
         runtime.coordinator.resolve_human_check(&source);
     }
-    start_updates(app, state, false, request_id).await
+    start_updates(app, state, false, request_id, None).await
 }
 
+/// `only` — проверить один сайт (после прохождения его проверки «вы человек?»):
+/// остальные сайты и поиск страниц не трогаются.
 async fn start_updates(
     app: AppHandle,
     state: Arc<AppState>,
     force: bool,
     request_id: u64,
+    only: Option<String>,
 ) -> Result<(), AppError> {
     let runtime = state
         .update
@@ -360,19 +364,21 @@ async fn start_updates(
         // Сотни записей о проверке — одним пакетом: файл библиотеки пишется раз в 20 с и в конце.
         let batch = state_for_task.library.batch();
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            coordinator.check(
-                force,
-                Some(&mut |progress: &UpdateProgress| {
-                    let _ = app_for_progress
-                        .emit("updates://event", progress_event(request_id, progress));
-                }),
-            )
+            let mut on_progress = |progress: &UpdateProgress| {
+                let _ =
+                    app_for_progress.emit("updates://event", progress_event(request_id, progress));
+            };
+            match only.as_deref() {
+                Some(source) => coordinator.check_source(source, Some(&mut on_progress)),
+                None => coordinator.check(force, Some(&mut on_progress)),
+            }
         }));
         drop(batch);
         match result {
             Ok(mut report) => {
                 // Моды без страницы ищем тем же ходом — но не после отмены.
                 if !report.cancelled
+                    && only.is_none()
                     && let Some(_guard) = PageBusyGuard::acquire(page_busy)
                 {
                     // Сбрасываем отмену только когда поиск страниц действительно наш:
@@ -741,13 +747,34 @@ pub async fn updates_restore(
 mod pages;
 pub use pages::*;
 
-const CHECK_LABEL: &str = "site-check";
+/// Окно проверки — своё у каждого сайта: пока одно долго грузится, можно пройти
+/// проверку другого сайта во втором окне.
+fn check_label(site: CheckSite) -> String {
+    format!("site-check-{}", site.id)
+}
 const CHECK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CHECK_POLL: Duration = Duration::from_millis(400);
 /// Сколько подряд не читать DOM, прежде чем считать, что окно закрыли.
 /// Перезагрузка и Cloudflare на секунды делают документ недоступным — это не закрытие.
 const CHECK_CLOSED_MISSES: u32 = 25;
-static CHECK_BUSY: AtomicBool = AtomicBool::new(false);
+/// Сайты, чью проверку проходят прямо сейчас: по одному окну на сайт.
+static CHECK_BUSY: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+fn check_busy() -> std::sync::MutexGuard<'static, Vec<&'static str>> {
+    CHECK_BUSY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Занять проверку сайта. `None` — у этого сайта окно проверки уже открыто.
+fn claim_check(site: CheckSite) -> Option<BusyGuard> {
+    let mut busy = check_busy();
+    if busy.contains(&site.id) {
+        return None;
+    }
+    busy.push(site.id);
+    Some(BusyGuard(site.id))
+}
 
 /// Сайт за Cloudflare, чью проверку «вы человек?» проходит человек.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -782,18 +809,24 @@ pub(crate) fn check_site(id: &str) -> Result<CheckSite, AppError> {
         .ok_or_else(|| AppError::new("check", "Этот сайт не просит проверку."))
 }
 
-/// Окно проверки одно на приложение: в нём человек проходит Cloudflare, а программа
-/// сама замечает, что сайт пустил, и продолжает работу.
+/// Окно проверки сайта: в нём человек проходит Cloudflare, а программа сама замечает,
+/// что сайт пустил, и продолжает работу. У каждого сайта своё окно.
 pub(crate) async fn open_site_check(
     app: AppHandle,
     state: Arc<AppState>,
     site: CheckSite,
     url: url::Url,
 ) -> Result<bool, AppError> {
-    if CHECK_BUSY.swap(true, Ordering::SeqCst) {
-        return Err(AppError::new("check", "Проверка сайта уже идёт."));
-    }
-    let _busy = BusyGuard;
+    let Some(_busy) = claim_check(site) else {
+        // Окно этого сайта уже открыто — показываем его, а не второе такое же.
+        if let Some(window) = app.get_webview_window(&check_label(site)) {
+            let _ = window.set_focus();
+        }
+        return Err(AppError::new(
+            "check",
+            format!("Проверка {} уже открыта.", site.name),
+        ));
+    };
 
     let window = check_window(&app, site, url.clone())?;
     let token = format!(
@@ -829,7 +862,7 @@ pub(crate) async fn open_site_check(
 
     // Окно могли закрыть сразу после проверки. Тогда true от DOM уже не придёт,
     // поэтому доступ подтверждаем тем же скрытым браузером, которым работает поиск.
-    let closed = app.get_webview_window(CHECK_LABEL).is_none();
+    let closed = app.get_webview_window(&check_label(site)).is_none();
     let confirmed = if passed || closed {
         access_confirmed(&state, site, url.clone()).await
     } else {
@@ -858,11 +891,11 @@ async fn access_confirmed(state: &Arc<AppState>, site: CheckSite, url: url::Url)
     .unwrap_or(false)
 }
 
-struct BusyGuard;
+struct BusyGuard(&'static str);
 
 impl Drop for BusyGuard {
     fn drop(&mut self) {
-        CHECK_BUSY.store(false, Ordering::SeqCst);
+        check_busy().retain(|site| *site != self.0);
     }
 }
 
@@ -871,12 +904,13 @@ fn check_window(
     site: CheckSite,
     url: url::Url,
 ) -> Result<WebviewWindow, AppError> {
-    if let Some(window) = app.get_webview_window(CHECK_LABEL) {
+    let label = check_label(site);
+    if let Some(window) = app.get_webview_window(&label) {
         return Ok(window);
     }
-    crate::with_browser_args!(WebviewWindowBuilder::new(
+    let window = crate::with_browser_args!(WebviewWindowBuilder::new(
         app,
-        CHECK_LABEL,
+        &label,
         WebviewUrl::External(url)
     ))
     .on_navigation(|url| url.scheme() == "about" || bmm_sources::net::redirect_allowed(url))
@@ -885,7 +919,29 @@ fn check_window(
     .min_inner_size(520.0, 420.0)
     .center()
     .build()
-    .map_err(|error| AppError::new("window", error.to_string()))
+    .map_err(|error| AppError::new("window", error.to_string()))?;
+    // Второе окно проверки не ложится ровно на первое: сдвигаем лесенкой.
+    let others = CHECK_SITES
+        .iter()
+        .filter(|other| {
+            other.id != site.id && app.get_webview_window(&check_label(**other)).is_some()
+        })
+        .count();
+    if others > 0
+        && let Ok(position) = window.outer_position()
+    {
+        let step = check_window_step(others);
+        let _ = window.set_position(tauri::PhysicalPosition::new(
+            position.x + step,
+            position.y + step,
+        ));
+    }
+    Ok(window)
+}
+
+/// На сколько пикселей сдвинуть окно проверки, если открыто ещё `others` таких окон.
+fn check_window_step(others: usize) -> i32 {
+    i32::try_from(others.min(4)).unwrap_or(4) * 36
 }
 
 /// Пока окно открыто, смотрим на страницу: обычная страница сайта без маркера
@@ -894,7 +950,7 @@ fn wait_for_check(app: &AppHandle, window: &WebviewWindow, token: &str, site: Ch
     let deadline = Instant::now() + CHECK_TIMEOUT;
     let mut misses = 0;
     loop {
-        if app.get_webview_window(CHECK_LABEL).is_none() || window.is_visible().is_err() {
+        if app.get_webview_window(&check_label(site)).is_none() || window.is_visible().is_err() {
             return false;
         }
         if Instant::now() >= deadline {
@@ -1540,6 +1596,35 @@ mod tests {
         assert_eq!(check_url(site, home.clone(), Some(other)), home);
         let lookalike: url::Url = "https://evilmodland.net/".parse().unwrap();
         assert_eq!(check_url(site, home.clone(), Some(lookalike)), home);
+    }
+
+    #[test]
+    fn each_site_has_its_own_check_window() {
+        // Было: окно проверки одно на программу — пока Modland долго грузится, ModHub
+        // не пройти.
+        let modland = check_site("modland").unwrap();
+        let modhub = check_site("modhub").unwrap();
+        assert_ne!(check_label(modland), check_label(modhub));
+        let first = claim_check(modland).expect("Modland свободен");
+        let second = claim_check(modhub).expect("ModHub можно проходить параллельно");
+        assert!(
+            claim_check(modland).is_none(),
+            "второе окно того же сайта не открываем"
+        );
+        drop(first);
+        assert!(claim_check(modland).is_some(), "окно закрыли — снова можно");
+        drop(second);
+    }
+
+    #[test]
+    fn second_check_window_steps_aside() {
+        assert_eq!(check_window_step(1), 36);
+        assert_eq!(check_window_step(2), 72);
+        assert_eq!(
+            check_window_step(99),
+            check_window_step(4),
+            "не уезжает за экран"
+        );
     }
 
     #[test]

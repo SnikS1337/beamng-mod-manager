@@ -81,30 +81,46 @@ export function queuePass(queue: string[], site: string): string[] {
   return queue.includes(site) ? queue : [...queue, site];
 }
 
+/** Какой своей проверкой занята страница «Обновлений». */
+export type RunKind = Followup | "retry" | { site: string };
+
 /**
  * Началась своя проверка — она начата после прохождения, и сайты, которые она покроет,
- * повторять незачем: проверка — сайты с модами, поиск страниц — сайты без модов.
- * «Повторить» одного сайта идёт по суточной очереди и полной проверки не заменяет.
+ * повторять незачем: проверка всех — сайты с модами, поиск страниц — сайты без модов,
+ * проверка одного сайта — только его. «Повторить» одного сайта идёт по суточной
+ * очереди и полной проверки не заменяет.
  */
-export function coveredBy(
-  queue: string[],
-  kind: Followup | "retry",
-  trackedOf: (site: string) => number,
-): string[] {
+export function coveredBy(queue: string[], kind: RunKind, trackedOf: (site: string) => number): string[] {
   if (kind === "retry") return queue;
+  if (typeof kind === "object") return queue.filter((site) => site !== kind.site);
   return queue.filter((site) => followupOf(trackedOf(site)) !== kind);
 }
 
+/** Что запустить из очереди: проверку одного сайта или поиск страниц. */
+export type QueueRun = { kind: "site"; site: string } | { kind: "findPages" };
+
 /**
- * Своя проверка закончилась: что запустить из очереди. Сначала проверка (она одна
- * покрывает все сайты с модами), поиск страниц — после неё.
+ * Своя проверка закончилась: что запустить из очереди. Сайты с модами — по одному,
+ * каждый своей проверкой (остальные сайты не трогаем); поиск страниц — один на все
+ * сайты без модов, после них.
  */
 export function nextFromQueue(
   queue: string[],
   trackedOf: (site: string) => number,
-): { run: Followup | null; rest: string[] } {
+): { run: QueueRun | null; rest: string[] } {
   if (queue.length === 0) return { run: null, rest: [] };
-  const pages = queue.filter((site) => followupOf(trackedOf(site)) === "findPages");
-  if (pages.length < queue.length) return { run: "check", rest: pages };
-  return { run: "findPages", rest: [] };
+  const site = queue.find((item) => followupOf(trackedOf(item)) === "check");
+  if (site !== undefined) return { run: { kind: "site", site }, rest: queue.filter((item) => item !== site) };
+  return { run: { kind: "findPages" }, rest: [] };
+}
+
+/**
+ * Ответ проверки одного сайта: этот сайт — свежий, остальные — как были. Раньше
+ * список сайтов заменялся целиком, и после проверки одного сайта остальные пропадали.
+ */
+export function withSources(current: UpdateSource[], fresh: UpdateSource[]): UpdateSource[] {
+  const byId = new Map(fresh.map((source) => [source.id, source]));
+  const kept = current.map((source) => byId.get(source.id) ?? source);
+  const added = fresh.filter((source) => !current.some((item) => item.id === source.id));
+  return [...kept, ...added];
 }

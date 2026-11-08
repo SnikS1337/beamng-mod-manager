@@ -1,3 +1,4 @@
+import { themeWave } from "./themeWave.js";
 import { settingsLoad, settingsSave, type SettingsDto } from "#lib/ipc/settings.js";
 
 const THEMES = ["night", "deep", "dusk", "forest", "graphite"] as const;
@@ -51,6 +52,7 @@ export const appearance = new Appearance();
 
 if (typeof window !== "undefined") {
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (appearance.settings?.mode === "system") appearance.apply();
+    // Windows сменил тему сам — та же волна, из центра окна.
+    if (appearance.settings?.mode === "system") void themeWave(null, () => appearance.apply());
   });
 }

@@ -126,6 +126,8 @@
 
 <style>
   .notice {
+    /* Свой слой в переходах: выезжающая панель мода не проезжает поверх окошка. */
+    view-transition-name: app-notice;
     position: fixed;
     right: 20px;
     bottom: 20px;

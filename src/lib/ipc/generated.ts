@@ -29,6 +29,12 @@ export type AppError = { code: string, message: string, };
 
 export type SettingsDto = { allowDownloads: boolean, modsFolder: string | null, userFolder: string | null, downloadsFolder: string | null, deleteDownloadsAfterInstall: boolean, checkTtlHours: number, autoCheckOnStart: boolean, checkAppUpdates: boolean, autoCheckEveryHours: number, checkDisabledMods: boolean, disabledSources: Array<string>, keepBackups: number, maxCardChecksPerSource: number, liquidGlass: boolean, mode: UiMode, theme: BackgroundTheme, background: BackgroundStyle, uiAnimations: boolean, animatedBackground: boolean, fireflies: boolean, backgroundTilt: boolean, activeModsWarnAbove: number, firstRunDone: boolean, watchFolders: Array<string>, };
 
+export type ImageCache = { bytes: number, 
+/**
+ * Предел: сверх него при запуске уходят давно не нужные картинки.
+ */
+limitBytes: number, };
+
 export type DownloadRequest = { modName: string, installedVersion: string | null, latestVersion: string | null, pageUrl: string, previewUrl: string | null, role: ModRole | null, 
 /**
  * Какой мод обновляем. Скачался тот же файл, что уже стоит, — панель предложит

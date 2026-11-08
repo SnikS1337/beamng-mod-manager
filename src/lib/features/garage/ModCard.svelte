@@ -17,6 +17,7 @@
   import { flowName } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
   import { coverFlight } from "./coverFlight.svelte";
+  import { coverTint, knownTint } from "./coverTint";
   import { conflictFlash, installedFlash } from "./conflictFlash.svelte";
   import DrawCheck from "#lib/shell/DrawCheck.svelte";
   import { liveDownloads } from "#lib/features/download/live.svelte.js";
@@ -92,6 +93,25 @@
       .catch(() => {});
   });
 
+  /** Цвет обложки — тонкий кант карточки; под курсором он ярче. */
+  let tint = $state<string | null>(null);
+  $effect(() => {
+    const url = preview && preview !== brokenPreview ? preview : null;
+    const known = knownTint(url);
+    if (known !== undefined) {
+      tint = known;
+      return;
+    }
+    tint = null;
+    let current = true;
+    void coverTint(url).then((value) => {
+      if (current) tint = value;
+    });
+    return () => {
+      current = false;
+    };
+  });
+
   // Панель мода покажет эту же обложку сразу, пока грузятся данные мода.
   $effect(() => {
     coverFlight.remember(mod.id, preview && preview !== brokenPreview ? preview : null);
@@ -117,7 +137,8 @@
   class:appear
   class:sleeping={!mod.enabled && !mod.deleted}
   class:deleted={mod.deleted}
-  style={`--i:${Math.min(index, 14)}; --flow:${flowName(mod.id)}`}
+  class:tinted={tint !== null}
+  style={`--i:${Math.min(index, 14)}; --flow:${flowName(mod.id)}${tint ? `; --tint:${tint}` : ""}`}
   data-mod-id={mod.id}
 >
   <!-- Выбор — отдельной кнопкой поверх карточки: переключатель не вложен в кнопку. -->
@@ -314,6 +335,23 @@
   .card:hover {
     border-color: var(--border-strong);
     box-shadow: var(--shadow-1);
+  }
+
+  /* Кант в цвет обложки: тонкий всегда, под курсором — ярче и с мягким свечением. */
+  .card.tinted {
+    border-color: color-mix(in oklab, var(--tint) 34%, var(--border));
+  }
+
+  /* Выключенный мод — обложка серая, и кант лишь намёком. */
+  .card.tinted.sleeping {
+    border-color: color-mix(in oklab, var(--tint) 14%, var(--border));
+  }
+
+  .card.tinted:not(.selected):hover {
+    border-color: color-mix(in oklab, var(--tint) 70%, var(--border));
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--tint) 28%, transparent),
+      0 16px 34px -16px color-mix(in oklab, var(--tint) 75%, transparent);
   }
 
   /* Нажатие по карточке (её кнопка выбора .select на всю площадь): она чуть

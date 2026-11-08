@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { coverTint, tintFromPixels } from "./coverTint";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { coverTint, forgetTints, knownTint, tintFromPixels } from "./coverTint";
 
 function pixels(...colors: [number, number, number, number][]): number[] {
   return colors.flat();
@@ -54,5 +54,43 @@ describe("оттенок панели по обложке", () => {
   it("без адреса или вне окна — сразу нет", async () => {
     expect(await coverTint(null)).toBeNull();
     expect(await coverTint("http://bmm.localhost/preview/a.png")).toBeNull();
+  });
+});
+
+describe("оттенки между запусками", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    forgetTints();
+  });
+
+  const storage = (value: string | null) => ({ getItem: () => value, setItem: vi.fn() });
+
+  it("посчитанный раньше оттенок известен сразу — карточка не мигает", () => {
+    vi.stubGlobal("localStorage", storage(JSON.stringify({ "a.jpg": "hsl(10 50% 50%)", "b.jpg": "" })));
+    forgetTints();
+    expect(knownTint("a.jpg")).toBe("hsl(10 50% 50%)");
+    expect(knownTint("b.jpg"), "серая обложка: оттенка нет, но считать снова не надо").toBeNull();
+    expect(knownTint("c.jpg"), "не считали").toBeUndefined();
+    expect(knownTint(null)).toBeNull();
+  });
+
+  it("испорченное или чужое в хранилище не ломает и не подставляется", () => {
+    vi.stubGlobal("localStorage", storage("{не json"));
+    forgetTints();
+    expect(knownTint("a.jpg")).toBeUndefined();
+    vi.stubGlobal("localStorage", storage(JSON.stringify({ "a.jpg": "url(javascript:x)", "b.jpg": 5 })));
+    forgetTints();
+    expect(knownTint("a.jpg")).toBeUndefined();
+    expect(knownTint("b.jpg")).toBeUndefined();
+  });
+
+  it("известный оттенок отдаётся без загрузки картинки", async () => {
+    vi.stubGlobal("localStorage", storage(JSON.stringify({ "a.jpg": "hsl(200 40% 50%)" })));
+    vi.stubGlobal("document", {});
+    vi.stubGlobal("Image", function () {
+      throw new Error("картинку грузить не нужно");
+    });
+    forgetTints();
+    await expect(coverTint("a.jpg")).resolves.toBe("hsl(200 40% 50%)");
   });
 });

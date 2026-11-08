@@ -1,5 +1,6 @@
 import { listenUpdates, type UpdateProgress, type UpdatesEvent } from "#lib/ipc/updates.js";
 import { isSiteFinish } from "./siteLive.js";
+import { outcomeOf, type CheckOutcome } from "./outcome.js";
 
 /** Фоновая проверка при запуске и по расписанию приходит с этим номером. */
 export const AUTO_REQUEST = 0;
@@ -13,6 +14,8 @@ class UpdatesRun {
   checking = $state(false);
   progress = $state<UpdateProgress | null>(null);
   autoProgress = $state<UpdateProgress | null>(null);
+  /** Итог последней законченной проверки: «новых обновлений нет» не пропадает с тостом. */
+  outcome = $state<CheckOutcome | null>(null);
   /** Номер своей (нажатой человеком) проверки: чужие события не путаем с ней. */
   requestId = 0;
   /** Итог, пришедший, пока раздел был закрыт: страница покажет его при возврате. */
@@ -61,6 +64,7 @@ class UpdatesRun {
   onEvent(event: UpdatesEvent): void {
     if (this.attached) return;
     if (event.requestId === AUTO_REQUEST) {
+      if (event.phase === "auto") this.outcome = outcomeOf(event, { background: true }) ?? this.outcome;
       if (event.phase !== "progress") this.autoProgress = null;
       // «Сайт закончил» общую строку хода не меняет: другие сайты ещё идут.
       else if (!isSiteFinish(event.progress) || this.autoProgress === null) {
@@ -76,6 +80,8 @@ class UpdatesRun {
     this.checking = false;
     this.progress = null;
     this.pending = event;
+    // Охват (один сайт или все) знает только раздел — он уточнит итог при возврате.
+    if (event.phase === "done") this.outcome = outcomeOf(event) ?? this.outcome;
   }
 }
 

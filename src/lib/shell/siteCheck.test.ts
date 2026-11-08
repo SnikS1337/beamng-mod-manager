@@ -1,20 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { needsPassButton, passButton, rerunAfterPass } from "./siteCheck";
+import { needsPassButton, passButton, rerunAfterPass, startPassing, stopPassing } from "./siteCheck";
 
 describe("кнопка «Пройти проверку»", () => {
   it("«Проходим проверку…» — только у нажатого сайта", () => {
-    expect(passButton("modland", "modland", "Modland")).toEqual({
+    expect(passButton(["modland"], "modland", "Modland")).toEqual({
       text: "Проходим проверку…",
       disabled: true,
     });
-    expect(passButton("modland", "modhub", "ModHub")).toEqual({
-      text: "Пройти проверку ModHub",
-      disabled: true,
-    });
-    expect(passButton(null, "modhub", "ModHub")).toEqual({
+    expect(passButton([], "modhub", "ModHub")).toEqual({
       text: "Пройти проверку ModHub",
       disabled: false,
     });
+  });
+
+  it("пока проходят один сайт, другой тоже можно пройти", () => {
+    // Было: окно проверки одно на программу — пока первый сайт долго грузился,
+    // кнопка второго была недоступна.
+    expect(passButton(["modland"], "modhub", "ModHub").disabled).toBe(false);
+    const both = startPassing(startPassing([], "modland"), "modhub");
+    expect(both).toEqual(["modland", "modhub"]);
+    expect(passButton(both, "modhub", "ModHub").text).toBe("Проходим проверку…");
+  });
+
+  it("повторное нажатие не дублирует, закрытое окно освобождает только свой сайт", () => {
+    const passing = startPassing(["modland"], "modland");
+    expect(passing).toEqual(["modland"]);
+    const after = stopPassing(["modland", "modhub"], "modland");
+    expect(after).toEqual(["modhub"]);
+    expect(passButton(after, "modland", "Modland").disabled).toBe(false);
+    expect(stopPassing([], "modhub")).toEqual([]);
   });
 });
 

@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { forgetPreview, knownPreview, rememberPreview } from "#lib/features/search/previewCache.js";
   import SiteMark from "#lib/shell/SiteMark.svelte";
   import { errorText } from "#lib/shell/errorText.js";
-  import { passButton, rerunAfterPass } from "#lib/shell/siteCheck.js";
+  import { passButton, rerunAfterPass, startPassing, stopPassing } from "#lib/shell/siteCheck.js";
   import { anyOverlay } from "#lib/shell/overlays.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
@@ -47,7 +48,8 @@
   let submitted = $state("");
   let searching = $state(false);
   /** Сайт, проверку которого сейчас проходят; `null` — окна проверки нет. */
-  let passing = $state<string | null>(null);
+  /** Сайты, чьи окна проверки открыты: у каждого сайта своё окно. */
+  let passing = $state<string[]>([]);
   let searched = $state(false);
   let cards = $state<SearchCard[]>([]);
   let sources = $state<SearchSource[]>([]);
@@ -85,10 +87,18 @@
       if (previews[card.id] || requestedPreviews.has(card.id)) continue;
       const url = card.listings.find((listing) => listing.previewUrl)?.previewUrl;
       if (url) {
+        // Уже скачанная картинка встаёт сразу, без запроса и очереди к сайту.
+        const saved = knownPreview(url);
+        if (saved) {
+          previews[card.id] = saved;
+          continue;
+        }
         requestedPreviews.add(card.id);
         void searchPreview(url)
           .then((value) => {
-            if (value && generation === previewGeneration) previews[card.id] = value;
+            if (!value) return;
+            rememberPreview(url, value);
+            if (generation === previewGeneration) previews[card.id] = value;
           })
           .catch(() => {});
         continue;
@@ -97,11 +107,19 @@
       if (pageRequests >= PAGE_PREVIEW_LIMIT || requestedPages.has(card.id)) continue;
       const listing = card.listings.find((item) => item.source === "modsgaming");
       if (!listing) continue;
+      const pageKey = `page:${listing.url}`;
+      const savedPage = knownPreview(pageKey);
+      if (savedPage) {
+        previews[card.id] = savedPage;
+        continue;
+      }
       pageRequests += 1;
       requestedPages.add(card.id);
       void searchPagePreview(listing.source, listing.url)
         .then((value) => {
-          if (value && generation === previewGeneration) previews[card.id] = value;
+          if (!value) return;
+          rememberPreview(pageKey, value);
+          if (generation === previewGeneration) previews[card.id] = value;
         })
         .catch(() => {});
     }
@@ -415,11 +433,12 @@
   }
 
   async function openCheck(source: string, name: string) {
-    if (passing !== null) return;
-    passing = source;
+    if (passing.includes(source)) return;
+    passing = startPassing(passing, source);
     try {
       // В разделе текста нет: окно откроет страницу, где сайт показал проверку.
       const passed = await searchOpenCheck(source, browseKind ? "" : submitted || query);
+      passing = stopPassing(passing, source);
       if (passed) {
         toasts.show(`${name} пускает программу — ищем снова`);
         const rerun = rerunAfterPass(submitted, browseKind);
@@ -435,7 +454,7 @@
     } catch (reason) {
       error = errorText(reason, "Не удалось выполнить поиск.");
     } finally {
-      passing = null;
+      passing = stopPassing(passing, source);
     }
   }
 
@@ -540,6 +559,17 @@
       sameSize ? "размер" : null,
     ].filter((value): value is string => value !== null);
     return hints.length > 0 ? `Совпали: ${hints.join(", ")}` : "Похожее название";
+  }
+
+  /** Файла картинки уже нет (кеш почистили): забываем и запрашиваем один раз заново. */
+  const retriedPreviews = new Set<string>();
+  function dropPreview(id: string, local: string) {
+    forgetPreview(local);
+    if (previews[id] !== local || retriedPreviews.has(id)) return;
+    retriedPreviews.add(id);
+    delete previews[id];
+    requestedPreviews.delete(id);
+    requestedPages.delete(id);
   }
 
   function previewOf(card: SearchCard): string | null {
@@ -653,14 +683,24 @@
     }
   });
 
+  /**
+   * Фильтр, сортировка, сайт — одним движением, как в гараже: оставшиеся карточки
+   * переезжают, лишние тают, новые проявляются.
+   */
+  function flowSearch(change: () => void) {
+    void motion.run(change, "flow-search");
+  }
+
   function resetFilters() {
-    kindFilter = "all";
-    priceFilter = "all";
-    onlyInstalled = false;
-    sourceFilter = "all";
-    sortOrder = browseKind ? "site" : "relevance";
-    authorFilter = null;
-    onlyCompatible = false;
+    flowSearch(() => {
+      kindFilter = "all";
+      priceFilter = "all";
+      onlyInstalled = false;
+      sourceFilter = "all";
+      sortOrder = browseKind ? "site" : "relevance";
+      authorFilter = null;
+      onlyCompatible = false;
+    });
   }
 
   function chooseKind(next: SearchKindFilter) {
@@ -881,7 +921,7 @@
           Фильтры
           {#if activeFilterCount > 0}<b>{activeFilterCount}</b>{/if}
         </button>
-        <select bind:value={sortOrder} aria-label="Сортировка">
+        <select bind:value={() => sortOrder, (value) => flowSearch(() => (sortOrder = value))} aria-label="Сортировка">
           {#each sortOptions as item (item.id)}
             <option value={item.id}>{item.label}</option>
           {/each}
@@ -898,21 +938,21 @@
             class:on={priceFilter === "all"}
             type="button"
             aria-pressed={priceFilter === "all"}
-            onclick={() => (priceFilter = "all")}
+            onclick={() => flowSearch(() => (priceFilter = "all"))}
           >Любая</button>
           <button
             class="chip"
             class:on={priceFilter === "free"}
             type="button"
             aria-pressed={priceFilter === "free"}
-            onclick={() => (priceFilter = priceFilter === "free" ? "all" : "free")}
+            onclick={() => flowSearch(() => (priceFilter = priceFilter === "free" ? "all" : "free"))}
           >Бесплатные</button>
           <button
             class="chip"
             class:on={priceFilter === "paid"}
             type="button"
             aria-pressed={priceFilter === "paid"}
-            onclick={() => (priceFilter = priceFilter === "paid" ? "all" : "paid")}
+            onclick={() => flowSearch(() => (priceFilter = priceFilter === "paid" ? "all" : "paid"))}
           >Платные</button>
         </div>
         <div class="filter-row">
@@ -922,7 +962,7 @@
             class:on={onlyInstalled}
             type="button"
             aria-pressed={onlyInstalled}
-            onclick={() => (onlyInstalled = !onlyInstalled)}
+            onclick={() => flowSearch(() => (onlyInstalled = !onlyInstalled))}
           >Установленные</button>
           {#if gameVersion}
             <button
@@ -931,7 +971,7 @@
               type="button"
               aria-pressed={onlyCompatible}
               title={`Установлена игра ${gameVersion}`}
-              onclick={() => (onlyCompatible = !onlyCompatible)}
+              onclick={() => flowSearch(() => (onlyCompatible = !onlyCompatible))}
             >Совместимо с игрой</button>
           {/if}
           {#if authorFilter}
@@ -939,13 +979,13 @@
               class="chip on"
               type="button"
               title="Убрать фильтр по автору"
-              onclick={() => (authorFilter = null)}
+              onclick={() => flowSearch(() => (authorFilter = null))}
             >Автор: {authorFilter} ×</button>
           {/if}
         </div>
         <div class="filter-row">
           <span class="filter-label">Сайт</span>
-          <select bind:value={sourceFilter} aria-label="Сайт">
+          <select bind:value={() => sourceFilter, (value) => flowSearch(() => (sourceFilter = value))} aria-label="Сайт">
             <option value="all">Все сайты</option>
             {#each sources as source (source.id)}
               <option value={source.id}>{source.displayName}</option>
@@ -958,27 +998,27 @@
       <div class="active-filters" aria-label="Активные фильтры">
         <span>Фильтры:</span>
         {#if priceFilter !== "all"}
-          <button class="chip" type="button" onclick={() => (priceFilter = "all")}>
+          <button class="chip" type="button" onclick={() => flowSearch(() => (priceFilter = "all"))}>
             {priceFilter === "free" ? "Бесплатные" : "Платные"} <b>×</b>
           </button>
         {/if}
         {#if onlyInstalled}
-          <button class="chip" type="button" onclick={() => (onlyInstalled = false)}>
+          <button class="chip" type="button" onclick={() => flowSearch(() => (onlyInstalled = false))}>
             Установленные <b>×</b>
           </button>
         {/if}
         {#if onlyCompatible}
-          <button class="chip" type="button" onclick={() => (onlyCompatible = false)}>
+          <button class="chip" type="button" onclick={() => flowSearch(() => (onlyCompatible = false))}>
             Совместимо с игрой <b>×</b>
           </button>
         {/if}
         {#if sourceFilter !== "all"}
-          <button class="chip" type="button" onclick={() => (sourceFilter = "all")}>
+          <button class="chip" type="button" onclick={() => flowSearch(() => (sourceFilter = "all"))}>
             {sources.find((source) => source.id === sourceFilter)?.displayName ?? sourceName(sourceFilter)} <b>×</b>
           </button>
         {/if}
         {#if authorFilter}
-          <button class="chip" type="button" onclick={() => (authorFilter = null)}>
+          <button class="chip" type="button" onclick={() => flowSearch(() => (authorFilter = null))}>
             Автор: {authorFilter} <b>×</b>
           </button>
         {/if}
@@ -1026,14 +1066,20 @@
       <button class="btn-glass" type="button" onclick={resetFilters}>Сбросить фильтры</button>
     </div>
   {:else if view === "grid"}
-    <div class="grid search-grid">
+    <div class="grid search-grid flow-mods">
       {#each shownCards as card (card.id)}
         {@const preview = previewOf(card)}
         <!-- Сайты отвечают по очереди: пришедшие карточки проявляются, а не выскакивают. -->
-        <article class="card search-card" style={`--flow:${flowName(card.id)}`} in:softFade={{ duration: 220 }}>
+        <article class="card search-card flow-card" style={`--flow:${flowName(card.id)}`} in:softFade={{ duration: motion.active ? 0 : 220 }}>
           <div class="cover">
             {#if preview}
-              <img src={preview} alt="" loading="lazy" decoding="async" />
+              <img
+                src={preview}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                onerror={() => dropPreview(card.id, preview)}
+              />
             {:else}
               {@const Glyph = kindIcon(card.kind)}
               <span class="glyph"><Glyph size={44} weight="thin" /></span>
@@ -1067,7 +1113,7 @@
                           class="author"
                           type="button"
                           title="Показать моды этого автора"
-                          onclick={() => (authorFilter = listing.author)}
+                          onclick={() => flowSearch(() => (authorFilter = listing.author))}
                         >{listing.author}</button>
                         {#if metaText(card, listing)} · {/if}
                       {/if}

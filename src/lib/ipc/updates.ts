@@ -242,12 +242,16 @@ export async function updatesSnapshot(): Promise<UpdatesSnapshot> {
   return clone(mockSnapshot);
 }
 
-export async function updatesStart(force: boolean, requestId: number): Promise<void> {
+/**
+ * Проверка обновлений. `only` — проверить один сайт (после прохождения его проверки
+ * «вы человек?»), остальные не трогать.
+ */
+export async function updatesStart(force: boolean, requestId: number, only?: string): Promise<void> {
   if (isTauri()) {
-    await invoke("updates_start", { force, requestId });
+    await invoke("updates_start", { force, requestId, only: only ?? null });
     return;
   }
-  mockStart(requestId);
+  mockStart(requestId, only);
 }
 
 export async function updatesCancel(): Promise<void> {
@@ -422,6 +426,10 @@ export async function updatesOpenCheck(source: string): Promise<boolean> {
   if (!isTauri()) {
     await new Promise((resolve) => setTimeout(resolve, 900));
     if (source === "modland") mockModlandNeedsCheck = false;
+    // Сайт пустил — и в сохранённом состоянии он больше не «просит проверку».
+    mockSnapshot.sites = mockSnapshot.sites?.map((site) =>
+      site.id === source && site.status === "human_check" ? { ...site, status: "ok", note: null } : site,
+    );
     mockSources = mockSources.map((item) =>
       item.id === source
         ? { ...item, status: "ok", cardsFetched: 12, feedPagesFetched: 3, note: null }
@@ -443,9 +451,11 @@ export function checkSiteOf(url: string): string {
   return "modland";
 }
 
-function mockStart(requestId: number): void {
+function mockStart(requestId: number, only?: string): void {
   // Сайты идут параллельно и заканчивают каждый в своё время — как в настоящей проверке.
-  const sites = (mockSnapshot.sites ?? []).filter((site) => site.status !== "off").map((site) => site.id);
+  const sites = (mockSnapshot.sites ?? [])
+    .filter((site) => site.status !== "off" && (only === undefined || site.id === only))
+    .map((site) => site.id);
   const steps: { source: string; stage: string; done: number; total: number }[] = [];
   for (let round = 0; round < 4; round += 1) {
     sites.forEach((source, index) => {
@@ -492,10 +502,10 @@ function mockStart(requestId: number): void {
       requestId,
       phase: "done",
       progress: null,
-      sources: mockSources,
-      newCount: 1,
+      sources: only === undefined ? mockSources : mockSources.filter((item) => item.id === only),
+      newCount: only === undefined ? 1 : 0,
       upToDate: 18,
-      requests: 31,
+      requests: only === undefined ? 31 : 4,
       cancelled: false,
       stoppedByTime: false,
       followed: 0,

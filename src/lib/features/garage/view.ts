@@ -160,3 +160,16 @@ export async function applyLoaded(options: {
   if (options.smooth) await options.run(apply);
   else apply();
 }
+
+/** Пауза после последней буквы поиска по гаражу, мс: не перестраиваем сетку на каждую букву. */
+export const QUERY_PAUSE_MS = 140;
+
+/**
+ * Что делать с набранным поиском: пусто — сбросить сразу (сброс из палитры или после
+ * установки не ждёт); то же, что применено, — ничего; иначе — применить после паузы.
+ */
+export function queryStep(typed: string, applied: string): "clear" | "same" | "wait" {
+  if (typed.trim() === "") return "clear";
+  if (typed === applied) return "same";
+  return "wait";
+}

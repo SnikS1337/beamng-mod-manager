@@ -54,7 +54,7 @@ fn declarations(cfg: &Config) -> Vec<String> {
         FilterCounts, LibrarySnapshot, ModCardDto, ModDetails, ToggleResult, VersionRowDto,
     };
     use crate::commands::search::{
-        OfferDto, SearchCardDto, SearchEventDto, SearchListingDto, SearchSourceDto,
+        ImageCacheDto, OfferDto, SearchCardDto, SearchEventDto, SearchListingDto, SearchSourceDto,
     };
     use crate::commands::settings::SettingsDto;
     use crate::commands::updates::{
@@ -67,6 +67,7 @@ fn declarations(cfg: &Config) -> Vec<String> {
     vec![
         AppError::decl(cfg),
         SettingsDto::decl(cfg),
+        ImageCacheDto::decl(cfg),
         DownloadRequest::decl(cfg),
         DownloadPanelEvent::decl(cfg),
         DownloadProgress::decl(cfg),

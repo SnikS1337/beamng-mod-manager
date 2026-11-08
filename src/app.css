@@ -655,23 +655,41 @@ input[type="checkbox"]:checked::after {
   animation: none;
 }
 
-/* Смена акцента: новый вид раскрывается кругом от нажатого образца,
-   старый остаётся под ним до конца. */
+/* Смена темы, акцента и фона (themeWave.ts): новый вид расходится волной от
+   нажатого места с мягкой кромкой и заливает окно; старый стоит под ним.
+   Отдельных слоёв в этом переходе нет — двигается всё окно целиком. */
+@property --theme-wave {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+html.flow-theme *,
+html.flow-theme *::before,
+html.flow-theme *::after {
+  view-transition-name: none !important;
+}
+
 html.flow-theme::view-transition-old(root),
 html.flow-theme::view-transition-group(root) {
   animation: none;
 }
 
 html.flow-theme::view-transition-new(root) {
-  animation: theme-reveal var(--dur-3) var(--ease-out) both;
+  mask-image: radial-gradient(
+    circle at var(--theme-x, 50%) var(--theme-y, 50%),
+    #000 calc(var(--theme-wave) - 120px),
+    transparent var(--theme-wave)
+  );
+  animation: theme-wave 760ms cubic-bezier(0.45, 0, 0.2, 1) both;
 }
 
-@keyframes theme-reveal {
+@keyframes theme-wave {
   from {
-    clip-path: circle(0 at var(--theme-x, 50%) var(--theme-y, 50%));
+    --theme-wave: 0px;
   }
   to {
-    clip-path: circle(150% at var(--theme-x, 50%) var(--theme-y, 50%));
+    --theme-wave: var(--theme-r, 150vmax);
   }
 }
 
@@ -680,24 +698,41 @@ html.flow-theme::view-transition-new(root) {
   animation-timing-function: var(--ease-out);
 }
 
-/* Кто двигается внутри гаража. Карточка — отдельный слой и переезжает на новое
-   место; сетка обрезает карточки по краю, чтобы они не залезали на фильтры. */
-html.flow-garage .flow-card {
+/* Карточки — одинаково везде: гараж (сетка и список), поиск, «Обновления».
+   Карточка — отдельный слой и переезжает на новое место; список обрезает карточки
+   по краю, чтобы они не залезали на фильтры. Области: `flow-garage`,
+   `flow-search`, `flow-list` (motion.svelte.ts). */
+html.flow-garage .flow-card,
+html.flow-search .flow-card,
+html.flow-list .flow-card {
   view-transition-name: var(--flow);
   view-transition-class: card;
   view-transition-group: nearest;
 }
 
-html.flow-garage .flow-mods {
+html.flow-garage .flow-mods,
+html.flow-search .flow-mods,
+html.flow-list .flow-mods {
   view-transition-name: mods;
   view-transition-group: nearest;
+}
+
+/* Карточка, чья обложка летит в панель, — поверх соседей: они не проезжают по ней. */
+html.flow-garage .flow-card:has(.cover-from) {
+  view-transition-class: card picked;
 }
 
 html.flow-garage .flow-body > aside {
   view-transition-name: side;
   view-transition-group: nearest;
-  /* Своё появление панели в переходе лишнее — её уже выдвигает переход. */
-  animation: none;
+}
+
+/* Своё появление элемента, родившегося внутри перехода, лишнее — его уже ведёт
+   переход (`bornInFlow`). Не по классу области: класс снимают после перехода, и
+   анимация запускалась бы заново — панель мода на миг пропадала. */
+[data-flowed],
+[data-flowed] .flow-intro {
+  animation: none !important;
 }
 
 /* Вкладки и разделы настроек: меняется только содержимое, шапка стоит. */
@@ -719,13 +754,40 @@ html.flow-section::view-transition-new(section) {
   animation: flow-page-in var(--dur-3) var(--ease-out) both;
 }
 
-/* Смена раздела: старый чуть уходит вверх и гаснет, новый поднимается навстречу. */
+/* Смена раздела — по порядку меню (--route-dir: 1 вниз, -1 вверх): старый уходит
+   в обратную сторону и гаснет, новый въезжает пружиной. Меню и рамка окна стоят. */
+/* Едет только внутри своей области: на рамку окна и меню не наезжает. */
+html.flow-route::view-transition-group(page) {
+  overflow: clip;
+}
+
 html.flow-route::view-transition-old(page) {
-  animation: flow-page-out var(--dur-2) var(--ease-in-out) both;
+  animation: route-out 240ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
 html.flow-route::view-transition-new(page) {
-  animation: flow-page-in var(--dur-3) var(--ease-out) 60ms both;
+  animation:
+    route-in 560ms var(--ease-spring) 40ms both,
+    route-fade-in 280ms var(--ease-out) 40ms both;
+}
+
+@keyframes route-out {
+  to {
+    opacity: 0;
+    transform: translateY(calc(var(--route-dir, 1) * -26px)) scale(0.985);
+  }
+}
+
+@keyframes route-in {
+  from {
+    transform: translateY(calc(var(--route-dir, 1) * 48px));
+  }
+}
+
+@keyframes route-fade-in {
+  from {
+    opacity: 0;
+  }
 }
 
 /* Смена вида (сетка ↔ список): старый быстро гаснет, новый поднимается. */
@@ -747,36 +809,19 @@ html.flow-view::view-transition-new(mods) {
   animation: flow-page-in var(--dur-3) var(--ease-out) both;
 }
 
-/* Фильтр типа в поиске: карточки переезжают и уходят, как в гараже. */
-html.flow-search .search-grid {
-  view-transition-name: mods;
-  view-transition-group: nearest;
-}
-
-html.flow-search .search-card {
-  view-transition-name: var(--flow);
-  view-transition-class: card;
-  view-transition-group: nearest;
-}
-
-html.flow-search::view-transition-old(page),
-html.flow-search::view-transition-new(page) {
-  animation: none;
-}
-
-html.flow-search::view-transition-old(mods),
-html.flow-search::view-transition-new(mods) {
-  animation: none;
-}
-
-/* Внутри раздела страница не мигает: двигаются карточки и панель. */
+/* Внутри раздела страница и список не мигают: двигаются карточки и панель. */
 html.flow-garage::view-transition-old(page),
-html.flow-garage::view-transition-new(page) {
-  animation: none;
-}
-
+html.flow-garage::view-transition-new(page),
+html.flow-search::view-transition-old(page),
+html.flow-search::view-transition-new(page),
+html.flow-list::view-transition-old(page),
+html.flow-list::view-transition-new(page),
 html.flow-garage::view-transition-old(mods),
-html.flow-garage::view-transition-new(mods) {
+html.flow-garage::view-transition-new(mods),
+html.flow-search::view-transition-old(mods),
+html.flow-search::view-transition-new(mods),
+html.flow-list::view-transition-old(mods),
+html.flow-list::view-transition-new(mods) {
   animation: none;
 }
 
@@ -808,11 +853,22 @@ html.flow-garage::view-transition-new(mods) {
 }
 
 ::view-transition-new(*.card):only-child {
-  animation: flow-card-in var(--dur-3) var(--ease-out) both;
+  animation: flow-card-in var(--dur-3) var(--ease-spring) both;
 }
 
 ::view-transition-old(*.card):only-child {
-  animation: flow-fade-out var(--dur-2) var(--ease-out) both;
+  animation: flow-card-out var(--dur-2) var(--ease-out) both;
+}
+
+/* Далёкий переезд (через ряд и вбок) — не полёт поверх соседей, а «перескок»:
+   на старом месте карточка тает, на новом проявляется чуть позже (`hop` ставит
+   motion.svelte.ts). */
+::view-transition-new(*.hop):only-child {
+  animation-delay: 70ms;
+}
+
+::view-transition-group(*.picked) {
+  z-index: 1;
 }
 
 /* Установленный мод «прилетает» из окна установки на место своей карточки
@@ -896,6 +952,13 @@ html.flow-garage::view-transition-new(cover) {
 
 @keyframes flow-card-in {
   from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+@keyframes flow-card-out {
+  to {
     opacity: 0;
     transform: scale(0.96);
   }

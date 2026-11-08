@@ -1,17 +1,28 @@
 /**
- * Кнопка «Пройти проверку» сайта. Окно проверки одно на программу: пока проходят
- * проверку одного сайта, кнопки остальных недоступны, но «Проходим проверку…» пишет
- * только нажатая — раньше надпись менялась у обоих сайтов сразу.
+ * Кнопка «Пройти проверку» сайта. У каждого сайта своё окно проверки: пока Modland
+ * долго грузится, можно пройти ModHub. Недоступна только кнопка сайта, чьё окно уже
+ * открыто, и «Проходим проверку…» пишет только она.
  */
 export function passButton(
-  passing: string | null,
+  passing: readonly string[],
   site: string,
   name: string,
 ): { text: string; disabled: boolean } {
+  const busy = passing.includes(site);
   return {
-    text: passing === site ? "Проходим проверку…" : `Пройти проверку ${name}`,
-    disabled: passing !== null,
+    text: busy ? "Проходим проверку…" : `Пройти проверку ${name}`,
+    disabled: busy,
   };
+}
+
+/** Сайт начали проходить: добавить в список открытых окон (без повторов). */
+export function startPassing(passing: readonly string[], site: string): string[] {
+  return passing.includes(site) ? [...passing] : [...passing, site];
+}
+
+/** Окно сайта закрылось (пустил или нет) — его кнопка снова доступна. */
+export function stopPassing(passing: readonly string[], site: string): string[] {
+  return passing.filter((item) => item !== site);
 }
 
 /**
