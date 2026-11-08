@@ -38,6 +38,14 @@ pub fn default_user_roots() -> Vec<PathBuf> {
 }
 
 pub fn find_mods_folders(user_root: &Path) -> Vec<PathBuf> {
+    mods_folders_within(user_root, 0)
+}
+
+/// Сколько вложенных «BeamNG.drive/BeamNG.drive/…» проверять. Папка-ссылка на саму
+/// себя (junction) иначе уводила поиск в бесконечную глубину и роняла программу.
+const MAX_NESTED: usize = 3;
+
+fn mods_folders_within(user_root: &Path, depth: usize) -> Vec<PathBuf> {
     if !user_root.is_dir() {
         return Vec::new();
     }
@@ -66,10 +74,10 @@ pub fn find_mods_folders(user_root: &Path) -> Vec<PathBuf> {
         add(dir.join("mods"));
     }
 
-    if result.is_empty() {
+    if result.is_empty() && depth < MAX_NESTED {
         let nested = user_root.join("BeamNG.drive");
         if nested.is_dir() {
-            result.extend(find_mods_folders(&nested));
+            result.extend(mods_folders_within(&nested, depth + 1));
         }
     }
     result
@@ -509,6 +517,29 @@ mod tests {
         let root = temp.path();
         fs::create_dir_all(root.join("BeamNG.drive/mods")).unwrap();
         assert_eq!(dirs(root), vec![root.join("BeamNG.drive/mods")]);
+    }
+
+    #[test]
+    fn nested_search_has_a_bottom() {
+        // Папка-ссылка «BeamNG.drive» на саму себя уводила поиск вглубь без конца.
+        // Здесь — длинная настоящая цепочка: глубже трёх уровней не идём.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let deep = root.join("BeamNG.drive/BeamNG.drive/BeamNG.drive/BeamNG.drive/mods");
+        fs::create_dir_all(&deep).unwrap();
+        assert!(dirs(root).is_empty());
+        let three = root.join("BeamNG.drive/BeamNG.drive/BeamNG.drive/mods");
+        fs::create_dir_all(&three).unwrap();
+        assert_eq!(dirs(root), vec![three]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_linked_to_itself_does_not_loop() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::os::unix::fs::symlink(root, root.join("BeamNG.drive")).unwrap();
+        assert!(dirs(root).is_empty());
     }
 
     #[test]

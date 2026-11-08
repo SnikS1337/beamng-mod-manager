@@ -248,12 +248,15 @@ pub fn find_page_of(
     if store.is_checking_declined(mod_id) {
         return PageSearchReport::default();
     }
+    // Человек нажал сам — как повтор: старое непроверенное предложение не мешает
+    // записать найденное. Раньше оно молча отсекало любую находку, и кнопка ничего
+    // не делала.
     search_pages_of(
         store,
         search,
         now,
         cancel,
-        false,
+        true,
         title_of,
         author_of,
         None,
@@ -2196,6 +2199,43 @@ mod tests {
             &|_| None,
         );
         assert!(report.skipped_sites.is_empty());
+    }
+
+    #[test]
+    fn single_mod_search_replaces_an_old_unconfirmed_suggestion() {
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "car", "stmods");
+        // Привязку на STMods снимаем: у мода только старое непроверенное предложение.
+        store.remove_binding("car", "stmods");
+        store
+            .upsert_binding(ModBinding {
+                mod_id: "car".to_string(),
+                source: "modsgaming".to_string(),
+                source_id: "old".to_string(),
+                url: Url::parse("https://modsgaming.test/old").unwrap(),
+                confirmed: false,
+            })
+            .unwrap();
+        let search = sites(vec![VerifySite::new(
+            "modland",
+            None,
+            vec![on_site("modland", "ml", "Maserati GranTurismo")],
+        )]);
+        let report = find_page_of(
+            &store,
+            &search,
+            now(),
+            &AtomicBool::new(false),
+            "car",
+            &|_| None,
+            &|_| Some("Flanje".to_string()),
+        );
+        assert_eq!(report.followed, 1, "{report:?}");
+        assert_eq!(
+            sources_of(&store, "car"),
+            ["modland"],
+            "старое предложение заменено"
+        );
     }
 
     #[test]
