@@ -639,6 +639,7 @@
     void listenDownloadContext((value) => {
       // Открыли другой мод. Загрузки и проверка прошлого идут дальше: архив
       // проверяется для своего мода, а не для того, что сейчас на странице.
+      if (disposed) return;
       context = value;
       if (!busy) showPage();
     })
@@ -649,7 +650,7 @@
       .catch(() => {});
     void listenDownloadState((value) => {
       // Пока на экране архив, шаги — про него; загрузка страницы видна в списке.
-      if (busy) return;
+      if (disposed || busy) return;
       step = value.step;
       status = value.title;
       detail = value.detail;

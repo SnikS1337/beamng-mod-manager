@@ -39,3 +39,23 @@ export function suspiciousText(files: string[], shown = 3): string {
   const rest = files.length - shown;
   return rest > 0 ? `${names} и ещё ${rest}` : names;
 }
+
+/**
+ * Отмена установки: от последнего мода к первому, не останавливаясь на ошибке —
+ * иначе одна неудача оставила бы остальные моды поставленными. Возвращает первую ошибку.
+ */
+export async function undoAll<T>(
+  tickets: T[],
+  undo: (ticket: T) => Promise<unknown>,
+  describe: (reason: unknown) => string,
+): Promise<string | null> {
+  let problem: string | null = null;
+  for (let index = tickets.length - 1; index >= 0; index -= 1) {
+    try {
+      await undo(tickets[index]);
+    } catch (reason) {
+      problem ??= describe(reason);
+    }
+  }
+  return problem;
+}

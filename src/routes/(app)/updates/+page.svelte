@@ -4,6 +4,7 @@
   import { settle } from "#lib/features/updates/settle.js";
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
+  import { tabByKey } from "#lib/shell/keys.js";
   import { page } from "$app/state";
   import Package from "phosphor-svelte/lib/Package";
   import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
@@ -91,6 +92,16 @@
   let verifying = $state<string | null>(null);
   let verifications = $state<Record<string, PageVerification | null>>({});
   let verifyErrors = $state<Record<string, string | null>>({});
+
+  const TABS: readonly Filter[] = ["available", "hidden", "pages"];
+
+  function tabKey(event: KeyboardEvent) {
+    const next = tabByKey(TABS, filter, event.key);
+    if (!next) return;
+    event.preventDefault();
+    setTab(next);
+    document.getElementById(`updates-tab-${next}`)?.focus();
+  }
 
   function setTab(next: Filter) {
     if (next === filter) return;
@@ -330,15 +341,13 @@
     if (run.checking) return;
     stopFinishing();
     startRun("check");
-    run.requestId += 1;
-    run.checking = true;
-    run.progress = null;
+    const id = run.begin();
     error = null;
     try {
       // По кнопке — все моды, без суточной очереди: человек сам решил проверить
       // сейчас. Паузы между запросами к сайту остаются. Очередь соблюдает только
       // фоновая проверка.
-      await updatesStart(true, run.requestId);
+      await updatesStart(true, id);
     } catch (reason) {
       error = errorText(reason);
       run.checking = false;
@@ -360,12 +369,10 @@
     if (run.checking) return;
     stopFinishing();
     startRun("findPages");
-    run.checking = true;
-    run.progress = null;
+    const id = run.begin();
     error = null;
-    run.requestId += 1;
     try {
-      await updatesFindPages(run.requestId);
+      await updatesFindPages(id);
     } catch (reason) {
       error = errorText(reason);
       run.checking = false;
@@ -721,12 +728,10 @@
     if (run.checking) return;
     stopFinishing();
     startRun("retry");
-    run.requestId += 1;
-    run.checking = true;
-    run.progress = null;
+    const id = run.begin();
     error = null;
     try {
-      await updatesRetrySource(source, run.requestId);
+      await updatesRetrySource(source, id);
     } catch (reason) {
       error = errorText(reason);
       run.checking = false;
@@ -762,7 +767,7 @@
         {headline.text}
       </p>
     </div>
-    <div class="tabs" role="tablist" aria-label="Что показать">
+    <div class="tabs" role="tablist" aria-label="Что показать" tabindex="-1" onkeydown={tabKey}>
       <button
         id="updates-tab-available"
         type="button"
@@ -770,6 +775,7 @@
         class="tab"
         class:active={filter === "available"}
         aria-selected={filter === "available"}
+        tabindex={filter === "available" ? 0 : -1}
         aria-controls="updates-panel"
         onclick={() => setTab("available")}
       >
@@ -783,6 +789,7 @@
         class="tab"
         class:active={filter === "hidden"}
         aria-selected={filter === "hidden"}
+        tabindex={filter === "hidden" ? 0 : -1}
         aria-controls="updates-panel"
         onclick={() => setTab("hidden")}
       >
@@ -796,6 +803,7 @@
         class="tab"
         class:active={filter === "pages"}
         aria-selected={filter === "pages"}
+        tabindex={filter === "pages" ? 0 : -1}
         aria-controls="updates-panel"
         onclick={() => setTab("pages")}
       >

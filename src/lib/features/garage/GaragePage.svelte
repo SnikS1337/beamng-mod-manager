@@ -74,6 +74,7 @@
   import { palette } from "#lib/shell/palette.svelte.js";
   import {
     EMPTY,
+    afterBulk,
     bulkPlan,
     clickSelect,
     keepVisible,
@@ -603,6 +604,7 @@
     const mods = plan.remove;
     if (bulkBusy || mods.length === 0) return;
     bulkBusy = true;
+    const started = picked;
     const removed: ModCardDto[] = [];
     let failed = 0;
     for (const mod of mods) {
@@ -613,7 +615,11 @@
         failed += 1;
       }
     }
-    picked = EMPTY;
+    picked = afterBulk(
+      started,
+      picked,
+      removed.map((mod) => mod.id),
+    );
     await load(true);
     bulkBusy = false;
     const text = `Удалено: ${removed.length}${failed > 0 ? ` · не получилось: ${failed}` : ""}`;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ModCardDto } from "#lib/ipc/library.js";
 import {
   EMPTY,
+  afterBulk,
   bulkPlan,
   clickSelect,
   keepVisible,
@@ -192,5 +193,21 @@ describe("галочки на карточках", () => {
     expect(kept.ids).toEqual(["b"]);
     expect(panelOf(kept)).toBe("none");
     expect(keepVisible(state, ["a"])).toEqual(EMPTY);
+  });
+});
+
+describe("выбор после удаления пачки", () => {
+  it("выбор не трогали — снимаем", () => {
+    const started = selectAll(["a", "b"]);
+    expect(afterBulk(started, started, ["a", "b"])).toBe(EMPTY);
+  });
+
+  it("пока удаляли, выбрали другое — оставляем без удалённых", () => {
+    const started = selectAll(["a", "b"]);
+    const now = clickSelect(started, "c", ["a", "b", "c"]);
+    expect(afterBulk(started, now, ["a", "b"])).toEqual({ ids: ["c"], anchor: "c" });
+    const both = { ids: ["b", "c"], anchor: "b", checking: true };
+    expect(afterBulk(started, both, ["a", "b"])).toEqual({ ids: ["c"], anchor: "c", checking: true });
+    expect(afterBulk(started, { ids: ["a"], anchor: "a" }, ["a"])).toBe(EMPTY);
   });
 });

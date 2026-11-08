@@ -21,8 +21,6 @@ pub struct SettingsLoadResult {
     pub save_blocked: bool,
 }
 
-impl SettingsLoadResult {}
-
 pub struct SettingsStore {
     path: PathBuf,
     now: Clock,

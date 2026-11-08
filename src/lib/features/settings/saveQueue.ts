@@ -33,8 +33,4 @@ export class SaveQueue {
   idle(): Promise<void> {
     return this.running ?? Promise.resolve();
   }
-
-  get busy(): boolean {
-    return this.running !== null;
-  }
 }

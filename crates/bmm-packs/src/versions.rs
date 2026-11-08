@@ -122,7 +122,6 @@ pub fn restore_version(
     store: &dyn LibraryStore,
     installed: &InstalledMod,
     version: &PastVersion,
-    _now: DateTime<FixedOffset>,
 ) -> OpResult {
     let result = installer.restore_version(
         &installed.file_name,
@@ -295,7 +294,7 @@ mod tests {
         store.upsert_mod(installed.clone());
         let versions = versions_for(&installer, &store, &installed);
         assert!(!versions.is_empty());
-        let restored = restore_version(&installer, &store, &installed, &versions[0], now());
+        let restored = restore_version(&installer, &store, &installed, &versions[0]);
         assert!(restored.success, "{}", restored.message);
         let updated = store.get_mod("car_v2.zip").unwrap();
         assert_eq!(updated.file_name, "car_v1.zip");
@@ -328,7 +327,7 @@ mod tests {
         store.upsert_mod(installed.clone());
         let versions = versions_for(&installer, &store, &installed);
         assert!(!versions.is_empty());
-        let restored = restore_version(&installer, &store, &installed, &versions[0], now());
+        let restored = restore_version(&installer, &store, &installed, &versions[0]);
         assert!(restored.success, "{}", restored.message);
 
         assert!(installer.layout().disabled_dir.join("car_v1.zip").is_file());

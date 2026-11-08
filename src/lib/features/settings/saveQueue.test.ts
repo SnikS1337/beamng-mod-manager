@@ -29,7 +29,6 @@ describe("очередь сохранений настроек", () => {
     gates[1]!.resolve();
     await waiting;
     expect(idle).toBe(true);
-    expect(queue.busy).toBe(false);
   });
 
   it("ошибка сохранения не блокирует следующие", async () => {

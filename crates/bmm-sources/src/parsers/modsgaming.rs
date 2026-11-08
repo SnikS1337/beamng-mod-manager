@@ -47,6 +47,8 @@ static DETAIL_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<!--.*?-->").unwrap());
+
 pub fn parse_list(html: &str) -> Vec<Listing> {
     let starts: Vec<(usize, usize, String)> = ENTRY_START
         .captures_iter(html)
@@ -240,10 +242,7 @@ fn is_mod_path(url: &url::Url) -> bool {
 
 pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
     let mut listing = basis.clone();
-    let without_comments = Regex::new(r"(?s)<!--.*?-->")
-        .unwrap()
-        .replace_all(html, "")
-        .into_owned();
+    let without_comments = COMMENT.replace_all(html, "").into_owned();
     let text = line_text(&without_comments);
     let author = AUTHOR.captures(&text).or_else(|| AUTHOR_EN.captures(&text));
     if let Some(author) = author.and_then(|captures| captures.name("a")) {
