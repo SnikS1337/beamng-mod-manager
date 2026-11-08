@@ -129,3 +129,12 @@ export function formatWhen(iso: string | null | undefined, now = new Date()): st
   }).format(date);
   return `${label} в ${time}`;
 }
+
+/**
+ * Обрезать длинное название до `max` знаков с «…». Считает знаки, а не единицы
+ * UTF-16: срез посреди эмодзи давал кракозябру в конце сообщения.
+ */
+export function trimText(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : text;
+}

@@ -2,7 +2,8 @@
   import { errorText } from "#lib/shell/errorText.js";
   import { SaveQueue } from "#lib/features/settings/saveQueue.js";
   import { motion } from "#lib/shell/motion.svelte.js";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
+  import { page } from "$app/state";
   import { beforeClose } from "#lib/shell/closeGuard.js";
   import { open } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -117,10 +118,21 @@
     { id: "beamng", label: "BeamNG (официальный)", note: "Репозиторий и обновления; в поиске не участвует" },
   ];
   // `/settings?section=folders` — ссылки вроде «Не нашли папку с модами» ведут сразу к нужному.
-  const requested = new URLSearchParams(globalThis.location?.search ?? "").get("section");
-  let activeSection = $state<SectionId>(
-    SECTIONS.find((section) => section.id === requested)?.id ?? "appearance",
-  );
+  // И на уже открытой странице: раньше раздел читался один раз, и «Что нового» из
+  // уведомления или палитра не переключали его.
+  let activeSection = $state<SectionId>(sectionOf(page.url.searchParams.get("section")) ?? "appearance");
+  let shownRequest = page.url.search;
+  $effect(() => {
+    const search = page.url.search;
+    if (search === shownRequest) return;
+    shownRequest = search;
+    const requested = sectionOf(page.url.searchParams.get("section"));
+    if (requested) untrack(() => selectSection(requested));
+  });
+
+  function sectionOf(id: string | null): SectionId | undefined {
+    return SECTIONS.find((section) => section.id === id)?.id;
+  }
   let sectionsEl = $state<HTMLDivElement | null>(null);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let revision = 0;

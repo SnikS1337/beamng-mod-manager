@@ -6,6 +6,7 @@
   import { isShortcut } from "#lib/shell/keys.js";
   import { groupMembers, isShown, visibleCards } from "./duplicates";
   import { libraryView, staleError } from "./libraryView";
+  import { InFlight, liveCard } from "./inflight";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import {
@@ -58,7 +59,7 @@
   import ModGrid from "./ModGrid.svelte";
   import ModList from "./ModList.svelte";
   import ModMenu from "./ModMenu.svelte";
-  import { groupDigits, headerNote, matchesQuery } from "./format";
+  import { groupDigits, headerNote, matchesQuery, trimText } from "./format";
   import {
     loadViewMode,
     matchesType,
@@ -484,13 +485,19 @@
     await applyToggle(mod, !mod.enabled, true);
   }
 
-  async function applyToggle(mod: ModCardDto, target: boolean, announce: boolean) {
+  /** Моды, переключение которых ещё идёт. */
+  const toggling = new InFlight();
+
+  async function applyToggle(card: ModCardDto, target: boolean, announce: boolean) {
+    if (!toggling.start(card.id)) return;
     try {
-      const result = await modToggle(mod.id, target);
+      const result = await modToggle(card.id, target);
       if (result.outcome === "error" || result.outcome === "failed") {
         showToast(result.message ?? "Не удалось изменить мод");
         return;
       }
+      // Пока ждали, список могли перечитать: правим карточку из текущего.
+      const mod = liveCard(snapshot?.mods, card);
       mod.enabled = target;
       mod.pending = result.outcome === "queued" ? "queued" : "none";
       if (snapshot) {
@@ -508,12 +515,14 @@
             result.outcome === "queued"
               ? undefined
               : () => {
-                  void applyToggle(mod, !target, false);
+                  void applyToggle(liveCard(snapshot?.mods, mod), !target, false);
                 },
         });
       }
     } catch (reason) {
       showToast(errorText(reason));
+    } finally {
+      toggling.done(card.id);
     }
   }
 
@@ -690,7 +699,10 @@
     if (!card) return;
     filter = "all";
     query = "";
+    // Иначе машина, поставленная при фильтре «Карты», так и не видна.
+    if (typeFilter !== "all" && !matchesType(card, typeFilter)) typeFilter = "all";
     picked = selectOnly(card.id);
+    reveal = nextReveal(reveal, card.id);
   }
 
   async function pickArchive() {
@@ -724,7 +736,7 @@
   }
 
   function trimName(name: string): string {
-    return name.length > 34 ? `${name.slice(0, 33)}…` : name;
+    return trimText(name, 34);
   }
 
   function isTyping(event: KeyboardEvent): boolean {
