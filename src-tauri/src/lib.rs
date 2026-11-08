@@ -488,6 +488,23 @@ fn safe_cache_name(name: &str) -> bool {
         )
 }
 
+/// Картинку мода разрешаем читать по пикселям (оттенок панели по обложке) только
+/// самой программе. В окне загрузки открыты чужие сайты: им — нет, даже если
+/// они знают адрес картинки.
+fn app_origin(origin: &str) -> bool {
+    matches!(
+        origin,
+        "http://tauri.localhost" | "https://tauri.localhost" | "tauri://localhost"
+    ) || ["http://localhost:", "http://127.0.0.1:"]
+        .iter()
+        .any(|dev| {
+            cfg!(debug_assertions)
+                && origin.strip_prefix(dev).is_some_and(|port| {
+                    !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit())
+                })
+        })
+}
+
 fn preview_protocol(
     app: &tauri::AppHandle,
     request: tauri::http::Request<Vec<u8>>,
@@ -539,12 +556,20 @@ fn preview_protocol(
     } else {
         "image/jpeg"
     };
-    tauri::http::Response::builder()
+    let mut response = tauri::http::Response::builder()
         .status(200)
         .header("Content-Type", mime)
         .header("Cache-Control", "no-cache")
-        .body(Cow::Owned(bytes))
-        .expect("preview response")
+        .header("Vary", "Origin");
+    if let Some(origin) = request
+        .headers()
+        .get("Origin")
+        .and_then(|value| value.to_str().ok())
+        .filter(|origin| app_origin(origin))
+    {
+        response = response.header("Access-Control-Allow-Origin", origin);
+    }
+    response.body(Cow::Owned(bytes)).expect("preview response")
 }
 
 /// Текст, если окно программы не создалось.
@@ -560,6 +585,29 @@ fn startup_failure(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_app_may_read_preview_pixels() {
+        assert!(app_origin("http://tauri.localhost"));
+        assert!(app_origin("https://tauri.localhost"));
+        assert!(app_origin("tauri://localhost"));
+        // Отладка: dev-сервер Vite.
+        assert!(app_origin("http://localhost:1420"));
+        assert!(app_origin("http://127.0.0.1:5173"));
+        // Чужие сайты из окна загрузки и подделки под наш адрес — нет.
+        for origin in [
+            "https://www.modland.net",
+            "http://tauri.localhost.evil.com",
+            "http://evil.tauri.localhost",
+            "http://localhost:",
+            "http://localhost:1420.evil.com",
+            "http://localhost",
+            "null",
+            "",
+        ] {
+            assert!(!app_origin(origin), "{origin}");
+        }
+    }
 
     #[test]
     fn window_failure_is_explained_not_silent() {

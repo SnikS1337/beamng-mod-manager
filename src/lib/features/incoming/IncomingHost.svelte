@@ -24,6 +24,7 @@
   import { arrival } from "#lib/shell/arrival.svelte.js";
   import { pop, softFade } from "#lib/shell/transitions.js";
   import { installable, preselected, suspiciousFiles, suspiciousText, undoAll } from "./selection";
+  import { dropPlan, dropRefusal, dropSummary } from "./drop";
 
   type CheckLevel = "ok" | "attention" | "blocked";
   interface Check {
@@ -41,6 +42,10 @@
   let currentDownloaded = $state(false);
   let busy = $state(false);
   let busyName = $state("");
+  /** Путь архива, который сейчас проверяется: второй раз его не берём. */
+  let busyPath = $state("");
+  /** Что несут над окном; `null` — имён не знаем (браузерная демо-версия). */
+  let dragPaths = $state.raw<string[] | null>(null);
   let selected = $state<boolean[]>([]);
   /** Строка, которая сейчас «улетает» в гараж (см. arrival). */
   let flyingItem = $state.raw<IncomingItemDto | null>(null);
@@ -148,14 +153,18 @@
       .onDragDropEvent((event) => {
         const payload = event.payload;
         if (payload.type === "enter") {
-          dragActive = payload.paths.some(isArchivePath) && !dialogOpen;
+          // Подсказку показываем всегда, даже если несут не архив: молчание
+          // непонятно, а «это не архив» — сразу ясно.
+          dragPaths = payload.paths;
+          dragActive = payload.paths.length > 0;
         } else if (payload.type === "leave") {
           dragActive = false;
+          dragPaths = null;
         } else if (payload.type === "drop") {
           dragActive = false;
+          dragPaths = null;
           // Всё брошенное — в очередь, даже поверх открытого окна: ничего не теряем.
-          const archives = payload.paths.filter(isArchivePath);
-          if (archives.length > 0) incomingQueue.add(archives);
+          takeDropped(payload.paths);
         }
       })
       .then((stop) => {
@@ -184,6 +193,7 @@
     const token = ++session;
     busy = true;
     busyName = archiveBaseName(path);
+    busyPath = path;
     try {
       const [archive] = await incomingInspect([path]);
       if (token !== session) {
@@ -463,22 +473,44 @@
   }
 
 
+  /** Открытый или проверяемый сейчас архив. */
+  function openPath(): string | null {
+    return current?.source ?? (busy ? busyPath : null);
+  }
+
+  function dropPlanNow(paths: string[]) {
+    return dropPlan(
+      paths,
+      openPath(),
+      incomingQueue.items.map((item) => item.path),
+    );
+  }
+
+  function takeDropped(paths: string[]): void {
+    const plan = dropPlanNow(paths);
+    if (plan.add.length > 0) incomingQueue.add(plan.add);
+    const refusal = dropRefusal(plan);
+    if (refusal) toasts.show(refusal);
+  }
+
+  const dropHint = $derived(dragActive ? dropSummary(dragPaths ? dropPlanNow(dragPaths) : null, dialogOpen) : null);
+
   function hasFiles(event: DragEvent): boolean {
     return event.dataTransfer?.types.includes("Files") ?? false;
   }
 
   function onHtmlDragEnter(event: DragEvent): void {
-    if (!hasFiles(event) || dialogOpen) return;
+    if (!hasFiles(event)) return;
     event.preventDefault();
+    // Имена файлов браузер отдаёт только при броске.
+    dragPaths = null;
     dragActive = true;
   }
 
   function onHtmlDragOver(event: DragEvent): void {
     if (!hasFiles(event)) return;
     event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = dialogOpen ? "none" : "copy";
-    }
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
   }
 
   function onHtmlDragLeave(event: DragEvent): void {
@@ -488,17 +520,17 @@
   function onHtmlDrop(event: DragEvent): void {
     event.preventDefault();
     dragActive = false;
+    dragPaths = null;
     const files = Array.from(event.dataTransfer?.files ?? []);
-    const archives = files.map((file) => file.name).filter(isArchivePath);
-    if (archives.length > 0) incomingQueue.add(archives);
+    takeDropped(files.map((file) => file.name));
   }
 </script>
 
 <svelte:window onkeydown={onkeydown} />
 
-{#if dragActive && !dialogOpen}
+{#if dropHint}
   <div class="drop-layer" aria-hidden="true" transition:softFade={{ duration: 160 }}>
-    <div class="drop-card glass solid liquid-edge">
+    <div class="drop-card glass solid liquid-edge {dropHint.tone}">
       <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
         <path
           d="M22 6v21M13.5 19 22 27.5 30.5 19M8 34h36"
@@ -508,8 +540,20 @@
           stroke-linejoin="round"
         />
       </svg>
-      <p>Отпустите — проверим и предложим установить</p>
-      <span>zip, rar или 7z</span>
+      <p>{dropHint.title}</p>
+      {#if dropHint.names.length > 0}
+        <ul class="drop-names">
+          {#each dropHint.names as name, index (index)}
+            <li class="mono">{shortName(name, 44)}</li>
+          {/each}
+          {#if dropHint.more > 0}
+            <li class="drop-more">и ещё {dropHint.more}</li>
+          {/if}
+        </ul>
+      {/if}
+      {#if dropHint.note}
+        <span>{dropHint.note}</span>
+      {/if}
     </div>
   </div>
 {/if}
@@ -637,7 +681,8 @@
   .drop-layer {
     position: fixed;
     inset: 0;
-    z-index: 50;
+    /* Поверх открытого окна: брошенное встанет в очередь, это видно. */
+    z-index: 70;
     display: grid;
     place-items: center;
     background: color-mix(in oklab, var(--background) 55%, transparent);
@@ -657,6 +702,40 @@
 
   .drop-card svg {
     margin-bottom: 10px;
+    transition: transform var(--dur-2) var(--ease-spring);
+  }
+
+  /* Брать нечего: стрелка «не сюда», карточка приглушена. */
+  .drop-card.none {
+    color: var(--muted-foreground);
+  }
+
+  .drop-card.none svg {
+    transform: rotate(180deg);
+    color: var(--danger);
+  }
+
+  .drop-names {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    margin: 8px 0 4px;
+    padding: 0;
+    max-width: 100%;
+    list-style: none;
+    font-size: 12.5px;
+  }
+
+  .drop-names li {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drop-more {
+    color: var(--muted-foreground);
   }
 
   .drop-card p {
