@@ -6,6 +6,7 @@ import {
   STAGE_SITE_FAILED,
   isSiteFinish,
   progressLine,
+  progressShare,
   siteLiveShare,
   siteLiveText,
   trackSite,
@@ -23,7 +24,7 @@ describe("ход проверки по сайтам", () => {
     known = trackSite(known, step("stmods", STAGE_SITE_FAILED, 1, 1));
     expect(siteLiveText(known.modland).tone).toBe("ok");
     expect(siteLiveText(known.stmods).tone).toBe("bad");
-    expect(siteLiveText(undefined)).toEqual({ tone: "wait", text: "ждёт очереди" });
+    expect(siteLiveText(undefined)).toEqual({ tone: "wait", text: "сейчас начнём" });
   });
 
   it("общее «готово» и поиск страниц сайтами не считаются", () => {
@@ -69,11 +70,26 @@ describe("общая строка хода", () => {
     expect(progressLine(step("modland", "карточки", 0, 0), name)).toBe("Modland · карточки");
     expect(progressLine(step("страницы", "страницы", 2, 5), name)).toBe("Ищем страницы: 2 из 5");
     expect(progressLine(step("страницы", "страницы", 0, 0), name)).toBe("Ищем страницы…");
+    // Какой мод ищем сейчас: «1 из 2», а не «0 из 2» с пустой полосой.
+    expect(progressLine(step("страницы", "страницы · Nissan Silvia", 0, 2), name)).toBe(
+      "Ищем страницы: 1 из 2 · Nissan Silvia",
+    );
+    expect(progressLine(step("страницы", "страницы · Last", 2, 2), name)).toBe("Ищем страницы: 2 из 2 · Last");
     expect(progressLine(step("", "готово", 1, 1), name)).toBe("проверка · готово 1 из 1");
   });
 
   it("сайт закончил — «проверен», а не «готово 1 из 1»", () => {
     expect(progressLine(step("modland", STAGE_SITE_DONE, 1, 1), name)).toBe("Modland · проверен");
     expect(progressLine(step("modland", STAGE_SITE_FAILED, 1, 1), name)).toBe("Modland · не проверен");
+  });
+});
+
+describe("общая полоса хода", () => {
+  const at = (done: number, total: number) => ({ source: "страницы", stage: "страницы", done, total });
+  it("идущий шаг заполнен наполовину, конец — целиком, без числа — бегущая", () => {
+    expect(progressShare(at(0, 2))).toBe(0.25);
+    expect(progressShare(at(2, 2))).toBe(1);
+    expect(progressShare(at(0, 0))).toBeNull();
+    expect(progressShare(null)).toBeNull();
   });
 });

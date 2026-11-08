@@ -31,4 +31,13 @@ describe("итог проверки в панели", () => {
     // Лента ответила без отдельных запросов за карточками — проверка была.
     expect(outcomeOf({ ...base, requests: 0 })?.text).toBe("новых обновлений нет");
   });
+
+  it("фоновая проверка без запросов итог не меняет", () => {
+    // Было: «Фоновая проверка: проверять нечего» с предупреждением.
+    expect(outcomeOf({ ...base, requests: 0, sources: [] }, { background: true })).toBeNull();
+    expect(outcomeOf({ ...base, requests: 0 }, { background: true })).toBeNull();
+    expect(outcomeOf({ ...base, requests: 3 }, { background: true })?.text).toBe(
+      "Фоновая проверка: новых обновлений нет",
+    );
+  });
 });

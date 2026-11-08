@@ -1,18 +1,26 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+
 /**
  * Кнопка «Пройти проверку» сайта. У каждого сайта своё окно проверки: пока Modland
- * долго грузится, можно пройти ModHub. Недоступна только кнопка сайта, чьё окно уже
- * открыто, и «Проходим проверку…» пишет только она.
+ * долго грузится, можно пройти ModHub. Пока окно сайта открыто, кнопка не мёртвая, а
+ * показывает это окно: раньше второе окно терялось за первым, и кнопка «висела».
  */
 export function passButton(
   passing: readonly string[],
   site: string,
   name: string,
-): { text: string; disabled: boolean } {
-  const busy = passing.includes(site);
+): { text: string; open: boolean } {
+  const open = passing.includes(site);
   return {
-    text: busy ? "Проходим проверку…" : `Пройти проверку ${name}`,
-    disabled: busy,
+    text: open ? `Показать окно проверки ${name}` : `Пройти проверку ${name}`,
+    open,
   };
+}
+
+/** Показать окно проверки сайта, если оно открыто. */
+export async function focusSiteCheck(site: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("site_check_focus", { source: site });
 }
 
 /** Сайт начали проходить: добавить в список открытых окон (без повторов). */

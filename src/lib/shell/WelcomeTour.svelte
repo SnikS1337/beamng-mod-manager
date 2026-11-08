@@ -103,7 +103,7 @@
     overflow-y: auto;
     padding: 28px 30px 24px;
     border-radius: 14px;
-    animation: welcome-in var(--dur-3) var(--ease-out) both;
+    animation: var(--enter);
   }
 
   .eyebrow {
@@ -198,14 +198,4 @@
     background: var(--accent-brand-hover);
   }
 
-  @keyframes welcome-in {
-    from {
-      opacity: 0;
-      transform: translateY(10px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
 </style>

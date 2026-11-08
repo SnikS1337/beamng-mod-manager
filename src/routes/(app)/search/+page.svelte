@@ -2,7 +2,7 @@
   import { forgetPreview, knownPreview, rememberPreview } from "#lib/features/search/previewCache.js";
   import SiteMark from "#lib/shell/SiteMark.svelte";
   import { errorText } from "#lib/shell/errorText.js";
-  import { passButton, rerunAfterPass, startPassing, stopPassing } from "#lib/shell/siteCheck.js";
+  import { focusSiteCheck, passButton, rerunAfterPass, startPassing, stopPassing } from "#lib/shell/siteCheck.js";
   import { anyOverlay } from "#lib/shell/overlays.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { isShortcut } from "#lib/shell/keys.js";
@@ -1294,7 +1294,7 @@
           {/if}
           {#if (source.id === "modland" || source.id === "modhub") && source.status === "needsHumanCheck"}
             {@const pass = passButton(passing, source.id, source.displayName)}
-            <button class="btn-glass pass" type="button" disabled={pass.disabled} onclick={() => void openCheck(source.id, source.displayName)}>
+            <button class="btn-glass pass" class:open={pass.open} type="button" onclick={() => void (pass.open ? focusSiteCheck(source.id) : openCheck(source.id, source.displayName))}>
               {pass.text}
             </button>
           {/if}
@@ -1729,7 +1729,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     background: var(--surface);
-    animation: rise-in var(--dur-3) var(--ease-out) both;
+    animation: var(--enter);
     transition: border-color var(--dur-2) var(--ease-out);
   }
 

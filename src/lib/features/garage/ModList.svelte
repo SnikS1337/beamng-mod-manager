@@ -180,8 +180,8 @@
             </span>
             <small>{mod.fileName}</small>
           </span>
-          <span class="type-cell"><span class="kind-tag {tag}"><KindIcon size={12} weight="bold" />{typeLabel(tag)}</span></span>
-          <span class="version-cell mono" class:fresh={version?.fresh}>
+          <span class="type-cell"><span class="kind-tag {tag}"><KindIcon size={12} weight="bold" /><span class="tag-text">{typeLabel(tag)}</span></span></span>
+          <span class="version-cell mono" class:fresh={version?.fresh} title={version?.text}>
             {#key version?.text}<span class="roll" in:rollIn>{version?.text ?? "—"}</span>{/key}
           </span>
           <span class="size-cell muted">{formatSize(mod.sizeBytes)}</span>
@@ -225,10 +225,46 @@
   .head,
   .row {
     display: grid;
-    grid-template-columns: 24px 56px minmax(0, 1fr) 108px 84px 76px minmax(120px, 210px) 52px;
+    /* Тип — по самой длинной метке («Дополнение» со значком): иначе метка
+       наезжала на версию. */
+    grid-template-columns: 24px 56px minmax(0, 1fr) 132px 92px 76px minmax(120px, 210px) 52px;
     align-items: center;
     gap: 10px;
     padding: 0 10px;
+  }
+
+  .type-cell {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .type-cell .kind-tag {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Длинная версия («4.0.6 Final», «1.7 → 1.8») не вылезает в соседнюю колонку. */
+  .version-cell {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .version-cell .roll {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .states {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .tag-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .head {

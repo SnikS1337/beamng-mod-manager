@@ -21,6 +21,9 @@ export function outcomeOf(
   options: { site?: string; background?: boolean; now?: number } = {},
 ): CheckOutcome | null {
   if (event.cancelled) return null;
+  // Фоновая проверка, которой нечего было проверять (всё проверено недавно), итога
+  // не меняет: было «Фоновая проверка: проверять нечего» рядом со списком обновлений.
+  if (options.background && event.requests === 0 && event.newCount === 0) return null;
   const at = options.now ?? Date.now();
   const who = options.site ? `${options.site}: ` : options.background ? "Фоновая проверка: " : "";
   const answered = event.sources.some((source) => source.status === "ok");

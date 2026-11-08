@@ -908,7 +908,7 @@ fn check_window(
     if let Some(window) = app.get_webview_window(&label) {
         return Ok(window);
     }
-    let window = crate::with_browser_args!(WebviewWindowBuilder::new(
+    let builder = crate::with_browser_args!(WebviewWindowBuilder::new(
         app,
         &label,
         WebviewUrl::External(url)
@@ -917,31 +917,86 @@ fn check_window(
     .title(format!("Проверка {}", site.name))
     .inner_size(980.0, 720.0)
     .min_inner_size(520.0, 420.0)
-    .center()
-    .build()
-    .map_err(|error| AppError::new("window", error.to_string()))?;
-    // Второе окно проверки не ложится ровно на первое: сдвигаем лесенкой.
-    let others = CHECK_SITES
-        .iter()
-        .filter(|other| {
-            other.id != site.id && app.get_webview_window(&check_label(**other)).is_some()
-        })
-        .count();
-    if others > 0
-        && let Ok(position) = window.outer_position()
-    {
-        let step = check_window_step(others);
-        let _ = window.set_position(tauri::PhysicalPosition::new(
-            position.x + step,
-            position.y + step,
-        ));
-    }
+    .center();
+    // Окно проверки — поверх программы и сворачивается вместе с ней: раньше второе
+    // окно пряталось за первым, и его находили только по значку на панели задач.
+    let builder = match app.get_webview_window("main") {
+        Some(main) => builder
+            .parent(&main)
+            .map_err(|error| AppError::new("window", error.to_string()))?,
+        None => builder,
+    };
+    let window = builder
+        .build()
+        .map_err(|error| AppError::new("window", error.to_string()))?;
+    tile_check_windows(app);
     Ok(window)
 }
 
-/// На сколько пикселей сдвинуть окно проверки, если открыто ещё `others` таких окон.
-fn check_window_step(others: usize) -> i32 {
-    i32::try_from(others.min(4)).unwrap_or(4) * 36
+/// «Проходим проверку… — показать окно»: окно проверки сайта на передний план.
+/// `false` — окна уже нет (закрыли).
+#[tauri::command]
+pub fn site_check_focus(app: AppHandle, source: String) -> Result<bool, AppError> {
+    let site = check_site(&source)?;
+    let Some(window) = app.get_webview_window(&check_label(site)) else {
+        return Ok(false);
+    };
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(true)
+}
+
+/// Открытые окна проверки — рядом, а не друг на друге: два окна делят экран пополам.
+fn tile_check_windows(app: &AppHandle) {
+    let open: Vec<WebviewWindow> = CHECK_SITES
+        .iter()
+        .filter_map(|site| app.get_webview_window(&check_label(*site)))
+        .collect();
+    if open.len() < 2 {
+        return;
+    }
+    let Some(area) = open[0]
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| *monitor.work_area())
+    else {
+        return;
+    };
+    let rects = check_window_rects(
+        (
+            area.position.x,
+            area.position.y,
+            area.size.width,
+            area.size.height,
+        ),
+        open.len(),
+    );
+    for (window, (x, y, width, height)) in open.iter().zip(rects) {
+        let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+}
+
+/// Места окон проверки в рабочей области экрана `(x, y, ширина, высота)`: в ряд,
+/// поровну, с отступами. Одно окно — как было (по центру), здесь не нужно.
+pub(crate) fn check_window_rects(
+    area: (i32, i32, u32, u32),
+    count: usize,
+) -> Vec<(i32, i32, u32, u32)> {
+    const GAP: u32 = 16;
+    let (x, y, width, height) = area;
+    let count = u32::try_from(count.clamp(1, 4)).unwrap_or(1);
+    let usable = width.saturating_sub(GAP * (count + 1));
+    let each = (usable / count).max(1);
+    let tall = height.saturating_sub(GAP * 2).max(1);
+    (0..count)
+        .map(|index| {
+            let left = x + i32::try_from(GAP + index * (each + GAP)).unwrap_or(0);
+            (left, y + i32::try_from(GAP).unwrap_or(0), each, tall)
+        })
+        .collect()
 }
 
 /// Пока окно открыто, смотрим на страницу: обычная страница сайта без маркера
@@ -1617,14 +1672,25 @@ mod tests {
     }
 
     #[test]
-    fn second_check_window_steps_aside() {
-        assert_eq!(check_window_step(1), 36);
-        assert_eq!(check_window_step(2), 72);
-        assert_eq!(
-            check_window_step(99),
-            check_window_step(4),
-            "не уезжает за экран"
+    fn two_check_windows_share_the_screen() {
+        // Было: второе окно ложилось на первое, и его находили только на панели задач.
+        let rects = check_window_rects((0, 0, 1920, 1040), 2);
+        assert_eq!(rects.len(), 2);
+        let (left, right) = (rects[0], rects[1]);
+        assert_eq!(left.2, right.2, "поровну");
+        assert!(
+            left.0 + i32::try_from(left.2).unwrap() < right.0,
+            "не перекрываются"
         );
+        assert!(
+            right.0 + i32::try_from(right.2).unwrap() <= 1920,
+            "в пределах экрана"
+        );
+        assert!(left.3 <= 1040);
+        // Экран со смещением (второй монитор) и предел числа окон.
+        let shifted = check_window_rects((1920, 40, 1280, 984), 9);
+        assert_eq!(shifted.len(), 4);
+        assert!(shifted.iter().all(|rect| rect.0 >= 1920 && rect.1 >= 40));
     }
 
     #[test]

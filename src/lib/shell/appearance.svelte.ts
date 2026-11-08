@@ -1,8 +1,15 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { themeWave } from "./themeWave.js";
 import { settingsLoad, settingsSave, type SettingsDto } from "#lib/ipc/settings.js";
 
 const THEMES = ["night", "deep", "dusk", "forest", "graphite"] as const;
 const BACKDROPS = ["accent", "aurora", "sunset", "ocean", "nebula", "mono"] as const;
+
+/** Цвет фона темы для окна: только `#rrggbb`, иначе не трогаем окно. */
+export function windowColor(value: string): string | null {
+  const color = value.trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : null;
+}
 
 class Appearance {
   settings = $state<SettingsDto | null>(null);
@@ -45,6 +52,23 @@ class Appearance {
     for (const backdrop of BACKDROPS) {
       root.classList.toggle(`backdrop-${backdrop}`, background === backdrop);
     }
+    this.paintWindow(root);
+  }
+
+  #painted: string | null = null;
+
+  /**
+   * Окно под страницей — цвета фона темы: пока WebView перерисовывает страницу
+   * (развернули окно), видно его, а не чёрный прямоугольник.
+   */
+  private paintWindow(root: HTMLElement): void {
+    if (!isTauri()) return;
+    const color = windowColor(getComputedStyle(root).getPropertyValue("--background"));
+    if (!color || color === this.#painted) return;
+    this.#painted = color;
+    void invoke("window_background", { color }).catch(() => {
+      this.#painted = null;
+    });
   }
 }
 

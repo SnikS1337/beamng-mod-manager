@@ -543,6 +543,38 @@ input[type="checkbox"]:checked::after {
 }
 
 /* Появление: короткий подъём с проявлением. Карточкам — с небольшой задержкой по порядку. */
+/* ── Язык движения ─────────────────────────────────────────────────────────
+   Всё, что появляется, появляется одинаково: чуть снизу и чуть меньше, сдвиг —
+   пружиной, прозрачность — коротко и ровно (--enter). Всё, что «идёт», идёт одной
+   бегущей полосой с одним шагом (--run). Уход — короткий спад (flow-card-out,
+   flow-side-out). Длительности — только токены --dur-*. */
+:root {
+  --enter: enter-move var(--dur-3) var(--ease-spring) both, enter-fade var(--dur-2) var(--ease-out) both;
+  --run: bar-run 1.3s var(--ease-in-out) infinite;
+}
+
+@keyframes enter-move {
+  from {
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Бегущая полоса: свои свойства translate, а не transform — не спорит с масштабом. */
+@keyframes bar-run {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 340% 0;
+  }
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -584,7 +616,7 @@ input[type="checkbox"]:checked::after {
 }
 
 .rise-in {
-  animation: rise-in var(--dur-3) var(--ease-out) both;
+  animation: var(--enter);
 }
 
 .skeleton {
@@ -751,7 +783,9 @@ html.flow-section::view-transition-old(section) {
 }
 
 html.flow-section::view-transition-new(section) {
-  animation: flow-page-in var(--dur-3) var(--ease-out) both;
+  animation:
+    flow-page-in var(--dur-3) var(--ease-spring) both,
+    enter-fade var(--dur-2) var(--ease-out) both;
 }
 
 /* Смена раздела — по порядку меню (--route-dir: 1 вниз, -1 вверх): старый уходит
@@ -806,7 +840,9 @@ html.flow-view::view-transition-old(mods) {
 }
 
 html.flow-view::view-transition-new(mods) {
-  animation: flow-page-in var(--dur-3) var(--ease-out) both;
+  animation:
+    flow-page-in var(--dur-3) var(--ease-spring) both,
+    enter-fade var(--dur-2) var(--ease-out) both;
 }
 
 /* Внутри раздела страница и список не мигают: двигаются карточки и панель. */

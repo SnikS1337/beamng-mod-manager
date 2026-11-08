@@ -1343,7 +1343,7 @@
     flex-direction: column;
     gap: 8px;
     max-width: 920px;
-    animation: rise-in var(--dur-3) var(--ease-out) both;
+    animation: var(--enter);
   }
 
   .block-head {
