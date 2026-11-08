@@ -353,6 +353,22 @@ impl LibraryStore for JsonLibraryStore {
         let changed = state.inner.set_page_search(mod_id, search);
         self.changed(&mut state, changed);
     }
+
+    fn get_fallback_search(&self, mod_id: &str) -> Option<DateTime<FixedOffset>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .inner
+            .fallback_searches
+            .get(mod_id)
+            .copied()
+    }
+
+    fn set_fallback_search(&self, mod_id: &str, at: Option<DateTime<FixedOffset>>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let changed = state.inner.set_fallback_search(mod_id, at);
+        self.changed(&mut state, changed);
+    }
 }
 
 #[derive(Serialize)]
@@ -374,6 +390,8 @@ struct FileModel {
     declined: Option<Vec<String>>,
     #[serde(default)]
     page_searches: Option<BTreeMap<String, PageSearch>>,
+    #[serde(default)]
+    fallback_searches: Option<BTreeMap<String, DateTime<FixedOffset>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_run_utc: Option<DateTime<FixedOffset>>,
 }
@@ -389,6 +407,7 @@ const KNOWN_ROOT: &[&str] = &[
     "History",
     "Declined",
     "PageSearches",
+    "FallbackSearches",
     "LastRunUtc",
 ];
 
@@ -504,6 +523,15 @@ fn model_of(inner: &Inner) -> FileModel {
                 .map(|search| (item.id.clone(), search.clone()))
         })
         .collect();
+    let fallback_searches = mods
+        .iter()
+        .filter_map(|item| {
+            inner
+                .fallback_searches
+                .get(&item.id)
+                .map(|at| (item.id.clone(), *at))
+        })
+        .collect();
 
     FileModel {
         schema: SCHEMA,
@@ -529,6 +557,7 @@ fn model_of(inner: &Inner) -> FileModel {
         history: Some(history),
         declined: Some(declined),
         page_searches: Some(page_searches),
+        fallback_searches: Some(fallback_searches),
         last_run_utc: inner.last_run,
     }
 }
@@ -671,6 +700,10 @@ fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<St
 
     for (mod_id, search) in parse_map::<PageSearch>(root, "PageSearches", &mut skipped) {
         inner.set_page_search(&mod_id, Some(search));
+    }
+
+    for (mod_id, at) in parse_map::<DateTime<FixedOffset>>(root, "FallbackSearches", &mut skipped) {
+        inner.set_fallback_search(&mod_id, Some(at));
     }
 
     inner.last_run = root
@@ -1005,6 +1038,7 @@ mod tests {
                     rejected: true,
                 }),
             );
+            store.set_fallback_search("a", Some(moment()));
             store.set_last_run(moment());
             assert!(temp_names(dir.path()).is_empty());
         }
@@ -1027,7 +1061,33 @@ mod tests {
         assert_eq!(loaded.file_history("a"), vec!["a_old.zip"]);
         assert!(loaded.is_checking_declined("a"));
         assert!(loaded.get_page_search("a").unwrap().rejected);
+        assert_eq!(loaded.get_fallback_search("a"), Some(moment()));
         assert_eq!(loaded.last_run(), Some(moment()));
+    }
+
+    #[test]
+    fn fallback_search_mark_goes_with_the_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let store = JsonLibraryStore::new(&path, system_clock());
+        store.set_fallback_search("ghost", Some(moment()));
+        assert_eq!(
+            store.get_fallback_search("ghost"),
+            None,
+            "мода нет — отметки нет"
+        );
+        store.upsert_mod(installed("a", "A", "1.0"));
+        store.set_fallback_search("a", Some(moment()));
+        store.remove_mod("a");
+        store.upsert_mod(installed("a", "A", "1.0"));
+        assert_eq!(
+            store.get_fallback_search("a"),
+            None,
+            "удалённый мод забыт целиком"
+        );
+        store.set_fallback_search("a", Some(moment()));
+        store.set_fallback_search("a", None);
+        assert_eq!(store.get_fallback_search("a"), None);
     }
 
     #[test]
