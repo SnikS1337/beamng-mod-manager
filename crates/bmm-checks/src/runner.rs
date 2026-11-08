@@ -22,12 +22,18 @@ use crate::options::UpdateCheckOptions;
 use crate::planner::{FeedCoverage, FeedEntry, TrackedBinding, UpdateCheckPlanner};
 use crate::service::{UpdateCheckService, UpdateFinding, mod_label, status_to_store};
 
+/// Этап «сайт проверен» — у каждого сайта свой, как только он закончил: интерфейс
+/// красит его значок, не дожидаясь остальных.
+pub const STAGE_SITE_DONE: &str = "сайт проверен";
+/// Этап «сайт не открылся»; причину подробно скажет итог проверки.
+pub const STAGE_SITE_FAILED: &str = "сайт не открылся";
+
 /// Ход проверки для интерфейса.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateProgress {
     /// Пустая строка в финальном сообщении «готово».
     pub source: String,
-    /// «лента», «карточки», «готово».
+    /// «лента», «карточки», [`STAGE_SITE_DONE`] / [`STAGE_SITE_FAILED`], «готово».
     pub stage: String,
     pub done: usize,
     pub total: usize,
@@ -434,7 +440,22 @@ impl Runner<'_, '_, '_> {
                     let handle = std::thread::Builder::new()
                         .name(format!("bmm-check-{source}"))
                         .spawn_scoped(scope, move || {
-                            worker.run_source(source, pages, due, adapter)
+                            let outcome = worker.run_source(source, pages, due, adapter);
+                            // Остановили — итог скажет сам, значок «проверен» был бы неправдой.
+                            if !outcome.cancelled {
+                                worker.emit(&UpdateProgress {
+                                    source: source.to_string(),
+                                    stage: if outcome.failure.is_some() {
+                                        STAGE_SITE_FAILED
+                                    } else {
+                                        STAGE_SITE_DONE
+                                    }
+                                    .to_string(),
+                                    done: 1,
+                                    total: 1,
+                                });
+                            }
+                            outcome
                         });
                     (source, handle)
                 })
@@ -2830,5 +2851,66 @@ mod tests {
         assert!(stages.iter().any(|stage| stage == "x:лента"));
         assert!(stages.iter().any(|stage| stage == "x:карточки"));
         assert_eq!(stages.last().map(String::as_str), Some(":готово"));
+        let done = format!("x:{STAGE_SITE_DONE}");
+        let at = stages.iter().position(|stage| *stage == done);
+        assert_eq!(
+            at,
+            Some(stages.len() - 2),
+            "сайт отмечен проверенным сразу перед общим «готово»: {stages:?}"
+        );
+    }
+
+    #[test]
+    fn each_site_reports_its_own_finish_and_failure() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        add(&store, "b", "y", "b", Some("1.0"), Some("1.0"), Some(old));
+        let x = Site::new("x").with_feed(vec![l("x", "a", Some("1.0"), None)]);
+        let y = Site::new("y");
+        y.set_feed_failure(Some(SourceError::unavailable("502")));
+        let all: Vec<Arc<dyn ModSource>> = vec![x, y];
+        let cancel = AtomicBool::new(false);
+        let request = UpdateRun::new(&store, &all, now(), UpdateCheckOptions::default(), &cancel);
+        let mut stages = Vec::new();
+        UpdateRunner::run(
+            &request,
+            Some(&mut |progress: &UpdateProgress| {
+                stages.push(format!("{}:{}", progress.source, progress.stage));
+            }),
+        );
+        let count = |wanted: String| stages.iter().filter(|stage| **stage == wanted).count();
+        assert_eq!(count(format!("x:{STAGE_SITE_DONE}")), 1, "{stages:?}");
+        assert_eq!(count(format!("y:{STAGE_SITE_FAILED}")), 1, "{stages:?}");
+        assert_eq!(count(format!("y:{STAGE_SITE_DONE}")), 0, "{stages:?}");
+    }
+
+    #[test]
+    fn stopped_check_does_not_mark_sites_as_checked() {
+        let store = InMemoryLibraryStore::new();
+        add(
+            &store,
+            "a",
+            "x",
+            "a",
+            Some("1.0"),
+            Some("1.0"),
+            Some(now() - TimeDelta::days(2)),
+        );
+        let site = Site::new("x").with_feed(vec![l("x", "a", Some("1.0"), None)]);
+        let all = sources(&site);
+        let cancel = AtomicBool::new(true);
+        let request = UpdateRun::new(&store, &all, now(), UpdateCheckOptions::default(), &cancel);
+        let mut stages = Vec::new();
+        UpdateRunner::run(
+            &request,
+            Some(&mut |progress: &UpdateProgress| stages.push(progress.stage.clone())),
+        );
+        assert!(
+            !stages
+                .iter()
+                .any(|stage| stage == STAGE_SITE_DONE || stage == STAGE_SITE_FAILED),
+            "{stages:?}"
+        );
     }
 }

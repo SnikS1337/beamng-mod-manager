@@ -5,6 +5,13 @@
   import { AUTO_REQUEST, updatesRun as run } from "#lib/features/updates/run.svelte.js";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { tabByKey } from "#lib/shell/keys.js";
+  import {
+    isSiteFinish,
+    siteLiveShare,
+    siteLiveText,
+    trackSite,
+    type SiteLive,
+  } from "#lib/features/updates/siteLive.js";
   import { page } from "$app/state";
   import Package from "phosphor-svelte/lib/Package";
   import PuzzlePiece from "phosphor-svelte/lib/PuzzlePiece";
@@ -112,6 +119,10 @@
   /** Ход проверки при запуске (она идёт сама, без нажатия). */
   /** Полоса проверки доходит до конца и только потом уступает кнопкам. */
   let finishing = $state(false);
+  /** Ход идущей проверки по сайтам: значок каждого красится, как только сайт закончил. */
+  let siteLive = $state<Record<string, SiteLive>>({});
+  /** Своя проверка всех сайтов: тогда ещё не начатые сайты «ждут очереди». */
+  let liveKind = $state<"check" | "findPages" | "retry" | null>(null);
   let finishTimer: ReturnType<typeof setTimeout> | undefined;
   /** Номер запроса проверки при запуске (`AUTO_REQUEST_ID` в окне). */
   let error = $state<string | null>(null);
@@ -204,7 +215,12 @@
   function onEvent(event: UpdatesEvent) {
     if (event.requestId === AUTO_REQUEST && event.phase === "progress") {
       stopFinishing();
-      run.autoProgress = event.progress;
+      // Фоновая проверка только началась — прошлый ход по сайтам не её.
+      if (run.autoProgress === null && !run.checking) siteLive = {};
+      if (event.progress) siteLive = trackSite(siteLive, event.progress);
+      if (!isSiteFinish(event.progress) || run.autoProgress === null) {
+        run.autoProgress = event.progress;
+      }
       return;
     }
     if (event.requestId === AUTO_REQUEST && event.phase === "error") {
@@ -241,7 +257,9 @@
     }
     if (event.phase === "progress") {
       stopFinishing();
-      run.progress = event.progress;
+      if (event.progress) siteLive = trackSite(siteLive, event.progress);
+      // «Сайт закончил» общую строку хода не меняет: другие сайты ещё идут.
+      if (!isSiteFinish(event.progress)) run.progress = event.progress;
       if (event.sources.length > 0) sources = freshSources(event.sources, passes, runEpoch);
       return;
     }
@@ -331,6 +349,8 @@
 
   /** Номер начала своей проверки — см. `passes.ts`. */
   function startRun(kind: "check" | "findPages" | "retry") {
+    siteLive = {};
+    liveKind = kind;
     const started = runStarted(passes);
     passes = started.passes;
     runEpoch = started.epoch;
@@ -684,8 +704,11 @@
     text: string;
     when: string;
     retry: boolean;
+    /** Пока идёт проверка: доля полоски сайта (0–1) или `null` — «бежит». */
+    share?: number | null;
   }[] {
     const live = new Map(sources.map((item) => [item.id, item]));
+    const checkingNow = run.checking || run.autoProgress !== null;
     return (snapshot.sites ?? []).map((site) => {
       const now = live.get(site.id);
       const human = site.status === "human_check" || now?.status === "needsHumanCheck";
@@ -693,6 +716,22 @@
       const when = site.lastChecked ? `проверен ${formatAgo(site.lastChecked)}` : "ещё не проверялся";
       if (site.status === "off") {
         return { id: site.id, name: site.displayName, tone: "off", text: "выключен", when: "", retry: false };
+      }
+      // Идёт проверка: у сайта свой ход. Не начатые «ждут» только в своей проверке
+      // всех сайтов — в фоновой и при повторе одного сайта они могут и не начаться.
+      const progress = siteLive[site.id];
+      const waits = run.checking && liveKind === "check" && site.tracked > 0;
+      if (checkingNow && (progress || waits)) {
+        const shown = siteLiveText(progress);
+        return {
+          id: site.id,
+          name: site.displayName,
+          tone: shown.tone,
+          text: shown.text,
+          when: "",
+          retry: false,
+          share: siteLiveShare(progress),
+        };
       }
       if (human) {
         return { id: site.id, name: site.displayName, tone: "warn", text: "просит проверку", when, retry: false };
@@ -1099,8 +1138,18 @@
       <h2 class="display sites-title">Сайты</h2>
       <div class="sites">
         {#each siteRows() as site (site.id)}
-          <div class="site" title={site.when ? `${site.text} · ${site.when}` : site.text}>
+          <div
+            class="site"
+            class:live={site.share !== undefined}
+            title={site.when ? `${site.text} · ${site.when}` : site.text}
+          >
             <span class="dot {site.tone}"></span>
+            {#if site.share !== undefined}
+              <!-- Ход сайта по низу строки: двигается только transform. -->
+              <span class="site-track {site.tone}" class:unknown={site.share === null} aria-hidden="true">
+                <span style={`--share:${site.share ?? 0}`}></span>
+              </span>
+            {/if}
             <b class="site-name">{site.name}</b>
             <span class="site-meta">
               <span class="state-text">{site.text}</span>
@@ -1707,6 +1756,93 @@
 
   .dot.bad {
     background: var(--danger);
+  }
+
+  /* Ход проверки по сайтам: идущий сайт «дышит», закончивший — щёлкает цветом. */
+  .site.live {
+    position: relative;
+  }
+
+  .site.live .dot {
+    transition: background-color var(--dur-2) var(--ease-out);
+  }
+
+  .dot.wait {
+    opacity: 0.45;
+  }
+
+  .dot.busy {
+    background: var(--accent-brand);
+    animation: dot-breathe 1.1s var(--ease-in-out) infinite alternate;
+  }
+
+  .site.live .dot.ok,
+  .site.live .dot.bad {
+    animation: dot-settle var(--dur-3) var(--ease-snap) both;
+  }
+
+  @keyframes dot-breathe {
+    from {
+      opacity: 0.45;
+      transform: scale(0.8);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1.15);
+    }
+  }
+
+  @keyframes dot-settle {
+    from {
+      transform: scale(1.8);
+    }
+  }
+
+  .site-track {
+    position: absolute;
+    inset: auto 12px 3px;
+    height: 2px;
+    overflow: hidden;
+    border-radius: 1px;
+    background: color-mix(in oklab, var(--border) 70%, transparent);
+    pointer-events: none;
+  }
+
+  .site-track > span {
+    position: absolute;
+    inset: 0;
+    background: var(--accent-brand);
+    transform: scaleX(var(--share));
+    transform-origin: left;
+  }
+
+  .site-track.ok > span {
+    background: var(--ok);
+  }
+
+  .site-track.bad > span {
+    background: var(--danger);
+  }
+
+  .site-track > span {
+    transition:
+      transform var(--dur-3) var(--ease-out),
+      background-color var(--dur-2) var(--ease-out);
+  }
+
+  .site-track.unknown > span {
+    width: 30%;
+    transform: none;
+    animation: site-run 1.2s var(--ease-in-out) infinite;
+  }
+
+  @keyframes site-run {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 340% 0;
+    }
   }
 
   .state-text {
