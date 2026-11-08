@@ -162,6 +162,19 @@ impl LibraryStore for InMemoryLibraryStore {
     fn set_page_search(&self, mod_id: &str, state: Option<PageSearch>) {
         self.inner.lock().unwrap().set_page_search(mod_id, state);
     }
+
+    fn get_fallback_search(&self, mod_id: &str) -> Option<DateTime<FixedOffset>> {
+        self.inner
+            .lock()
+            .unwrap()
+            .fallback_searches
+            .get(mod_id)
+            .copied()
+    }
+
+    fn set_fallback_search(&self, mod_id: &str, at: Option<DateTime<FixedOffset>>) {
+        self.inner.lock().unwrap().set_fallback_search(mod_id, at);
+    }
 }
 
 #[cfg(test)]

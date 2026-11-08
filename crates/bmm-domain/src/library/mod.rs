@@ -151,6 +151,11 @@ pub trait LibraryStore: Send + Sync {
     fn set_checking_declined(&self, mod_id: &str, declined: bool);
     fn get_page_search(&self, mod_id: &str) -> Option<PageSearch>;
     fn set_page_search(&self, mod_id: &str, state: Option<PageSearch>);
+    /// Когда мод в последний раз искали на запасных сайтах (его сайт не открывался).
+    /// Отдельно от [`Self::get_page_search`]: поиск запасного сайта раз в сутки не
+    /// должен откладывать поиск вторых страниц на две недели.
+    fn get_fallback_search(&self, mod_id: &str) -> Option<DateTime<FixedOffset>>;
+    fn set_fallback_search(&self, mod_id: &str, at: Option<DateTime<FixedOffset>>);
 }
 
 #[derive(Debug, Default)]
@@ -163,6 +168,7 @@ pub(crate) struct Inner {
     pub(crate) history: HashMap<String, Vec<String>>,
     pub(crate) declined: HashSet<String>,
     pub(crate) page_searches: HashMap<String, PageSearch>,
+    pub(crate) fallback_searches: HashMap<String, DateTime<FixedOffset>>,
     pub(crate) last_run: Option<DateTime<FixedOffset>>,
 }
 
@@ -197,6 +203,7 @@ impl Inner {
         changed |= self.history.remove(id).is_some();
         changed |= self.declined.remove(id);
         changed |= self.page_searches.remove(id).is_some();
+        changed |= self.fallback_searches.remove(id).is_some();
         changed
     }
 
@@ -316,6 +323,28 @@ impl Inner {
             }
             None => {
                 self.page_searches.remove(mod_id);
+            }
+        }
+        true
+    }
+
+    pub(crate) fn set_fallback_search(
+        &mut self,
+        mod_id: &str,
+        at: Option<DateTime<FixedOffset>>,
+    ) -> bool {
+        if !self.mods.contains_key(mod_id) {
+            return false;
+        }
+        if self.fallback_searches.get(mod_id) == at.as_ref() {
+            return false;
+        }
+        match at {
+            Some(at) => {
+                self.fallback_searches.insert(mod_id.to_string(), at);
+            }
+            None => {
+                self.fallback_searches.remove(mod_id);
             }
         }
         true

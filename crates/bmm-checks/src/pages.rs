@@ -680,7 +680,15 @@ pub fn find_extra_pages(
         .collect();
 
     search_more_pages(
-        store, search, &due, now, cancel, title_of, author_of, progress,
+        store,
+        search,
+        &due,
+        now,
+        cancel,
+        title_of,
+        author_of,
+        SearchMark::Extra,
+        progress,
     )
 }
 
@@ -721,13 +729,18 @@ pub fn find_fallback_pages(
         .filter(|installed| only.is_none_or(|only| only == installed.id))
         .filter(|installed| include_disabled || installed.enabled || only.is_some())
         .filter(|installed| !store.is_checking_declined(&installed.id))
+        // «Это другой мод» — человек отказался от найденных страниц: не навязываем.
+        .filter(|installed| {
+            store
+                .get_page_search(&installed.id)
+                .is_none_or(|search| !search.rejected)
+        })
         // Человек нажал «Поискать на других сайтах» — ищем, даже если искали недавно.
-        .filter(|installed| match store.get_page_search(&installed.id) {
-            None => true,
-            Some(search) => {
-                !search.rejected
-                    && (only.is_some() || now - search.at >= FALLBACK_RETRY || search.at > now)
-            }
+        .filter(|installed| {
+            only.is_some()
+                || store
+                    .get_fallback_search(&installed.id)
+                    .is_none_or(|at| now - at >= FALLBACK_RETRY || at > now)
         })
         .filter_map(|installed| {
             let own: Vec<&ModBinding> = bindings
@@ -750,7 +763,15 @@ pub fn find_fallback_pages(
         })
         .collect();
     search_more_pages(
-        store, search, &due, now, cancel, title_of, author_of, progress,
+        store,
+        search,
+        &due,
+        now,
+        cancel,
+        title_of,
+        author_of,
+        SearchMark::Fallback,
+        progress,
     )
 }
 
@@ -764,6 +785,7 @@ fn search_more_pages(
     cancel: &AtomicBool,
     title_of: &dyn Fn(&str) -> Option<String>,
     author_of: &dyn Fn(&str) -> Option<String>,
+    mark: SearchMark,
     mut progress: Option<&mut dyn FnMut(&UpdateProgress)>,
 ) -> PageSearchReport {
     let mut result = PageSearchReport::default();
@@ -840,13 +862,16 @@ fn search_more_pages(
             continue;
         }
         result.searched += 1;
-        store.set_page_search(
-            &installed.id,
-            Some(PageSearch {
-                at: now,
-                rejected: false,
-            }),
-        );
+        match mark {
+            SearchMark::Extra => store.set_page_search(
+                &installed.id,
+                Some(PageSearch {
+                    at: now,
+                    rejected: false,
+                }),
+            ),
+            SearchMark::Fallback => store.set_fallback_search(&installed.id, Some(now)),
+        }
         let author = author_of(&installed.id);
         for site in missing {
             let on_site: Vec<Listing> = listings
@@ -906,7 +931,23 @@ fn search_more_pages(
             }
         }
     }
+    // Сайты, которые так и не ответили: окно не должно писать «искали везде».
+    result.skipped_sites = search
+        .sources()
+        .iter()
+        .filter(|source| skipped.contains(source.id()) && !answered_sites.contains(source.id()))
+        .map(|source| source.display_name().to_string())
+        .collect();
     result
+}
+
+/// Какую отметку «когда искали» ставит поиск: вторых страниц (раз в две недели) или
+/// запасного сайта (раз в сутки). Раньше отметка была общая, и поиск запасного сайта
+/// откладывал поиск вторых страниц на две недели.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchMark {
+    Extra,
+    Fallback,
 }
 
 /// Запись со страницы мода поверх записи из поиска: размер, автор и версия, которых
@@ -1449,11 +1490,27 @@ mod tests {
         id: &'static str,
         page: Option<Listing>,
         results: Vec<Listing>,
+        silent: bool,
     }
 
     impl VerifySite {
         fn new(id: &'static str, page: Option<Listing>, results: Vec<Listing>) -> Arc<Self> {
-            Arc::new(Self { id, page, results })
+            Arc::new(Self {
+                id,
+                page,
+                results,
+                silent: false,
+            })
+        }
+
+        /// Сайт не открывается: поиск на нём отвечает сбоем соединения.
+        fn silent(id: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                id,
+                page: None,
+                results: Vec::new(),
+                silent: true,
+            })
         }
     }
 
@@ -1481,6 +1538,12 @@ mod tests {
             true
         }
         fn search(&self, _query: &str, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            if self.silent {
+                return Err(SourceError::unreachable(
+                    bmm_sources::reach::Reach::Stalled,
+                    "не открывается",
+                ));
+            }
             Ok(self.results.clone())
         }
         fn feed_page(&self, _page: u32, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
@@ -1882,6 +1945,69 @@ mod tests {
         assert_eq!(one.searched, 1);
         let again = fallback(&store, &nothing, tomorrow, &["stmods"], Some("car"));
         assert_eq!(again.searched, 1, "по кнопке — и в тот же день");
+        // Отметка запасного поиска своя: поиск вторых страниц от неё не зависит.
+        assert_eq!(
+            store.get_page_search("car").map(|search| search.at),
+            Some(now() - TimeDelta::days(3)),
+            "отметка вторых страниц не тронута"
+        );
+        assert_eq!(store.get_fallback_search("car"), Some(tomorrow));
+    }
+
+    #[test]
+    fn fallback_search_does_not_put_off_the_second_page_search() {
+        // Раньше отметка была общая: поиск запасного сайта (раз в сутки) откладывал
+        // поиск вторых страниц (раз в две недели) на две недели.
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "car", "stmods");
+        let nothing = sites(vec![VerifySite::new("modland", None, Vec::new())]);
+        assert_eq!(
+            fallback(&store, &nothing, now(), &["stmods"], None).searched,
+            1
+        );
+        assert!(store.get_page_search("car").is_none());
+        let extra = find_extra_pages(
+            &store,
+            &nothing,
+            now(),
+            &AtomicBool::new(false),
+            false,
+            &|_| None,
+            &|_| None,
+            None,
+        );
+        assert_eq!(
+            extra.searched, 1,
+            "вторые страницы ищутся по своему расписанию"
+        );
+    }
+
+    #[test]
+    fn sites_that_did_not_answer_are_reported() {
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "car", "stmods");
+        let search = sites(vec![
+            VerifySite::silent("modsgaming"),
+            VerifySite::new("modland", None, Vec::new()),
+        ]);
+        let report = fallback(&store, &search, now(), &["stmods"], None);
+        assert_eq!(report.searched, 1);
+        assert_eq!(
+            report.skipped_sites,
+            ["modsgaming"],
+            "окно не пишет «искали везде»"
+        );
+        // Не ответил никто — мод не считается обысканным, отметки нет.
+        let store = InMemoryLibraryStore::new();
+        maserati(&store, "car", "stmods");
+        let all_silent = sites(vec![VerifySite::silent("modland")]);
+        let report = fallback(&store, &all_silent, now(), &["stmods"], None);
+        assert_eq!((report.searched, report.skipped_sites.len()), (0, 1));
+        assert_eq!(
+            store.get_fallback_search("car"),
+            None,
+            "попробуем при следующей проверке"
+        );
     }
 
     #[test]

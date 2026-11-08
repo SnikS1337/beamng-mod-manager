@@ -600,9 +600,14 @@
   async function searchElsewhere(finding: UpdateFinding) {
     if (!ask || ask.busy) return;
     ask = { ...ask, busy: true };
+    // Поиск идёт секунды: если за это время список перечитали, ответ поиска уже не
+    // свежее — снимок не затираем, а вопрос строим по ответу.
+    const token = ++readToken;
     try {
       const fresh = await updatesFindFallback(finding.modId);
-      snapshot = fresh;
+      if (token === readToken) snapshot = fresh;
+      // Пока искали, человек мог закрыть вопрос или открыть другой — не навязываем.
+      if (!ask || ask.modId !== finding.modId) return;
       const again = fresh.findings.find((item) => item.modId === finding.modId);
       const plan = planAfterSearch(again);
       if (plan.kind === "open") {
