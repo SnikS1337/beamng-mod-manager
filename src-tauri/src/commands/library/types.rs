@@ -45,6 +45,9 @@ pub struct ModCardDto {
     pub group: Vec<String>,
     /// В группе включено больше одного: игра загрузит все.
     pub group_conflict: bool,
+    /// У мода есть страница на сайте (подтверждённая или предложенная): на карточке
+    /// можно открыть её сразу, не заходя в панель.
+    pub has_page: bool,
     /// «vehicle», «map», «addon»; `None` — архив ещё не прочитан.
     #[ts(type = "ModRole | null")]
     pub role: Option<String>,

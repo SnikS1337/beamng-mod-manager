@@ -17,3 +17,15 @@ describe("значок «Обновления»", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("кнопка на панели задач мигает о найденном", () => {
+  it("только про новое и только когда окно в стороне", async () => {
+    const { shouldAskAttention } = await import("./updatesBadge.svelte");
+    expect(shouldAskAttention({ phase: "auto", newCount: 2 }, false)).toBe(true);
+    expect(shouldAskAttention({ phase: "auto", newCount: 2 }, true)).toBe(false);
+    expect(shouldAskAttention({ phase: "auto", newCount: 0 }, false)).toBe(false);
+    expect(shouldAskAttention({ phase: "done", newCount: 2 }, false)).toBe(true);
+    expect(shouldAskAttention({ phase: "pages", newCount: 2 }, false)).toBe(false);
+    expect(shouldAskAttention({ phase: "progress", newCount: 2 }, false)).toBe(false);
+  });
+});

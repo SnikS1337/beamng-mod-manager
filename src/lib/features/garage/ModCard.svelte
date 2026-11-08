@@ -13,13 +13,16 @@
   import { Switch } from "#lib/components/ui/switch/index.js";
   import { modPreview, type ModCardDto } from "#lib/ipc/library.js";
   import { copiesBadge } from "./duplicates";
-  import { addonCaption, compatNote, versionLine } from "./cardText";
+  import { addonCaption, cardActions, compatNote, versionLine } from "./cardText";
+  import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
+  import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
   import { formatSize, plural } from "./format";
   import { typeLabel, typeTag } from "./view";
   import { modStatus } from "./status";
   import { flowName } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
   import { coverFlight } from "./coverFlight.svelte";
+  import { conflictFlash } from "./conflictFlash.svelte";
   import { liveDownloads } from "#lib/features/download/live.svelte.js";
   import { modProgress } from "#lib/features/download/jobs.js";
 
@@ -31,6 +34,8 @@
     appear = false,
     onselect,
     ontoggle,
+    onupdate,
+    onopenpage,
   }: {
     mod: ModCardDto;
     selected: boolean;
@@ -42,13 +47,21 @@
     appear?: boolean;
     onselect: (id: string, keys: ClickKeys) => void;
     ontoggle: (mod: ModCardDto) => void;
+    /** «Обновить» на карточке — как кнопка в панели мода. */
+    onupdate?: (mod: ModCardDto) => void;
+    /** «Открыть сайт» на карточке. */
+    onopenpage?: (mod: ModCardDto) => void;
   } = $props();
+
+  const actions = $derived(cardActions(mod));
 
   let preview = $state<string | null>(null);
   let requested = $state("");
   let loaded = $state(false);
   /** Для этого мода качается обновление: полоска на обложке. */
   const download = $derived(modProgress(liveDownloads.jobs, liveDownloads.tracked, mod.id));
+  /** Обновление уже качается — второй раз страницу не открываем. */
+  const showUpdate = $derived(actions.update && download === null);
   /** Картинка не открылась (битый файл превью): показываем значок, а не пустое место. */
   let brokenPreview = $state<string | null>(null);
 
@@ -190,10 +203,41 @@
         <span style={`--p:${(download.percent ?? 0) / 100}`}></span>
       </span>
     {/if}
+    {#if (showUpdate && onupdate) || (actions.page && onopenpage)}
+      <!-- Быстрые действия под курсором. С клавиатуры то же есть в меню карточки
+           (Shift+F10), поэтому в порядок Tab кнопки не встают. -->
+      <span class="quick">
+        {#if showUpdate && onupdate}
+          <button
+            class="quick-button primary"
+            type="button"
+            tabindex="-1"
+            title={mod.updateVersion ? `Обновить до ${mod.updateVersion}` : "Открыть страницу обновления"}
+            onclick={() => onupdate(mod)}
+          >
+            <DownloadSimple size={13} weight="bold" />
+            Обновить
+          </button>
+        {/if}
+        {#if actions.page && onopenpage}
+          <button
+            class="quick-button"
+            type="button"
+            tabindex="-1"
+            aria-label="Открыть сайт мода"
+            title="Открыть сайт мода"
+            onclick={() => onopenpage(mod)}
+          >
+            <ArrowSquareOut size={14} weight="bold" />
+          </button>
+        {/if}
+      </span>
+    {/if}
     {#if copies}
       <span
         class="copies"
         class:conflict={mod.groupConflict}
+        class:flash={conflictFlash.id === mod.id}
         title={mod.groupConflict
           ? "Включено несколько копий — игра загрузит все"
           : "Остальные копии — в панели мода"}
@@ -254,6 +298,25 @@
   .card.appear {
     animation: rise-in var(--dur-3) var(--ease-out) both;
     animation-delay: calc(var(--i) * 18ms);
+  }
+
+  /* Карточка, въезжающая в экран при прокрутке, мягко проявляется. Ведёт
+     прокрутка, а не таймер: без перерисовки, на композиторе. Свои свойства
+     (translate, scale), а не transform: нажатие (transform) и анимация не спорят. */
+  @supports (animation-timeline: view()) {
+    :global(html:not(.no-motion)) .card:not(.appear) {
+      animation: card-enter linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 80%;
+    }
+  }
+
+  @keyframes card-enter {
+    from {
+      opacity: 0.3;
+      translate: 0 16px;
+      scale: 0.97;
+    }
   }
 
   /* Без сдвига при наведении: карточка под краем курсора начинала дрожать. */
@@ -352,6 +415,74 @@
     height: 140px;
     overflow: hidden;
     background: var(--surface-2);
+  }
+
+  /* Быстрые действия выезжают снизу обложки при наведении. Над кнопкой выбора
+     карточки (.select), иначе клик выбирал бы карточку. */
+  .quick {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    z-index: 2;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transform: translateY(6px);
+    transition:
+      opacity var(--dur-2) var(--ease-out),
+      transform var(--dur-2) var(--ease-spring);
+    pointer-events: none;
+  }
+
+  .card:hover .quick,
+  .card:focus-within .quick {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+
+  /* Пометка «N копии» в том же углу — уступает место кнопкам. */
+  .copies {
+    transition: opacity var(--dur-2) var(--ease-out);
+  }
+
+  .card:is(:hover, :focus-within):has(.quick) .copies {
+    opacity: 0;
+  }
+
+  /* Идёт выбор нескольких — карточка работает как галочка, действия не мешают. */
+  .card.selecting .quick {
+    display: none;
+  }
+
+  .quick-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--surface-2) 88%, transparent);
+    color: var(--foreground);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: default;
+    box-shadow: var(--shadow-1);
+  }
+
+  .quick-button:hover {
+    border-color: var(--accent-brand);
+  }
+
+  .quick-button:active {
+    transform: translateY(1px);
+  }
+
+  .quick-button.primary {
+    border-color: transparent;
+    background: var(--accent-brand);
+    color: var(--accent-brand-contrast);
   }
 
   /* Полоска хода обновления по низу обложки. Двигается только transform —
@@ -507,6 +638,36 @@
   .copies.conflict {
     border-color: color-mix(in oklab, var(--danger) 60%, transparent);
     color: var(--danger);
+  }
+
+  /* Только что включились две копии: метка вздрагивает и вспыхивает. Под
+     курсором кнопки её прячут — вспышку показываем поверх них. */
+  .copies.flash {
+    z-index: 3;
+    opacity: 1 !important;
+    animation: copies-flash 900ms var(--ease-out);
+  }
+
+  @keyframes copies-flash {
+    0%,
+    100% {
+      transform: none;
+      box-shadow: 0 0 0 0 transparent;
+    }
+    15% {
+      transform: translateX(-3px);
+      box-shadow: 0 0 0 4px color-mix(in oklab, var(--danger) 35%, transparent);
+    }
+    30% {
+      transform: translateX(3px);
+    }
+    45% {
+      transform: translateX(-2px);
+    }
+    60% {
+      transform: translateX(1px);
+      box-shadow: 0 0 0 6px transparent;
+    }
   }
 
   .body {

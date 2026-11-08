@@ -34,3 +34,16 @@ export function addonCaption(mod: Pick<ModCardDto, "kind">): string | null {
   if (mod.kind === "level") return "Для карт игры";
   return null;
 }
+
+/**
+ * Быстрые действия при наведении на карточку: «Обновить», если нашлось обновление,
+ * и «Открыть сайт», если у мода есть страница. У удалённых — ничего: их файла нет.
+ */
+export function cardActions(mod: {
+  deleted: boolean;
+  hasPage: boolean;
+  update: string;
+}): { update: boolean; page: boolean } {
+  if (mod.deleted || !mod.hasPage) return { update: false, page: false };
+  return { update: mod.update !== "none", page: true };
+}

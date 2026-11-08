@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addonCaption, compatNote, versionLine } from "./cardText";
+import { addonCaption, compatNote, versionLine, cardActions } from "./cardText";
 
 const compat = (over: Partial<{ modFor: string | null; game: string | null; differs: boolean }>) => ({
   compat: { modFor: "0.38", game: "0.40", text: null, differs: true, ...over },
@@ -48,5 +48,21 @@ describe("addonCaption", () => {
   it("говорит то, чего нет в метке", () => {
     expect(addonCaption({ kind: "vehicle" })).toBe("Для машин игры");
     expect(addonCaption({ kind: "level" })).toBe("Для карт игры");
+  });
+});
+
+describe("быстрые действия на карточке", () => {
+  it("есть обновление — «Обновить» и сайт", () => {
+    expect(cardActions({ deleted: false, hasPage: true, update: "likely" })).toEqual({ update: true, page: true });
+    expect(cardActions({ deleted: false, hasPage: true, update: "possible" })).toEqual({ update: true, page: true });
+  });
+
+  it("обновления нет — только сайт", () => {
+    expect(cardActions({ deleted: false, hasPage: true, update: "none" })).toEqual({ update: false, page: true });
+  });
+
+  it("без страницы и у удалённых — ничего", () => {
+    expect(cardActions({ deleted: false, hasPage: false, update: "likely" })).toEqual({ update: false, page: false });
+    expect(cardActions({ deleted: true, hasPage: true, update: "likely" })).toEqual({ update: false, page: false });
   });
 });

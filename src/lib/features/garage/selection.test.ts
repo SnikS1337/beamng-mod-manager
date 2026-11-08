@@ -99,6 +99,7 @@ function card(id: string, patch: Partial<ModCardDto> = {}): ModCardDto {
     duplicateOf: null,
     group: [],
     groupConflict: false,
+    hasPage: false,
     role: "vehicle",
     ...patch,
   };

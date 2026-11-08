@@ -3,6 +3,7 @@
   import Trash from "phosphor-svelte/lib/Trash";
   import X from "phosphor-svelte/lib/X";
   import { plural } from "./format";
+  import { rollIn } from "#lib/shell/transitions.js";
   import type { BulkPlan } from "./selection";
 
   let {
@@ -26,7 +27,11 @@
 
 <aside class="bulk" aria-label="Выбранные моды">
   <div class="head">
-    <h2 class="display">Выбрано {count} {plural(count, "мод", "мода", "модов")}</h2>
+    <!-- Число выбранных «прокручивается», как счётчик: видно, что выбор изменился. -->
+    <h2 class="display">
+      Выбрано {#key count}<span class="count" in:rollIn>{count}</span>{/key}
+      {plural(count, "мод", "мода", "модов")}
+    </h2>
     <button class="close" type="button" aria-label="Снять выбор" onclick={onClear}>
       <X size={15} weight="bold" />
     </button>

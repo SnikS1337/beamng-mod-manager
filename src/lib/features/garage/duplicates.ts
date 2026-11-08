@@ -38,3 +38,20 @@ export function duplicateExplain(duplicate: DuplicateOf): { title: string; text:
         text: `Те же машины, карты или скрипт, что в ${other}. В списке они показаны одной карточкой.`,
       };
 }
+
+/**
+ * Группа копий, в которую входит мод, и включено ли в ней больше одного файла —
+ * пересчёт сразу после переключения, не дожидаясь перечитывания библиотеки.
+ * Мод без копий — `null`.
+ */
+export function groupConflictNow(
+  all: ModCardDto[],
+  id: string,
+): { mainId: string; conflict: boolean } | null {
+  const main = all.find(
+    (card) => (card.id === id && card.group.length > 0) || card.group.includes(id),
+  );
+  if (!main) return null;
+  const enabled = groupMembers(main, all).filter((card) => card.enabled && !card.deleted).length;
+  return { mainId: main.id, conflict: enabled > 1 };
+}

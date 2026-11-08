@@ -20,6 +20,7 @@
   import { libraryLoad } from "#lib/ipc/library.js";
   import { downloadOpen } from "#lib/ipc/download.js";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
+  import { softFade } from "#lib/shell/transitions.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import {
     listenSearch,
@@ -1014,7 +1015,8 @@
     <div class="grid search-grid">
       {#each shownCards as card (card.id)}
         {@const preview = previewOf(card)}
-        <article class="card search-card" style={`--flow:${flowName(card.id)}`}>
+        <!-- Сайты отвечают по очереди: пришедшие карточки проявляются, а не выскакивают. -->
+        <article class="card search-card" style={`--flow:${flowName(card.id)}`} in:softFade={{ duration: 220 }}>
           <div class="cover">
             {#if preview}
               <img src={preview} alt="" loading="lazy" decoding="async" />
@@ -1131,6 +1133,16 @@
           </div>
         </article>
       {/each}
+      {#if searching && !browseKind}
+        <!-- Ещё не все сайты ответили: в конце списка — заготовки, видно, что придёт ещё. -->
+        {#each Array(2) as _, index (index)}
+          <div class="ghost" aria-hidden="true">
+            <div class="skeleton ghost-cover"></div>
+            <div class="skeleton ghost-line wide"></div>
+            <div class="skeleton ghost-line"></div>
+          </div>
+        {/each}
+      {/if}
     </div>
     {#if browseKind}
       <div class="more">
