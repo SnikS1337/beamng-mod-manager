@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { releaseNoteItems } from "#lib/shell/appUpdateNotice.js";
   import { errorText } from "#lib/shell/errorText.js";
   import { SaveQueue } from "#lib/features/settings/saveQueue.js";
   import { wholeNumbers } from "#lib/features/settings/numbers.js";
@@ -267,13 +268,7 @@
   }
 
   const releaseNotes = $derived.by(() => {
-    const text = appUpdate?.state.manifest?.notes?.trim();
-    if (!text) return [] as string[];
-    const parts = text
-      .split(/\s+-\s+|\r?\n/)
-      .map((part) => part.trim().replace(/^[-•]\s*/, ""))
-      .filter(Boolean);
-    return parts.length > 1 ? parts : [text];
+    return releaseNoteItems(appUpdate?.state.manifest?.notes);
   });
 
   function updateStageText(): string {

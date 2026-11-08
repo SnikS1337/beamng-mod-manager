@@ -6,6 +6,9 @@
   import { isShortcut } from "#lib/shell/keys.js";
   import { groupConflictNow, groupMembers, isShown, visibleCards } from "./duplicates";
   import { toggleMessage } from "./cardText";
+  import { updateFromGarage } from "#lib/features/updates/startUpdate.js";
+  import { updatesSnapshot } from "#lib/ipc/updates.js";
+  import { downloadOpen } from "#lib/ipc/download.js";
   import { libraryView, staleError } from "./libraryView";
   import { InFlight, liveCard } from "./inflight";
   import { onMount, tick, untrack } from "svelte";
@@ -917,17 +920,24 @@
     }
   }
 
-  /** «Обновить» с карточки — как кнопка в панели мода: страница и наблюдение за загрузками. */
+  /**
+   * «Обновить» с карточки и из панели мода — как в разделе «Обновления»: окно
+   * загрузки, а если сайт не открывается — туда, где спросят про запасной сайт.
+   */
   async function updateFromCard(mod: ModCardDto) {
     try {
-      const found = await modDetails(mod.id);
-      if (!found.binding?.url) {
-        await openPageOf(mod);
-        return;
+      const result = await updateFromGarage(mod.id, updatesSnapshot, {
+        openWindow: downloadOpen,
+        openBrowser: openExternal,
+        expectDownload,
+        toast: (text) => showToast(text),
+      });
+      if (result.kind === "ask") await goto(result.route);
+      else if (result.kind === "gone") {
+        showToast("Обновления у этого мода уже нет");
+        updatesBadge.refresh();
+        await load(true);
       }
-      if (!(await openExternal(found.binding.url))) return;
-      await expectDownload();
-      showToast("Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить");
     } catch (reason) {
       showToast(errorText(reason));
     }
@@ -1152,6 +1162,7 @@
           mods={allCards}
           onToggle={(mod) => void toggle(mod)}
           onOpenPage={(mod) => void openPageOf(mod)}
+          onUpdate={(mod) => void updateFromCard(mod)}
           onShowFolder={(mod) => void showFolderOf(mod)}
           onShowDetails={(mod) => (picked = selectOnly(mod.id))}
           onDelete={(mod) => void deleteCard(mod)}
@@ -1207,6 +1218,7 @@
       />
     {:else if selectedId !== null}
       <Inspector
+        onUpdate={selected ? () => void updateFromCard(selected!) : undefined}
         {details}
         loading={detailsLoading}
         coverHint={coverFlight.known(selectedId)}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SearchCard, SearchListing } from "#lib/ipc/search.js";
-import { filterAndSort, gameMatches, versionPair } from "./filters";
+import { filterAndSort, gameMatches, resultsView, versionPair } from "./filters";
 
 function listing(patch: Partial<SearchListing> = {}): SearchListing {
   return {
@@ -142,5 +142,30 @@ describe("фильтры поиска", () => {
       "old",
       "new",
     ]);
+  });
+});
+
+describe("что показать в результатах", () => {
+  const view = (patch: Partial<Parameters<typeof resultsView>[0]>) =>
+    resultsView({ searching: false, searched: true, error: false, total: 0, shown: 0, ...patch });
+
+  it("ждём первые ответы — заготовки", () => {
+    expect(view({ searching: true })).toBe("loading");
+  });
+
+  it("сайты ещё отвечают, а под фильтр пока ничего — не «ничего не подошло»", () => {
+    expect(view({ searching: true, total: 4, shown: 0 })).toBe("filteredWaiting");
+    expect(view({ searching: false, total: 4, shown: 0 })).toBe("filteredEmpty");
+  });
+
+  it("закончили и пусто — «ничего не нашли»; при ошибке — не пишем", () => {
+    expect(view({})).toBe("nothing");
+    expect(view({ error: true })).toBe("idle");
+    expect(view({ searched: false })).toBe("idle");
+  });
+
+  it("есть что показать — сетка, даже пока ищем", () => {
+    expect(view({ searching: true, total: 4, shown: 2 })).toBe("grid");
+    expect(view({ total: 4, shown: 4 })).toBe("grid");
   });
 });

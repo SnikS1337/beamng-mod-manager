@@ -13,7 +13,6 @@
     type PackagingProblem,
     type VersionRow,
   } from "#lib/ipc/library.js";
-  import { expectDownload } from "#lib/ipc/incoming.js";
   import type { AppError } from "#lib/ipc/types.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import X from "phosphor-svelte/lib/X";
@@ -55,6 +54,7 @@
     onDeclineChecking,
     onResumeChecking,
     onClose,
+    onUpdate,
   }: {
     details: ModDetails | null;
     loading: boolean;
@@ -105,6 +105,8 @@
     /** Снова включить проверку после отказа. */
     onResumeChecking?: () => Promise<void>;
     onClose: () => void;
+    /** «Обновить до …» — то же, что в разделе «Обновления». */
+    onUpdate?: () => void;
   } = $props();
 
   let binding = $state(false);
@@ -227,13 +229,12 @@
 
   async function openPage() {
     if (!details?.binding) return;
-    if (!(await openExternal(details.binding.url))) return;
-    if (hasUpdate) {
-      await expectDownload();
-      toasts.show(
-        "Скачайте архив на странице — программа заметит его в «Загрузках» и предложит установить",
-      );
+    // «Обновить» — как везде: окно загрузки, запасной сайт (см. startUpdate).
+    if (hasUpdate && onUpdate) {
+      onUpdate();
+      return;
     }
+    await openExternal(details.binding.url);
   }
 
   async function openFolder() {

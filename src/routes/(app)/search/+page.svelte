@@ -14,7 +14,7 @@
   import { formatSize, plural, shownOfLabel } from "#lib/features/garage/format.js";
   import { categoryIntent, type BrowseKind } from "#lib/features/search/category.js";
   import { searchKindLabel } from "#lib/features/search/kind.js";
-  import { filterAndSort, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
+  import { filterAndSort, resultsView, type SearchKindFilter, type SearchPriceFilter, type SearchSortOrder } from "#lib/features/search/filters.js";
   import { parseSearchInput } from "#lib/features/search/queryInput.js";
   import { suggest } from "#lib/features/search/suggest.js";
   import { libraryLoad } from "#lib/ipc/library.js";
@@ -612,6 +612,15 @@
       onlyCompatible,
     }),
   );
+  const view = $derived(
+    resultsView({
+      searching,
+      searched,
+      error: error !== null,
+      total: cards.length,
+      shown: shownCards.length,
+    }),
+  );
 
   $effect(() => {
     if (!filtersLoaded) return;
@@ -983,7 +992,11 @@
 
   <div class="body">
   <section class="results scroll-area">
-  {#if searching && cards.length === 0}
+  {#if view === "loading" || view === "filteredWaiting"}
+    {#if view === "filteredWaiting"}
+      <!-- Пока сайты отвечают, «ничего не подошло» — неправда: ответ может прийти. -->
+      <p class="waiting">Под фильтр пока ничего — ищем на остальных сайтах…</p>
+    {/if}
     <div class="grid skeletons">
       {#each Array(6) as _}
         <div class="ghost">
@@ -993,7 +1006,7 @@
         </div>
       {/each}
     </div>
-  {:else if searched && cards.length === 0 && !searching && !error}
+  {:else if view === "nothing"}
     <div class="state">
       {#if browseKind}
         <p class="display">В разделе пока ничего нет</p>
@@ -1005,13 +1018,13 @@
         <a class="btn-glass" href="/settings?section=sites">Какие сайты включены</a>
       {/if}
     </div>
-  {:else if cards.length > 0 && shownCards.length === 0}
+  {:else if view === "filteredEmpty"}
     <div class="state">
       <p class="display">Под фильтр ничего не подошло</p>
       <span>Измените цену, сайт или тип мода — или сбросьте фильтры.</span>
       <button class="btn-glass" type="button" onclick={resetFilters}>Сбросить фильтры</button>
     </div>
-  {:else if cards.length > 0}
+  {:else if view === "grid"}
     <div class="grid search-grid">
       {#each shownCards as card (card.id)}
         {@const preview = previewOf(card)}
@@ -1897,6 +1910,12 @@
     font-size: 12.5px;
     font-weight: 700;
     cursor: default;
+  }
+
+  .waiting {
+    margin: 0 0 12px;
+    color: var(--muted-foreground);
+    font-size: 13px;
   }
 
   .ghost {

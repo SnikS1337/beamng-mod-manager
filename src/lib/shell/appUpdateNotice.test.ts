@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppUpdateSnapshot } from "#lib/ipc/appUpdate.js";
-import { noticeFor, notesPreview } from "./appUpdateNotice";
+import { noteLines, noticeFor, notesPreview, releaseNoteItems } from "./appUpdateNotice";
 
 function snapshot(stage: AppUpdateSnapshot["state"]["stage"], progress = 0): AppUpdateSnapshot {
   return {
@@ -48,5 +48,23 @@ describe("плашка обновления программы", () => {
 
   it("берёт из заметок пару строк", () => {
     expect(notesPreview("- Первое\n- Второе\n- Третье")).toEqual(["Первое", "Второе"]);
+  });
+});
+
+describe("заметки к выпуску с подзаголовками", () => {
+  const notes = "### Новое\n\n- Мод прилетает\n- Обложка в панель\n\n### Исправлено\n\n- Поиск\r\n* Звёздочка";
+
+  it("подзаголовки — не пункты", () => {
+    expect(noteLines(notes)).toEqual(["Мод прилетает", "Обложка в панель", "Поиск", "Звёздочка"]);
+    expect(notesPreview(notes)).toEqual(["Мод прилетает", "Обложка в панель"]);
+  });
+
+  it("«Что нового»: все пункты; старый формат в одну строку тоже делится", () => {
+    expect(releaseNoteItems(notes)).toHaveLength(4);
+    expect(releaseNoteItems("- первое - второе - третье")).toEqual(["первое", "второе", "третье"]);
+    expect(releaseNoteItems("Одна строка без пунктов")).toEqual(["Одна строка без пунктов"]);
+    expect(releaseNoteItems("   ")).toEqual([]);
+    expect(releaseNoteItems(null)).toEqual([]);
+    expect(releaseNoteItems("### Только заголовок")).toEqual([]);
   });
 });

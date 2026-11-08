@@ -4,6 +4,8 @@
   import { ContextMenu } from "bits-ui";
   import Power from "phosphor-svelte/lib/Power";
   import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
+  import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
+  import { cardActions } from "./cardText";
   import FolderOpen from "phosphor-svelte/lib/FolderOpen";
   import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise";
   import Trash from "phosphor-svelte/lib/Trash";
@@ -14,6 +16,7 @@
     children,
     onToggle,
     onOpenPage,
+    onUpdate,
     onShowFolder,
     onShowDetails,
     onDelete,
@@ -25,6 +28,8 @@
     children: Snippet;
     onToggle: (mod: ModCardDto) => void;
     onOpenPage: (mod: ModCardDto) => void;
+    /** «Обновить» — есть, когда нашлось обновление (как кнопка на карточке). */
+    onUpdate?: (mod: ModCardDto) => void;
     onShowFolder: (mod: ModCardDto) => void;
     onShowDetails: (mod: ModCardDto) => void;
     onDelete: (mod: ModCardDto) => void;
@@ -96,6 +101,11 @@
         <ContextMenu.Item class="menu-item" onSelect={() => onToggle(mod)}>
           <Power size={16} />{mod.enabled ? "Выключить" : "Включить"}
         </ContextMenu.Item>
+        {#if onUpdate && cardActions(mod).update}
+          <ContextMenu.Item class="menu-item" onSelect={() => onUpdate(mod)}>
+            <DownloadSimple size={16} />{mod.updateVersion ? `Обновить до ${mod.updateVersion}` : "Обновить"}
+          </ContextMenu.Item>
+        {/if}
         <ContextMenu.Item class="menu-item" onSelect={() => onOpenPage(mod)}>
           <ArrowSquareOut size={16} />Открыть страницу мода
         </ContextMenu.Item>
