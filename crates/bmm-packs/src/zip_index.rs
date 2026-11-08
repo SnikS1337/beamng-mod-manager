@@ -187,17 +187,7 @@ mod tests {
             "число из настоящего конца"
         );
         // Без комментария — как раньше.
-        assert_eq!(
-            eocd_entries(
-                &real[..22]
-                    .iter()
-                    .copied()
-                    .map(|byte| byte)
-                    .collect::<Vec<_>>()
-            )
-            .map(|_| ()),
-            Some(())
-        );
+        assert_eq!(eocd_entries(&real), Some(60000));
     }
 
     #[test]
