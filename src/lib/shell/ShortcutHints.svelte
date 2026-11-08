@@ -2,7 +2,7 @@
   import { page } from "$app/state";
   import { toasts } from "./toasts.svelte";
   import { pop } from "./transitions";
-  import { CtrlHold, hintsFor } from "./shortcutHints.svelte";
+  import { CtrlHold, hintsFor } from "./ctrlHold.svelte";
 
   // Держат Ctrl один — внизу видно, какие сочетания есть на этой странице.
   const hold = new CtrlHold();

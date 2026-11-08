@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CtrlHold, HOLD_MS, hintsFor } from "./shortcutHints.svelte";
+import { CtrlHold, HOLD_MS, hintsFor } from "./ctrlHold.svelte";
 
 const key = (name: string, extra: Partial<KeyboardEvent> = {}) =>
   ({ key: name, repeat: false, shiftKey: false, altKey: false, metaKey: false, ...extra }) as KeyboardEvent;
