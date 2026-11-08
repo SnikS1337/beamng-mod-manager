@@ -86,8 +86,11 @@ pub fn probe(
         };
     }
     let url = peek.final_url.to_string();
+    // Сравниваем без хвоста `?…`: метки и подписи в нём меняются каждый раз, и
+    // страница файлообменника открывалась при каждой проверке.
     if let Some(previous) = previous
-        && previous.url == url
+        && Url::parse(&previous.url)
+            .is_ok_and(|known| without_query(&known) == without_query(&peek.final_url))
         && (previous.name.is_some() || previous.gone)
     {
         // Тот же адрес — тот же файл (или тот же удалённый): страницу не открываем.
@@ -289,6 +292,41 @@ mod tests {
             "подпись ставит проверка"
         );
         assert_eq!(fake.pages.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_file_page_with_a_new_query_is_not_opened_again() {
+        // Метки в `?…` меняются от раза к разу: раньше страница файлообменника
+        // открывалась при каждой проверке.
+        let (fake, polite) = fetcher(
+            Ok(Peek {
+                final_url: url("https://modsfire.com/FILE?ref=2&t=99"),
+                page: true,
+                name: None,
+                size: None,
+            }),
+            &modsfire_page(),
+        );
+        let previous = FileSnapshot {
+            gone: false,
+            offer: None,
+            seen_at: None,
+            url: "https://modsfire.com/FILE?ref=1&t=42".to_string(),
+            name: Some("car.zip".to_string()),
+            size: Some(1),
+            exact: false,
+            page_key: Some("1".to_string()),
+        };
+        let probe = probe(
+            &polite,
+            &url("https://stmods.org/d"),
+            Some(&previous),
+            true,
+            &NO,
+        );
+        assert!(!probe.opened_page);
+        assert_eq!(probe.file.unwrap().name.as_deref(), Some("car.zip"));
+        assert!(fake.pages.lock().unwrap().is_empty());
     }
 
     #[test]
