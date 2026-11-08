@@ -6,6 +6,7 @@ import {
   typeCounts,
   typeLabel,
   typeTag, revealScroll, nextReveal, freshReveal } from "./view";
+// @ts-expect-error — тесты идут в Node, а типов Node в проекте нет.
 import { readFileSync } from "node:fs";
 
 describe("typeTag", () => {
@@ -89,7 +90,7 @@ describe("показ карточки после стрелок — разовы
 
   it("сетка и список выполняют просьбу один раз и не следят за прокруткой", () => {
     for (const file of ["./ModGrid.svelte", "./ModList.svelte"]) {
-      const text = readFileSync(new URL(file, import.meta.url), "utf8");
+      const text: string = readFileSync(new URL(file, import.meta.url), "utf8");
       expect(text, file).toContain("freshReveal(request, revealed)");
       expect(text, file).toContain("revealed = request.seq");
       expect(text, file).toMatch(/untrack\(\(\) => \{\s*const index = items\.findIndex/);
