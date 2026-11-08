@@ -22,3 +22,29 @@ export function lightSpot(pathname: string): LightSpot {
   const clean = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   return SPOTS[clean] ?? FALLBACK;
 }
+
+/**
+ * Фон спит, когда его не видно: вкладка скрыта или окно свёрнуто. WebView2 не всегда
+ * помечает свёрнутое окно скрытым, поэтому свёрнутость спрашиваем у окна отдельно.
+ * Окно просто не в фокусе — видно, не спит.
+ */
+export function backgroundSleeps(state: { hidden: boolean; minimized: boolean }): boolean {
+  return state.hidden || state.minimized;
+}
+
+/**
+ * Ответ «свёрнуто ли окно» приходит асинхронно. Ответ на старый вопрос не должен
+ * перетереть более свежий: окно успели развернуть, пока шёл первый ответ.
+ */
+export class LatestAnswer {
+  #asked = 0;
+
+  ask(): number {
+    this.#asked += 1;
+    return this.#asked;
+  }
+
+  isLatest(ticket: number): boolean {
+    return ticket === this.#asked;
+  }
+}

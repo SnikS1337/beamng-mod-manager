@@ -831,6 +831,23 @@ html.flow-arrive::view-transition-old(incoming-backdrop) {
   animation: flow-fade-out var(--dur-2) var(--ease-out) both;
 }
 
+/* Обложка карточки переезжает в панель мода (coverFlight.svelte.ts). */
+html.flow-garage .cover-from,
+html.flow-garage .cover-to {
+  view-transition-name: cover;
+}
+
+html.flow-garage::view-transition-group(cover) {
+  animation-duration: calc(var(--dur-3) + 140ms);
+  animation-timing-function: var(--ease-spring);
+}
+
+html.flow-garage::view-transition-old(cover),
+html.flow-garage::view-transition-new(cover) {
+  height: 100%;
+  object-fit: cover;
+}
+
 /* Панель мода выезжает справа и уезжает обратно. */
 ::view-transition-new(side):only-child {
   animation: flow-side-in calc(var(--dur-3) + 80ms) var(--ease-spring) both;

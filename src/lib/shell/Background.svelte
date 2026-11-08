@@ -2,7 +2,9 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { appearance } from "#lib/shell/appearance.svelte.js";
-  import { lightSpot } from "./backgroundSpot";
+  import { isTauri } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { LatestAnswer, backgroundSleeps, lightSpot } from "./backgroundSpot";
 
   // Тихий фон: графит, мягкий свет акцентного цвета и тонкая сетка гаража.
   // Свет стоит у раздела, который открыт, и плавно переезжает при смене раздела —
@@ -12,15 +14,46 @@
     (appearance.settings?.animatedBackground ?? true) && (appearance.settings?.uiAnimations ?? true),
   );
   const spot = $derived(lightSpot(page.url.pathname));
-  let paused = $state(false);
+  let hidden = $state(false);
+  let minimized = $state(false);
+  // Невидимый фон не тратит кадры: свет и огоньки замирают, пока окно свёрнуто.
+  const paused = $derived(backgroundSleeps({ hidden, minimized }));
 
   onMount(() => {
-    const sync = () => {
-      paused = document.visibilityState === "hidden";
+    const syncHidden = () => {
+      hidden = document.visibilityState === "hidden";
     };
-    sync();
-    document.addEventListener("visibilitychange", sync);
-    return () => document.removeEventListener("visibilitychange", sync);
+    syncHidden();
+    document.addEventListener("visibilitychange", syncHidden);
+    if (!isTauri()) return () => document.removeEventListener("visibilitychange", syncHidden);
+
+    const window = getCurrentWindow();
+    const answers = new LatestAnswer();
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    const syncMinimized = () => {
+      const ticket = answers.ask();
+      void window
+        .isMinimized()
+        .then((value) => {
+          if (!disposed && answers.isLatest(ticket)) minimized = value;
+        })
+        .catch(() => {});
+    };
+    syncMinimized();
+    // Свернули и развернули — размер окна меняется: тогда и спрашиваем.
+    void window
+      .onResized(syncMinimized)
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      stop?.();
+      document.removeEventListener("visibilitychange", syncHidden);
+    };
   });
 </script>
 

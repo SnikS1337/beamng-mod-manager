@@ -14,6 +14,7 @@
   import { tick, untrack } from "svelte";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
+  import { coverFlight } from "./coverFlight.svelte";
 
   let {
     items,
@@ -154,7 +155,11 @@
           >
             {#if selectedIds.includes(mod.id)}<Check size={11} weight="bold" />{/if}
           </button>
-          <span class="thumb" class:addon={mod.role === "addon"}>
+          <span
+            class="thumb"
+            class:addon={mod.role === "addon"}
+            class:cover-from={coverFlight.from === mod.id}
+          >
             {#if mod.previewUrl && mod.role !== "addon"}
               <img src={mod.previewUrl} alt="" loading="lazy" decoding="async" />
             {:else}

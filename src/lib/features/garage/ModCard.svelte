@@ -19,6 +19,7 @@
   import { modStatus } from "./status";
   import { flowName } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
+  import { coverFlight } from "./coverFlight.svelte";
   import { liveDownloads } from "#lib/features/download/live.svelte.js";
   import { modProgress } from "#lib/features/download/jobs.js";
 
@@ -82,6 +83,11 @@
       .catch(() => {});
   });
 
+  // Панель мода покажет эту же обложку сразу, пока грузятся данные мода.
+  $effect(() => {
+    coverFlight.remember(mod.id, preview && preview !== brokenPreview ? preview : null);
+  });
+
   const icon = $derived(
     tag === "vehicle"
       ? Car
@@ -139,7 +145,7 @@
   >
     {#if selected}<Check size={12} weight="bold" />{/if}
   </button>
-  <div class="thumb" class:addon>
+  <div class="thumb" class:addon class:cover-from={coverFlight.from === mod.id}>
     {#if addon}
       {@const Icon = icon}
       <span class="addon-label">

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ModPreview } from "./modPreview.svelte";
+  import { coverTint } from "./coverTint";
   import { untrack } from "svelte";
   import { openExternal } from "#lib/shell/openExternal.js";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -25,6 +26,8 @@
   let {
     details,
     loading,
+    coverHint = null,
+    flying = false,
     canDelete,
     problem = null,
     duplicateOf = null,
@@ -55,6 +58,10 @@
   }: {
     details: ModDetails | null;
     loading: boolean;
+    /** Обложка с карточки: видна сразу, пока грузятся данные мода. */
+    coverHint?: string | null;
+    /** Обложка сейчас переезжает сюда с карточки (см. coverFlight). */
+    flying?: boolean;
     canDelete: boolean;
     problem?: PackagingProblem | null;
     /** Повторяет другой мод (основной в группе). */
@@ -192,10 +199,28 @@
   $effect(() => {
     const source = {
       id: details?.id ?? null,
-      known: details?.previewUrl ?? null,
+      // Обложку карточки уже знаем: не запрашиваем её ещё раз и не мигаем значком.
+      known: details?.previewUrl ?? (details ? untrack(() => coverHint) : null),
       skip: addon,
     };
     untrack(() => void heroPreview.update(source));
+  });
+
+  // Лёгкий оттенок панели по обложке. Ответ для прежнего мода на новый не ложится.
+  let tint = $state<string | null>(null);
+  $effect(() => {
+    const url = addon ? null : (heroPreview.url ?? (!details ? coverHint : null));
+    if (!url) {
+      tint = null;
+      return;
+    }
+    let current = true;
+    void coverTint(url).then((value) => {
+      if (current) tint = value;
+    });
+    return () => {
+      current = false;
+    };
   });
 
   const hasUpdate = $derived(update !== "none" && !!details?.binding);
@@ -221,17 +246,31 @@
   }
 </script>
 
-<aside class="inspector scroll-area" aria-label="Выбранный мод">
+<aside
+  class="inspector scroll-area"
+  class:tinted={tint !== null}
+  style={tint ? `--tint:${tint}` : undefined}
+  aria-label="Выбранный мод"
+>
   <button class="close" type="button" aria-label="Закрыть панель" onclick={onClose}>
     <X size={15} weight="bold" />
   </button>
 
   {#if loading && !details}
-    <div class="skeleton hero-skeleton"></div>
+    <!-- Пока грузятся данные — уже известная обложка с карточки, а не серая заглушка:
+         в неё и «прилетает» картинка карточки. -->
+    <div class="hero" class:addon class:cover-to={flying}>
+      {#if coverHint && !addon}
+        <img src={coverHint} alt="" />
+      {:else}
+        <span class="hero-icon"><Car size={56} weight="thin" /></span>
+      {/if}
+      <span class="kind-tag {tag}">{typeLabel(tag)}</span>
+    </div>
     <div class="skeleton line-skeleton"></div>
   {:else if details}
     {#key details.id}
-      <div class="hero" class:addon>
+      <div class="hero" class:addon class:cover-to={flying}>
         {#if heroPreview.url}
           <img src={heroPreview.url} alt="" />
         {:else}
@@ -470,6 +509,37 @@
     border-left: 1px solid var(--border);
     background: var(--surface);
     animation: panel-in var(--dur-3) var(--ease-out) both;
+    isolation: isolate;
+  }
+
+  /* Оттенок по обложке: мягкий свет сверху панели, текст остаётся на обычном фоне. */
+  .inspector::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 340px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tint, transparent) 16%, transparent),
+      transparent
+    );
+    opacity: 0;
+    transition: opacity var(--dur-3) var(--ease-out);
+    pointer-events: none;
+    /* Под содержимым, но над фоном панели (isolation у .inspector). */
+    z-index: -1;
+  }
+
+  .inspector.tinted::before {
+    opacity: 1;
+  }
+
+  :global(html:not(.dark)) .inspector::before {
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tint, transparent) 10%, transparent),
+      transparent
+    );
   }
 
   @keyframes panel-in {

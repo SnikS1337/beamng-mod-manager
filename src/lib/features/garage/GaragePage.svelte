@@ -87,6 +87,7 @@
   } from "./selection";
   import { motion } from "#lib/shell/motion.svelte.js";
   import { arrival } from "#lib/shell/arrival.svelte.js";
+  import { coverFlight } from "./coverFlight.svelte";
   import BulkBar from "./BulkBar.svelte";
 
   type Filter = "all" | "disabled" | "updates" | "unchecked" | "deleted";
@@ -470,6 +471,17 @@
   function pick(next: Selection) {
     if (panelOf(next) === panelOf(picked)) {
       picked = next;
+      return;
+    }
+    // Панель открывается для одного мода: его обложка переезжает в неё.
+    const opening = panelOf(picked) === "none" ? single(next) : null;
+    if (opening) {
+      const cover = document.querySelector(`[data-mod-id="${CSS.escape(opening)}"] .thumb`);
+      // У удалённого мода в панели обложки нет — лететь некуда.
+      const target = allCards.find((mod) => mod.id === opening);
+      void coverFlight.open(opening, cover !== null && !!target && !target.deleted, () => {
+        picked = next;
+      });
       return;
     }
     void motion.run(() => {
@@ -1146,6 +1158,8 @@
       <Inspector
         {details}
         loading={detailsLoading}
+        coverHint={coverFlight.known(selectedId)}
+        flying={coverFlight.to === selectedId}
         canDelete={selected ? !selected.fromGameRepo : false}
         problem={selected?.problem ?? null}
         duplicateOf={selected?.duplicateOf ?? null}

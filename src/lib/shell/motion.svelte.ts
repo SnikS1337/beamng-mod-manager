@@ -90,6 +90,9 @@ class Motion {
    * Выполнить изменение плавно. `scope` — класс на <html> на время перехода:
    * по нему CSS решает, что именно двигается (`flow-garage`, `flow-route`…).
    */
+  /** Последний переход доигран (или оборван). Без перехода — сразу. */
+  settled: Promise<void> = Promise.resolve();
+
   run(update: () => void | Promise<void>, scope: string): Promise<void> {
     if (typeof document === "undefined" || !canFlow(document)) {
       return Promise.resolve(update()).then(() => undefined);
@@ -107,6 +110,10 @@ class Motion {
       await tick();
     });
     this.#current = transition;
+    this.settled = transition.finished.then(
+      () => undefined,
+      () => undefined,
+    );
     // При skipTransition() встроенный `ready` отклоняется с AbortError. Мы его не
     // ждём, но без обработчика WebView пишет «Uncaught (in promise)» в консоль.
     transition.ready.catch(() => undefined);
