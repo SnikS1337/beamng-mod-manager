@@ -180,7 +180,10 @@ mod tests {
                 if path.extension().is_none_or(|ext| ext != "rs") {
                     continue;
                 }
-                let text = std::fs::read_to_string(&path).unwrap();
+                // На Windows git отдаёт файлы с CRLF: без замены граница тестов не находится.
+                let text = std::fs::read_to_string(&path)
+                    .unwrap()
+                    .replace("\r\n", "\n");
                 let body = text.split("#[cfg(test)]\nmod tests").next().unwrap_or("");
                 if unwraps_lock(body) {
                     found.push(path.display().to_string());
