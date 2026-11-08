@@ -27,7 +27,17 @@ pub use types::*;
 pub async fn updates_snapshot(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<UpdatesSnapshotDto, AppError> {
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
+}
+
+/// Снимок обновлений — в отдельном потоке: на большой библиотеке он собирается
+/// заметно, а прямо в асинхронной команде занимал поток, который нужен остальным.
+pub(crate) async fn snapshot_off_thread(
+    state: Arc<AppState>,
+) -> Result<UpdatesSnapshotDto, AppError> {
+    tauri::async_runtime::spawn_blocking(move || build_snapshot(&state))
+        .await
+        .map_err(|error| AppError::new("task", error.to_string()))
 }
 
 fn progress_event(request_id: u64, progress: &UpdateProgress) -> UpdatesEventDto {
@@ -621,12 +631,14 @@ pub async fn updates_decline_mod(
     }
     let undo = BindingActions::decline(state.library.as_ref(), &mod_id)
         .ok_or_else(|| AppError::new("updates", "Мод не найден."))?;
-    let mut list = declined();
-    list.retain(|item| item.mod_id != mod_id);
-    list.push(undo);
-    let excess = list.len().saturating_sub(16);
-    list.drain(..excess);
-    Ok(build_snapshot(&state))
+    {
+        let mut list = declined();
+        list.retain(|item| item.mod_id != mod_id);
+        list.push(undo);
+        let excess = list.len().saturating_sub(16);
+        list.drain(..excess);
+    }
+    snapshot_off_thread(state.clone()).await
 }
 
 /// «Отменить» после «Не проверять обновления».
@@ -660,7 +672,7 @@ pub async fn updates_undo_decline(
             "Не удалось вернуть проверку: мод изменился или удалён.",
         ));
     }
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.clone()).await
 }
 
 /// Снять отказ «Не проверять» (например, после перезапуска, когда отменять
@@ -681,17 +693,20 @@ pub async fn updates_resume_mod(
             "Проверка обновлений уже идёт. Дождитесь её окончания.",
         ));
     }
-    {
+    let undone = {
         let mut list = declined();
         if let Some(index) = list.iter().position(|item| item.mod_id == mod_id) {
             let undo = list.remove(index);
-            if BindingActions::undo(state.library.as_ref(), &undo) {
-                return Ok(build_snapshot(&state));
-            }
+            BindingActions::undo(state.library.as_ref(), &undo)
+        } else {
+            false
         }
+    };
+    if undone {
+        return snapshot_off_thread(state.clone()).await;
     }
     BindingActions::resume_checking(state.library.as_ref(), &mod_id);
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.clone()).await
 }
 
 static DECLINED: std::sync::Mutex<Vec<bmm_checks::DeclineUndo>> = std::sync::Mutex::new(Vec::new());
@@ -711,7 +726,7 @@ pub async fn updates_dismiss(
     let finding = UpdateCheckService::finding_for(store, &mod_id)
         .ok_or_else(|| AppError::new("updates", "Обновление не найдено."))?;
     UpdateCheckService::dismiss(store, &finding);
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -720,7 +735,7 @@ pub async fn updates_restore(
     mod_id: String,
 ) -> Result<UpdatesSnapshotDto, AppError> {
     UpdateCheckService::restore(state.library.as_ref(), &mod_id);
-    Ok(build_snapshot(&state))
+    snapshot_off_thread(state.inner().clone()).await
 }
 
 mod pages;

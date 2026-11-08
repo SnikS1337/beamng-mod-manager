@@ -292,16 +292,20 @@ pub fn run() {
     });
     state.load_pending();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Служебное окно браузера не должно всплывать на экране при следующем запуске.
+                // Окно загрузки тоже: размер и место ему считает программа, а
+                // восстановленное состояние показывало его до того, как в нём появятся
+                // панель и страница, и со старой геометрией после смены монитора.
                 .with_denylist(&[
                     browser_pages::MODLAND_LABEL,
                     browser_pages::MODHUB_LABEL,
                     browser_pages::FILE_PAGES_LABEL,
+                    commands::download_window::WINDOW_LABEL,
                 ])
                 .build(),
         )
@@ -410,40 +414,48 @@ pub fn run() {
             commands::app_update::app_update_cancel,
             commands::app_update::app_update_restart
         ])
-        .build(tauri::generate_context!())
-        .expect("error while running tauri application")
-        .run(|app, event| match event {
-            // Скрытые окна (страницы Modland, проверка сайта) держат процесс живым:
-            // без этого после закрытия главного окна программа остаётся висеть,
-            // а новый запуск упирается в «уже запущен».
-            tauri::RunEvent::WindowEvent {
-                label,
-                event: tauri::WindowEvent::Destroyed,
-                ..
-            } => {
-                // В app.windows() входит и окно загрузки: оно создано обычным
-                // Window с дочерними webview и в webview_windows() не попадает.
-                let open: Vec<String> = app.windows().into_keys().collect();
-                if label == MAIN_WINDOW {
-                    // Программа закрывается: загрузки окна скачивания обрываем, а не
-                    // оставляем полуфайлы.
-                    commands::download_window::cancel_downloads(app);
-                }
-                for other in windows_to_close(&label, &open) {
-                    if let Some(window) = app.get_webview_window(&other) {
-                        let _ = window.destroy();
-                    } else if let Some(window) = app.get_window(&other) {
-                        let _ = window.destroy();
-                    }
+        .build(tauri::generate_context!());
+    // WebView2 есть в реестре, но среда повреждена: окно не создаётся. Раньше процесс
+    // молча исчезал — теперь человек видит причину.
+    let app = match app {
+        Ok(app) => app,
+        Err(error) => {
+            webview2::show_error(&startup_failure(&error.to_string()));
+            return;
+        }
+    };
+    app.run(|app, event| match event {
+        // Скрытые окна (страницы Modland, проверка сайта) держат процесс живым:
+        // без этого после закрытия главного окна программа остаётся висеть,
+        // а новый запуск упирается в «уже запущен».
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } => {
+            // В app.windows() входит и окно загрузки: оно создано обычным
+            // Window с дочерними webview и в webview_windows() не попадает.
+            let open: Vec<String> = app.windows().into_keys().collect();
+            if label == MAIN_WINDOW {
+                // Программа закрывается: загрузки окна скачивания обрываем, а не
+                // оставляем полуфайлы.
+                commands::download_window::cancel_downloads(app);
+            }
+            for other in windows_to_close(&label, &open) {
+                if let Some(window) = app.get_webview_window(&other) {
+                    let _ = window.destroy();
+                } else if let Some(window) = app.get_window(&other) {
+                    let _ = window.destroy();
                 }
             }
-            // Фоновая проверка пишет библиотеку пакетами раз в 20 секунд: при закрытии
-            // программы дописываем то, что накопилось, иначе найденное пропадёт.
-            tauri::RunEvent::Exit => {
-                app.state::<Arc<AppState>>().library.flush();
-            }
-            _ => {}
-        });
+        }
+        // Фоновая проверка пишет библиотеку пакетами раз в 20 секунд: при закрытии
+        // программы дописываем то, что накопилось, иначе найденное пропадёт.
+        tauri::RunEvent::Exit => {
+            app.state::<Arc<AppState>>().library.flush();
+        }
+        _ => {}
+    });
 }
 
 /// Главное окно закрыли — закрываем и все служебные, чтобы процесс завершился.
@@ -533,9 +545,29 @@ fn preview_protocol(
         .expect("preview response")
 }
 
+/// Текст, если окно программы не создалось.
+fn startup_failure(error: &str) -> String {
+    format!(
+        "Не удалось открыть окно программы.\n\n\
+         Чаще всего так бывает, когда повреждена среда Microsoft Edge WebView2: \
+         переустановите WebView2 Runtime с сайта Microsoft и запустите программу снова.\n\n\
+         Подробности: {error}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_failure_is_explained_not_silent() {
+        let text = startup_failure("WebView2 error 0x80004005");
+        assert!(text.contains("WebView2 Runtime"));
+        assert!(text.contains("0x80004005"), "подробности для поддержки");
+        let source = include_str!("lib.rs");
+        let run = &source[source.find(".build(tauri::generate_context!())").unwrap()..];
+        assert!(!run[..200].contains(".expect("), "без молчаливого падения");
+    }
 
     #[test]
     fn main_window_may_destroy_itself_after_close_request() {
