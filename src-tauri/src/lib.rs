@@ -314,9 +314,11 @@ pub fn run() {
             if webview.label() == "main"
                 && payload.event() == tauri::webview::PageLoadEvent::Finished
             {
-                let update_dir = webview.state::<Arc<AppState>>().paths.update_dir();
+                let state = webview.state::<Arc<AppState>>();
+                let update_dir = state.paths.update_dir();
+                let runtime = state.app_update.clone();
                 static HEALTHY: std::sync::Once = std::sync::Once::new();
-                HEALTHY.call_once(|| commands::app_update::on_healthy(update_dir));
+                HEALTHY.call_once(|| commands::app_update::on_healthy(update_dir, runtime));
             }
         })
         .register_uri_scheme_protocol("bmm", |context, request| {

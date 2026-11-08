@@ -354,6 +354,12 @@ pub fn rollback_from_running(current_exe: &Path) -> bool {
 /// Убрать `*.old`, `*.new`, `*.bad` и папку подготовки. Зовётся, когда версия
 /// уже показала окно: до этого `*.old` нужен для отката.
 pub fn cleanup(current_exe: &Path, update_dir: &Path) {
+    cleanup_leftovers(current_exe);
+    cleanup_update_dir(update_dir);
+}
+
+/// Прежний exe и неудавшиеся копии рядом с программой.
+pub fn cleanup_leftovers(current_exe: &Path) {
     for suffix in [OLD_SUFFIX, NEW_SUFFIX, BAD_SUFFIX] {
         let leftover = with_suffix(current_exe, suffix);
         let mut attempts = 0;
@@ -365,7 +371,10 @@ pub fn cleanup(current_exe: &Path, update_dir: &Path) {
             attempts += 1;
         }
     }
+}
 
+/// Папка со скачанным обновлением.
+pub fn cleanup_update_dir(update_dir: &Path) {
     let mut attempts = 0;
     while update_dir.is_dir() && attempts < 10 {
         match fs::remove_dir_all(update_dir) {

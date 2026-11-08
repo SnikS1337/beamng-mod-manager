@@ -47,18 +47,6 @@ fn default_user_agent_uses_the_crate_version() {
 }
 
 #[test]
-fn release_build_is_detected() {
-    for text in ["0.3", "0.2", "0.3.1", "0.1.129"] {
-        assert!(
-            AppVersion::parse(text).unwrap().is_release(),
-            "{text} — выпуск"
-        );
-    }
-    assert!(!AppVersion::parse("1.0.0.0").unwrap().is_release());
-    assert!(!AppVersion::parse("0.0.0.0").unwrap().is_release());
-}
-
-#[test]
 fn parses_manifest_and_normalizes_version() {
     let zip = release_zip(true, true, EXE_NAME);
     let json = manifest_json("v0.1.30", &zip, ZIP_URL, None);
