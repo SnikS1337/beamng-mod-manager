@@ -1,4 +1,5 @@
 import { listenUpdates, type UpdateProgress, type UpdatesEvent } from "#lib/ipc/updates.js";
+import { isSiteFinish } from "./siteLive.js";
 
 /** Фоновая проверка при запуске и по расписанию приходит с этим номером. */
 export const AUTO_REQUEST = 0;
@@ -60,13 +61,16 @@ class UpdatesRun {
   onEvent(event: UpdatesEvent): void {
     if (this.attached) return;
     if (event.requestId === AUTO_REQUEST) {
-      if (event.phase === "progress") this.autoProgress = event.progress;
-      else this.autoProgress = null;
+      if (event.phase !== "progress") this.autoProgress = null;
+      // «Сайт закончил» общую строку хода не меняет: другие сайты ещё идут.
+      else if (!isSiteFinish(event.progress) || this.autoProgress === null) {
+        this.autoProgress = event.progress;
+      }
       return;
     }
     if (event.requestId !== this.requestId) return;
     if (event.phase === "progress") {
-      this.progress = event.progress;
+      if (!isSiteFinish(event.progress)) this.progress = event.progress;
       return;
     }
     this.checking = false;

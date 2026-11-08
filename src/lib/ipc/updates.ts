@@ -444,22 +444,48 @@ export function checkSiteOf(url: string): string {
 }
 
 function mockStart(requestId: number): void {
-  window.setTimeout(() => {
-    emit({
-      ...clone(mockSnapshot),
-      requestId,
-      phase: "progress",
-      progress: { source: "stmods", stage: "карточки", done: 4, total: 8 },
-      sources: mockSources,
-      newCount: 0,
-      upToDate: 0,
-      requests: 7,
-      cancelled: false,
-      stoppedByTime: false,
-      followed: 0,
-      error: null,
+  // Сайты идут параллельно и заканчивают каждый в своё время — как в настоящей проверке.
+  const sites = (mockSnapshot.sites ?? []).filter((site) => site.status !== "off").map((site) => site.id);
+  const steps: { source: string; stage: string; done: number; total: number }[] = [];
+  for (let round = 0; round < 4; round += 1) {
+    sites.forEach((source, index) => {
+      if (round <= index + 1) {
+        steps.push(
+          round < 2
+            ? { source, stage: "лента", done: round, total: 2 }
+            : { source, stage: "карточки", done: round - 2, total: 3 },
+        );
+      } else if (round === index + 2) {
+        const stage = source === "modland" && mockModlandNeedsCheck ? "сайт не открылся" : "сайт проверен";
+        steps.push({ source, stage, done: 1, total: 1 });
+      }
     });
-  }, 250);
+  }
+  sites.forEach((source) => {
+    if (!steps.some((step) => step.source === source && step.stage.startsWith("сайт "))) {
+      steps.push({ source, stage: "сайт проверен", done: 1, total: 1 });
+    }
+  });
+  steps.forEach((progress, index) => {
+    window.setTimeout(
+      () =>
+        emit({
+          ...clone(mockSnapshot),
+          requestId,
+          phase: "progress",
+          progress,
+          sources: [],
+          newCount: 0,
+          upToDate: 0,
+          requests: index,
+          cancelled: false,
+          stoppedByTime: false,
+          followed: 0,
+          error: null,
+        }),
+      200 + index * 180,
+    );
+  });
   window.setTimeout(() => {
     emit({
       ...clone(mockSnapshot),
@@ -475,7 +501,7 @@ function mockStart(requestId: number): void {
       followed: 0,
       error: null,
     });
-  }, 900);
+  }, 400 + steps.length * 180);
 }
 
 function clone(snapshot: UpdatesSnapshot): UpdatesSnapshot {

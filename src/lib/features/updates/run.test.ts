@@ -82,3 +82,32 @@ describe("идущая проверка", () => {
     }
   });
 });
+
+describe("«сайт закончил» и общая строка хода", () => {
+  it("строку хода не перетирает — другие сайты ещё идут", () => {
+    const id = updatesRun.begin();
+    updatesRun.onEvent(event(id, "progress"));
+    updatesRun.onEvent({
+      ...event(id, "progress"),
+      progress: { source: "modland", stage: "сайт проверен", done: 1, total: 1 },
+    });
+    expect(updatesRun.progress).toEqual({ source: "stmods", stage: "лента", done: 1, total: 3 });
+    updatesRun.checking = false;
+  });
+
+  it("у фоновой проверки тоже, но первое событие всё же включает её ход", () => {
+    updatesRun.onEvent({
+      ...event(0, "progress"),
+      progress: { source: "modland", stage: "сайт проверен", done: 1, total: 1 },
+    });
+    expect(updatesRun.autoProgress?.stage).toBe("сайт проверен");
+    updatesRun.onEvent(event(0, "progress"));
+    updatesRun.onEvent({
+      ...event(0, "progress"),
+      progress: { source: "modland", stage: "сайт не открылся", done: 1, total: 1 },
+    });
+    expect(updatesRun.autoProgress?.stage).toBe("лента");
+    updatesRun.onEvent(event(0, "auto"));
+    expect(updatesRun.autoProgress).toBeNull();
+  });
+});
