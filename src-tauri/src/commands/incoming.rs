@@ -233,10 +233,7 @@ pub async fn incoming_discard(work_dir: String) -> Result<(), AppError> {
 }
 
 fn inspect_paths(state: &AppState, paths: &[String]) -> Result<Vec<IncomingArchiveDto>, AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installer = installer_for(state)?;
     let installed = installed_archives(state, &installer);
     let root = incoming_root();
@@ -343,7 +340,7 @@ fn installed_archives(
         seen.insert(path.clone());
         let stamp = (metadata.len(), metadata.modified().ok());
         let content = {
-            let mut cache = state.content_cache.lock().unwrap();
+            let mut cache = crate::state::lock(&state.content_cache);
             match cache.get(&path) {
                 Some(cached) if cached.len == stamp.0 && cached.modified == stamp.1 => {
                     cached.content.clone()
@@ -466,10 +463,7 @@ fn install_items(
     state: &AppState,
     requests: &[IncomingInstallRequest],
 ) -> Result<Vec<IncomingInstallResult>, AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installer = installer_for(state)?;
     let keep = state.settings.load().settings.keep_backups.max(1) as usize;
     let mut results = Vec::new();
@@ -665,10 +659,7 @@ fn remember_installed_version(state: &AppState, file_name: &str, version: &str, 
 }
 
 fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installer = installer_for(state)?;
     if let Some(replaced) = &ticket.replaces {
         // Новый файл убираем первым и проверяем, что убрался: иначе «Отменить»

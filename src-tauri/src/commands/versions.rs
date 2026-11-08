@@ -96,10 +96,7 @@ pub async fn mod_delete_version(
 }
 
 fn delete_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installed = state
         .library
         .get_mod(id)
@@ -156,16 +153,13 @@ pub(crate) fn installer_for(state: &AppState) -> Result<ModInstaller, AppError> 
 }
 
 fn delete_mod(state: &AppState, id: &str) -> Result<DeletedTicketDto, AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installer = installer_for(state)?;
     let installed = state
         .library
         .get_mod(id)
         .ok_or_else(|| AppError::new("not_found", "Мод не найден."))?;
-    let target = state.previews_by_id.lock().unwrap().get(id).cloned();
+    let target = crate::state::lock(&state.previews_by_id).get(id).cloned();
     if target
         .as_ref()
         .and_then(|target| target.sub_folder.as_ref())
@@ -222,10 +216,7 @@ fn delete_mod(state: &AppState, id: &str) -> Result<DeletedTicketDto, AppError> 
 }
 
 fn undelete_mod(state: &AppState, id: &str) -> Result<(), AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let ticket = state
         .deleted
         .lock()
@@ -238,7 +229,7 @@ fn undelete_mod(state: &AppState, id: &str) -> Result<(), AppError> {
     if !result.success {
         return Err(AppError::new("undelete", result.message));
     }
-    state.deleted.lock().unwrap().remove(id);
+    crate::state::lock(&state.deleted).remove(id);
     if let Some(mut installed) = state.library.get_mod(id) {
         installed.enabled = !ticket.was_in_disabled;
         state.library.upsert_mod(installed);
@@ -247,11 +238,8 @@ fn undelete_mod(state: &AppState, id: &str) -> Result<(), AppError> {
 }
 
 fn forget_deleted(state: &AppState, id: &str) -> Result<(), AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
-    let Some(ticket) = state.deleted.lock().unwrap().remove(id) else {
+    let _guard = state.load_guard();
+    let Some(ticket) = crate::state::lock(&state.deleted).remove(id) else {
         return Ok(());
     };
     let installer = installer_for(state)?;
@@ -272,10 +260,7 @@ fn restore_deleted(
     file_name: &str,
     backup_id: Option<&str>,
 ) -> Result<(), AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installer = installer_for(state)?;
     let item = installer
         .deleted_mods()
@@ -297,10 +282,7 @@ fn restore_deleted(
 }
 
 fn versions_of(state: &AppState, id: &str) -> Result<Vec<VersionRowDto>, AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installed = state
         .library
         .get_mod(id)
@@ -331,10 +313,7 @@ fn versions_of(state: &AppState, id: &str) -> Result<Vec<VersionRowDto>, AppErro
 }
 
 fn restore_version(state: &AppState, id: &str, backup_id: &str) -> Result<(), AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let installed = state
         .library
         .get_mod(id)

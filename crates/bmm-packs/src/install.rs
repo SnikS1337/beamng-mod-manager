@@ -212,7 +212,10 @@ impl ModInstaller {
             );
         }
 
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(existing) = self.check_target(name, options) {
             return existing;
         }
@@ -365,7 +368,10 @@ impl ModInstaller {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return OpResult::fail("Недопустимое имя файла.");
         };
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let src = from.join(&name);
         let dst = to.join(&name);
         if !src.is_file() {
@@ -387,7 +393,10 @@ impl ModInstaller {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return OpResult::fail("Недопустимое имя файла.");
         };
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let paths: Vec<PathBuf> = [&self.layout.mods_dir, &self.layout.disabled_dir]
             .into_iter()
             .map(|dir| dir.join(&name))
@@ -423,7 +432,10 @@ impl ModInstaller {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return OpResult::fail("Недопустимое имя файла.");
         };
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(source) = self.find_backup(&name, backup_id) else {
             return OpResult::fail("Копия удалённого мода пропала.");
         };
@@ -455,7 +467,10 @@ impl ModInstaller {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return OpResult::fail("Недопустимое имя файла.");
         };
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(path) = self.find_backup(&name, backup_id) else {
             return OpResult::fail("Такой копии нет.");
         };
@@ -976,11 +991,10 @@ fn parse_backup(path: &Path, mod_name: &str) -> Option<BackupEntry> {
     let sequence = file_name[..digits].parse::<i64>().ok()?;
     const STAMP_LEN: usize = 19;
     let mut saved_at = None;
-    if file_name.len() >= digits + 1 + STAMP_LEN
-        && let Ok(naive) = NaiveDateTime::parse_from_str(
-            &file_name[digits + 1..digits + 1 + STAMP_LEN],
-            "%Y%m%d-%H%M%S-%3f",
-        )
+    // `get`, а не срез: в чужом имени на месте штампа может стоять кириллица, и
+    // срез посреди буквы ронял программу при открытии копий.
+    if let Some(stamp) = file_name.get(digits + 1..digits + 1 + STAMP_LEN)
+        && let Ok(naive) = NaiveDateTime::parse_from_str(stamp, "%Y%m%d-%H%M%S-%3f")
     {
         saved_at = Some(Utc.from_utc_datetime(&naive).fixed_offset());
     }
@@ -1107,6 +1121,32 @@ mod tests {
         let id = installer.list_backups("a.zip")[0].id.clone();
         assert!(installer.restore_backup("a.zip", &id).success);
         assert!(!disabled_marker(&backup).exists());
+    }
+
+    #[test]
+    fn odd_backup_names_do_not_crash_the_list() {
+        // Чужое имя в папке копий: на месте штампа времени — кириллица. Срез по
+        // байтам посреди буквы ронял программу при открытии копий мода.
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let dir = installer.layout().backup_dir.join("car.zip");
+        fs::create_dir_all(&dir).unwrap();
+        for name in [
+            "0000000001_ййййййййййййй_car.zip",
+            "0000000002_й_car.zip",
+            "0000000003_20261108-1200😀-000_car.zip",
+            "0000000004_20261108-120000-000_car.zip",
+        ] {
+            fs::write(dir.join(name), b"zip").unwrap();
+        }
+        let list = installer.list_backups("car.zip");
+        assert_eq!(list.len(), 4, "все копии видны");
+        let stamped: Vec<_> = list
+            .iter()
+            .filter(|entry| entry.saved_at.is_some())
+            .collect();
+        assert_eq!(stamped.len(), 1, "время — только у правильного штампа");
+        assert!(stamped[0].id.starts_with("0000000004_"));
     }
 
     #[test]

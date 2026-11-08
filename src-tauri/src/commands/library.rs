@@ -58,10 +58,7 @@ pub async fn mod_fix_packaging(
 }
 
 fn fix_packaging(state: &AppState, id: &str) -> Result<(), AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let target = state
         .previews_by_id
         .lock()
@@ -459,13 +456,17 @@ pub(crate) fn fill_titles(state: &AppState) -> usize {
 /// Автор мода из его архива (`info.json`) — для поиска страницы. Не кэшируется:
 /// нужен только при подборе, не больше нескольких десятков модов за раз.
 pub(crate) fn archive_author_of(state: &AppState, mod_id: &str) -> Option<String> {
-    let target = state.previews_by_id.lock().unwrap().get(mod_id).cloned()?;
+    let target = crate::state::lock(&state.previews_by_id)
+        .get(mod_id)
+        .cloned()?;
     overview::archive_info(&target.path).ok()?.author
 }
 
 /// Название мода из его архива для поиска страницы: из кэша, иначе прочитать сейчас.
 pub(crate) fn archive_title_of(state: &AppState, mod_id: &str) -> Option<String> {
-    let target = state.previews_by_id.lock().unwrap().get(mod_id).cloned()?;
+    let target = crate::state::lock(&state.previews_by_id)
+        .get(mod_id)
+        .cloned()?;
     if let Some(known) = state.previews.title(&target.key) {
         return known;
     }
@@ -522,7 +523,7 @@ mod snapshot;
 pub(crate) use snapshot::{load_snapshot, resolve_folder};
 
 fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
-    let pending = state.pending.lock().unwrap().clone();
+    let pending = crate::state::lock(&state.pending).clone();
     if pending.is_empty() {
         return;
     }
@@ -564,7 +565,7 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
             SetActiveOutcome::NotInDb | SetActiveOutcome::NoDb
         )
     {
-        let mut queue = state.pending.lock().unwrap();
+        let mut queue = crate::state::lock(&state.pending);
         // Чистим только то, что применили: запрос, пришедший за это время, и
         // неудавшиеся остаются.
         for (file, enabled) in &pending {
@@ -660,10 +661,7 @@ pub(crate) fn toggle_mod(
     id: &str,
     enabled: bool,
 ) -> Result<ToggleResult, AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let settings = state.settings.load().settings;
     let (mods_dir, error) = resolve_folder(&settings);
     let Some(mods_dir) = mods_dir else {
@@ -844,10 +842,7 @@ pub(crate) fn toggle_many(
     ids: &[String],
     enabled: bool,
 ) -> Result<BulkToggleResult, AppError> {
-    let _guard = state
-        .load_lock
-        .lock()
-        .map_err(|_| AppError::new("lock", "не удалось заблокировать библиотеку"))?;
+    let _guard = state.load_guard();
     let settings = state.settings.load().settings;
     let (mods_dir, error) = resolve_folder(&settings);
     let Some(mods_dir) = mods_dir else {
@@ -980,7 +975,7 @@ pub(crate) fn toggle_many(
 }
 
 fn clear_pending(state: &AppState, file_name: &str) {
-    let mut pending = state.pending.lock().unwrap();
+    let mut pending = crate::state::lock(&state.pending);
     let before = pending.len();
     pending.retain(|key, _| !key.eq_ignore_ascii_case(file_name));
     let changed = pending.len() != before;
@@ -994,7 +989,7 @@ fn clear_pending_many(state: &AppState, file_names: &[String]) {
     if file_names.is_empty() {
         return;
     }
-    let mut pending = state.pending.lock().unwrap();
+    let mut pending = crate::state::lock(&state.pending);
     let before = pending.len();
     pending.retain(|key, _| !file_names.iter().any(|file| key.eq_ignore_ascii_case(file)));
     let changed = pending.len() != before;
@@ -1080,7 +1075,7 @@ fn details(state: &AppState, id: &str) -> Result<ModDetails, AppError> {
         .library
         .get_mod(id)
         .ok_or_else(|| AppError::new("not_found", "Мод не найден."))?;
-    let target = state.previews_by_id.lock().unwrap().get(id).cloned();
+    let target = crate::state::lock(&state.previews_by_id).get(id).cloned();
     let settings = state.settings.load().settings;
     let (mods_dir, _) = resolve_folder(&settings);
     let game_version = mods_dir
@@ -1167,7 +1162,7 @@ fn details(state: &AppState, id: &str) -> Result<ModDetails, AppError> {
 }
 
 fn ensure_preview(state: &AppState, id: &str) -> Option<String> {
-    let target = state.previews_by_id.lock().unwrap().get(id).cloned()?;
+    let target = crate::state::lock(&state.previews_by_id).get(id).cloned()?;
     if let Some(cached) = state.previews.get(&target.key) {
         return match cached {
             CachedPreview::Image { extension, .. } => Some(preview_url(&target.key, &extension)),
@@ -1409,6 +1404,38 @@ mod tests {
 
     fn test_state(temp: &tempfile::TempDir, mods: &std::path::Path) -> AppState {
         crate::test_support::test_state(temp, mods)
+    }
+
+    #[test]
+    fn panic_under_the_library_lock_does_not_lock_the_library_for_good() {
+        // Паника в одной команде (битый архив и т.п.) отравляла замок: все следующие
+        // команды гаража отвечали «не удалось заблокировать» до перезапуска.
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        let state = test_state(&temp, &mods);
+        std::thread::scope(|scope| {
+            let crashed = scope
+                .spawn(|| {
+                    let _guard = state.load_guard();
+                    panic!("команда упала под замком");
+                })
+                .join();
+            assert!(crashed.is_err());
+        });
+        assert!(state.load_lock.is_poisoned());
+        assert!(load_snapshot(&state).is_ok(), "гараж снова читается");
+        // Прочие замки состояния — так же.
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _pending = crate::state::lock(&state.pending);
+                    panic!("упало под замком очереди");
+                })
+                .join();
+        });
+        assert!(state.pending.is_poisoned());
+        assert!(state.save_pending().is_ok());
     }
 
     #[test]
