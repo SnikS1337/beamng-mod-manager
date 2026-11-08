@@ -48,8 +48,12 @@ static DOWNLOAD_BTN: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+/// Версия — в заголовке страницы. Ищем внутри `<h1>…</h1>`: без этой границы при
+/// заголовке без версии бралась первая «muted»-подпись дальше по странице (в
+/// сайдбаре, в подвале) — чужая версия и ложное обновление.
+static H1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<h1>(?<h>.*?)</h1>").unwrap());
 static H1_VERSION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?s)<h1>.*?<span class="muted">(?<v>[^<]+)</span>"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"<span class="muted">(?<v>[^<]+)</span>"#).unwrap());
 
 pub fn parse_list(html: &str) -> Vec<Listing> {
     let starts: Vec<(usize, usize, String)> = ITEM_START
@@ -167,8 +171,10 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
             .and_then(|captures| captures.name("c"))
             .map(|value| clean(value.as_str()));
     }
-    if let Some(version) = H1_VERSION
+    if let Some(version) = H1
         .captures(html)
+        .and_then(|captures| captures.name("h"))
+        .and_then(|heading| H1_VERSION.captures(heading.as_str()))
         .and_then(|captures| captures.name("v"))
     {
         listing.mod_version = Some(clean(version.as_str()));
@@ -314,5 +320,26 @@ mod tests {
         let detail = parse_detail(&html, &basis);
         assert_eq!(detail.mod_version.as_deref(), Some("1.1"));
         assert!(!detail.offers.is_empty(), "кнопка Download Now");
+    }
+
+    #[test]
+    fn version_is_read_only_from_the_page_heading() {
+        // В заголовке версии нет: раньше бралась первая «muted»-подпись дальше по
+        // странице — версия чужого мода из сайдбара, и выходило ложное обновление.
+        let basis = Listing::new(
+            SOURCE_ID,
+            url::Url::parse("https://beamng.com/resources/car.1/").unwrap(),
+            "1",
+            "Car",
+        );
+        let html = r#"<h1>Car</h1><p>текст</p>
+            <div class="sidebar"><h3>Other</h3><span class="muted">9.9</span></div>"#;
+        assert_eq!(parse_detail(html, &basis).mod_version, None);
+        let html = r#"<h1>Car <span class="muted">2.0</span></h1>
+            <div class="sidebar"><span class="muted">9.9</span></div>"#;
+        assert_eq!(
+            parse_detail(html, &basis).mod_version.as_deref(),
+            Some("2.0")
+        );
     }
 }

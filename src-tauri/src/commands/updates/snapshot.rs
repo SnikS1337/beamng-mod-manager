@@ -392,6 +392,7 @@ pub(crate) fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> U
         {
             Some(known) => {
                 let keep = bmm_checks::coordinator::keeps_reason(known, &source);
+                let answered = source.feed_pages_fetched + source.cards_fetched > 0;
                 known.feed_pages_fetched += source.feed_pages_fetched;
                 known.cards_fetched += source.cards_fetched;
                 known.postponed += source.postponed;
@@ -406,13 +407,14 @@ pub(crate) fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> U
                     }
                 }
                 known.layout_changed |= source.layout_changed;
-                if source.status != bmm_sources::sources::SourceStatus::Ok {
-                    known.status = source.status;
-                }
-                if !keep && source.note.is_some() {
-                    known.note = source.note;
-                    known.reach = source.reach;
-                }
+                bmm_checks::coordinator::merge_status(
+                    known,
+                    source.status,
+                    source.note,
+                    source.reach,
+                    answered,
+                    keep,
+                );
             }
             None => sources.push(source),
         }

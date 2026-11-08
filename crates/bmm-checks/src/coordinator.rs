@@ -16,6 +16,7 @@ use chrono::{DateTime, FixedOffset, TimeDelta};
 
 use bmm_domain::clock::Clock;
 use bmm_domain::library::{LibraryStore, SourceStatus as StoreSourceStatus};
+use bmm_sources::reach::Reach;
 use bmm_sources::sources::{ModSource, SourceStatus};
 
 use crate::options::UpdateCheckOptions;
@@ -476,6 +477,7 @@ fn merge_source_report(sources: &mut Vec<SourceRunReport>, source: SourceRunRepo
         return;
     };
     let keep = keeps_reason(known, &source);
+    let answered = source.feed_pages_fetched + source.cards_fetched > 0;
     known.feed_pages_fetched += source.feed_pages_fetched;
     known.cards_fetched += source.cards_fetched;
     // Отложенное считается в каждой пачке заново: последняя пачка знает, что
@@ -492,12 +494,39 @@ fn merge_source_report(sources: &mut Vec<SourceRunReport>, source: SourceRunRepo
         }
     }
     known.layout_changed |= source.layout_changed;
-    if source.status != SourceStatus::Ok {
-        known.status = source.status;
+    merge_status(
+        known,
+        source.status,
+        source.note,
+        source.reach,
+        answered,
+        keep,
+    );
+}
+
+/// Статус и подпись сайта из следующей части проверки. Сайт в ней ответил — он
+/// пускает: раньше «просит проверку» из первой части оставалось в итоге, хотя
+/// проверку прошли между частями и сайт уже отдавал страницы.
+pub fn merge_status(
+    known: &mut SourceRunReport,
+    status: SourceStatus,
+    note: Option<String>,
+    reach: Option<Reach>,
+    answered: bool,
+    keep: bool,
+) {
+    if status == SourceStatus::Ok && answered {
+        known.status = SourceStatus::Ok;
+        known.note = note;
+        known.reach = None;
+        return;
     }
-    if !keep && source.note.is_some() {
-        known.note = source.note;
-        known.reach = source.reach;
+    if status != SourceStatus::Ok {
+        known.status = status;
+    }
+    if !keep && note.is_some() {
+        known.note = note;
+        known.reach = reach;
     }
 }
 
@@ -551,7 +580,6 @@ mod tests {
 
     use super::*;
     use crate::runner::UpdateRunReport;
-    use bmm_sources::reach::Reach;
 
     fn t0() -> DateTime<FixedOffset> {
         DateTime::parse_from_rfc3339("2026-10-13T12:00:00+00:00").unwrap()
@@ -1409,6 +1437,45 @@ mod tests {
             note: Some(note.to_string()),
             reach,
         }
+    }
+
+    #[test]
+    fn site_that_answered_in_a_later_part_is_fine_in_the_result() {
+        // Проверку «вы человек?» прошли между частями: вторая часть открыла страницы.
+        // Раньше в итоге оставалось «просит проверку» с прежней подписью.
+        let asked = site_report(
+            SourceStatus::NeedsHumanCheck,
+            "сайт просит пройти проверку",
+            None,
+            0,
+        );
+        let mut answered = site_report(SourceStatus::Ok, "", None, 3);
+        answered.note = None;
+        let mut merged = vec![asked.clone()];
+        merge_source_report(&mut merged, answered);
+        assert_eq!(merged[0].status, SourceStatus::Ok);
+        assert_eq!(merged[0].note, None);
+        // Так же — сайт, который не открывался, а потом открылся.
+        let blocked = site_report(
+            SourceStatus::Unavailable,
+            "похоже на блокировку",
+            Some(Reach::Stalled),
+            0,
+        );
+        let mut later = site_report(SourceStatus::Ok, "", None, 2);
+        later.note = None;
+        let mut merged = vec![blocked];
+        merge_source_report(&mut merged, later);
+        assert_eq!(
+            (merged[0].status, merged[0].reach),
+            (SourceStatus::Ok, None)
+        );
+        // Ничего не спросили (сайт отложен) — прежний статус остаётся.
+        let mut idle = site_report(SourceStatus::Ok, "", None, 0);
+        idle.note = None;
+        let mut merged = vec![asked];
+        merge_source_report(&mut merged, idle);
+        assert_eq!(merged[0].status, SourceStatus::NeedsHumanCheck);
     }
 
     #[test]

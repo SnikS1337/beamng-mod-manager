@@ -63,12 +63,21 @@ fn ensure_entry_limit(path: &Path) -> Result<(), ZipError> {
     Ok(())
 }
 
+/// Число записей из конца центрального каталога. Подпись конца можно вписать и в
+/// комментарий архива, и тогда последняя найденная подпись подсовывала ложное
+/// «1 запись» — предел записей обходился. Берём наибольшее из всех подписей в хвосте:
+/// настоящий конец среди них есть всегда.
 fn eocd_entries(tail: &[u8]) -> Option<u32> {
     const SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
-    let at = tail.windows(4).rposition(|window| window == SIGNATURE)?;
-    let low = *tail.get(at + 10)? as u32;
-    let high = *tail.get(at + 11)? as u32;
-    Some(low | (high << 8))
+    tail.windows(4)
+        .enumerate()
+        .filter(|(_, window)| *window == SIGNATURE)
+        .filter_map(|(at, _)| {
+            let low = *tail.get(at + 10)? as u32;
+            let high = *tail.get(at + 11)? as u32;
+            Some(low | (high << 8))
+        })
+        .max()
 }
 
 fn open_with<R: std::io::Read + std::io::Seek>(
@@ -157,6 +166,38 @@ mod tests {
         assert!(eocd_entries(&[0u8; 22]).is_none());
         tail[10..12].copy_from_slice(&u16::MAX.to_le_bytes());
         assert_eq!(eocd_entries(&tail), Some(u16::MAX as u32));
+    }
+
+    #[test]
+    fn fake_eocd_in_the_comment_does_not_hide_the_real_count() {
+        // Настоящий конец каталога — 60000 записей, а в его комментарии поддельная
+        // подпись с «1 запись», последняя в файле.
+        let mut fake = vec![0u8; 22];
+        fake[..4].copy_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        fake[10..12].copy_from_slice(&1u16.to_le_bytes());
+        let mut real = vec![0u8; 22];
+        real[..4].copy_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        real[10..12].copy_from_slice(&60000u16.to_le_bytes());
+        real[20..22].copy_from_slice(&(fake.len() as u16).to_le_bytes());
+        let mut tail = real.clone();
+        tail.extend_from_slice(&fake);
+        assert_eq!(
+            eocd_entries(&tail),
+            Some(60000),
+            "число из настоящего конца"
+        );
+        // Без комментария — как раньше.
+        assert_eq!(
+            eocd_entries(
+                &real[..22]
+                    .iter()
+                    .copied()
+                    .map(|byte| byte)
+                    .collect::<Vec<_>>()
+            )
+            .map(|_| ()),
+            Some(())
+        );
     }
 
     #[test]

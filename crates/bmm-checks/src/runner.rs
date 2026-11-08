@@ -820,6 +820,11 @@ impl Worker<'_, '_> {
                     done += 1;
                     attempted += 1;
                     outcome.cards_done = Some(done as u32);
+                    // Пока шёл запрос, человек мог указать моду другую страницу этого же
+                    // сайта (или убрать её): ответ старой страницы не пишем в новую.
+                    if !still_bound(self.request.store, &current_binding) {
+                        continue;
+                    }
                     match current {
                         None => {
                             // Страницы нет (убрана автором или сменила адрес): прошлое состояние
@@ -963,6 +968,16 @@ impl Worker<'_, '_> {
     fn emit(&self, progress: &UpdateProgress) {
         let _ = self.progress.send(progress.clone());
     }
+}
+
+/// Привязка всё та же: та же страница того же сайта.
+fn still_bound(store: &dyn LibraryStore, asked: &bmm_domain::library::ModBinding) -> bool {
+    store.bindings().iter().any(|binding| {
+        binding.mod_id == asked.mod_id
+            && binding.source == asked.source
+            && binding.source_id == asked.source_id
+            && binding.url == asked.url
+    })
 }
 
 /// Подпись сайта, который не открылся, — по другим сайтам той же проверки: ответил
@@ -2088,6 +2103,50 @@ mod tests {
         assert!(report.findings.is_empty());
         assert!(store.checks().is_empty());
         assert_eq!(report.sources[0].status, SourceStatus::Ok);
+    }
+
+    #[test]
+    fn page_replaced_during_check_does_not_get_the_old_pages_answer() {
+        // Пока открывалась старая страница, человек указал моду другую страницу того же
+        // сайта: ответ старой раньше записывался как состояние новой.
+        let store = Arc::new(InMemoryLibraryStore::new());
+        add(
+            &store,
+            "a",
+            "x",
+            "a",
+            Some("1.0"),
+            Some("1.0"),
+            Some(now() - TimeDelta::days(5)),
+        );
+        let site = Site::new("x");
+        site.set_card(l("x", "a", Some("2.0"), None));
+        let store_for_callback = Arc::clone(&store);
+        site.on_card(Arc::new(move || {
+            store_for_callback
+                .upsert_binding(ModBinding {
+                    mod_id: "a".to_string(),
+                    source: "x".to_string(),
+                    source_id: "other".to_string(),
+                    url: Url::parse(&u("x", "other")).unwrap(),
+                    confirmed: true,
+                })
+                .unwrap();
+        }));
+        let all = sources(&site);
+        let cancel = AtomicBool::new(false);
+        let before = store.get_check("a", "x");
+        let request = UpdateRun::new(&*store, &all, now(), UpdateCheckOptions::default(), &cancel);
+        let report = UpdateRunner::run(&request, None);
+        assert!(
+            report.findings.is_empty(),
+            "версия старой страницы — не находка"
+        );
+        assert_eq!(
+            store.get_check("a", "x"),
+            before,
+            "состояние новой не тронуто"
+        );
     }
 
     #[test]
