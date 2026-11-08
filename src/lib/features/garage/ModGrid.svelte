@@ -2,6 +2,7 @@
   import type { ClickKeys } from "./selection";
   import type { ModCardDto } from "#lib/ipc/library.js";
   import { tick, untrack } from "svelte";
+  import { freshReveal, type RevealRequest } from "./view";
   import { motion } from "#lib/shell/motion.svelte.js";
   import ModCard from "./ModCard.svelte";
 
@@ -13,7 +14,7 @@
     ontoggle,
     resetKey = "",
     appearKey = resetKey,
-    revealId = null,
+    reveal = null,
   }: {
     items: ModCardDto[];
     /** Выбранные: одна карточка или несколько. */
@@ -26,8 +27,8 @@
     resetKey?: string;
     /** Когда карточки появляются заново. Поиск сюда не входит: иначе каждая буква перезапускает анимацию. */
     appearKey?: string;
-    /** Карточка, к которой нужно прокрутить и передать фокус после стрелок. */
-    revealId?: string | null;
+    /** Карточка, к которой нужно прокрутить и передать фокус после стрелок (разово). */
+    reveal?: RevealRequest | null;
   } = $props();
 
   // Рисуются только видимые ряды (+ по ряду сверху и снизу): сотни модов не тормозят.
@@ -80,19 +81,28 @@
     });
   });
 
+  /** Номер последней выполненной просьбы показать карточку. */
+  let revealed = 0;
+
   $effect(() => {
-    const id = revealId;
-    if (!id || !viewport) return;
+    const request = reveal;
     const el = viewport;
-    const index = items.findIndex((mod) => mod.id === id);
-    if (index < 0) return;
-    // Карточка вне окна виртуализации: сначала прокручиваем к её ряду,
-    // иначе фокусировать нечего.
-    if (index < startRow * columns || index >= endRow * columns) {
-      const target = Math.max(0, Math.floor(index / columns) * ROW_HEIGHT);
-      el.scrollTop = target;
-      scrollTop = target;
-    }
+    if (!freshReveal(request, revealed) || !el) return;
+    // Разово: прокрутка, ввод в поиск и новые карточки не повторяют показ —
+    // иначе прокрутка возвращалась к карточке, а фокус — на её переключатель.
+    revealed = request.seq;
+    const id = request.id;
+    untrack(() => {
+      const index = items.findIndex((mod) => mod.id === id);
+      if (index < 0) return;
+      // Карточка вне окна виртуализации: сначала прокручиваем к её ряду,
+      // иначе фокусировать нечего.
+      if (index < startRow * columns || index >= endRow * columns) {
+        const target = Math.max(0, Math.floor(index / columns) * ROW_HEIGHT);
+        el.scrollTop = target;
+        scrollTop = target;
+      }
+    });
     void tick().then(() => {
       const card = [...el.querySelectorAll<HTMLElement>("[data-mod-id]")].find(
         (element) => element.dataset.modId === id,

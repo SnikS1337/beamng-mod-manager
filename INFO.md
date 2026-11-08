@@ -295,7 +295,7 @@ npm test
 npm run build
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo test --workspace --all-targets
 npm run tauri dev
 ```
 

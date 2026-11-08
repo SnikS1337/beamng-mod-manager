@@ -9,8 +9,8 @@
   import { versionLine } from "./cardText";
   import { formatSize } from "./format";
   import { modStatus } from "./status";
-  import { revealScroll, typeLabel, typeTag } from "./view";
-  import { tick } from "svelte";
+  import { freshReveal, revealScroll, typeLabel, typeTag, type RevealRequest } from "./view";
+  import { tick, untrack } from "svelte";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
 
   let {
@@ -19,7 +19,7 @@
     onselect,
     ontoggle,
     resetKey = "",
-    revealId = null,
+    reveal = null,
   }: {
     items: ModCardDto[];
     /** Выбранные: одна карточка или несколько. */
@@ -27,8 +27,8 @@
     onselect: (id: string, keys: ClickKeys) => void;
     ontoggle: (mod: ModCardDto) => void;
     resetKey?: string;
-    /** Строка, выбранная стрелками: прокрутить к ней и перевести фокус. */
-    revealId?: string | null;
+    /** Строка, выбранная стрелками: прокрутить к ней и перевести фокус (разово). */
+    reveal?: RevealRequest | null;
   } = $props();
 
   // Плотный список для сотен модов: строка 48, рисуются только видимые.
@@ -50,17 +50,25 @@
     }
   });
 
+  /** Номер последней выполненной просьбы показать строку. */
+  let revealed = 0;
+
   $effect(() => {
-    const id = revealId;
+    const request = reveal;
     const el = viewport;
-    if (!id || !el) return;
-    const index = items.findIndex((mod) => mod.id === id);
-    if (index < 0) return;
-    const target = revealScroll(index, ROW, el.scrollTop, el.clientHeight);
-    if (target !== null) {
-      el.scrollTop = target;
-      scrollTop = target;
-    }
+    if (!freshReveal(request, revealed) || !el) return;
+    // Разово: прокрутка и ввод в поиск не повторяют показ (см. `RevealRequest`).
+    revealed = request.seq;
+    const id = request.id;
+    untrack(() => {
+      const index = items.findIndex((mod) => mod.id === id);
+      if (index < 0) return;
+      const target = revealScroll(index, ROW, el.scrollTop, el.clientHeight);
+      if (target !== null) {
+        el.scrollTop = target;
+        scrollTop = target;
+      }
+    });
     void tick().then(() => {
       const row = [...el.querySelectorAll<HTMLElement>("[data-mod-id]")].find(
         (element) => element.dataset.modId === id,

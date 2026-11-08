@@ -5,7 +5,8 @@ import {
   saveViewMode,
   typeCounts,
   typeLabel,
-  typeTag, revealScroll } from "./view";
+  typeTag, revealScroll, nextReveal, freshReveal } from "./view";
+import { readFileSync } from "node:fs";
 
 describe("typeTag", () => {
   it("верит составу архива", () => {
@@ -65,5 +66,34 @@ describe("прокрутка к строке списка", () => {
     expect(revealScroll(3, 48, 0, 480)).toBeNull();
     expect(revealScroll(10, 48, 0, 480)).toBe(48);
     expect(revealScroll(2, 48, 200, 480)).toBe(96);
+  });
+});
+
+describe("показ карточки после стрелок — разовый", () => {
+  it("каждая просьба новая, даже к той же карточке", () => {
+    const first = nextReveal(null, "a");
+    const again = nextReveal(first, "a");
+    expect(first).toEqual({ id: "a", seq: 1 });
+    expect(again.seq).toBe(2);
+  });
+
+  it("выполненную просьбу не повторяем", () => {
+    // Раньше показ повторялся при прокрутке и вводе в поиск: прокрутка
+    // возвращалась к карточке, фокус уходил на её переключатель.
+    const request = nextReveal(null, "a");
+    expect(freshReveal(request, 0)).toBe(true);
+    expect(freshReveal(request, request.seq)).toBe(false);
+    expect(freshReveal(null, 0)).toBe(false);
+    expect(freshReveal(nextReveal(request, "b"), request.seq)).toBe(true);
+  });
+
+  it("сетка и список выполняют просьбу один раз и не следят за прокруткой", () => {
+    for (const file of ["./ModGrid.svelte", "./ModList.svelte"]) {
+      const text = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(text, file).toContain("freshReveal(request, revealed)");
+      expect(text, file).toContain("revealed = request.seq");
+      expect(text, file).toMatch(/untrack\(\(\) => \{\s*const index = items\.findIndex/);
+      expect(text, file).not.toContain("revealId");
+    }
   });
 });

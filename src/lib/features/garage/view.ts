@@ -100,6 +100,26 @@ function safeStorage(): Storage | null {
 }
 
 /**
+ * Просьба показать карточку после перехода стрелками. Разовая: номер отличает
+ * новую просьбу от прежней. Раньше карточка «прилипала»: показ повторялся при
+ * каждой прокрутке и вводе в поиск — прокрутка возвращалась к ней, а фокус уходил
+ * на её переключатель.
+ */
+export interface RevealRequest {
+  id: string;
+  seq: number;
+}
+
+export function nextReveal(previous: RevealRequest | null, id: string): RevealRequest {
+  return { id, seq: (previous?.seq ?? 0) + 1 };
+}
+
+/** Просьбу ещё не выполняли: `handled` — номер последней выполненной. */
+export function freshReveal(request: RevealRequest | null, handled: number): request is RevealRequest {
+  return request !== null && request.seq > handled;
+}
+
+/**
  * Куда прокрутить список строк одинаковой высоты, чтобы строка `index` стала видна.
  * `null` — она уже на экране. В режиме списка стрелки раньше меняли выбор, но
  * строка за краем экрана так и оставалась невидимой.
