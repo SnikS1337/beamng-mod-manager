@@ -23,7 +23,15 @@
   import { trapFocus } from "#lib/shell/focus.js";
   import { arrival } from "#lib/shell/arrival.svelte.js";
   import { pop, softFade } from "#lib/shell/transitions.js";
-  import { installable, preselected, suspiciousFiles, suspiciousText, undoAll } from "./selection";
+  import {
+    installSucceeded,
+    installable,
+    mayRemoveSource,
+    preselected,
+    suspiciousFiles,
+    suspiciousText,
+    undoAll,
+  } from "./selection";
   import { dropPlan, dropRefusal, dropSummary } from "./drop";
 
   type CheckLevel = "ok" | "attention" | "blocked";
@@ -50,6 +58,8 @@
   /** Строка, которая сейчас «улетает» в гараж (см. arrival). */
   let flyingItem = $state.raw<IncomingItemDto | null>(null);
   let installing = $state(false);
+  /** Почему установка не удалась: окно остаётся открытым, распакованное цело. */
+  let installError = $state<string | null>(null);
   let dragActive = $state(false);
   let installButton = $state<HTMLButtonElement | null>(null);
   let session = 0;
@@ -224,6 +234,7 @@
   function openArchive(archive: IncomingArchiveDto, downloaded = false): void {
     current = archive;
     currentDownloaded = downloaded;
+    installError = null;
     selected = archive.items.map(preselected);
   }
 
@@ -237,6 +248,7 @@
     const archive = current;
     current = null;
     currentDownloaded = false;
+    installError = null;
     selected = [];
     if (archive?.workDir) void incomingDiscard(archive.workDir).catch(() => {});
     void pump();
@@ -299,12 +311,26 @@
         }
       });
       const workDir = archive.workDir;
-      const leftInArchive = archive.items.some(
-        (item, index) => installable(item) && !selected[index],
-      );
-      if (currentDownloaded && failures.length === 0 && !leftInArchive) {
+      const installedFiles = new Set(tickets.map((ticket) => ticket.fileName.toLowerCase()));
+      if (currentDownloaded && mayRemoveSource(archive.items, installedFiles, failures.length)) {
         void incomingRemoveSource(archive.source).catch(() => {});
       }
+      // Поставилось не всё: окно и распакованное остаются — можно повторить, не добавляя архив заново.
+      if (!installSucceeded(tickets.length, failures.length)) {
+        installError = failures[0]?.message ?? "Не удалось установить моды.";
+        if (tickets.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent("bmm:library-changed", {
+              detail: { fileNames: tickets.map((ticket) => ticket.fileName) },
+            }),
+          );
+        }
+        toasts.show(toastText(chosen, tickets.length, failures), {
+          undo: tickets.length > 0 ? () => undoTickets(tickets) : undefined,
+        });
+        return;
+      }
+      installError = null;
       // Последний поставленный мод «прилетает» из окна на место своей карточки:
       // гараж выделяет именно его.
       flyingItem = lastInstalled;
@@ -621,11 +647,11 @@
                   </p>
                 </div>
                 {#if several}
-                  <label class="check" class:disabled={!installable(item)}>
+                  <label class="check" class:disabled={!installable(item) || installing}>
                     <input
                       type="checkbox"
                       checked={selected[index] ?? false}
-                      disabled={!installable(item)}
+                      disabled={!installable(item) || installing}
                       onchange={(event) => toggle(index, event)}
                       aria-label={`Установить ${item.title}`}
                     />
@@ -646,6 +672,7 @@
             </article>
           {/each}
         </div>
+        {#if installError}<p class="problem">{installError}</p>{/if}
         {#if hasUpdate}
           <p class="note">
             Прошлая версия сохранится — её можно вернуть в «Прошлых версиях»

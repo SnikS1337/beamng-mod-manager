@@ -98,21 +98,24 @@ export function panelOf(current: Selection): "none" | "one" | "many" {
   return single(current) ? "one" : "none";
 }
 
-/** Что можно сделать с выбранными: включить выключенные, выключить включённые, удалить. */
+/** Что можно сделать с выбранными: включить, выключить, удалить, вернуть удалённые. */
 export interface BulkPlan {
   enable: ModCardDto[];
   disable: ModCardDto[];
   remove: ModCardDto[];
+  restore: ModCardDto[];
 }
 
 export function bulkPlan(cards: ModCardDto[], ids: string[]): BulkPlan {
   const wanted = new Set(ids);
-  const chosen = cards.filter((card) => wanted.has(card.id) && !card.deleted);
+  const selected = cards.filter((card) => wanted.has(card.id));
+  const chosen = selected.filter((card) => !card.deleted);
   return {
     enable: chosen.filter((card) => !card.enabled),
     disable: chosen.filter((card) => card.enabled),
     // Моды из репозитория игры удаляются в самой игре.
     remove: chosen.filter((card) => !card.fromGameRepo),
+    restore: selected.filter((card) => card.deleted),
   };
 }
 

@@ -38,7 +38,7 @@
     {/if}
   </div>
 
-  <p class="hint">Мод вернётся в папку модов и снова включится.</p>
+  <p class="hint">Мод вернётся в папку модов. Был выключен — останется выключенным.</p>
   <button class="btn-primary" type="button" onclick={() => onRestore(card)}>Вернуть</button>
 </aside>
 

@@ -57,7 +57,7 @@
   import { expectDownload, isArchivePath } from "#lib/ipc/incoming.js";
   import type { AppError } from "#lib/ipc/types.js";
   import { incomingQueue } from "#lib/features/incoming/queue.svelte.js";
-  import { toasts } from "#lib/shell/toasts.svelte.js";
+  import { bulkUndoMs, toasts } from "#lib/shell/toasts.svelte.js";
   import { updatesBadge } from "#lib/shell/updatesBadge.svelte.js";
   import DeletedInspector from "./DeletedInspector.svelte";
   import Inspector from "./Inspector.svelte";
@@ -705,6 +705,8 @@
     bulkBusy = false;
     const text = `Удалено: ${removed.length}${failed > 0 ? ` · не получилось: ${failed}` : ""}`;
     showToast(text, {
+      // Пачку заметнее и решать дольше: срок растёт с числом удалённых.
+      duration: bulkUndoMs(removed.length),
       undo: removed.length
         ? async () => {
             for (const mod of removed) await modUndelete(mod.id).catch(() => {});
@@ -718,6 +720,34 @@
           }
         : undefined,
     });
+  }
+
+  async function bulkRestore() {
+    const mods = plan.restore;
+    if (bulkBusy || mods.length === 0) return;
+    bulkBusy = true;
+    const started = picked;
+    const restored: ModCardDto[] = [];
+    let failed = 0;
+    for (const mod of mods) {
+      try {
+        await modRestoreDeleted(mod.fileName);
+        restored.push(mod);
+      } catch {
+        failed += 1;
+      }
+    }
+    await load(true, true, () => {
+      picked = afterBulk(
+        started,
+        picked,
+        restored.map((mod) => mod.id),
+      );
+    });
+    bulkBusy = false;
+    showToast(
+      `Возвращено: ${restored.length}${failed > 0 ? ` · не получилось: ${failed}` : ""}`,
+    );
   }
 
   async function restoreDeleted(card: ModCardDto) {
@@ -883,7 +913,7 @@
     }
     if (isShortcut(event, "a") && filtered.length > 0) {
       event.preventDefault();
-      picked = selectAll(filtered.filter((mod) => !mod.deleted).map((mod) => mod.id));
+      picked = selectAll(filtered.map((mod) => mod.id));
       return;
     }
     if (picked.ids.length > 1) {
@@ -1244,6 +1274,7 @@
         onEnable={() => void bulkToggle(true)}
         onDisable={() => void bulkToggle(false)}
         onDelete={() => void bulkDelete()}
+        onRestore={() => void bulkRestore()}
         onClear={() => pick(EMPTY)}
       />
     {:else if selected?.deleted}

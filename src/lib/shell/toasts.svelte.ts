@@ -24,6 +24,11 @@ export function ringTiming(total: number, left: number): { duration: number; del
   return { duration, delay: -done };
 }
 
+/** Массовое действие: чем больше модов затронуто, тем больше времени заметить и отменить. */
+export function bulkUndoMs(count: number): number {
+  return Math.min(60_000, 6000 + Math.max(0, count - 1) * 500);
+}
+
 /** Сколько держать тост: по длине текста, чтобы успеть прочитать. */
 export function readingTime(message: string, withUndo = false): number {
   // ~15 знаков в секунду плюс время заметить тост.

@@ -11,6 +11,8 @@ import {
   single,
   panelOf,
 } from "./selection";
+// @ts-expect-error — тесты идут в Node, а типов Node в проекте нет.
+import { readFileSync } from "node:fs";
 
 const order = ["a", "b", "c", "d", "e"];
 
@@ -119,11 +121,35 @@ describe("действия над выбранными", () => {
     expect(plan.enable.map((item) => item.id)).toEqual(["off"]);
     expect(plan.disable.map((item) => item.id)).toEqual(["on", "repo"]);
     expect(plan.remove.map((item) => item.id)).toEqual(["on", "off"]);
+    expect(plan.restore.map((item) => item.id)).toEqual(["gone"]);
+  });
+
+  it("удалённые возвращаются пачкой, а не по одному", () => {
+    // Раньше удалённые исключались из выбора: Ctrl+A в «Удалённых» не давал панели,
+    // и вернуть 12 модов можно было только двенадцатью отдельными возвратами.
+    const plan = bulkPlan(cards, ["gone"]);
+    expect(plan.restore.map((item) => item.id)).toEqual(["gone"]);
+    expect(plan.enable).toEqual([]);
+    expect(plan.disable).toEqual([]);
+    expect(plan.remove).toEqual([]);
   });
 
   it("невыбранные не трогает", () => {
-    expect(bulkPlan(cards, [])).toEqual({ enable: [], disable: [], remove: [] });
+    expect(bulkPlan(cards, [])).toEqual({ enable: [], disable: [], remove: [], restore: [] });
     expect(bulkPlan(cards, ["nope"]).remove).toEqual([]);
+  });
+
+  it("гараж выбирает все видимые, включая удалённые, и умеет возвращать пачкой", () => {
+    for (const file of ["./GaragePage.svelte", "./BulkBar.svelte"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8") as string;
+      if (file === "./GaragePage.svelte") {
+        expect(source).toContain("selectAll(filtered.map((mod) => mod.id))");
+        expect(source).toContain("onRestore={() => void bulkRestore()}");
+      } else {
+        expect(source).toContain("plan.restore.length");
+        expect(source).not.toContain("возвращаются по одному");
+      }
+    }
   });
 });
 
