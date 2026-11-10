@@ -880,7 +880,7 @@ impl Worker<'_, '_> {
                                 &current,
                                 self.request.now,
                             );
-                            self.note_file(adapter, binding, &current);
+                            self.note_file(adapter, &current_binding, &current);
                         }
                     }
                 }
@@ -934,7 +934,7 @@ impl Worker<'_, '_> {
     fn note_file(
         &self,
         adapter: &std::sync::Arc<dyn ModSource>,
-        binding: &TrackedBinding,
+        binding: &bmm_domain::library::ModBinding,
         current: &bmm_domain::models::Listing,
     ) {
         use std::sync::atomic::Ordering;
@@ -966,6 +966,11 @@ impl Worker<'_, '_> {
             self.file_pages.fetch_add(1, Ordering::SeqCst);
         }
         if let Some(mut file) = probe.file {
+            // Пока шли по ссылке, человек мог заменить привязку: файл старой страницы
+            // не пишем как файл новой.
+            if !still_bound(store, binding) {
+                return;
+            }
             file.offer = offer;
             file.seen_at = Some(self.request.now);
             UpdateCheckService::apply_file(store, &binding.mod_id, &binding.source, file);
@@ -1075,6 +1080,7 @@ mod tests {
         feed_fails: Mutex<Option<SourceError>>,
         card_fails: Mutex<Option<SourceError>>,
         on_card: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+        on_probe: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
         feed_covers: bool,
         /// Многостраничная лента: страница N — элемент N-1. Пусто — только `feed`.
         pages: Mutex<Vec<Vec<Listing>>>,
@@ -1095,6 +1101,7 @@ mod tests {
                 feed_fails: Mutex::new(None),
                 card_fails: Mutex::new(None),
                 on_card: Mutex::new(None),
+                on_probe: Mutex::new(None),
                 feed_covers: true,
                 pages: Mutex::new(Vec::new()),
                 file: Mutex::new(None),
@@ -1136,6 +1143,10 @@ mod tests {
 
         fn on_card(&self, callback: Arc<dyn Fn() + Send + Sync>) {
             *self.on_card.lock().unwrap() = Some(callback);
+        }
+
+        fn on_probe(&self, callback: Arc<dyn Fn() + Send + Sync>) {
+            *self.on_probe.lock().unwrap() = Some(callback);
         }
 
         fn feed_calls(&self) -> usize {
@@ -1212,6 +1223,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((listing.url.to_string(), open_page));
+            if let Some(callback) = self.on_probe.lock().unwrap().clone() {
+                callback();
+            }
             bmm_sources::files::FileProbe {
                 file: self.file.lock().unwrap().clone(),
                 // Страницу «открываем», только если разрешили.
@@ -2168,6 +2182,48 @@ mod tests {
             store.get_check("a", "x"),
             before,
             "состояние новой не тронуто"
+        );
+    }
+
+    #[test]
+    fn page_replaced_during_file_probe_does_not_get_the_old_pages_file() {
+        // Пока шла ссылка «Скачать» старой страницы, человек указал моду другую страницу
+        // того же сайта: файл старой страницы не должен стать файлом новой.
+        let store = Arc::new(InMemoryLibraryStore::new());
+        add(
+            &store,
+            "a",
+            "x",
+            "a",
+            Some("1.0"),
+            Some("1.0"),
+            Some(now() - TimeDelta::days(5)),
+        );
+        let site = Site::new("x");
+        site.set_card(l("x", "a", Some("1.0"), None));
+        site.set_file(Some(snapshot("old.zip")));
+        let store_for_callback = Arc::clone(&store);
+        site.on_probe(Arc::new(move || {
+            store_for_callback
+                .upsert_binding(ModBinding {
+                    mod_id: "a".to_string(),
+                    source: "x".to_string(),
+                    source_id: "other".to_string(),
+                    url: Url::parse(&u("x", "other")).unwrap(),
+                    confirmed: true,
+                })
+                .unwrap();
+        }));
+        run_simple(
+            &store,
+            &sources(&site),
+            now(),
+            UpdateCheckOptions::default(),
+        );
+        assert_eq!(site.probes().len(), 1, "ссылку прошли");
+        assert!(
+            store.get_check("a", "x").unwrap().last_file.is_none(),
+            "файл старой страницы не записан новой привязке"
         );
     }
 

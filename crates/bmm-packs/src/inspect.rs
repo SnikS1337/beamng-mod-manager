@@ -89,6 +89,7 @@ const MIB: u64 = 1024 * 1024;
 
 const NOT_A_ZIP: &str = "Это не zip-архив или он повреждён.";
 const CORRUPTED_ZIP: &str = "Архив повреждён и не читается.";
+const ENCRYPTED_ZIP: &str = "Архив под паролем: игра не сможет его открыть.";
 
 /// Проверяет ZIP-файл до установки.
 pub fn inspect_zip(path: &Path, limits: &ArchiveLimits) -> InspectionResult {
@@ -149,7 +150,25 @@ fn inspect_archive<R: Read + Seek>(
     let mut root_has_files = false;
 
     for index in 0..entry_count {
-        let entry = archive.by_index(index)?;
+        let entry = match archive.by_index(index) {
+            Ok(entry) => entry,
+            // Запись под паролем не открывается: архив целый, но игра такой мод не прочтёт.
+            Err(zip::result::ZipError::UnsupportedArchive(
+                zip::result::ZipError::PASSWORD_REQUIRED,
+            )) => {
+                return Ok(InspectionResult {
+                    findings: vec![Finding {
+                        severity: Severity::Block,
+                        code: "encrypted",
+                        message: ENCRYPTED_ZIP.to_string(),
+                        entry: None,
+                    }],
+                    entry_count,
+                    total_uncompressed_bytes: 0,
+                });
+            }
+            Err(error) => return Err(error),
+        };
         let raw_name = entry.name()?.into_owned();
         let name = raw_name.replace('\\', "/");
         let size = entry.size();
@@ -629,6 +648,35 @@ mod tests {
         assert_eq!(result.findings[0].code, "not-zip");
         assert_eq!(result.findings[0].severity, Severity::Block);
         assert_eq!(result.findings[0].message, CORRUPTED_ZIP);
+    }
+
+    #[test]
+    fn password_protected_zip_says_so_instead_of_corrupted() {
+        let (_dir, path) = zip(&[("vehicles/car/a.jbeam", b"x")]);
+        let mut bytes = std::fs::read(&path).unwrap();
+        // Флаг шифрования: в локальном заголовке он на 6-м байте, в центральном каталоге — на 8-м.
+        for (signature, offset) in [
+            (b"PK\x03\x04".as_slice(), 6usize),
+            (b"PK\x01\x02".as_slice(), 8usize),
+        ] {
+            let at = bytes
+                .windows(4)
+                .position(|window| window == signature)
+                .expect("сигнатура заголовка");
+            let flags = u16::from_le_bytes([bytes[at + offset], bytes[at + offset + 1]]);
+            bytes[at + offset..at + offset + 2].copy_from_slice(&(flags | 1).to_le_bytes());
+        }
+        std::fs::write(&path, &bytes).unwrap();
+
+        let result = inspect_zip(&path, &ArchiveLimits::default());
+
+        assert!(result.is_blocked());
+        assert_eq!(result.findings.len(), 1);
+        assert_eq!(result.findings[0].code, "encrypted");
+        assert_eq!(
+            result.findings[0].message,
+            "Архив под паролем: игра не сможет его открыть."
+        );
     }
 
     #[test]

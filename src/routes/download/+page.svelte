@@ -25,6 +25,7 @@
   } from "#lib/ipc/incoming.js";
   import {
     installable,
+    mayRemoveSource,
     wholeArchiveInstalled,
     preselected,
     suspiciousFiles,
@@ -524,10 +525,8 @@
           });
         }
       });
-      const leftInArchive = archive.items.some(
-        (item, index) => installable(item) && !selected[index],
-      );
-      if (tickets.length > 0 && failures.length === 0 && !leftInArchive) {
+      const installedFiles = new Set(tickets.map((ticket) => ticket.fileName.toLowerCase()));
+      if (tickets.length > 0 && mayRemoveSource(archive.items, installedFiles, failures.length)) {
         void incomingRemoveSource(archive.source).catch(() => {});
       }
       if (tickets.length > 0) {

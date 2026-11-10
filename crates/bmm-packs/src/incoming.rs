@@ -2117,6 +2117,56 @@ mod tests {
     }
 
     #[test]
+    fn password_protected_zip_is_blocked_with_a_clear_reason() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("password.zip");
+        let file = File::create(&source).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(
+            "vehicles/car/a.jbeam",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"x").unwrap();
+        zip.finish().unwrap();
+        let mut bytes = std::fs::read(&source).unwrap();
+        for (signature, offset) in [
+            (b"PK\x03\x04".as_slice(), 6usize),
+            (b"PK\x01\x02".as_slice(), 8usize),
+        ] {
+            let at = bytes
+                .windows(4)
+                .position(|window| window == signature)
+                .unwrap();
+            let flags = u16::from_le_bytes([bytes[at + offset], bytes[at + offset + 1]]);
+            bytes[at + offset..at + offset + 2].copy_from_slice(&(flags | 1).to_le_bytes());
+        }
+        std::fs::write(&source, &bytes).unwrap();
+
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+
+        assert!(analysis.problem.is_none(), "{:?}", analysis.problem);
+        assert_eq!(analysis.items.len(), 1);
+        assert!(analysis.items[0].blocked);
+        let finding = analysis.items[0]
+            .findings
+            .iter()
+            .find(|finding| finding.severity == Severity::Block)
+            .expect("причина отказа");
+        assert_eq!(finding.code, "encrypted");
+        assert_eq!(
+            finding.message,
+            "Архив под паролем: игра не сможет его открыть."
+        );
+    }
+
+    #[test]
     fn already_installed_is_detected_by_exact_hash() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("map.zip");

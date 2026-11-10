@@ -21,6 +21,23 @@ export function wholeArchiveInstalled(
   );
 }
 
+/**
+ * Исходный архив можно убрать: поставлено всё, что в нём есть, и без ошибок.
+ * Смотрим на поставленные файлы, а не на галочки — их меняют и во время установки.
+ */
+export function mayRemoveSource(
+  items: IncomingItemDto[],
+  installedFiles: Set<string>,
+  failures: number,
+): boolean {
+  return failures === 0 && wholeArchiveInstalled(items, installedFiles);
+}
+
+/** Окно закрывается и рабочая папка убирается, только когда установка удалась целиком. */
+export function installSucceeded(tickets: number, failures: number): boolean {
+  return failures === 0 && tickets > 0;
+}
+
 /** Программы и скрипты Windows в архиве: ставить или нет — решает пользователь. */
 export function suspiciousFiles(item: IncomingItemDto): string[] {
   return item.findings

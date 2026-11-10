@@ -1,6 +1,7 @@
 <script lang="ts">
   import Power from "phosphor-svelte/lib/Power";
   import Trash from "phosphor-svelte/lib/Trash";
+  import ArrowCounterClockwise from "phosphor-svelte/lib/ArrowCounterClockwise";
   import X from "phosphor-svelte/lib/X";
   import { plural } from "./format";
   import { rollIn } from "#lib/shell/transitions.js";
@@ -13,6 +14,7 @@
     onEnable,
     onDisable,
     onDelete,
+    onRestore,
     onClear,
   }: {
     count: number;
@@ -21,6 +23,7 @@
     onEnable: () => void;
     onDisable: () => void;
     onDelete: () => void;
+    onRestore: () => void;
     onClear: () => void;
   } = $props();
 </script>
@@ -59,6 +62,12 @@
         Выключить {plan.disable.length}
       </button>
     {/if}
+    {#if plan.restore.length > 0}
+      <button class="btn-primary" type="button" disabled={busy} onclick={onRestore}>
+        <ArrowCounterClockwise size={16} />
+        Вернуть {plan.restore.length}
+      </button>
+    {/if}
     {#if plan.remove.length > 0}
       <button class="btn-glass danger" type="button" disabled={busy} onclick={onDelete}>
         <Trash size={16} />
@@ -66,10 +75,8 @@
       </button>
     {/if}
   </div>
-  {#if plan.enable.length + plan.disable.length + plan.remove.length === 0}
-    <!-- Выбраны только удалённые: пачкой с ними делать нечего — так и говорим, а не
-         показываем пустую панель. -->
-    <p class="hint">Удалённые моды возвращаются по одному: выберите мод и нажмите «Вернуть» на его панели.</p>
+  {#if plan.enable.length + plan.disable.length + plan.remove.length + plan.restore.length === 0}
+    <p class="hint">С выбранными модами нечего делать: они из репозитория игры — ими управляет сама игра.</p>
   {/if}
   {#if plan.remove.length < count && plan.remove.length > 0}
     <p class="hint">Моды из репозитория игры удаляются в самой игре — их здесь не тронем.</p>

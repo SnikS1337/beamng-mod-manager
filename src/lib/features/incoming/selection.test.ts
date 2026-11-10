@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { IncomingItemDto } from "#lib/ipc/incoming.js";
 import {
+  installSucceeded,
   installable,
+  mayRemoveSource,
   preselected,
   suspiciousFiles,
   suspiciousText,
   undoAll,
   wholeArchiveInstalled,
 } from "./selection";
+// @ts-expect-error — тесты идут в Node, а типов Node в проекте нет.
+import { readFileSync } from "node:fs";
 
 function item(patch: Partial<IncomingItemDto> = {}): IncomingItemDto {
   return {
@@ -80,6 +84,61 @@ describe("удаление исходного архива", () => {
   });
 });
 
+
+describe("удаление исходника после установки", () => {
+  it("в архиве остался непоставленный мод — исходник бережём", () => {
+    const a = item({ fileName: "a.zip" });
+    const b = item({ fileName: "b.zip" });
+    expect(mayRemoveSource([a, b], new Set(["a.zip"]), 0)).toBe(false);
+  });
+
+  it("часть модов не поставилась — исходник бережём", () => {
+    const a = item({ fileName: "a.zip" });
+    expect(mayRemoveSource([a], new Set<string>(), 1)).toBe(false);
+  });
+
+  it("строка «ещё N модов не разобраны» не даёт удалить исходник", () => {
+    const a = item({ fileName: "a.zip" });
+    const overflow = item({ fileName: "pack.zip", blocked: true });
+    expect(mayRemoveSource([a, overflow], new Set(["a.zip"]), 0)).toBe(false);
+  });
+
+  it("поставлено всё, что в архиве есть, — исходник можно удалить", () => {
+    const a = item({ fileName: "a.zip" });
+    const b = item({ fileName: "B.zip" });
+    const already = item({ fileName: "c.zip", kind: "alreadyInstalled" });
+    expect(mayRemoveSource([a, b, already], new Set(["a.zip", "b.zip"]), 0)).toBe(true);
+  });
+
+  it("решение про исходник не зависит от галочек — только от поставленного", () => {
+    // Доотметка пункта во время установки раньше делала архив «полностью разобранным».
+    for (const file of ["./IncomingHost.svelte", "../../../routes/download/+page.svelte"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8") as string;
+      expect(source, file).toContain("mayRemoveSource(");
+      expect(source, file).not.toContain("leftInArchive");
+    }
+  });
+});
+
+describe("итог установки", () => {
+  it("всё поставилось — окно можно закрыть и рабочую папку убрать", () => {
+    expect(installSucceeded(2, 0)).toBe(true);
+  });
+
+  it("хоть одна ошибка — окно и распакованное остаются", () => {
+    expect(installSucceeded(1, 1)).toBe(false);
+    expect(installSucceeded(0, 2)).toBe(false);
+  });
+
+  it("не поставилось ничего — окно остаётся, чтобы попробовать снова", () => {
+    expect(installSucceeded(0, 0)).toBe(false);
+  });
+
+  it("галочки не меняются, пока идёт установка", () => {
+    const source = readFileSync(new URL("./IncomingHost.svelte", import.meta.url), "utf8") as string;
+    expect(source).toContain("disabled={!installable(item) || installing}");
+  });
+});
 
 describe("отмена установки", () => {
   it("снимает все моды с конца, даже если один не снялся, и говорит о первой ошибке", async () => {

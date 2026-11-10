@@ -172,6 +172,14 @@ impl InstalledIndex {
     }
 }
 
+/// Ни одного включённого сайта: ищем негде — говорим прямо, а не «ничего не нашли».
+fn refuse_without_sites(sources: &[Arc<dyn ModSource>]) -> Result<(), AppError> {
+    if sources.is_empty() {
+        return Err(AppError::new("search", "Все сайты выключены."));
+    }
+    Ok(())
+}
+
 fn searchable_sources(runtime: &SearchRuntime, disabled: &[String]) -> Vec<Arc<dyn ModSource>> {
     runtime
         .service
@@ -232,6 +240,7 @@ pub async fn search_start(
         .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
     let settings = state.settings.load().settings;
     let sources = searchable_sources(&runtime, &settings.disabled_sources);
+    refuse_without_sites(&sources)?;
     let fetcher = runtime.fetcher.clone();
     reset_challenged(&fetcher, &sources);
     let options = runtime.service.options().clone();
@@ -324,9 +333,7 @@ pub async fn search_browse(
         .ok_or_else(|| AppError::new("search", "Поиск недоступен."))?;
     let settings = state.settings.load().settings;
     let sources = searchable_sources(&runtime, &settings.disabled_sources);
-    if sources.is_empty() {
-        return Err(AppError::new("search", "Все сайты выключены."));
-    }
+    refuse_without_sites(&sources)?;
     if from_page <= 1 {
         reset_challenged(&runtime.fetcher, &sources);
     }
@@ -937,6 +944,15 @@ fn price_summary(price: PriceSummary) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_without_enabled_sites_refuses_instead_of_finding_nothing() {
+        // Все сайты выключены: пользователь должен узнать причину, а не получить
+        // «ничего не нашли, попробуйте короче» и перебирать запросы.
+        let error = refuse_without_sites(&[]).expect_err("без сайтов — отказ");
+        assert_eq!(error.code, "search");
+        assert_eq!(error.message, "Все сайты выключены.");
+    }
 
     #[test]
     fn search_previews_are_limited() {

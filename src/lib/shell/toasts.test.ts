@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readingTime, ringTiming, toasts } from "./toasts.svelte";
+import { bulkUndoMs, readingTime, ringTiming, toasts } from "./toasts.svelte";
 
 describe("тосты", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -96,6 +96,16 @@ describe("тосты", () => {
     expect(toasts.current?.message).toBe(long);
     vi.advanceTimersByTime(readingTime(long));
     expect(toasts.current).toBeNull();
+  });
+
+  it("массовая операция даёт тем больше времени, чем больше модов затронула", () => {
+    // Было: «Удалено: 12» и «Удалено: 5000» висели одинаковые 6 секунд,
+    // а вернуть потом можно было только по одному.
+    expect(bulkUndoMs(1)).toBe(6000);
+    expect(bulkUndoMs(12)).toBeGreaterThan(bulkUndoMs(2));
+    expect(bulkUndoMs(12)).toBeGreaterThan(6000);
+    expect(bulkUndoMs(5000)).toBeLessThanOrEqual(60000);
+    expect(bulkUndoMs(0)).toBe(6000);
   });
 
   it("под курсором тост не исчезает", () => {
