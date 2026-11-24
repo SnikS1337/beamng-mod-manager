@@ -1293,7 +1293,7 @@
     background: transparent;
     color: var(--muted-foreground);
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
     transition: color var(--dur-2) var(--ease-out);
   }
@@ -1454,7 +1454,7 @@
   h2 {
     margin: 0;
     font-size: 18px;
-    font-weight: 800;
+    font-weight: 600;
   }
 
   .chip {
@@ -1462,9 +1462,9 @@
     align-items: center;
     height: 22px;
     padding: 0 8px;
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
   }
 
@@ -1588,7 +1588,7 @@
     margin-top: 4px;
     padding: 9px 10px;
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--surface-2);
   }
 
@@ -1780,7 +1780,7 @@
     background: var(--accent-brand);
     transform: scaleX(var(--share, 0));
     transform-origin: left center;
-    transition: transform 520ms var(--ease-spring);
+    transition: transform var(--dur-3) var(--ease-out);
   }
 
   .bar.pulse {
@@ -1819,7 +1819,7 @@
      словам («BeamNG (официальный)»), одно слово — целиком. */
   .site-name {
     min-width: 0;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.2;
     overflow-wrap: normal;
     word-break: keep-all;
@@ -1890,7 +1890,7 @@
     }
     to {
       opacity: 1;
-      transform: scale(1.15);
+      transform: scale(1.08);
     }
   }
 

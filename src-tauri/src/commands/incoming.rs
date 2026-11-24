@@ -476,6 +476,7 @@ fn install_items(
     let installer = installer_for(state)?;
     let keep = state.settings.load().settings.keep_backups.max(1) as usize;
     let mut results = Vec::new();
+    let mut update_targets = HashMap::<String, usize>::new();
     let work_root = incoming_root();
     for request in requests {
         let source = PathBuf::from(&request.zip_path);
@@ -535,6 +536,21 @@ fn install_items(
                 });
                 continue;
             }
+            let target_key = replaced.to_lowercase();
+            if update_targets.contains_key(&target_key) {
+                results.push(IncomingInstallResult {
+                    success: false,
+                    message: Some("Этот мод уже обновляется в этой пачке.".to_string()),
+                    warning: None,
+                    file_name: request.file_name.clone(),
+                    replaces: request.replaces.clone(),
+                    backup_id: None,
+                    was_disabled: false,
+                    same_name: replaced.eq_ignore_ascii_case(&request.file_name),
+                });
+                continue;
+            }
+            update_targets.insert(target_key, results.len());
             let update = installer.update_from_path(replaced, &source, &request.file_name, options);
             let mut warning = None;
             if update.install.success
@@ -916,6 +932,45 @@ mod tests {
         assert!(installer.layout().disabled_dir.join("car_v1.zip").is_file());
         assert!(!installer.layout().mods_dir.join("car_v1.zip").exists());
         assert!(!installer.layout().disabled_dir.join("car_v2.zip").exists());
+    }
+
+    #[test]
+    fn two_updates_of_one_target_run_only_once() {
+        let (temp, state) = setup();
+        let v1 = temp.path().join("v1.zip");
+        let v2 = temp.path().join("v2.zip");
+        let v3 = temp.path().join("v3.zip");
+        make_zip(&v1, b"one");
+        make_zip(&v2, b"two");
+        make_zip(&v3, b"three");
+        let installer = installer_for_test(&state);
+        assert!(
+            installer
+                .install_from_path(&v1, "car.zip", InstallOptions::default())
+                .success
+        );
+        checked_source(&v2);
+        checked_source(&v3);
+        let request = |path: &Path| IncomingInstallRequest {
+            zip_path: path.display().to_string(),
+            file_name: "car.zip".to_string(),
+            replaces: Some("car.zip".to_string()),
+            allow_warnings: true,
+            version: None,
+        };
+        let results = install_items(&state, &[request(&v2), request(&v3)]).unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+        assert!(
+            !results[1].success,
+            "второй Update не должен делать копию нового"
+        );
+        assert!(
+            results[1]
+                .message
+                .as_deref()
+                .unwrap_or("")
+                .contains("уже обновляется")
+        );
     }
 
     #[test]

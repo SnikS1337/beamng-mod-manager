@@ -2,7 +2,7 @@
   import { errorText } from "#lib/shell/errorText.js";
   import { onMount, tick, untrack } from "svelte";
   import { isTauri } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
+  import { stableListen } from "#lib/shell/stableListen.js";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { enterOverlay, takeEscape } from "#lib/shell/overlays.js";
   import {
@@ -133,7 +133,7 @@
     let unlistenPanel: (() => void) | undefined;
     let unlistenDismissed: (() => void) | undefined;
     let disposed = false;
-    void listen<{ path: string }>("incoming://download", (event) => {
+    void stableListen<{ path: string }>("incoming://download", (event) => {
       const path = event.payload.path;
       if (isArchivePath(path)) incomingQueue.add([path], true);
     })
@@ -142,7 +142,7 @@
         else unlistenDownload = stop;
       })
       .catch(() => {});
-    void listen<PanelInstalled>("download://installed", (event) => {
+    void stableListen<PanelInstalled>("download://installed", (event) => {
       if (!disposed) panelInstalled(event.payload);
     })
       .then((stop) => {
@@ -151,7 +151,7 @@
       })
       .catch(() => {});
     // В окне скачивания попросили больше не предлагать версию — «Обновления» перечитать.
-    void listen("download://dismissed", () => {
+    void stableListen("download://dismissed", () => {
       if (!disposed) window.dispatchEvent(new CustomEvent("bmm:library-changed"));
     })
       .then((stop) => {
@@ -817,7 +817,7 @@
   h2 {
     margin: 0;
     font-size: 20px;
-    font-weight: 650;
+    font-weight: 500;
     letter-spacing: -0.01em;
     line-height: 1.25;
     overflow-wrap: anywhere;
@@ -953,7 +953,7 @@
     flex: none;
     width: 14px;
     text-align: center;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .checks li.ok .mark {
@@ -997,7 +997,7 @@
     border-radius: 6px;
     color: var(--primary-foreground);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .check input:checked + span {

@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { stableListen } from "#lib/shell/stableListen.js";
 import type {
   BulkToggleResult,
   DeletedTicket,
@@ -171,6 +172,7 @@ function mockSnapshot(count = 5000): LibrarySnapshot {
     },
     folder: "C:\\Users\\Player\\AppData\\Local\\BeamNG\\BeamNG.drive\\current\\mods",
     folderError: null,
+    resolvedUserFolder: "C:\\Users\\Player\\AppData\\Local\\BeamNG\\BeamNG.drive",
     gameVersion: "0.39.4",
     gameRunning: false,
     warning: null,
@@ -245,6 +247,17 @@ export async function modDetails(id: string): Promise<ModDetails> {
 }
 
 const previewRequests = new Map<string, Promise<string | null>>();
+const PREVIEW_CACHE_LIMIT = 256;
+
+function rememberPreview(key: string, request: Promise<string | null>): void {
+  previewRequests.delete(key);
+  previewRequests.set(key, request);
+  while (previewRequests.size > PREVIEW_CACHE_LIMIT) {
+    const oldest = previewRequests.keys().next().value;
+    if (oldest === undefined) break;
+    previewRequests.delete(oldest);
+  }
+}
 
 /** Демо: у двух модов из трёх — цветная «обложка», чтобы видеть оттенки и перелёт обложки. */
 function mockPreview(id: string): string | null {
@@ -262,12 +275,16 @@ function mockPreview(id: string): string | null {
 
 export function modPreview(id: string, key = id): Promise<string | null> {
   const existing = previewRequests.get(key);
-  if (existing) return existing;
+  if (existing) {
+    previewRequests.delete(key);
+    previewRequests.set(key, existing);
+    return existing;
+  }
   const request = (async () => {
     if (!isTauri()) return mockPreview(id);
     return invoke<string | null>("mod_preview", { id });
   })();
-  previewRequests.set(key, request);
+  rememberPreview(key, request);
   // Неудачу не кешируем: архив мог быть занят, при возврате карточки попробуем снова.
   void request
     .then((url) => {
@@ -389,7 +406,13 @@ export async function modDeleteVersion(id: string, backupId: string): Promise<vo
 /** Дочитаны названия модов из их архивов: карточки стоит перерисовать. */
 export async function listenLibraryTitles(handler: () => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<number>("library://titles", () => handler());
+  return stableListen<number>("library://titles", () => handler());
+}
+
+/** Изменилось состояние записи библиотеки: показать или снять предупреждение. */
+export async function listenLibraryRefresh(handler: () => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return stableListen("library://refresh", () => handler());
 }
 
 /** Переупаковать архив, который игра не загрузит (прежний уходит в копии). */

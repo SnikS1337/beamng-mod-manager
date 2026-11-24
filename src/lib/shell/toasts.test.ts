@@ -108,6 +108,46 @@ describe("тосты", () => {
     expect(bulkUndoMs(0)).toBe(6000);
   });
 
+  it("очередь не вытесняет сообщения с Отменить", async () => {
+    toasts.show("Первое", { undo: vi.fn() });
+    for (let index = 0; index < 20; index += 1) toasts.show(`Фон ${index}`);
+    toasts.show("Второе", { undo: vi.fn() });
+    for (let index = 0; index < 20 && toasts.current?.message !== "Второе"; index += 1) {
+      vi.advanceTimersByTime(3000);
+    }
+    expect(toasts.current?.message).toBe("Второе");
+    await toasts.undo();
+    expect(toasts.current).toBeNull();
+  });
+
+  it("несколько Отменить не вытесняют друг друга", async () => {
+    const undos = Array.from({ length: 10 }, () => vi.fn());
+    toasts.show("Действие 0", { undo: undos[0] });
+    for (let index = 1; index < undos.length; index += 1) {
+      toasts.show(`Действие ${index}`, { undo: undos[index] });
+    }
+    for (let index = 0; index < undos.length; index += 1) {
+      expect(toasts.current?.message).toBe(`Действие ${index}`);
+      await toasts.undo();
+      expect(undos[index]).toHaveBeenCalledTimes(1);
+    }
+    expect(toasts.current).toBeNull();
+  });
+
+  it("несколько commit-тостов не вытесняют друг друга", () => {
+    const commits = Array.from({ length: 10 }, () => vi.fn());
+    toasts.show("Действие 0", { commit: commits[0] });
+    for (let index = 1; index < commits.length; index += 1) {
+      toasts.show(`Действие ${index}`, { commit: commits[index] });
+    }
+    for (let index = 0; index < commits.length; index += 1) {
+      expect(toasts.current?.message).toBe(`Действие ${index}`);
+      vi.advanceTimersByTime(3000);
+      expect(commits[index]).toHaveBeenCalledTimes(1);
+    }
+    expect(toasts.current).toBeNull();
+  });
+
   it("под курсором тост не исчезает", () => {
     toasts.show("Готово");
     vi.advanceTimersByTime(2000);

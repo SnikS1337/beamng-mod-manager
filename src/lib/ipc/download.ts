@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { stableListen } from "#lib/shell/stableListen.js";
 
 import type {
   DownloadJob,
@@ -65,20 +66,20 @@ export async function listenDownloadReady(
   handler: (job: DownloadJob) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadJob>("download://ready", (event) => handler(event.payload));
+  return stableListen<DownloadJob>("download://ready", (event) => handler(event.payload));
 }
 
 export async function listenDownloadJobs(
   handler: (jobs: DownloadJob[]) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadJob[]>("download://jobs", (event) => handler(event.payload));
+  return stableListen<DownloadJob[]>("download://jobs", (event) => handler(event.payload));
 }
 
 /** Окно закрывают (Alt+F4), а файл ещё качается: панель должна спросить. */
 export async function listenDownloadCloseAsked(handler: () => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen("download://close-asked", () => handler());
+  return stableListen("download://close-asked", () => handler());
 }
 
 /** Во время пачки нажали «Обновить» у другого мода: он встал в конец очереди. */
@@ -86,21 +87,21 @@ export async function listenDownloadBatchAdded(
   handler: (request: DownloadRequest) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadRequest>("download://batch-added", (event) => handler(event.payload));
+  return stableListen<DownloadRequest>("download://batch-added", (event) => handler(event.payload));
 }
 
 export async function listenDownloadContext(
   handler: (request: DownloadRequest) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadRequest>("download://context", (event) => handler(event.payload));
+  return stableListen<DownloadRequest>("download://context", (event) => handler(event.payload));
 }
 
 export async function listenDownloadState(
   handler: (event: DownloadPanelEvent) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadPanelEvent>("download://state", (event) => handler(event.payload));
+  return stableListen<DownloadPanelEvent>("download://state", (event) => handler(event.payload));
 }
 
 /** Ход загрузки: байты, размер, скорость — несколько раз в секунду. */
@@ -108,7 +109,7 @@ export async function listenDownloadProgress(
   handler: (progress: DownloadProgress) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadProgress>("download://progress", (event) => handler(event.payload));
+  return stableListen<DownloadProgress>("download://progress", (event) => handler(event.payload));
 }
 
 /** «Обновить все»: окно откроет страницы модов по очереди, установка — в конце. */
@@ -131,5 +132,5 @@ export async function listenDownloadBatch(
   handler: (requests: DownloadRequest[]) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<DownloadRequest[]>("download://batch", (event) => handler(event.payload));
+  return stableListen<DownloadRequest[]>("download://batch", (event) => handler(event.payload));
 }

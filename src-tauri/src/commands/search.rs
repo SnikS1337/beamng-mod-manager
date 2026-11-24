@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -257,13 +257,7 @@ pub async fn search_start(
     // Новый текстовый поиск закрывает раздел: старые страницы больше не нужны.
     *crate::state::lock(&state.browse) = None;
     let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut slot = crate::state::lock(&state.search_cancel);
-        if let Some((_, previous)) = slot.take() {
-            previous.store(true, Ordering::Relaxed);
-        }
-        *slot = Some((request_id, cancel.clone()));
-    }
+    let operation = claim_search_slot(&state.search_cancel, request_id, cancel.clone());
     let state_for_task = state.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let app_for_progress = app.clone();
@@ -300,13 +294,7 @@ pub async fn search_start(
                 let _ = app.emit("search://event", event);
             }
         }
-        let mut slot = crate::state::lock(&state_for_task.search_cancel);
-        if slot
-            .as_ref()
-            .is_some_and(|(current, _)| *current == request_id)
-        {
-            *slot = None;
-        }
+        release_search_slot(&state_for_task.search_cancel, request_id, operation);
     });
     Ok(())
 }
@@ -357,6 +345,7 @@ pub async fn search_browse(
         }
     }
     let cancel = Arc::new(AtomicBool::new(false));
+    let operation = next_search_operation();
     {
         let mut slot = crate::state::lock(&state.search_cancel);
         if slot.is_some() {
@@ -365,23 +354,14 @@ pub async fn search_browse(
                 "Поиск уже идёт. Дождитесь его окончания.",
             ));
         }
-        *slot = Some((request_id, Arc::clone(&cancel)));
+        *slot = Some((request_id, operation, Arc::clone(&cancel)));
     }
     let state_for_task = state.clone();
     let run = tauri::async_runtime::spawn_blocking(move || {
         service.browse(kind, from_page, BROWSE_PAGES, &cancel, None)
     })
     .await;
-    let superseded = {
-        let mut slot = crate::state::lock(&state.search_cancel);
-        let ours = slot
-            .as_ref()
-            .is_some_and(|(current, _)| *current == request_id);
-        if ours {
-            *slot = None;
-        }
-        !ours
-    };
+    let superseded = !release_search_slot(&state.search_cancel, request_id, operation);
     let response = run.map_err(|error| AppError::new("task", error.to_string()))?;
     if superseded {
         return Err(AppError::new(
@@ -485,18 +465,7 @@ pub async fn search_retry_source(
     .with_notes(runtime.fetcher.notes());
     let installed = InstalledIndex::build(&state);
     let cancel = Arc::new(AtomicBool::new(false));
-    {
-        // Повтор занимает тот же слот, что и обычный поиск: новый поиск отменит
-        // повтор, а не станет с ним наперегонки за `last_search`.
-        let mut slot = crate::state::lock(&state.search_cancel);
-        if slot.is_some() {
-            return Err(AppError::new(
-                "search",
-                "Поиск уже идёт. Дождитесь его окончания.",
-            ));
-        }
-        *slot = Some((request_id, Arc::clone(&cancel)));
-    }
+    let operation = claim_search_slot(&state.search_cancel, request_id, cancel.clone());
     let state_for_task = state.clone();
     let source_id_for_task = source_id.clone();
     let cancel_for_task = Arc::clone(&cancel);
@@ -508,16 +477,7 @@ pub async fn search_retry_source(
         }
     })
     .await;
-    let superseded = {
-        let mut slot = crate::state::lock(&state.search_cancel);
-        let ours = slot
-            .as_ref()
-            .is_some_and(|(current, _)| *current == request_id);
-        if ours {
-            *slot = None;
-        }
-        !ours
-    };
+    let superseded = !release_search_slot(&state.search_cancel, request_id, operation);
     let response = run
         .map_err(|error| AppError::new("task", error.to_string()))?
         .ok_or_else(|| AppError::new("search", "Сайт не найден."))?;
@@ -556,13 +516,47 @@ pub async fn search_retry_source(
     Ok(to_event(&response, request_id, "done", &installed, None))
 }
 
+type SearchSlot = (u64, u64, Arc<AtomicBool>);
+static NEXT_SEARCH_OPERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_search_operation() -> u64 {
+    NEXT_SEARCH_OPERATION.fetch_add(1, Ordering::Relaxed)
+}
+
+fn claim_search_slot(
+    slot: &Mutex<Option<SearchSlot>>,
+    request_id: u64,
+    cancel: Arc<AtomicBool>,
+) -> u64 {
+    let operation = next_search_operation();
+    let mut slot = crate::state::lock(slot);
+    if let Some((_, _, previous)) = slot.take() {
+        previous.store(true, Ordering::Relaxed);
+    }
+    *slot = Some((request_id, operation, cancel));
+    operation
+}
+
+fn release_search_slot(slot: &Mutex<Option<SearchSlot>>, request_id: u64, operation: u64) -> bool {
+    let mut slot = crate::state::lock(slot);
+    let ours = slot
+        .as_ref()
+        .is_some_and(|(current, current_operation, _)| {
+            *current == request_id && *current_operation == operation
+        });
+    if ours {
+        *slot = None;
+    }
+    ours
+}
+
 #[tauri::command]
 pub async fn search_cancel(
     state: tauri::State<'_, Arc<AppState>>,
     request_id: Option<u64>,
 ) -> Result<(), AppError> {
     let slot = crate::state::lock(&state.search_cancel);
-    if let Some((current, cancel)) = slot.as_ref()
+    if let Some((current, _, cancel)) = slot.as_ref()
         && request_id.is_none_or(|request| request == *current)
     {
         cancel.store(true, Ordering::Relaxed);
@@ -944,6 +938,25 @@ fn price_summary(price: PriceSummary) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_with_same_request_id_keeps_the_new_slot() {
+        let slot = std::sync::Mutex::new(None);
+        let first_cancel = Arc::new(AtomicBool::new(false));
+        let second_cancel = Arc::new(AtomicBool::new(false));
+        let first = claim_search_slot(&slot, 7, first_cancel.clone());
+        let second = claim_search_slot(&slot, 7, second_cancel.clone());
+        assert!(first_cancel.load(Ordering::Relaxed));
+        assert!(!release_search_slot(&slot, 7, first));
+        assert!(
+            slot.lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|(_, operation, _)| *operation == second)
+        );
+        assert!(release_search_slot(&slot, 7, second));
+        assert!(slot.lock().unwrap().is_none());
+    }
 
     #[test]
     fn search_without_enabled_sites_refuses_instead_of_finding_nothing() {

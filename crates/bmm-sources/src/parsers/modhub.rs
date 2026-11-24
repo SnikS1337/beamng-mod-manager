@@ -92,7 +92,7 @@ pub fn parse_list(html: &str) -> Vec<Listing> {
             continue;
         }
         let source_id = slug_of(&url);
-        if result.iter().any(|item| item.source_id == source_id) {
+        if result.iter().any(|item| item.url == url) {
             continue;
         }
         let mut listing = listing_for(url, source_id, &title);
@@ -242,13 +242,25 @@ pub fn is_mod_url(url: &url::Url) -> bool {
     parts.len() == 2 && parts[0].eq_ignore_ascii_case(SECTION)
 }
 
+pub fn stable_slug(slug: &str) -> String {
+    // ModHub добавляет версию игры к имени загрузки. Она меняется при перезаливе,
+    // но страница того же мода должна сохранять один source_id.
+    if let Some(base) = slug.strip_suffix("-040x") {
+        return base.to_string();
+    }
+    if let Some(base) = slug.strip_suffix("-039") {
+        return base.to_string();
+    }
+    slug.to_string()
+}
+
 pub fn slug_of(url: &url::Url) -> String {
     url.path()
         .trim_end_matches('/')
         .rsplit('/')
         .next()
-        .unwrap_or("")
-        .to_string()
+        .map(stable_slug)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -277,7 +289,7 @@ mod tests {
             list.iter().map(|item| &item.title).collect::<Vec<_>>()
         );
         assert_eq!(list[0].title, "BMW M8 CS 0.39");
-        assert_eq!(list[0].source_id, "bmw-m8-cs-039");
+        assert_eq!(list[0].source_id, "bmw-m8-cs");
         assert_eq!(
             list[0].url.as_str(),
             "https://www.modhub.us/beamng-drive-mods/bmw-m8-cs-039"
@@ -291,6 +303,16 @@ mod tests {
             list[0].preview_url
         );
         assert!(list.iter().all(|item| item.source == SOURCE_ID));
+    }
+
+    #[test]
+    fn game_version_suffix_does_not_change_source_id() {
+        let old = url::Url::parse(&format!("{BASE}{SECTION}/bmw-m8-cs-039")).unwrap();
+        let new = url::Url::parse(&format!("{BASE}{SECTION}/bmw-m8-cs-040x")).unwrap();
+        let numbered = url::Url::parse(&format!("{BASE}{SECTION}/some-mod-2")).unwrap();
+        assert_eq!(slug_of(&old), "bmw-m8-cs");
+        assert_eq!(slug_of(&old), slug_of(&new));
+        assert_eq!(slug_of(&numbered), "some-mod-2");
     }
 
     #[test]

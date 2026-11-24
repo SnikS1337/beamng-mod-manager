@@ -30,6 +30,29 @@ use crate::state::{AppState, PreviewTarget};
 mod types;
 pub use types::*;
 
+/// Следит за состоянием записи библиотеки: баннер в UI и повтор после освобождения файла.
+pub fn spawn_save_watch(app: tauri::AppHandle, state: Arc<AppState>) {
+    std::thread::spawn(move || {
+        let mut blocked = state.library.is_save_blocked();
+        let mut error = state.library.save_error();
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let now_blocked = state.library.is_save_blocked();
+            let now_error = state.library.save_error();
+            if now_blocked != blocked || now_error != error {
+                let _ = app.emit("library://refresh", ());
+            }
+            blocked = now_blocked;
+            error = now_error;
+            if blocked && state.library.maybe_retry_blocked_save() {
+                blocked = false;
+                error = None;
+                let _ = app.emit("library://refresh", ());
+            }
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn library_load(
     app: tauri::AppHandle,
@@ -37,6 +60,7 @@ pub async fn library_load(
 ) -> Result<LibrarySnapshot, AppError> {
     let state = state.inner().clone();
     let task_state = state.clone();
+    state.library.maybe_retry_blocked_save();
     let snapshot = tauri::async_runtime::spawn_blocking(move || load_snapshot(&task_state))
         .await
         .map_err(|error| AppError::new("task", error.to_string()))??;
@@ -1065,13 +1089,17 @@ fn try_live_toggle(
                 }),
             })
         }
-        LiveReply::Sent => Some(ToggleResult {
-            outcome: "queued".to_string(),
-            enabled,
-            message: Some(
-                "Игра занята: изменение отправлено и применится, когда она закончит.".to_string(),
-            ),
-        }),
+        LiveReply::Sent => {
+            queue_toggle(state, &disk.file_name, enabled);
+            Some(ToggleResult {
+                outcome: "queued".to_string(),
+                enabled,
+                message: Some(
+                    "Игра занята: изменение отправлено и применится, когда она закончит."
+                        .to_string(),
+                ),
+            })
+        }
         LiveReply::Dead => None,
     }
 }
@@ -1135,8 +1163,14 @@ fn toggle_live_many_within(
             }
             clear_pending_many(state, &changed_files);
         }
-        // Команда у игры: применится, когда она закончит, — не откладываем ещё раз.
-        LiveReply::Sent => queued.extend(items.into_iter().map(|(id, _)| id)),
+        // Команда у игры: желаемое состояние остаётся в pending, пока снимок не
+        // сверит его с db.json. Так перезапуск или потеря ответа не теряют пачку.
+        LiveReply::Sent => {
+            for (_, installed) in &items {
+                queue_toggle(state, &installed.file_name, enabled);
+            }
+            queued.extend(items.into_iter().map(|(id, _)| id));
+        }
         LiveReply::Dead => {
             for (id, installed) in items {
                 queue_toggle(state, &installed.file_name, enabled);
@@ -1396,6 +1430,7 @@ fn empty_snapshot(
             deleted: 0,
         },
         folder: None,
+        resolved_user_folder: None,
         folder_error,
         game_version: None,
         game_running,
@@ -2288,7 +2323,12 @@ mod tests {
             toggle_live_many_within(&state, &mods, &ids, false, |_| Duration::from_millis(150));
         assert!(result.changed.is_empty());
         assert_eq!(result.queued, ids);
-        assert!(crate::state::lock(&state.pending).is_empty());
+        assert_eq!(crate::state::lock(&state.pending).len(), ids.len());
+        assert!(
+            crate::state::lock(&state.pending)
+                .values()
+                .all(|enabled| !enabled)
+        );
         assert!(
             ids.iter()
                 .all(|id| state.library.get_mod(id).unwrap().enabled)

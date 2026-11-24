@@ -1052,7 +1052,7 @@
     overflow: hidden;
     color: var(--foreground);
     background:
-      radial-gradient(ellipse 70% 60% at 70% 0%, var(--accent-brand-soft), transparent 70%),
+      radial-gradient(ellipse 70% 60% at 70% 0%, color-mix(in oklab, var(--accent-brand) 6%, transparent), transparent 70%),
       linear-gradient(145deg, var(--surface), var(--background));
   }
 
@@ -1139,7 +1139,7 @@
     padding: 0 12px;
     overflow: hidden;
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--surface-2);
     color: var(--muted-foreground);
     font-family: var(--font-mono);
@@ -1207,7 +1207,7 @@
     color: var(--faint-foreground);
     font-family: var(--font-mono);
     font-size: 10px;
-    letter-spacing: 0.16em;
+    letter-spacing: 0.08em;
   }
 
   .step {
@@ -1300,7 +1300,7 @@
     margin-top: 8px;
     padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--surface-2);
     color: var(--muted-foreground);
     font-size: 12px;
@@ -1322,7 +1322,7 @@
     margin-bottom: 12px;
     padding: 10px 12px;
     border: 1px solid var(--accent-brand);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--accent-brand-soft);
     font-size: 12px;
     line-height: 1.4;
@@ -1350,7 +1350,7 @@
     margin-bottom: 12px;
     padding: 10px 12px;
     border: 1px solid var(--danger);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--danger-soft);
     font-size: 12px;
     line-height: 1.4;
@@ -1391,7 +1391,7 @@
     gap: 2px;
     padding: 8px 10px;
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--surface-2);
     font-size: 12px;
   }
@@ -1491,7 +1491,7 @@
     margin-top: 10px;
     padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--surface-2);
     color: var(--muted-foreground);
     font-size: 12px;

@@ -28,6 +28,12 @@ static POST_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
 static H1_TITLE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?s)<h1[^>]*class="[^"]*post-title[^"]*"[^>]*>(?<b>.*?)</h1>"#).unwrap()
 });
+static DOWNLOAD_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<div[^>]*class="[^"]*\bdl\b[^"]*"[^>]*>(?<body>.*?)</div>"#).unwrap()
+});
+static EXTERNAL_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)External Download Links:(?<body>.*?)(?:Uploaded by|</body>|$)").unwrap()
+});
 static EXTERNAL_TITLE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"title="External Download - (?<u>https?://[^"\s]+)""#).unwrap());
 static LATEST_VERSION: LazyLock<Regex> =
@@ -121,23 +127,50 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
     let mut download_urls = Vec::new();
     let saw_external = html.to_lowercase().contains("external download links");
 
-    for anchor in ANCHOR.captures_iter(html) {
-        let Some(href) = anchor.name("h") else {
+    // Ссылки берём только из блока загрузки: в комментариях и «похожих» часто
+    // лежит чужой файл, который раньше мог стать оффером этого мода.
+    for block in DOWNLOAD_BLOCK.captures_iter(html) {
+        let Some(body) = block.name("body") else {
             continue;
         };
-        let href = decode(href.as_str());
-        let Ok(url) = url::Url::parse(&href) else {
-            continue;
-        };
-        collect_offer(
-            &url,
-            saw_external,
-            &mut offers,
-            &mut download_urls,
-            &mut seen,
-        );
+        for anchor in ANCHOR.captures_iter(body.as_str()) {
+            let Some(href) = anchor.name("h") else {
+                continue;
+            };
+            let href = decode(href.as_str());
+            let Ok(url) = url::Url::parse(&href) else {
+                continue;
+            };
+            collect_offer(
+                &url,
+                saw_external,
+                &mut offers,
+                &mut download_urls,
+                &mut seen,
+            );
+        }
     }
     if saw_external {
+        for external in EXTERNAL_BLOCK.captures_iter(html) {
+            let Some(body) = external.name("body") else {
+                continue;
+            };
+            for anchor in ANCHOR.captures_iter(body.as_str()) {
+                let Some(url) = anchor.name("h") else {
+                    continue;
+                };
+                let Ok(url) = url::Url::parse(&decode(url.as_str())) else {
+                    continue;
+                };
+                collect_offer(
+                    &url,
+                    saw_external,
+                    &mut offers,
+                    &mut download_urls,
+                    &mut seen,
+                );
+            }
+        }
         for external in EXTERNAL_TITLE.captures_iter(html) {
             let Some(url) = external.name("u") else {
                 continue;
@@ -354,6 +387,23 @@ mod tests {
                 .any(|offer| offer.kind == OfferKind::PaidLink),
             "{:?}",
             detail.offers
+        );
+    }
+
+    #[test]
+    fn detail_ignores_file_links_outside_download_block() {
+        let url = url::Url::parse("https://www.modland.net/beamng.drive-mods/cars/a.html").unwrap();
+        let basis = Listing::new(SOURCE_ID, url, "a", "Car");
+        let detail = parse_detail(
+            r#"<h1 class="post-title">Car</h1>
+               <div class="dl"><a href="https://modsfire.com/9nDwN00BJ04Ef55">right.zip</a></div>
+               <div class="comments"><a href="https://modsfire.com/ABCDEF123456">other.zip</a></div>"#,
+            &basis,
+        );
+        assert_eq!(detail.offers.len(), 1);
+        assert_eq!(
+            detail.offers[0].url.as_str(),
+            "https://modsfire.com/9nDwN00BJ04Ef55"
         );
     }
 

@@ -128,6 +128,8 @@ pub struct DeletedMod {
     pub copies: usize,
     pub last_saved_at: Option<DateTime<FixedOffset>>,
     pub last_size_bytes: u64,
+    pub kind: String,
+    pub role: Option<String>,
 }
 
 pub struct ModInstaller {
@@ -650,11 +652,21 @@ impl ModInstaller {
             let Some(latest) = list.first() else {
                 continue;
             };
+            let (kind, role) = if result.len() < 100 {
+                self.backups(&name)
+                    .last()
+                    .map(|path| deleted_metadata(path))
+                    .unwrap_or_else(|| ("unknown".to_string(), None))
+            } else {
+                ("unknown".to_string(), None)
+            };
             result.push(DeletedMod {
                 file_name: name,
                 copies: list.len(),
                 last_saved_at: latest.saved_at,
                 last_size_bytes: latest.size_bytes,
+                kind,
+                role,
             });
         }
         result.sort_by(|a, b| {
@@ -955,6 +967,32 @@ fn long_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+fn deleted_metadata(path: &Path) -> (String, Option<String>) {
+    let Ok(index) = crate::zip_index::read_index(path) else {
+        return ("unknown".to_string(), None);
+    };
+    let content = crate::incoming::content_keys(&index);
+    let content: Vec<String> = content.into_iter().collect();
+    let types = crate::overview::vehicle_types_from_index(path, &index);
+    let role = crate::duplicates::role_of_full(&content, None, &types);
+    let kind = match role {
+        Some(crate::duplicates::Role::Vehicle) => "vehicle",
+        Some(crate::duplicates::Role::Map) => "level",
+        Some(crate::duplicates::Role::Addon)
+            if content.iter().any(|key| key.starts_with("scripts/")) =>
+        {
+            "script"
+        }
+        Some(crate::duplicates::Role::Addon)
+            if content.iter().any(|key| key.starts_with("art/sound")) =>
+        {
+            "sound"
+        }
+        _ => "unknown",
+    };
+    (kind.to_string(), role.map(|role| role.code().to_string()))
+}
+
 fn next_sequence(dir: &Path) -> i64 {
     let mut max = 0;
     if let Ok(entries) = fs::read_dir(dir) {
@@ -1121,6 +1159,23 @@ mod tests {
         let id = installer.list_backups("a.zip")[0].id.clone();
         assert!(installer.restore_backup("a.zip", &id).success);
         assert!(!disabled_marker(&backup).exists());
+    }
+
+    #[test]
+    fn deleted_mod_keeps_its_type_from_the_latest_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        let source = source_zip(&temp);
+        assert!(
+            installer
+                .install_from_path(&source, "car.zip", InstallOptions::default())
+                .success
+        );
+        assert!(installer.remove("car.zip").success);
+        let deleted = installer.deleted_mods();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].kind, "vehicle");
+        assert_eq!(deleted[0].role.as_deref(), Some("vehicle"));
     }
 
     #[test]

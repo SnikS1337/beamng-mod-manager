@@ -80,6 +80,7 @@ pub struct LibrarySnapshot {
     pub counts: FilterCounts,
     pub folder: Option<String>,
     pub folder_error: Option<String>,
+    pub resolved_user_folder: Option<String>,
     pub game_version: Option<String>,
     pub game_running: bool,
     pub warning: Option<String>,

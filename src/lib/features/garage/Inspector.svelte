@@ -508,7 +508,7 @@
     height: 520px;
     background: linear-gradient(
       180deg,
-      color-mix(in oklab, var(--accent-brand) 12%, transparent),
+      color-mix(in oklab, var(--accent-brand) 6%, transparent),
       transparent
     );
     pointer-events: none;
@@ -517,13 +517,13 @@
   }
 
   .inspector {
-    border-left-color: color-mix(in oklab, var(--accent-brand) 30%, var(--border));
+    border-left-color: color-mix(in oklab, var(--accent-brand) 18%, var(--border));
   }
 
   :global(html:not(.dark)) .inspector::before {
     background: linear-gradient(
       180deg,
-      color-mix(in oklab, var(--accent-brand) 8%, transparent),
+      color-mix(in oklab, var(--accent-brand) 4%, transparent),
       transparent
     );
   }
@@ -606,8 +606,9 @@
 
   h2 {
     margin: 0;
-    font-size: 25px;
-    line-height: 1.1;
+    font-size: var(--fs-2xl);
+    font-weight: 500;
+    line-height: 1.15;
   }
 
   .file {
@@ -647,7 +648,7 @@
     display: flex;
     justify-content: space-between;
     gap: 14px;
-    padding: 9px 12px;
+    padding: 8px 12px;
     color: var(--muted-foreground);
     font-size: 13px;
   }
@@ -698,19 +699,19 @@
 
   .facts p {
     margin: 0;
-    padding: 9px 12px;
+    padding: 8px 12px;
   }
 
   section {
-    padding-top: 18px;
+    padding-top: 20px;
   }
 
   h3 {
     margin: 0 0 8px;
     color: var(--faint-foreground);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
@@ -789,7 +790,7 @@
     background: none;
     color: var(--accent-brand-text);
     font-size: 12.5px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
   }
 
@@ -907,7 +908,7 @@
     background: transparent;
     color: var(--danger);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
   }
 

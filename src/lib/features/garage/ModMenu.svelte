@@ -150,7 +150,7 @@
     overflow: hidden;
     color: var(--faint-foreground);
     font-size: 11.5px;
-    font-weight: 700;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

@@ -162,7 +162,7 @@ role: ModRole | null, };
 
 export type FilterCounts = { all: number, enabled: number, updates: number, unchecked: number, deleted: number, };
 
-export type LibrarySnapshot = { mods: Array<ModCardDto>, counts: FilterCounts, folder: string | null, folderError: string | null, gameVersion: string | null, gameRunning: boolean, warning: string | null, manyEnabled: string | null, deleted: Array<ModCardDto>, };
+export type LibrarySnapshot = { mods: Array<ModCardDto>, counts: FilterCounts, folder: string | null, folderError: string | null, resolvedUserFolder: string | null, gameVersion: string | null, gameRunning: boolean, warning: string | null, manyEnabled: string | null, deleted: Array<ModCardDto>, };
 
 export type DeletedTicket = { id: string, fileName: string, backupId: string, wasInDisabled: boolean, name: string, };
 

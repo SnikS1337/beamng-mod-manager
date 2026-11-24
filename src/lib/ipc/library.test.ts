@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { libraryLoad, modDelete, modUndelete } from "./library";
+import { libraryLoad, modDelete, modPreview, modUndelete } from "./library";
+
+describe("демо: превью", () => {
+  it("кеш ограничен и повторяет недавний запрос", async () => {
+    for (let index = 0; index < 300; index += 1) await modPreview(`mod-${index}`, `key-${index}`);
+    const recent = modPreview("mod-299", "key-299");
+    expect(modPreview("mod-299", "key-299")).toBe(recent);
+    await recent;
+  });
+
+  it("недавний ключ не вытесняется первым", async () => {
+    for (let index = 0; index < 300; index += 1) {
+      await modPreview(`flush-${index * 3}`, `flush-key-${index}`);
+    }
+    const first = modPreview("lru-0", "lru-key-0");
+    const second = modPreview("lru-3", "lru-key-1");
+    for (let index = 2; index < 256; index += 1) {
+      await modPreview(`lru-${index * 3}`, `lru-key-${index}`);
+    }
+    expect(modPreview("lru-0", "lru-key-0")).toBe(first);
+    for (let index = 256; index < 270; index += 1) {
+      await modPreview(`lru-${index * 3}`, `lru-key-${index}`);
+    }
+    expect(modPreview("lru-0", "lru-key-0")).toBe(first);
+    expect(modPreview("lru-3", "lru-key-1")).not.toBe(second);
+    await Promise.all([first, second]);
+  });
+});
 
 // Демо-версия должна вести себя как программа: отменённое удаление возвращает
 // карточку на её место, а не в конец списка.

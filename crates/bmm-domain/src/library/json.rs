@@ -31,8 +31,13 @@ struct State {
     dirty: bool,
     save_blocked: bool,
     save_error: Option<String>,
+    /// Файл был успешно прочитан: runtime-retry может безопасно сравнить его с baseline.
+    loaded: bool,
+    /// Текст последнего успешно прочитанного или записанного файла.
+    baseline: Option<String>,
     /// Когда последний раз писали файл (или начали пакет).
     last_save: Option<Instant>,
+    last_retry: Option<Instant>,
 }
 
 pub struct JsonLibraryStore {
@@ -45,7 +50,8 @@ impl JsonLibraryStore {
     pub fn new(path: impl Into<PathBuf>, now: Clock) -> Self {
         let path = path.into();
         atomic::cleanup_stale_temps(&path);
-        let (inner, warnings, save_blocked, unknown) = load(&path, &now);
+        let (inner, warnings, save_blocked, unknown, baseline) = load(&path, &now);
+        let loaded = !save_blocked;
         Self {
             path,
             state: Mutex::new(State {
@@ -55,7 +61,10 @@ impl JsonLibraryStore {
                 dirty: false,
                 save_blocked,
                 save_error: None,
+                loaded,
+                baseline,
                 last_save: None,
+                last_retry: None,
             }),
             load_warnings: warnings,
         }
@@ -77,6 +86,13 @@ impl JsonLibraryStore {
             .clone()
     }
 
+    pub fn is_save_blocked(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .save_blocked
+    }
+
     pub fn batch(&self) -> BatchGuard<'_> {
         {
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
@@ -90,8 +106,139 @@ impl JsonLibraryStore {
 
     pub fn flush(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        self.retry_blocked_locked(&mut state, true);
         if state.dirty {
             self.save_locked(&mut state);
+        }
+        !state.dirty
+    }
+
+    pub fn retry_blocked_save(&self) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        self.retry_blocked_locked(&mut state, true)
+    }
+
+    pub fn maybe_retry_blocked_save(&self) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        self.maybe_retry_blocked_locked(&mut state)
+    }
+
+    fn maybe_retry_blocked_locked(&self, state: &mut State) -> bool {
+        if state
+            .last_retry
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(30))
+        {
+            return !state.save_blocked;
+        }
+        self.retry_blocked_locked(state, false)
+    }
+
+    fn retry_blocked_locked(&self, state: &mut State, force: bool) -> bool {
+        if !state.save_blocked {
+            return true;
+        }
+        if !force
+            && state
+                .last_retry
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(30))
+        {
+            return false;
+        }
+        state.last_retry = Some(Instant::now());
+        if state.loaded && !self.path.exists() {
+            if state.baseline.is_some() {
+                state.save_error = Some(
+                    "файл библиотеки исчез, пока запись была заблокирована; автоматическая перезапись остановлена".to_string(),
+                );
+                return false;
+            }
+            state.save_blocked = false;
+            state.save_error = None;
+            if state.dirty {
+                self.save_locked(state);
+            }
+            return !state.dirty;
+        }
+        let Ok(text) = fs::read_to_string(&self.path) else {
+            return false;
+        };
+        let Ok(value) = crate::json5_safe::from_str::<Value>(&text) else {
+            return false;
+        };
+        let Some(root) = value.as_object() else {
+            return false;
+        };
+        if !matches!(root.get("Mods"), Some(Value::Array(_))) {
+            return false;
+        }
+        if root
+            .get("Schema")
+            .and_then(Value::as_i64)
+            .is_some_and(|schema| schema > SCHEMA as i64)
+        {
+            return false;
+        }
+        if state.loaded {
+            if state.baseline.as_deref() != Some(text.as_str()) {
+                state.save_error = Some(
+                    "файл библиотеки изменился извне, пока запись была заблокирована; автоматическая перезапись остановлена".to_string(),
+                );
+                return false;
+            }
+            state.baseline = Some(text);
+            state.save_blocked = false;
+            state.save_error = None;
+            if state.dirty {
+                self.save_locked(state);
+            }
+            return !state.dirty;
+        }
+        let mut unknown = Unknown::default();
+        let now = crate::clock::system_clock();
+        let (disk, _, blocked, _) = load_inner(&self.path, &now, &mut unknown);
+        if blocked {
+            return false;
+        }
+        for (key, value) in disk.mods {
+            state.inner.mods.entry(key).or_insert(value);
+        }
+        for (key, value) in disk.bindings {
+            state.inner.bindings.entry(key).or_insert(value);
+        }
+        for (key, value) in disk.checks {
+            state.inner.checks.entry(key).or_insert(value);
+        }
+        for (key, value) in disk.statuses {
+            state.inner.statuses.entry(key).or_insert(value);
+        }
+        for (key, value) in disk.dismissed {
+            state.inner.dismissed.entry(key).or_insert(value);
+        }
+        for (key, value) in disk.history {
+            state.inner.history.entry(key).or_insert(value);
+        }
+        state.inner.declined.extend(disk.declined);
+        for (key, value) in disk.page_searches {
+            state.inner.page_searches.entry(key).or_insert(value);
+        }
+        for (key, value) in disk.fallback_searches {
+            state.inner.fallback_searches.entry(key).or_insert(value);
+        }
+        if state.inner.last_run.is_none() {
+            state.inner.last_run = disk.last_run;
+        }
+        for (key, value) in unknown.root {
+            state.unknown.root.entry(key).or_insert(value);
+        }
+        for (key, value) in unknown.records {
+            state.unknown.records.entry(key).or_insert(value);
+        }
+        state.loaded = true;
+        state.baseline = Some(text);
+        state.save_blocked = false;
+        state.save_error = None;
+        if state.dirty {
+            self.save_locked(state);
         }
         !state.dirty
     }
@@ -110,9 +257,9 @@ impl JsonLibraryStore {
     }
 
     fn save_locked(&self, state: &mut State) {
-        if state.save_blocked {
+        if state.save_blocked && !self.maybe_retry_blocked_locked(state) {
             state.save_error = Some(
-                "файл библиотеки был занят при запуске; чтобы не потерять его, изменения не пишутся до перезапуска программы"
+                "файл библиотеки был занят при запуске; изменения не пишутся, пока файл не станет доступен"
                     .to_string(),
             );
             return;
@@ -133,9 +280,13 @@ impl JsonLibraryStore {
             Ok(()) => {
                 state.dirty = false;
                 state.save_error = None;
+                state.loaded = true;
+                state.baseline = Some(json);
                 state.last_save = Some(Instant::now());
             }
             Err(error) => {
+                state.save_blocked = true;
+                state.last_retry = Some(Instant::now());
                 state.save_error = Some(error.to_string());
             }
         }
@@ -562,24 +713,28 @@ fn model_of(inner: &Inner) -> FileModel {
     }
 }
 
-fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool, Unknown) {
+fn load(path: &Path, now: &Clock) -> (Inner, Vec<String>, bool, Unknown, Option<String>) {
     let mut unknown = Unknown::default();
-    let (inner, warnings, blocked) = load_inner(path, now, &mut unknown);
-    (inner, warnings, blocked, unknown)
+    let (inner, warnings, blocked, baseline) = load_inner(path, now, &mut unknown);
+    (inner, warnings, blocked, unknown, baseline)
 }
 
-fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<String>, bool) {
+fn load_inner(
+    path: &Path,
+    now: &Clock,
+    unknown: &mut Unknown,
+) -> (Inner, Vec<String>, bool, Option<String>) {
     let mut inner = Inner::default();
     let mut warnings = Vec::new();
     if !path.exists() {
-        return (inner, warnings, false);
+        return (inner, warnings, false, None);
     }
 
     if let Ok(metadata) = fs::metadata(path)
         && metadata.len() > MAX_BYTES
     {
         let blocked = quarantine(path, now, "файл библиотеки слишком большой", &mut warnings);
-        return (inner, warnings, blocked);
+        return (inner, warnings, blocked, None);
     }
 
     let mut text = None;
@@ -596,19 +751,19 @@ fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<St
                 warnings.push(format!(
                     "библиотека не прочиталась ({error}); изменения не сохранятся до перезапуска программы"
                 ));
-                return (inner, warnings, true);
+                return (inner, warnings, true, None);
             }
         }
     }
     let Some(text) = text else {
-        return (inner, warnings, true);
+        return (inner, warnings, true, None);
     };
 
     let value: serde_json::Value = match crate::json5_safe::from_str(&text) {
         Ok(value) => value,
         Err(_) => {
             let blocked = quarantine(path, now, "файл библиотеки повреждён", &mut warnings);
-            return (inner, warnings, blocked);
+            return (inner, warnings, blocked, None);
         }
     };
 
@@ -619,7 +774,7 @@ fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<St
             "файл библиотеки имеет неверный формат",
             &mut warnings,
         );
-        return (inner, warnings, blocked);
+        return (inner, warnings, blocked, None);
     };
     if !matches!(root.get("Mods"), Some(serde_json::Value::Array(_))) {
         let blocked = quarantine(
@@ -628,7 +783,7 @@ fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<St
             "файл библиотеки имеет неверный формат",
             &mut warnings,
         );
-        return (inner, warnings, blocked);
+        return (inner, warnings, blocked, None);
     }
 
     let schema = match root.get("Schema") {
@@ -645,7 +800,7 @@ fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<St
         warnings.push(format!(
             "библиотека создана более новой версией (схема {schema}); изменения не сохранятся"
         ));
-        return (inner, warnings, true);
+        return (inner, warnings, true, None);
     }
     if schema < SCHEMA {
         warnings.push(format!(
@@ -727,12 +882,12 @@ fn load_inner(path: &Path, now: &Clock, unknown: &mut Unknown) -> (Inner, Vec<St
                 warnings.push(format!(
                     "записей библиотеки пропущено из-за неверных данных: {skipped}; копию сохранить не удалось, изменения не пишутся до перезапуска программы"
                 ));
-                return (inner, warnings, true);
+                return (inner, warnings, true, None);
             }
         }
     }
 
-    (inner, warnings, false)
+    (inner, warnings, false, Some(text))
 }
 
 fn parse_array<T: DeserializeOwned>(
@@ -1321,22 +1476,134 @@ mod tests {
             store.upsert_binding(binding("a")).unwrap();
         }
         let before = fs::read_to_string(&path).unwrap();
-        let store = {
-            let _lock = fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .share_mode(0)
-                .open(&path)
-                .unwrap();
-            JsonLibraryStore::new(&path, system_clock())
-        };
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
 
         assert_eq!(store.load_warnings().len(), 1);
         assert!(store.mods().is_empty());
         store.upsert_mod(installed("b", "B", "1.0"));
         assert!(store.save_error().is_some());
         assert!(!store.flush());
+        drop(_lock);
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_library_can_recover_without_losing_original_records() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        {
+            let store = JsonLibraryStore::new(&path, system_clock());
+            store.upsert_mod(installed("a", "A", "1.0"));
+            store.upsert_binding(binding("a")).unwrap();
+        }
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let store = JsonLibraryStore::new(&path, system_clock());
+        store.upsert_mod(installed("b", "B", "1.0"));
+        assert!(!store.flush());
+        drop(_lock);
+        assert!(store.retry_blocked_save());
+        let reopened = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(reopened.mods().len(), 2);
+        assert_eq!(reopened.bindings().len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runtime_write_failure_recovers_after_release() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let store = JsonLibraryStore::new(&path, system_clock());
+        store.upsert_mod(installed("a", "A", "1.0"));
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        store.upsert_mod(installed("b", "B", "1.0"));
+        assert!(store.save_error().is_some());
+        assert!(!store.flush());
+        drop(lock);
+        assert!(store.retry_blocked_save());
+        let reopened = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(reopened.mods().len(), 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runtime_write_failure_keeps_removals_after_release() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let store = JsonLibraryStore::new(&path, system_clock());
+        store.upsert_mod(installed("a", "A", "1.0"));
+        store.upsert_mod(installed("b", "B", "1.0"));
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        store.remove_mod("a");
+        assert!(store.save_error().is_some());
+        drop(lock);
+        assert!(store.retry_blocked_save());
+        let reopened = JsonLibraryStore::new(&path, system_clock());
+        assert_eq!(
+            reopened
+                .mods()
+                .into_iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runtime_retry_does_not_overwrite_external_changes() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        let store = JsonLibraryStore::new(&path, system_clock());
+        store.upsert_mod(installed("a", "A", "1.0"));
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        store.upsert_mod(installed("b", "B", "1.0"));
+        drop(lock);
+        let external = r#"{
+            "Schema": 1,
+            "Mods": [
+                {"Id":"a","Name":"A","FileName":"a.zip","InstalledAtUtc":"2026-10-15T12:00:00+00:00","Enabled":true},
+                {"Id":"c","Name":"C","FileName":"c.zip","InstalledAtUtc":"2026-10-15T12:00:00+00:00","Enabled":true}
+            ]
+        }"#;
+        fs::write(&path, external).unwrap();
+        assert!(!store.retry_blocked_save());
+        assert_eq!(fs::read_to_string(&path).unwrap(), external);
+        assert!(store.save_error().is_some());
     }
 
     #[test]

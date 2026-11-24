@@ -24,7 +24,7 @@
     background: var(--mark);
     color: #fff;
     font-size: calc(var(--mark-size) * 0.46);
-    font-weight: 800;
+    font-weight: 600;
     letter-spacing: 0.02em;
     line-height: 1;
     box-shadow: inset 0 0 0 1px color-mix(in oklab, #fff 14%, transparent);

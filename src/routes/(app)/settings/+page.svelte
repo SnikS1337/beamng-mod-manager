@@ -33,6 +33,7 @@
   import { openExternal } from "#lib/shell/openExternal.js";
   import { toasts } from "#lib/shell/toasts.svelte.js";
   import { appDataFolder, type SettingsDto } from "#lib/ipc/settings.js";
+  import { libraryLoad, type LibrarySnapshot } from "#lib/ipc/library.js";
   import {
     appUpdateCancel,
     appUpdateCheck,
@@ -145,12 +146,18 @@
 
   function selectSection(id: SectionId) {
     if (id === activeSection) return;
+    if (id === "folders" && !librarySnapshot) {
+      void libraryLoad().then((snapshot) => { librarySnapshot = snapshot; }).catch(() => {});
+    }
     void motion.run(() => {
       activeSection = id;
       if (sectionsEl) sectionsEl.scrollTop = 0;
     }, "flow-section");
   }
   let draft = $state<SettingsDto | null>(null);
+  let librarySnapshot = $state<LibrarySnapshot | null>(null);
+  const effectiveModsFolder = $derived(draft?.modsFolder ?? librarySnapshot?.folder ?? null);
+  const effectiveUserFolder = $derived(draft?.userFolder ?? librarySnapshot?.resolvedUserFolder ?? null);
   let loading = $state(true);
   let saving = $state(false);
   let dirty = $state(false);
@@ -823,15 +830,15 @@
           <small>Папка mods внутри папки пользователя игры.</small>
         </div>
         <div class="path-row">
-          <input id="mods-folder" readonly value={draft.modsFolder ?? ""} placeholder="не выбрана" title={draft.modsFolder ?? ""} />
+          <input id="mods-folder" readonly value={effectiveModsFolder ?? ""} placeholder="не выбрана" title={effectiveModsFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("modsFolder")}>
             <FolderOpen size={13} weight="bold" />
             Выбрать
           </button>
           <button
             type="button"
-            disabled={!draft.modsFolder}
-            onclick={() => void openFolder(draft?.modsFolder ?? null)}
+            disabled={!effectiveModsFolder}
+            onclick={() => void openFolder(effectiveModsFolder)}
           >
             Показать
           </button>
@@ -844,15 +851,15 @@
           <small>Где игра хранит настройки и моды. Обычно находится сама.</small>
         </div>
         <div class="path-row">
-          <input id="user-folder" readonly value={draft.userFolder ?? ""} placeholder="определяется автоматически" title={draft.userFolder ?? ""} />
+          <input id="user-folder" readonly value={effectiveUserFolder ?? ""} placeholder="определяется автоматически" title={effectiveUserFolder ?? ""} />
           <button type="button" onclick={() => void pickFolder("userFolder")}>
             <FolderOpen size={13} weight="bold" />
             Выбрать
           </button>
           <button
             type="button"
-            disabled={!draft.userFolder}
-            onclick={() => void openFolder(draft?.userFolder ?? null)}
+            disabled={!effectiveUserFolder}
+            onclick={() => void openFolder(effectiveUserFolder)}
           >
             Показать
           </button>
@@ -1306,7 +1313,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    height: 38px;
+    height: 36px;
     padding: 0 12px;
     border: 0;
     border-radius: 8px;
@@ -1341,7 +1348,7 @@
   .block {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
     max-width: 920px;
     animation: var(--enter);
   }
@@ -1368,15 +1375,15 @@
     margin: 14px 0 8px;
     color: var(--faint-foreground);
     font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
   .appearance-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 8px 32px;
+    gap: 12px 32px;
   }
 
   .presets {
@@ -1389,8 +1396,8 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 3px;
-    padding: 12px 14px;
+    gap: 4px;
+    padding: 12px 16px;
     border: 1px solid var(--border-strong);
     border-radius: 10px;
     background: var(--surface);
@@ -1413,7 +1420,7 @@
 
   .presets b {
     font-size: 14.5px;
-    font-weight: 800;
+    font-weight: 600;
   }
 
   .presets small,
@@ -1435,7 +1442,7 @@
     background: transparent;
     color: var(--accent-brand-text);
     font: inherit;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
   }
 
@@ -1488,7 +1495,7 @@
 
   .switch-row b {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .choices {
@@ -1572,7 +1579,7 @@
 
   .swatch-text b {
     font-size: 13.5px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .swatch-text small {
@@ -1596,7 +1603,7 @@
   .backdrop-swatch {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 8px;
     padding: 8px;
     border: 1px solid var(--border-strong);
     border-radius: 10px;
@@ -1623,7 +1630,7 @@
     display: grid;
     place-items: center;
     height: 46px;
-    border-radius: 7px;
+    border-radius: var(--radius-control);
     color: #fff;
     text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
   }
@@ -1631,12 +1638,12 @@
   .backdrop-text {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
   }
 
   .backdrop-text b {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .backdrop-text small {
@@ -1659,7 +1666,7 @@
   .row label,
   .row .label {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .path-row {
@@ -1699,7 +1706,7 @@
     background: var(--surface-2);
     color: var(--foreground);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
     transition: background-color var(--dur-1) var(--ease-out);
   }
@@ -1848,7 +1855,7 @@
   .about-stage {
     margin: 0;
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .update-error {

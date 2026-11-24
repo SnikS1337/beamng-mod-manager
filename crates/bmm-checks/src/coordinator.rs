@@ -403,8 +403,9 @@ impl UpdateCoordinator {
             .due
             .len();
 
-            let hold = {
+            let (hold, resolutions_at_start) = {
                 let mut state = self.lock();
+                let resolutions_at_start = state.resolutions;
                 // Принудительная проверка отменяет паузу после сбоя: пользователь настаивает.
                 if batch_force {
                     match only {
@@ -415,7 +416,7 @@ impl UpdateCoordinator {
                     }
                 }
                 // Пауза не может быть дольше FailureBackoff: иначе часы переводили назад.
-                state
+                let hold = state
                     .retry_after
                     .iter()
                     .filter(|(_, until)| {
@@ -430,7 +431,8 @@ impl UpdateCoordinator {
                             ),
                         )
                     })
-                    .collect::<BTreeMap<String, String>>()
+                    .collect::<BTreeMap<String, String>>();
+                (hold, resolutions_at_start)
             };
 
             // Фабрика вызывается на каждую часть: настройки сайтов могли поменяться.
@@ -446,6 +448,7 @@ impl UpdateCoordinator {
                 cancel,
                 clock: Some(&*self.clock),
                 hold_off: hold.clone(),
+                human_check_resolved: Some(&|| self.lock().resolutions > resolutions_at_start),
             };
             let callback = progress
                 .as_mut()

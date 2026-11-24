@@ -114,6 +114,8 @@ pub struct UpdateRun<'a> {
     pub clock: Option<&'a (dyn Fn() -> DateTime<FixedOffset> + Sync)>,
     /// Сайты на паузе после недавнего сбоя: сообщение для отчёта.
     pub hold_off: BTreeMap<String, String>,
+    /// Проверка «вы человек?» была пройдена после старта этого запуска.
+    pub human_check_resolved: Option<&'a (dyn Fn() -> bool + Sync)>,
 }
 
 impl UpdateRun<'_> {
@@ -133,6 +135,7 @@ impl UpdateRun<'_> {
             cancel,
             clock: None,
             hold_off: BTreeMap::new(),
+            human_check_resolved: None,
         }
     }
 }
@@ -980,7 +983,12 @@ impl Worker<'_, '_> {
     fn failure_of(&self, source: &str, error: &SourceError) -> (SourceStatus, String) {
         // Проверка «вы человек?» запоминается, пока пользователь её не пройдёт;
         // недоступность — нет, она может пройти сама.
-        if error.status == SourceStatus::NeedsHumanCheck {
+        if error.status == SourceStatus::NeedsHumanCheck
+            && !self
+                .request
+                .human_check_resolved
+                .is_some_and(|resolved| resolved())
+        {
             self.request
                 .store
                 .set_source_status(source, status_to_store(SourceStatus::NeedsHumanCheck));
@@ -1752,6 +1760,36 @@ mod tests {
     }
 
     #[test]
+    fn late_human_check_does_not_undo_a_resolution() {
+        let store = InMemoryLibraryStore::new();
+        let old = now() - TimeDelta::days(2);
+        add(&store, "a", "x", "a", Some("1.0"), Some("1.0"), Some(old));
+        let site = Site::new("x");
+        site.set_feed_failure(Some(SourceError {
+            status: SourceStatus::NeedsHumanCheck,
+            message: "late challenge".to_string(),
+            reach: None,
+        }));
+        let all = sources(&site);
+        let cancel = AtomicBool::new(false);
+        let request = UpdateRun {
+            store: &store,
+            sources: &all,
+            now: now(),
+            options: UpdateCheckOptions::default(),
+            cancel: &cancel,
+            clock: None,
+            hold_off: BTreeMap::new(),
+            human_check_resolved: Some(&|| true),
+        };
+        let _ = UpdateRunner::run(&request, None);
+        assert_eq!(
+            store.source_status("x"),
+            bmm_domain::library::SourceStatus::Ok
+        );
+    }
+
+    #[test]
     fn next_run_skips_human_check_site() {
         let store = InMemoryLibraryStore::new();
         add(
@@ -1956,6 +1994,7 @@ mod tests {
             cancel: &cancel,
             clock: None,
             hold_off: BTreeMap::new(),
+            human_check_resolved: None,
         };
         let report = UpdateRunner::run(&request, None);
         assert!(report.cancelled);
@@ -2464,6 +2503,7 @@ mod tests {
             cancel: &cancel,
             clock: Some(&clock),
             hold_off: BTreeMap::new(),
+            human_check_resolved: None,
         };
         let mut stages = Vec::new();
         let report = UpdateRunner::run(
@@ -2776,6 +2816,7 @@ mod tests {
             cancel: &cancel,
             clock: None,
             hold_off: BTreeMap::from([("x".to_string(), "сайт недавно не отвечал".to_string())]),
+            human_check_resolved: None,
         };
         let report = UpdateRunner::run(&request, None);
         assert_eq!(site.feed_calls(), 0);
