@@ -302,7 +302,7 @@ impl UpdateDownloader {
                 continue;
             }
             // Удаляем только явно нашу попытку, а не случайный каталог.
-            if path.join("update.zip").is_file() || path.join("exe").is_dir() {
+            if is_update_attempt(&path) {
                 let _ = fs::remove_dir_all(&path);
             }
         }
@@ -423,6 +423,23 @@ impl UpdateDownloader {
         }
         Err(DownloadError::TooManyRedirects)
     }
+}
+
+fn is_update_attempt(path: &Path) -> bool {
+    if path.join("update.zip").is_file() || path.join("exe").is_dir() {
+        return true;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        name.starts_with("update-")
+            && (name.ends_with(".zip")
+                || name.ends_with(".exe")
+                || name.ends_with(".zip.part")
+                || name.ends_with(".exe.part"))
+    })
 }
 
 fn read_limited(

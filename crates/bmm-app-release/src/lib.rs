@@ -6,10 +6,10 @@
 //! Слои:
 //! - [`manifest`] — разбор и проверка `latest.json` (https, только GitHub,
 //!   версия, размер, SHA-256, заметки и дата);
-//! - [`download`] — описание и архив через [`HttpTransport`], поток в `.part`,
+//! - [`download`] — описание и файл обновления через [`HttpTransport`], поток в `.part`,
 //!   сверка размера и хеша, прогресс и отмена;
 //! - [`local_feed`] — те же проверки на сборочной машине, файлы из папки вместо GitHub;
-//! - [`install`] — распаковка exe из zip, подготовка `*.new`, подмена с откатом,
+//! - [`install`] — проверка exe из zip или прямого файла, подготовка `*.new`, подмена с откатом,
 //!   запись в тот же файл с копией `previous.exe` и уборка;
 //! - [`update`] — `check(local_version, manifest_url/bytes)` и состояние плашки.
 //!
@@ -45,8 +45,8 @@ pub use install::{
 };
 pub use local_feed::LocalFeedTransport;
 pub use manifest::{
-    MAX_NOTES_CHARS, MAX_SIZE, MIN_SIZE, ManifestError, UpdateManifest, is_allowed_host,
-    parse_manifest,
+    MAX_NOTES_CHARS, MAX_SIZE, MIN_SIZE, ManifestError, UpdateFormat, UpdateManifest,
+    is_allowed_host, parse_manifest,
 };
 pub use update::{
     ManifestInput, UpdateStage, UpdateState, check, check_bytes, check_json, check_url,

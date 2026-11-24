@@ -23,6 +23,7 @@ use url::Url;
 
 const MANIFEST_URL: &str = "https://github.com/o/r/releases/latest/download/latest.json";
 const ZIP_URL: &str = "https://github.com/o/r/releases/download/v0.1.30/ModManagerBeamNG.zip";
+const EXE_URL: &str = "https://github.com/o/r/releases/download/v0.1.30/BeamModManager-0.1.30.exe";
 const BLOB_URL: &str = "https://objects.githubusercontent.com/blob/zip";
 
 fn url(text: &str) -> Url {
@@ -54,6 +55,7 @@ fn parses_manifest_and_normalizes_version() {
     assert_eq!(manifest.version, AppVersion::parse("0.1.30.0").unwrap());
     assert_eq!(manifest.version.display(), "0.1.30");
     assert_eq!(manifest.size, zip.len() as u64);
+    assert_eq!(manifest.format, bmm_app_release::UpdateFormat::Zip);
     assert_eq!(manifest.notes.as_deref(), Some("Что нового"));
     assert!(manifest.published.is_some(), "дата разобрана");
 }
@@ -139,6 +141,14 @@ fn rejects_untrusted_or_broken_manifest() {
         ("{ сломано".to_string(), "мусор"),
         ("[1]".to_string(), "не объект"),
         (no_sha, "нет суммы"),
+        (
+            format!(
+                "{{\"version\":\"0.1.30\",\"url\":\"{ZIP_URL}\",\"size\":{},\"sha256\":\"{}\",\"format\":\"tar\"}}",
+                zip.len(),
+                sha_hex(&zip)
+            ),
+            "неизвестный формат",
+        ),
     ];
     for (json, why) in cases {
         assert!(
@@ -390,6 +400,98 @@ fn download_into_builds_update_folder_for_version() {
         root.path().join("0.1.30").join("update.zip")
     );
     assert_eq!(fs::read(&downloaded.path).unwrap(), zip);
+}
+
+#[test]
+fn direct_exe_downloads_and_prepares_without_zip() {
+    let feed = tempfile::tempdir().unwrap();
+    let exe = release_exe();
+    fs::write(feed.path().join("BeamModManager-0.1.30.exe"), exe).unwrap();
+    fs::write(
+        feed.path().join("latest.json"),
+        direct_manifest_json("0.1.30", exe),
+    )
+    .unwrap();
+    let downloader = UpdateDownloader::new(Arc::new(LocalFeedTransport::new(feed.path())));
+    let manifest = downloader
+        .get_manifest(&url(MANIFEST_URL), &CancelToken::new())
+        .unwrap();
+    assert_eq!(manifest.format, bmm_app_release::UpdateFormat::Exe);
+    let downloaded = downloader
+        .download_into_named(
+            &manifest,
+            feed.path(),
+            "update-1.exe",
+            &mut |_| {},
+            &CancelToken::new(),
+        )
+        .unwrap();
+    let rig = Rig::new();
+    let expected = AppVersion::parse("0.1.30").unwrap();
+    let prepared = prepare_update(
+        &downloaded.path,
+        &rig.update_dir,
+        &manifest,
+        &AppVersion::parse("0.1.29").unwrap(),
+        &rig.exe,
+        &|_| Some(expected),
+        &PrepareOptions {
+            allow_temporary_location: true,
+            ..PrepareOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(prepared.new_exe, downloaded.path);
+    assert!(fs::read(&prepared.new_exe).unwrap().starts_with(b"MZ"));
+}
+
+#[test]
+fn direct_exe_rejects_bad_header_and_wrong_version() {
+    let rig = Rig::new();
+    let expected = AppVersion::parse("0.1.30").unwrap();
+    let options = PrepareOptions {
+        allow_temporary_location: true,
+        ..PrepareOptions::default()
+    };
+    let mut bad = release_exe().to_vec();
+    bad[0] = b'X';
+    let archive = rig.update_dir.join("bad.exe");
+    fs::create_dir_all(&rig.update_dir).unwrap();
+    fs::write(&archive, &bad).unwrap();
+    let manifest = UpdateManifest::parse(&direct_manifest_json("0.1.30", &bad)).unwrap();
+    let error = prepare_update(
+        &archive,
+        &rig.update_dir,
+        &manifest,
+        &AppVersion::parse("0.1.29").unwrap(),
+        &rig.exe,
+        &|_| Some(expected),
+        &options,
+    )
+    .unwrap_err();
+    assert_eq!(error, InstallError::NotWindowsExe);
+
+    let exe = release_exe();
+    let archive = rig.update_dir.join("wrong.exe");
+    fs::write(&archive, exe).unwrap();
+    let manifest = UpdateManifest::parse(&direct_manifest_json("0.1.30", exe)).unwrap();
+    let error = prepare_update(
+        &archive,
+        &rig.update_dir,
+        &manifest,
+        &AppVersion::parse("0.1.29").unwrap(),
+        &rig.exe,
+        &|_| Some(AppVersion::parse("0.1.28").unwrap()),
+        &options,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        InstallError::VersionMismatch {
+            found: "0.1.28".to_string(),
+            expected: "0.1.30".to_string(),
+        }
+    );
 }
 
 #[test]
@@ -1368,6 +1470,14 @@ fn manifest_json(version: &str, zip: &[u8], url: &str, sha: Option<&str>) -> Str
     format!(
         "{{\"version\":\"{version}\",\"url\":\"{url}\",\"size\":{},\"sha256\":\"{sha}\",\"notes\":\"Что нового\",\"published\":\"2026-10-15T12:00:00Z\"}}",
         zip.len()
+    )
+}
+
+fn direct_manifest_json(version: &str, exe: &[u8]) -> String {
+    format!(
+        "{{\"version\":\"{version}\",\"url\":\"{EXE_URL}\",\"size\":{},\"sha256\":\"{}\",\"format\":\"exe\",\"notes\":\"Что нового\",\"published\":\"2026-10-15T12:00:00Z\"}}",
+        exe.len(),
+        sha_hex(exe)
     )
 }
 

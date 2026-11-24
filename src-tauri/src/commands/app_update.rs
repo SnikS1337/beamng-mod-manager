@@ -309,7 +309,7 @@ fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)
     let downloaded = downloader.download_into_named(
         &manifest,
         &update_dir,
-        &format!("update-{attempt}.zip"),
+        &format!("update-{attempt}.{}", manifest.format.extension()),
         progress,
         &cancel,
     );
@@ -937,6 +937,7 @@ mod tests {
                 .unwrap(),
             size,
             sha256: "a".repeat(64),
+            format: Default::default(),
             notes: None,
             published: None,
         }

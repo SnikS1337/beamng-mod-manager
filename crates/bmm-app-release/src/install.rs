@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 
-use crate::manifest::{MAX_SIZE, MIN_SIZE, UpdateManifest};
+use crate::manifest::{MAX_SIZE, MIN_SIZE, UpdateFormat, UpdateManifest};
 use crate::paths::with_suffix;
 use crate::version::AppVersion;
 
@@ -37,7 +37,7 @@ const COPY_ATTEMPTS: usize = 10;
 pub enum InstallError {
     #[error("в архиве обновления нет программы")]
     ProgramMissing,
-    #[error("программа в архиве неправдоподобного размера")]
+    #[error("программа обновления неправдоподобного размера")]
     ImplausibleSize,
     #[error("в архиве не программа Windows")]
     NotWindowsExe,
@@ -146,6 +146,29 @@ pub fn extract_exe(
         });
     }
     Ok(destination)
+}
+
+fn validate_direct_exe(
+    path: &Path,
+    manifest: &UpdateManifest,
+    version_of: &dyn Fn(&Path) -> Option<AppVersion>,
+) -> Result<PathBuf, InstallError> {
+    let size = fs::metadata(path).map_err(archive_error)?.len();
+    if size != manifest.size || !(MIN_SIZE..=MAX_SIZE).contains(&size) {
+        return Err(InstallError::ImplausibleSize);
+    }
+    if !looks_like_exe(path) {
+        return Err(InstallError::NotWindowsExe);
+    }
+    if let Some(actual) = version_of(path)
+        && actual != manifest.version
+    {
+        return Err(InstallError::VersionMismatch {
+            found: actual.display(),
+            expected: manifest.version.display(),
+        });
+    }
+    Ok(path.to_path_buf())
 }
 
 fn copy_limited(input: &mut dyn Read, output: &mut File) -> Result<u64, InstallError> {
@@ -536,19 +559,26 @@ pub fn prepare_update(
 
     let attempt = update_dir.join(manifest.version.display());
     let staging = attempt.join("exe");
-    let new_exe = match extract_exe(archive, &staging, manifest.version, version_of) {
-        Ok(path) => path,
-        Err(error) => {
-            // Неудачная распаковка не должна оставлять распакованный exe;
-            // сам архив оставляем — его ещё можно использовать.
-            let _ = fs::remove_dir_all(&staging);
-            return Err(error);
+    let new_exe = match manifest.format {
+        UpdateFormat::Zip => {
+            match extract_exe(archive, &staging, manifest.version, version_of) {
+                Ok(path) => path,
+                Err(error) => {
+                    // Неудачная распаковка не должна оставлять распакованный exe;
+                    // сам архив оставляем — его ещё можно использовать.
+                    let _ = fs::remove_dir_all(&staging);
+                    return Err(error);
+                }
+            }
         }
+        UpdateFormat::Exe => validate_direct_exe(archive, manifest, version_of)?,
     };
     if options.require_writable
         && let Err(error) = check_writable(current_exe)
     {
-        let _ = fs::remove_dir_all(&staging);
+        if manifest.format == UpdateFormat::Zip {
+            let _ = fs::remove_dir_all(&staging);
+        }
         return Err(error);
     }
 

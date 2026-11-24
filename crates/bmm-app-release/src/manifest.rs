@@ -19,6 +19,24 @@ pub const MAX_SIZE: u64 = 400 * 1024 * 1024;
 /// 1.2 обрывался на третьей строке посреди слова.
 pub const MAX_NOTES_CHARS: usize = 8000;
 
+/// Формат файла обновления. Старые манифесты без поля считаются ZIP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateFormat {
+    #[default]
+    Zip,
+    Exe,
+}
+
+impl UpdateFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Zip => "zip",
+            Self::Exe => "exe",
+        }
+    }
+}
+
 /// Разобранное и проверенное описание обновления.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +45,8 @@ pub struct UpdateManifest {
     pub url: Url,
     pub size: u64,
     pub sha256: String,
+    #[serde(default)]
+    pub format: UpdateFormat,
     pub notes: Option<String>,
     pub published: Option<DateTime<FixedOffset>>,
 }
@@ -57,6 +77,8 @@ pub enum ManifestError {
     ImplausibleSize,
     #[error("в описании обновления нет контрольной суммы")]
     MissingChecksum,
+    #[error("формат обновления должен быть zip или exe")]
+    InvalidFormat,
 }
 
 /// Куда можно ходить за обновлением: GitHub и его хранилище файлов, только https.
@@ -109,6 +131,13 @@ pub fn parse_manifest(json: &str) -> Result<UpdateManifest, ManifestError> {
         return Err(ManifestError::MissingChecksum);
     }
 
+    let format = match object.get("format") {
+        None => UpdateFormat::Zip,
+        Some(Value::String(value)) if value.eq_ignore_ascii_case("zip") => UpdateFormat::Zip,
+        Some(Value::String(value)) if value.eq_ignore_ascii_case("exe") => UpdateFormat::Exe,
+        Some(_) => return Err(ManifestError::InvalidFormat),
+    };
+
     let notes = text("notes").map(truncate_notes);
     let published = text("published").and_then(parse_published);
 
@@ -117,6 +146,7 @@ pub fn parse_manifest(json: &str) -> Result<UpdateManifest, ManifestError> {
         url,
         size,
         sha256,
+        format,
         notes,
         published,
     })
