@@ -2,8 +2,8 @@
 
 На 2026-11-24. Основная ветка — `main` (Rust + Tauri).
 
-Последний опубликованный выпуск — **1.4.2** (из `main`). Версии в `Cargo.toml`,
-`package.json` и `src-tauri/tauri.conf.json` — 1.4.2. Что готовится к следующему выпуску —
+Последний опубликованный выпуск — **1.4.3** (из `main`). Версии в `Cargo.toml`,
+`package.json` и `src-tauri/tauri.conf.json` — 1.4.3. Что готовится к следующему выпуску —
 раздел «Не выпущено» в [CHANGES.md](../CHANGES.md).
 
 ## Стек
@@ -52,7 +52,7 @@
 CI на `windows-2025` (`.github/workflows/ci.yml`) на каждый push и PR: `svelte-check`,
 Vitest, сборка фронтенда, `cargo fmt`, `clippy -D warnings`, `cargo test`; на `main`
 ещё и полная release-сборка exe. На 2026-11-24:
-**1062 теста Rust** (`--all-targets` на Windows: 1062 прошли, 3 пропущены намеренно)
+**1064 теста Rust** (`--all-targets` на Windows: 1064 прошли, 3 пропущены намеренно)
 плюс 1 пример в документации и **490 тестов интерфейса** (79 файлов).
 
 Отдельно проверяется связка окна и Rust: каждый `invoke()` попадает в команду с теми
