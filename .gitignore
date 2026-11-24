@@ -47,5 +47,4 @@ appsettings.Local.json
 # ОС
 .DS_Store
 Thumbs.db
-.claude/
 .codegraph/
