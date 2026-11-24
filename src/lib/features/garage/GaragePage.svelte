@@ -38,6 +38,7 @@
   import {
     libraryLoad,
     listenLibraryTitles,
+    listenLibraryRefresh,
     modBindPage,
     modFixPackaging,
     modDelete,
@@ -229,16 +230,24 @@
       })
       .catch(() => {});
     let stopTitles: (() => void) | undefined;
+    let stopRefresh: (() => void) | undefined;
     void listenLibraryTitles(() => void load(true))
       .then((stop) => {
         if (disposed) stop();
         else stopTitles = stop;
       })
       .catch(() => {});
+    void listenLibraryRefresh(() => void load(true))
+      .then((stop) => {
+        if (disposed) stop();
+        else stopRefresh = stop;
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
       stopUpdates?.();
       stopTitles?.();
+      stopRefresh?.();
       window.removeEventListener("bmm:library-changed", onLibraryChanged);
       detachArrival();
     };
@@ -923,14 +932,18 @@
       }
       return;
     }
-    if (event.key === "Delete" && selected && !selected.deleted && !selected.fromGameRepo) {
+    const checked = picked.ids.length === 1 && picked.checking
+      ? allCards.find((mod) => mod.id === picked.ids[0])
+      : undefined;
+    const actionable = selected ?? checked;
+    if (event.key === "Delete" && actionable && !actionable.deleted && !actionable.fromGameRepo) {
       event.preventDefault();
-      void deleteSelected();
+      void (selected ? deleteSelected() : deleteCard(actionable));
       return;
     }
-    if (event.key === " " && selected && !selected.deleted && !activatesControl(event)) {
+    if (event.key === " " && actionable && !actionable.deleted && !activatesControl(event)) {
       event.preventDefault();
-      void toggle(selected);
+      void toggle(actionable);
       return;
     }
     if (selected && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
@@ -1431,7 +1444,7 @@
     height: 24px;
     padding: 0;
     border: 0;
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     background: transparent;
     color: var(--muted-foreground);
     cursor: default;
@@ -1493,7 +1506,7 @@
     box-sizing: border-box;
     padding: 0 12px;
     border: 1px solid var(--border-strong);
-    border-radius: 15px;
+    border-radius: var(--radius);
     background: transparent;
     color: var(--muted-foreground);
     font-size: 13px;

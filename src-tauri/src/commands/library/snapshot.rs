@@ -327,7 +327,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 size_bytes: i64::try_from(item.last_size_bytes).unwrap_or(i64::MAX),
                 enabled: false,
                 sub_folder: None,
-                kind: "unknown".to_string(),
+                kind: item.kind,
                 preview_url: None,
                 compat: compat_of(None, game_version.as_deref()),
                 update: "none".to_string(),
@@ -343,7 +343,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
                 group: Vec::new(),
                 group_conflict: false,
                 has_page: false,
-                role: None,
+                role: item.role,
             }
         })
         .collect();
@@ -377,6 +377,7 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         },
         mods,
         folder: Some(mods_dir.display().to_string()),
+        resolved_user_folder: resolved_user_folder(&mods_dir),
         folder_error,
         game_version,
         game_running,
@@ -384,6 +385,14 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
         many_enabled,
         deleted: deleted_cards,
     })
+}
+
+fn resolved_user_folder(mods_dir: &Path) -> Option<String> {
+    let version_dir = mods_dir.parent()?;
+    let root = version_dir.parent()?;
+    root.file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("BeamNG.drive"))
+        .then(|| root.display().to_string())
 }
 
 pub(crate) fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option<String>) {
@@ -405,4 +414,24 @@ pub(crate) fn resolve_folder(settings: &AppSettings) -> (Option<PathBuf>, Option
         return (Some(found), None);
     }
     (None, Some("Папка игры не выбрана.".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolved_user_folder_recognizes_current_and_versioned_mods() {
+        let current = Path::new(r"C:\BeamNG\BeamNG.drive\current\mods");
+        let versioned = Path::new(r"C:\BeamNG\BeamNG.drive\0.39\mods");
+        assert_eq!(
+            resolved_user_folder(current).as_deref(),
+            Some(r"C:\BeamNG\BeamNG.drive")
+        );
+        assert_eq!(
+            resolved_user_folder(versioned).as_deref(),
+            Some(r"C:\BeamNG\BeamNG.drive")
+        );
+        assert_eq!(resolved_user_folder(Path::new(r"C:\Custom\mods")), None);
+    }
 }

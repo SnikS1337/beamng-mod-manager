@@ -8,7 +8,7 @@ import {
   saveViewMode,
   typeCounts,
   typeLabel,
-  typeTag, revealScroll, nextReveal, freshReveal } from "./view";
+  typeTag, revealScroll, nextReveal, freshReveal, shouldRollVersion } from "./view";
 // @ts-expect-error — тесты идут в Node, а типов Node в проекте нет.
 import { readFileSync } from "node:fs";
 
@@ -99,6 +99,25 @@ describe("показ карточки после стрелок — разовы
       expect(text, file).toMatch(/untrack\(\(\) => \{\s*const index = items\.findIndex/);
       expect(text, file).not.toContain("revealId");
     }
+  });
+});
+
+describe("анимация версии в списке", () => {
+  it("не играет при первом показе и повторном въезде", () => {
+    expect(shouldRollVersion(undefined, "1.0", true)).toBe(false);
+    expect(shouldRollVersion("1.0", "1.0", true)).toBe(false);
+  });
+
+  it("играет только при реальном изменении и включённом движении", () => {
+    expect(shouldRollVersion("1.0", "2.0", true)).toBe(true);
+    expect(shouldRollVersion("1.0", "2.0", false)).toBe(false);
+  });
+
+  it("список запоминает версию по id мода", () => {
+    const text: string = readFileSync(new URL("./ModList.svelte", import.meta.url), "utf8");
+    expect(text).toContain("shownVersions.get(id)");
+    expect(text).toContain("shownVersions.set(id, text)");
+    expect(text).toContain("shouldRollVersion(previous, text, animated)");
   });
 });
 

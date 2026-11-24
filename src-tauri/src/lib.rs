@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use bmm_checks::{UpdateCheckOptions, UpdateCoordinator, UpdateCoordinatorOptions};
 use bmm_domain::clock::system_clock;
-use bmm_domain::library::JsonLibraryStore;
+use bmm_domain::library::{JsonLibraryStore, LibraryStore};
 use bmm_domain::matches::{MatchDecisionStore, MatchDecisions};
 use bmm_domain::paths::AppPaths;
 use bmm_domain::settings_store::SettingsStore;
@@ -142,6 +142,17 @@ pub fn run() {
     let settings_store = SettingsStore::with_system_clock(paths.settings());
     let settings_snapshot = settings_store.load().settings;
     let library = Arc::new(JsonLibraryStore::new(paths.library(), system_clock()));
+    // Старые привязки ModHub хранили slug вместе с версией игры. Приводим их к
+    // тому же stable id, который теперь даёт парсер, иначе обновления потеряются.
+    for mut binding in library.bindings() {
+        if binding.source.eq_ignore_ascii_case("modhub") {
+            let stable = bmm_sources::parsers::modhub::stable_slug(&binding.source_id);
+            if stable != binding.source_id {
+                binding.source_id = stable;
+                let _ = library.upsert_binding(binding);
+            }
+        }
+    }
     // У каждого сайта за Cloudflare своё скрытое окно: в одном окне страницы шли
     // строго по очереди, и Modland с ModHub ждали друг друга.
     let browser_log = Some(paths.root().join("browser-pages.log"));
@@ -336,7 +347,8 @@ pub fn run() {
                 installer.cleanup_stale_temp(std::time::Duration::from_secs(60 * 60));
             }
             commands::downloads::spawn(app.handle().clone(), state.clone());
-            commands::updates::spawn_auto_check(app.handle().clone(), state);
+            commands::updates::spawn_auto_check(app.handle().clone(), state.clone());
+            commands::library::spawn_save_watch(app.handle().clone(), state);
             if std::env::args().any(|arg| arg == "--probe") {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

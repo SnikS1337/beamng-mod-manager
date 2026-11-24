@@ -65,8 +65,8 @@
   .eyebrow {
     color: var(--faint-foreground);
     font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
@@ -93,8 +93,8 @@
   .hero span {
     color: var(--faint-foreground);
     font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 

@@ -59,7 +59,7 @@
   }
 </script>
 
-<IconContext values={{ "aria-hidden": "true" }}>
+<IconContext values={{ "aria-hidden": "true", size: 18, weight: "regular" }}>
   <div class="app">
     <Background />
     <Titlebar />

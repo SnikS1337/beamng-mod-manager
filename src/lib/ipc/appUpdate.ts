@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { stableListen } from "#lib/shell/stableListen.js";
 
 import type { AppUpdateSnapshot } from "./generated.js";
 
@@ -37,7 +38,7 @@ export async function listenAppUpdateProgress(
     listeners.add(handler);
     return () => listeners.delete(handler);
   }
-  return listen<{ progress: number }>("app-update://event", (event) =>
+  return stableListen<{ progress: number }>("app-update://event", (event) =>
     handler(event.payload.progress),
   );
 }
@@ -46,7 +47,7 @@ export async function listenAppUpdateState(
   handler: (snapshot: AppUpdateSnapshot) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<AppUpdateSnapshot>("app-update://state", (event) =>
+  return stableListen<AppUpdateSnapshot>("app-update://state", (event) =>
     handler(clone(event.payload)),
   );
 }

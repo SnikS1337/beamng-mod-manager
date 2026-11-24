@@ -95,17 +95,7 @@ pub(crate) fn build_snapshot(state: &AppState) -> UpdatesSnapshotDto {
                 .map(|source| {
                     let id = source.id().to_string();
                     let off = disabled.iter().any(|item| item.eq_ignore_ascii_case(&id));
-                    let status = if off {
-                        "off"
-                    } else {
-                        match statuses.get(&id) {
-                            Some(bmm_domain::library::SourceStatus::NeedsHumanCheck) => {
-                                "human_check"
-                            }
-                            Some(bmm_domain::library::SourceStatus::Unavailable) => "unavailable",
-                            _ => "ok",
-                        }
-                    };
+                    let status = site_status(off, statuses.get(&id), down.contains_key(&id));
                     UpdateSiteDto {
                         tracked: tracked
                             .iter()
@@ -268,6 +258,24 @@ pub(crate) fn finding_dto(
     }
 }
 
+fn site_status(
+    off: bool,
+    stored: Option<&bmm_domain::library::SourceStatus>,
+    down: bool,
+) -> &'static str {
+    if off {
+        "off"
+    } else if down {
+        "unavailable"
+    } else {
+        match stored {
+            Some(bmm_domain::library::SourceStatus::NeedsHumanCheck) => "human_check",
+            Some(bmm_domain::library::SourceStatus::Unavailable) => "unavailable",
+            _ => "ok",
+        }
+    }
+}
+
 /// Сайты, которые сейчас не открываются: сетевой слой держит их на паузе после
 /// сбоев или последняя проверка их не открыла. Подпись — самая свежая.
 pub(crate) fn down_now(
@@ -423,5 +431,22 @@ pub(crate) fn merge_reports(first: UpdateRunReport, again: UpdateRunReport) -> U
         cancelled: first.cancelled || again.cancelled,
         stopped_by_time: first.stopped_by_time || again.stopped_by_time,
         reused: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn site_status_uses_last_failure_without_painting_healthy_sites() {
+        use bmm_domain::library::SourceStatus;
+        assert_eq!(site_status(false, None, true), "unavailable");
+        assert_eq!(site_status(false, None, false), "ok");
+        assert_eq!(site_status(true, None, true), "off");
+        assert_eq!(
+            site_status(false, Some(&SourceStatus::NeedsHumanCheck), false),
+            "human_check"
+        );
     }
 }

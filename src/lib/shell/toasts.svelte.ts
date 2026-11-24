@@ -66,7 +66,10 @@ class Toasts {
       if (!item.undo && (repeat(this.current) || this.#queue.some(repeat))) return;
       // Фоновое «нашли обновления» не должно отнимать кнопку у удаления.
       this.#queue.push(item);
-      if (this.#queue.length > 8) this.#queue.shift();
+      if (this.#queue.length > 8) {
+        const drop = this.#queue.findIndex((queued) => !queued.undo && !queued.commit);
+        if (drop >= 0) this.#queue.splice(drop, 1);
+      }
       return;
     }
     this.#activate(item);

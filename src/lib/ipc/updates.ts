@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { stableListen } from "#lib/shell/stableListen.js";
 
 import type {
   FindPageResult,
@@ -234,7 +235,7 @@ export async function listenUpdates(handler: Listener): Promise<UnlistenFn> {
     listeners.add(handler);
     return () => listeners.delete(handler);
   }
-  return listen<UpdatesEvent>("updates://event", (event) => handler(event.payload));
+  return stableListen<UpdatesEvent>("updates://event", (event) => handler(event.payload));
 }
 
 export async function updatesSnapshot(): Promise<UpdatesSnapshot> {

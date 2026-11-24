@@ -110,8 +110,8 @@
     margin: 0 0 6px;
     color: var(--accent-brand-text);
     font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
@@ -158,7 +158,7 @@
   h2 {
     margin: 0;
     font-size: 14.5px;
-    font-weight: 800;
+    font-weight: 600;
   }
 
   .point p {
@@ -190,7 +190,7 @@
     background: var(--accent-brand);
     color: var(--accent-brand-contrast);
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 600;
     cursor: default;
   }
 

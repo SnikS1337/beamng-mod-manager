@@ -33,24 +33,34 @@ end
 
 local function apply(set)
   local results = {}
-  for name, on in pairs(set) do
-    local key = string.lower(tostring(name))
-    if key == selfName then
-      results[key] = 'skipped'
-    else
-      local mod = core_modmanager.getModDB(key)
-      if not mod then
-        results[key] = 'missing'
+  local keys = {}
+  for name in pairs(set) do keys[#keys + 1] = name end
+  table.sort(keys)
+  -- Большая пачка не должна замораживать игру одним синхронным onUpdate.
+  for start = 1, #keys, 50 do
+    local finish = math.min(start + 49, #keys)
+    for index = start, finish do
+      local name = keys[index]
+      local on = set[name]
+      local key = string.lower(tostring(name))
+      if key == selfName then
+        results[key] = 'skipped'
       else
-        local active = mod.active ~= false
-        if on == true and not active then
-          core_modmanager.activateMod(key)
-        elseif on ~= true and active then
-          core_modmanager.deactivateMod(key)
+        local mod = core_modmanager.getModDB(key)
+        if not mod then
+          results[key] = 'missing'
+        else
+          local active = mod.active ~= false
+          if on == true and not active then
+            core_modmanager.activateMod(key)
+          elseif on ~= true and active then
+            core_modmanager.deactivateMod(key)
+          end
+          results[key] = 'ok'
         end
-        results[key] = 'ok'
       end
     end
+    if finish < #keys then writeState() end
   end
   return results
 end

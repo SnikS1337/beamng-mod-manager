@@ -99,6 +99,27 @@ impl GameBridge {
         let serial = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let id = format!("{}-{serial}", moment.timestamp_millis());
         let mut set = Map::new();
+        // Неподтверждённая команда остаётся частью следующей: вторая команда не
+        // должна затирать первую, пока игра не ответила на неё.
+        if let Ok(bytes) = fs::read(self.command_path())
+            && let Ok(previous) = serde_json::from_slice::<Value>(&bytes)
+            && let Some(previous_id) = previous.get("id").and_then(Value::as_str)
+            && let Some(previous_time) = previous.get("time").and_then(Value::as_i64)
+            && moment.timestamp() - previous_time <= 60
+            && self
+                .read_state()
+                .and_then(|state| {
+                    state
+                        .get("ackId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .as_deref()
+                != Some(previous_id)
+            && let Some(previous_set) = previous.get("set").and_then(Value::as_object)
+        {
+            set = previous_set.clone();
+        }
         for (file, enabled) in wanted {
             let key = crate::db::key_of(file);
             if key.is_empty() || key == MOD_KEY {
@@ -290,6 +311,17 @@ mod tests {
         assert_eq!(answer.result("BMW_M2_G87_INF"), Some("ok"));
         assert_eq!(answer.result("ghost"), Some("missing"));
         assert!(bridge.is_alive());
+    }
+
+    #[test]
+    fn new_command_merges_unanswered_changes_and_new_values_win() {
+        let (_temp, _mods, bridge) = setup();
+        bridge.send(&[("a.zip", false)]).unwrap();
+        bridge.send(&[("b.zip", true), ("a.zip", true)]).unwrap();
+        let command: Value =
+            serde_json::from_str(&fs::read_to_string(bridge.command_path()).unwrap()).unwrap();
+        assert_eq!(command["set"]["a"], true);
+        assert_eq!(command["set"]["b"], true);
     }
 
     #[test]

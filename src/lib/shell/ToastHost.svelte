@@ -86,7 +86,7 @@
     background: var(--accent-brand-soft);
     color: var(--accent-brand-text);
     font-size: 12.5px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
   }
 

@@ -11,13 +11,21 @@
   import { versionLine } from "./cardText";
   import { formatSize } from "./format";
   import { modStatus } from "./status";
-  import { freshReveal, revealScroll, typeLabel, typeTag, type RevealRequest } from "./view";
+  import { freshReveal, revealScroll, shouldRollVersion, typeLabel, typeTag, type RevealRequest } from "./view";
   import { tick, untrack } from "svelte";
   import { flowName, motion } from "#lib/shell/motion.svelte.js";
   import { rollIn } from "#lib/shell/transitions.js";
   import { coverFlight } from "./coverFlight.svelte";
   import { installedFlash } from "./conflictFlash.svelte";
   import DrawCheck from "#lib/shell/DrawCheck.svelte";
+
+  const shownVersions = new Map<string, string>();
+  const versionIn = (node: Element, id: string, text: string) => {
+    const previous = shownVersions.get(id);
+    shownVersions.set(id, text);
+    const animated = !document.documentElement.classList.contains("no-motion");
+    return shouldRollVersion(previous, text, animated) ? rollIn(node) : { duration: 0 };
+  };
 
   let {
     items,
@@ -47,6 +55,13 @@
   let start = $derived(Math.max(0, Math.floor(scrollTop / ROW) - 4));
   let end = $derived(Math.min(items.length, Math.ceil((scrollTop + Math.max(height, 1)) / ROW) + 4));
   let visible = $derived(items.slice(start, end));
+
+  $effect(() => {
+    const ids = new Set(items.map((mod) => mod.id));
+    for (const id of shownVersions.keys()) {
+      if (!ids.has(id)) shownVersions.delete(id);
+    }
+  });
 
   $effect(() => {
     resetKey;
@@ -182,7 +197,7 @@
           </span>
           <span class="type-cell"><span class="kind-tag {tag}"><KindIcon size={12} weight="bold" /><span class="tag-text">{typeLabel(tag)}</span></span></span>
           <span class="version-cell mono" class:fresh={version?.fresh} title={version?.text}>
-            {#key version?.text}<span class="roll" in:rollIn>{version?.text ?? "—"}</span>{/key}
+            {#key version?.text}<span class="roll" in:versionIn={[mod.id, version?.text ?? "—"]}>{version?.text ?? "—"}</span>{/key}
           </span>
           <span class="size-cell muted">{formatSize(mod.sizeBytes)}</span>
           <span class="states">
@@ -272,8 +287,8 @@
     border-bottom: 1px solid var(--border);
     color: var(--faint-foreground);
     font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
@@ -328,7 +343,7 @@
     height: 20px;
     padding: 0;
     border: 1px solid var(--border-strong);
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     background: var(--surface);
     color: var(--foreground);
     opacity: 0.55;
@@ -362,7 +377,7 @@
     width: 56px;
     height: 34px;
     overflow: hidden;
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     background: var(--surface-2);
     color: var(--faint-foreground);
   }
@@ -406,7 +421,7 @@
 
   .name b {
     min-width: 0;
-    font-weight: 700;
+    font-weight: 600;
     transition: color var(--dur-2) var(--ease-out);
   }
 
@@ -432,10 +447,10 @@
     height: 22px;
     padding: 0 8px;
     border: 1px solid var(--border-strong);
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     color: var(--muted-foreground);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
   }
 

@@ -3,6 +3,7 @@
   import { toasts } from "./toasts.svelte";
   import { pop } from "./transitions";
   import { CtrlHold, hintsFor } from "./ctrlHold.svelte";
+  import { anyOverlay } from "./overlays.js";
 
   // Держат Ctrl один — внизу видно, какие сочетания есть на этой странице.
   const hold = new CtrlHold();
@@ -20,7 +21,7 @@
   {onblur}
 />
 
-{#if hold.shown}
+{#if hold.shown && !anyOverlay()}
   <div
     class="hints glass solid"
     class:above-toast={toasts.current !== null}

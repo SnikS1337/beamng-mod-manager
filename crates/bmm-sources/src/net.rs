@@ -573,8 +573,8 @@ impl HttpPageFetcher {
     pub fn with_user_agent(user_agent: &str) -> Result<Self, FetchError> {
         let client = Client::builder()
             .user_agent(user_agent)
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(15))
             .redirect(safe_redirect_policy())
             .cookie_store(true)
             .build()
@@ -633,7 +633,7 @@ impl HttpPageFetcher {
         response
             .take(self.max_body as u64 + 1)
             .read_to_end(&mut body)
-            .map_err(|_| FetchError::Network)?;
+            .map_err(body_read_error)?;
         if body.len() > self.max_body {
             return Err(FetchError::TooLarge);
         }
@@ -781,6 +781,15 @@ fn ensure_public(url: &Url) -> Result<(), FetchError> {
 #[cfg(test)]
 fn ensure_public(_: &Url) -> Result<(), FetchError> {
     Ok(())
+}
+
+fn body_read_error(error: std::io::Error) -> FetchError {
+    fetch_error_of(
+        error.kind() == std::io::ErrorKind::TimedOut,
+        false,
+        false,
+        &error,
+    )
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> FetchError {
@@ -2966,6 +2975,10 @@ mod tests {
         server.join().unwrap();
         assert!(matches!(
             map_reqwest_error(error),
+            FetchError::Unreachable(Reach::Stalled)
+        ));
+        assert!(matches!(
+            body_read_error(std::io::Error::from(std::io::ErrorKind::TimedOut)),
             FetchError::Unreachable(Reach::Stalled)
         ));
         // Таймаут на подключении — «не отвечает на подключение».

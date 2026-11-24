@@ -356,11 +356,13 @@ impl SearchService {
                 if done < total {
                     for (index, slot) in slots.iter_mut().enumerate() {
                         if slot.is_none() {
-                            *slot = Some(runner.stopped(
+                            let mut stopped = runner.stopped(
                                 self.sources[index].as_ref(),
                                 SourceStatus::Unavailable,
-                                "сайт не ответил вовремя",
-                            ));
+                                "сайт перестал отвечать",
+                            );
+                            stopped.report.reach = Some(Reach::Stalled);
+                            *slot = Some(stopped);
                         }
                     }
                 }
@@ -1958,7 +1960,7 @@ mod tests {
             title: "Car X",
         });
         let options = SearchOptions {
-            per_source_timeout: Duration::from_millis(100),
+            per_source_timeout: Duration::from_millis(500),
             ..SearchOptions::default()
         };
         let started = Instant::now();
@@ -1973,7 +1975,8 @@ mod tests {
             .find(|report| report.source_id == "slow")
             .unwrap();
         assert_eq!(report.status, SourceStatus::Unavailable);
-        assert!(report.note.as_deref().unwrap_or("").contains("вовремя"));
+        assert!(report.note.is_some());
+        assert_eq!(report.reach, Some(Reach::Stalled));
     }
 
     #[test]

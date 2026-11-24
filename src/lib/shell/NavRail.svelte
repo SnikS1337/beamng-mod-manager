@@ -113,7 +113,7 @@
     color: var(--accent-brand-contrast);
     font-family: var(--font-display);
     font-size: 17px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.02em;
   }
 
@@ -139,8 +139,8 @@
     height: 58px;
     border-radius: 10px;
     color: var(--muted-foreground);
-    font-size: 10.5px;
-    font-weight: 600;
+    font-size: var(--fs-2xs);
+    font-weight: 500;
     text-decoration: none;
     transition:
       background-color var(--dur-2) var(--ease-out),
@@ -201,14 +201,14 @@
 
   .glyph {
     display: grid;
-    transition: scale var(--dur-2) var(--ease-spring);
+    transition: scale var(--dur-2) var(--ease-out);
   }
 
   .glyph > :global(svg) {
     grid-area: 1 / 1;
     transition:
       opacity var(--dur-2) var(--ease-out),
-      scale var(--dur-3) var(--ease-spring);
+      scale var(--dur-3) var(--ease-out);
   }
 
   /* Заливка вырастает из чуть меньшего размера, контур тает чуть крупнее —
@@ -243,8 +243,8 @@
     border-radius: 999px;
     background: var(--accent-brand);
     color: var(--accent-brand-contrast);
-    font-size: 10.5px;
-    font-weight: 800;
+    font-size: var(--fs-2xs);
+    font-weight: 600;
     line-height: 17px;
     text-align: center;
     animation: pop-in var(--dur-3) var(--ease-out) both;

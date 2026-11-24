@@ -21,6 +21,11 @@
   import DrawCheck from "#lib/shell/DrawCheck.svelte";
   import { liveDownloads } from "#lib/features/download/live.svelte.js";
   import { modProgress } from "#lib/features/download/jobs.js";
+  import { onMount } from "svelte";
+
+  let mounted = false;
+  onMount(() => { mounted = true; });
+  const versionIn = (node: Element) => mounted ? rollIn(node) : { duration: 0 };
 
   let {
     mod,
@@ -246,7 +251,7 @@
           <!-- Версия сменилась (нашли обновление или поставили его) — новая
                прокручивается снизу. При первом показе карточки не играет. -->
           {#key version.text}
-            <span class="mono version" class:fresh={version.fresh} in:rollIn>{version.text}</span>
+            <span class="mono version" class:fresh={version.fresh} in:versionIn>{version.text}</span>
           {/key}
         {/if}
         <span>{formatSize(mod.sizeBytes)}</span>
@@ -288,7 +293,7 @@
 
   .card.appear {
     animation: var(--enter);
-    animation-delay: calc(var(--i) * 18ms);
+    animation-delay: calc(var(--i) * 12ms);
   }
 
   /* Карточка, въезжающая в экран при прокрутке, мягко проявляется. Ведёт
@@ -304,9 +309,9 @@
 
   @keyframes card-enter {
     from {
-      opacity: 0.3;
-      translate: 0 16px;
-      scale: 0.97;
+      opacity: 0.65;
+      translate: 0 8px;
+      scale: 0.99;
     }
   }
 
@@ -316,10 +321,10 @@
     box-shadow: var(--shadow-1);
   }
 
-  /* Кант в цвет акцента темы: тонкий всегда, под курсором — ярче и с мягким
-     свечением. От темы, а не от обложки: так он одинаково виден на любой карточке. */
+  /* Тонкий кант в цвет акцента темы. От темы, а не от обложки: так он
+     одинаково читается на любой карточке и не спорит с её содержимым. */
   .card {
-    border-color: color-mix(in oklab, var(--accent-brand) 16%, var(--border));
+    border-color: color-mix(in oklab, var(--accent-brand) 8%, var(--border));
   }
 
   .card.sleeping {
@@ -327,10 +332,8 @@
   }
 
   .card:not(.selected):hover {
-    border-color: color-mix(in oklab, var(--accent-brand) 55%, var(--border));
-    box-shadow:
-      0 0 0 1px color-mix(in oklab, var(--accent-brand) 22%, transparent),
-      0 14px 32px -16px color-mix(in oklab, var(--accent-brand) 55%, transparent);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-1);
   }
 
   /* Нажатие по карточке (её кнопка выбора .select на всю площадь): она чуть
@@ -438,7 +441,7 @@
     transform: translateY(6px);
     transition:
       opacity var(--dur-2) var(--ease-out),
-      transform var(--dur-2) var(--ease-spring);
+      transform var(--dur-2) var(--ease-out);
     pointer-events: none;
   }
 
@@ -472,11 +475,11 @@
     height: 26px;
     padding: 0 8px;
     border: 1px solid var(--border-strong);
-    border-radius: 7px;
+    border-radius: var(--radius-control);
     background: color-mix(in oklab, var(--surface-2) 88%, transparent);
     color: var(--foreground);
-    font-size: 12px;
-    font-weight: 700;
+    font-size: var(--fs-xs);
+    font-weight: 600;
     cursor: default;
     box-shadow: var(--shadow-1);
   }
@@ -546,7 +549,7 @@
   }
 
   .card:hover .thumb img {
-    transform: scale(1.04);
+    transform: scale(1.02);
   }
 
   .placeholder {
@@ -576,7 +579,7 @@
     gap: 6px;
     color: var(--muted-foreground);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
 
@@ -588,9 +591,9 @@
     max-width: 100%;
     overflow: hidden;
     padding: 0 8px;
-    border-radius: 5px;
-    font-size: 11px;
-    font-weight: 700;
+    border-radius: 6px;
+    font-size: var(--fs-2xs);
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
     animation: pop-in var(--dur-3) var(--ease-out) both;
@@ -637,11 +640,11 @@
     background: var(--background);
     color: var(--ok);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
     translate: -50% 0;
     pointer-events: none;
-    box-shadow: 0 6px 18px -8px color-mix(in oklab, var(--ok) 60%, transparent);
+    box-shadow: var(--shadow-1);
   }
 
   .copies {
@@ -654,11 +657,11 @@
     height: 22px;
     padding: 0 8px;
     border: 1px solid var(--border-strong);
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     background: var(--background);
     color: var(--foreground);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .copies.conflict {
@@ -681,18 +684,18 @@
       box-shadow: 0 0 0 0 transparent;
     }
     15% {
-      transform: translateX(-3px);
-      box-shadow: 0 0 0 4px color-mix(in oklab, var(--danger) 35%, transparent);
+      transform: translateX(-2px);
+      box-shadow: 0 0 0 3px color-mix(in oklab, var(--danger) 20%, transparent);
     }
     30% {
-      transform: translateX(3px);
+      transform: translateX(2px);
     }
     45% {
-      transform: translateX(-2px);
+      transform: translateX(-1px);
     }
     60% {
       transform: translateX(1px);
-      box-shadow: 0 0 0 6px transparent;
+      box-shadow: 0 0 0 4px transparent;
     }
   }
 
@@ -715,7 +718,7 @@
     margin: 0;
     overflow: hidden;
     font-size: 14.5px;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.25;
     overflow-wrap: anywhere;
     -webkit-box-orient: vertical;

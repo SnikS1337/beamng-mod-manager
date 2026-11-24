@@ -98,7 +98,7 @@ pub struct AppState {
     pub search: Option<Arc<SearchRuntime>>,
     pub update: Option<Arc<UpdateRuntime>>,
     pub app_update: Option<Arc<Mutex<AppUpdateRuntime>>>,
-    pub search_cancel: Mutex<Option<(u64, Arc<AtomicBool>)>>,
+    pub search_cancel: Mutex<Option<(u64, u64, Arc<AtomicBool>)>>,
     pub last_search: Mutex<Option<SearchResponse>>,
     pub browse: Mutex<Option<BrowseSession>>,
 }

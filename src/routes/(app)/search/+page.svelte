@@ -177,7 +177,7 @@
   onDestroy(() => {
     disposed = true;
     unlisten?.();
-    if (searching) void searchCancel(requestId);
+    if (searching || retrying !== null) void searchCancel(requestId);
   });
 
   function onEvent(event: SearchEvent) {
@@ -797,6 +797,7 @@
   }
 
   function onkeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented || anyOverlay()) return;
     if (isShortcut(event, "f")) {
       event.preventDefault();
       input?.focus();
@@ -841,7 +842,8 @@
         bind:this={input}
         bind:value={query}
         type="search"
-        placeholder="Название машины, карты или автора"
+        name="q"
+        placeholder="Машина, карта или автор"
         aria-label="Поиск модов на сайтах"
         autocomplete="off"
         role="combobox"
@@ -921,7 +923,7 @@
           Фильтры
           {#if activeFilterCount > 0}<b>{activeFilterCount}</b>{/if}
         </button>
-        <select bind:value={() => sortOrder, (value) => flowSearch(() => (sortOrder = value))} aria-label="Сортировка">
+        <select name="sort" bind:value={() => sortOrder, (value) => flowSearch(() => (sortOrder = value))} aria-label="Сортировка">
           {#each sortOptions as item (item.id)}
             <option value={item.id}>{item.label}</option>
           {/each}
@@ -985,7 +987,7 @@
         </div>
         <div class="filter-row">
           <span class="filter-label">Сайт</span>
-          <select bind:value={() => sourceFilter, (value) => flowSearch(() => (sourceFilter = value))} aria-label="Сайт">
+          <select name="source" bind:value={() => sourceFilter, (value) => flowSearch(() => (sourceFilter = value))} aria-label="Сайт">
             <option value="all">Все сайты</option>
             {#each sources as source (source.id)}
               <option value={source.id}>{source.displayName}</option>
@@ -1330,8 +1332,8 @@
   .top {
     display: flex;
     flex-direction: column;
-    gap: 9px;
-    padding: 14px 150px 12px 24px;
+    gap: 8px;
+    padding: 16px 150px 16px 24px;
     border-bottom: 1px solid var(--border);
   }
 
@@ -1549,7 +1551,7 @@
     color: var(--accent-brand-text);
     font: inherit;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
   }
 
@@ -1631,7 +1633,7 @@
     margin-left: auto;
     padding: 1px 6px;
     border: 1px solid var(--border);
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     background: transparent;
     color: var(--muted-foreground);
     font-size: 11px;
@@ -1657,7 +1659,7 @@
     height: 30px;
     padding: 0 12px;
     border: 1px solid var(--border-strong);
-    border-radius: 15px;
+    border-radius: var(--radius);
     background: transparent;
     color: var(--muted-foreground);
     font-size: 13px;
@@ -1773,9 +1775,9 @@
     align-items: center;
     height: 22px;
     padding: 0 8px;
-    border-radius: 5px;
+    border-radius: var(--radius-small);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .price {
@@ -1808,14 +1810,14 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 12px 14px 14px;
+    padding: 12px 16px 16px;
   }
 
   h2 {
     margin: 0;
     overflow: hidden;
     font-size: 15.5px;
-    font-weight: 800;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1842,7 +1844,7 @@
     display: flex;
     flex: 1 1 150px;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
     min-width: 0;
   }
 
@@ -1852,8 +1854,8 @@
     gap: 5px;
     color: var(--muted-foreground);
     font-size: 10.5px;
-    font-weight: 800;
-    letter-spacing: 0.07em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
   }
 
@@ -1896,7 +1898,7 @@
     background: var(--surface);
     color: var(--foreground);
     font-size: 12.5px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
     transition: background-color var(--dur-1) var(--ease-out);
   }
@@ -1961,7 +1963,7 @@
     background: var(--surface);
     color: var(--foreground);
     font-size: 12.5px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: default;
   }
 
@@ -2157,7 +2159,7 @@
 
   .site-row b {
     overflow: hidden;
-    font-weight: 700;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2208,7 +2210,7 @@
   .link {
     color: var(--accent-brand-text);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     text-decoration: none;
   }
 

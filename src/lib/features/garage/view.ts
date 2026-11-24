@@ -119,6 +119,11 @@ export function freshReveal(request: RevealRequest | null, handled: number): req
   return request !== null && request.seq > handled;
 }
 
+/** Версия анимируется только при реальном изменении, не при повторном въезде виртуализованной строки. */
+export function shouldRollVersion(previous: string | undefined, next: string, animated: boolean): boolean {
+  return animated && previous !== undefined && previous !== next;
+}
+
 /**
  * Куда прокрутить список строк одинаковой высоты, чтобы строка `index` стала видна.
  * `null` — она уже на экране. В режиме списка стрелки раньше меняли выбор, но

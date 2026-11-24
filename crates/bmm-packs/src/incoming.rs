@@ -198,6 +198,8 @@ fn analyze_zip(
         Err(_) => return Err("Архив повреждён и не читается.".to_string()),
     };
     let overview = read_overview(source);
+    let mod_title = mod_info_title(source, &index);
+    let title = mod_title.clone().or_else(|| overview.title.clone());
     let blocked = inspection.is_blocked();
     let file_name = display_name(name, source);
 
@@ -207,7 +209,7 @@ fn analyze_zip(
             source,
             file_name,
             &index,
-            overview.title.clone(),
+            title,
             inspection,
             installed,
             work_dir,
@@ -222,7 +224,7 @@ fn analyze_zip(
             source,
             file_name,
             &index,
-            overview.title.clone(),
+            title,
             inspection,
             installed,
             work_dir,
@@ -827,10 +829,12 @@ fn match_item(
             continue;
         }
         let shared = content.intersection(&item_content).count();
-        let score = shared as f64 / candidate_count.max(item_content.len()) as f64;
-        if score < 0.5 {
+        // Обновление может добавить файлы, но не выбросить часть прежнего мода:
+        // A+B -> B+C — другой пак, а не новая версия A+B.
+        if shared == 0 || !item_content.is_subset(&content) {
             continue;
         }
+        let score = shared as f64 / candidate_count.max(item_content.len()) as f64;
         match best {
             None => best = Some((item, score)),
             Some((_, current)) if score > current + 1e-9 => {
@@ -1026,6 +1030,18 @@ fn unique_name(
         index += 1;
     }
     name
+}
+
+fn mod_info_title(path: &Path, index: &ZipIndex) -> Option<String> {
+    let (_, value) = crate::overview::try_mod_info_from_index(path, index)
+        .ok()
+        .flatten()?;
+    ["name", "title", "tag_line"]
+        .iter()
+        .find_map(|key| value.get(*key).and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && title.chars().count() <= 80)
+        .map(str::to_string)
 }
 
 /// Название по имени файла, без меток сайтов и версии: «hustle traffic rotation»
@@ -1821,6 +1837,71 @@ mod tests {
             &AtomicBool::new(false),
         );
         assert_eq!(common.items[0].kind, IncomingKind::New);
+    }
+
+    #[test]
+    fn mod_info_name_wins_over_file_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("hotw.zip");
+        build_zip(
+            &source,
+            &[
+                ("lua/init.lua", b"x"),
+                (
+                    "mod_info/handsonthewheel/info.json",
+                    br#"{"name":"Hands on the Wheel","version":"0.4.0"}"#,
+                ),
+            ],
+        );
+        let analysis = analyze(
+            &source,
+            &[],
+            &temp.path().join("work"),
+            IncomingOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(analysis.items[0].title, "Hands on the Wheel");
+    }
+
+    #[test]
+    fn partial_overlap_is_new_but_superset_is_update() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("new.zip");
+        build_zip(
+            &source,
+            &[("vehicles/b/b.jbeam", b"x"), ("vehicles/c/c.jbeam", b"x")],
+        );
+        let old = installed("old.zip", &["vehicles/a", "vehicles/b"]);
+        let (kind, replaces, _, _) = match_item(
+            &source,
+            "new.zip",
+            &HashSet::from(["vehicles/b".to_string(), "vehicles/c".to_string()]),
+            std::slice::from_ref(&old),
+        );
+        assert_eq!(kind, IncomingKind::New, "B+C не обновление A+B");
+        assert_eq!(replaces, None);
+
+        let superset = temp.path().join("superset.zip");
+        build_zip(
+            &superset,
+            &[
+                ("vehicles/a/a.jbeam", b"x"),
+                ("vehicles/b/b.jbeam", b"x"),
+                ("vehicles/c/c.jbeam", b"x"),
+            ],
+        );
+        let (kind, replaces, _, _) = match_item(
+            &superset,
+            "superset.zip",
+            &HashSet::from([
+                "vehicles/a".to_string(),
+                "vehicles/b".to_string(),
+                "vehicles/c".to_string(),
+            ]),
+            &[old],
+        );
+        assert_eq!(kind, IncomingKind::Update);
+        assert_eq!(replaces.as_deref(), Some("old.zip"));
     }
 
     #[test]

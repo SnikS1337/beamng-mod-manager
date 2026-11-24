@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { stableListen } from "#lib/shell/stableListen.js";
 
 import type {
   ImageCache,
@@ -36,7 +37,7 @@ export async function listenSearch(handler: MockListener): Promise<UnlistenFn> {
     mockListeners.add(handler);
     return () => mockListeners.delete(handler);
   }
-  return listen<SearchEvent>("search://event", (event) => handler(event.payload));
+  return stableListen<SearchEvent>("search://event", (event) => handler(event.payload));
 }
 
 export async function searchStart(query: string, requestId: number): Promise<void> {
