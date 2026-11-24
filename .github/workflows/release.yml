@@ -74,21 +74,21 @@ jobs:
       - name: Сборка окна
         run: npm run tauri build -- --no-bundle -- --locked
 
-      - name: Портативный архив и latest.json
+      - name: Портативный exe и latest.json
         shell: pwsh
         run: |
           $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
-          $exe = "target/release/BeamModManager.exe"
-          $zip = "BeamModManager-$version.zip"
-          if (-not (Test-Path $exe)) { throw "Нет $exe" }
-          Compress-Archive -Path $exe -DestinationPath $zip -Force
-          $size = (Get-Item $zip).Length
-          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$zip"
+          $source = "target/release/BeamModManager.exe"
+          $asset = "BeamModManager-$version.exe"
+          if (-not (Test-Path $source)) { throw "Нет $source" }
+          Copy-Item -LiteralPath $source -Destination $asset -Force
+          $size = (Get-Item $asset).Length
+          $sha = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$asset"
           $notes = (Get-Content notes.md -Raw -Encoding utf8).Trim()
           $manifest = [ordered]@{
             version = $version
-            format = "zip"
+            format = "exe"
             url = $url
             size = $size
             sha256 = $sha
@@ -101,7 +101,7 @@ jobs:
         with:
           name: release
           path: |
-            BeamModManager-*.zip
+            BeamModManager-*.exe
             latest.json
             notes.md
           if-no-files-found: error
@@ -150,6 +150,6 @@ jobs:
         with:
           body_path: notes.md
           files: |
-            BeamModManager-*.zip
+            BeamModManager-*.exe
             latest.json
           fail_on_unmatched_files: true
