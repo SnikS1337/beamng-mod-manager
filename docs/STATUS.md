@@ -1,10 +1,10 @@
 # Состояние проекта
 
-На 2026-11-24. Основная ветка — `main` (Rust + Tauri).
+На 2026-11-25. Основная ветка — `main` (Rust + Tauri).
 
 Последний опубликованный выпуск — **1.4.4** (из `main`). Версии в `Cargo.toml`,
-`package.json` и `src-tauri/tauri.conf.json` — 1.4.4. Что готовится к следующему выпуску —
-раздел «Не выпущено» в [CHANGES.md](../CHANGES.md).
+`package.json` и `src-tauri/tauri.conf.json` — 1.4.4. Раздел «Не выпущено» в
+[CHANGES.md](../CHANGES.md) сейчас пуст.
 
 ## Стек
 
@@ -51,7 +51,7 @@
 
 CI на `windows-2025` (`.github/workflows/ci.yml`) на каждый push и PR: `svelte-check`,
 Vitest, сборка фронтенда, `cargo fmt`, `clippy -D warnings`, `cargo test`; на `main`
-ещё и полная release-сборка exe. На 2026-11-24:
+ещё и полная release-сборка exe. На 2026-11-25:
 **1064 теста Rust** (`--all-targets` на Windows: 1064 прошли, 3 пропущены намеренно)
 плюс 1 пример в документации и **490 тестов интерфейса** (79 файлов).
 
