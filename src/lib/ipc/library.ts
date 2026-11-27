@@ -7,6 +7,7 @@ import type {
   LibrarySnapshot,
   ModCardDto,
   ModDetails,
+  RestoreUndoTicket,
   ToggleResult,
   VersionRow,
 } from "./generated.js";
@@ -23,6 +24,7 @@ export type {
   LibrarySnapshot,
   ModCardDto,
   ModDetails,
+  RestoreUndoTicket,
   ToggleResult,
   VersionRow,
 } from "./generated.js";
@@ -192,6 +194,14 @@ export async function libraryLoad(): Promise<LibrarySnapshot> {
 export async function modToggle(id: string, enabled: boolean): Promise<ToggleResult> {
   if (isTauri()) {
     return invoke<ToggleResult>("mod_toggle", { id, enabled });
+  }
+  const snapshot = await libraryLoad();
+  const mod = snapshot.mods.find((item) => item.id === id);
+  if (mod) {
+    mod.enabled = enabled;
+    snapshot.counts.enabled = snapshot.mods.filter(
+      (item) => item.enabled && !item.duplicateOf,
+    ).length;
   }
   return { outcome: "done", enabled, message: null };
 }
@@ -383,7 +393,15 @@ export async function modRestoreDeleted(fileName: string, backupId?: string): Pr
 
 export async function modVersions(id: string): Promise<VersionRow[]> {
   if (isTauri()) return invoke<VersionRow[]>("mod_versions", { id });
+  const card = (await libraryLoad()).mods.find((mod) => mod.id === id);
   return [
+    {
+      backupId: `current-${card?.fileName ?? "demo.zip"}`,
+      fileName: card?.fileName ?? "demo.zip",
+      version: card?.version ?? "1.0",
+      savedAt: "2026-10-21T12:00:00+00:00",
+      sizeBytes: card?.sizeBytes ?? 88 * 1024 * 1024,
+    },
     {
       backupId: "0000000002_20261020-120000-000_demo.zip",
       fileName: "demo_v1.zip",
@@ -394,8 +412,23 @@ export async function modVersions(id: string): Promise<VersionRow[]> {
   ];
 }
 
-export async function modRestoreVersion(id: string, backupId: string): Promise<void> {
-  if (isTauri()) await invoke("mod_restore_version", { id, backupId });
+export async function modRestoreVersion(
+  id: string,
+  backupId: string,
+  expectedToken?: string,
+): Promise<RestoreUndoTicket | null> {
+  if (isTauri()) {
+    return invoke<RestoreUndoTicket | null>("mod_restore_version", {
+      id,
+      backupId,
+      expectedToken: expectedToken ?? null,
+    });
+  }
+  return { backupId: `undo-${backupId}`, installedToken: `demo-${backupId}` };
+}
+
+export async function modCommitRestoreUndo(backupId: string): Promise<void> {
+  if (isTauri()) await invoke("mod_commit_restore_undo", { backupId });
 }
 
 /** Стереть прошлую копию мода насовсем. */

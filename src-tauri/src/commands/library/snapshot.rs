@@ -27,9 +27,12 @@ pub(crate) fn load_snapshot(state: &AppState) -> Result<LibrarySnapshot, AppErro
     if !game_running {
         apply_pending(state, &db, &layout);
     }
-
     let mut scan_result = scan::scan_mods(&layout);
-    let db_read = db.read_stable();
+    let mut db_read = db.read_stable();
+    if game_running && reconcile_live_pending(state, &mods_dir, &scan_result.mods, &db_read) {
+        scan_result = scan::scan_mods(&layout);
+        db_read = db.read_stable();
+    }
     if !db_read.unreadable {
         for disk in &mut scan_result.mods {
             if let Some(entry) = db_read.find(&disk.file_name)

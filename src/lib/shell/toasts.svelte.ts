@@ -143,7 +143,11 @@ class Toasts {
     if (!current) return;
     if (current.timer) clearTimeout(current.timer);
     this.#hide();
-    if (current.commit) void Promise.resolve(current.commit()).catch(() => {});
+    if (current.commit) {
+      void Promise.resolve(current.commit()).catch((reason: unknown) => {
+        this.show(errorText(reason));
+      });
+    }
     this.#next();
   }
 

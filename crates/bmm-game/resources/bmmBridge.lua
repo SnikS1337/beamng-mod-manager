@@ -12,10 +12,12 @@ local stateFile = dir .. 'state.json'
 local selfName = 'bmm_bridge'
 local version = 1
 local maxAge = 60 -- секунд: команда старше не выполняется (например, оставшаяся с прошлого запуска)
+local chunkSize = 50
 
 local lastId = nil
 local off = false -- помощник выключили в меню модов игры: код уже в памяти, но он молчит и ничего не делает
 local lastAnswer = nil -- ответ на последнюю команду: повторяется в каждой записи, чтобы признак жизни его не затёр
+local active = nil -- текущая пачка: между кадрами игра успевает отрисоваться и ответить heartbeat
 local pollTimer = 0
 local beatTimer = 0
 
@@ -31,41 +33,58 @@ local function answer(a)
   writeState()
 end
 
-local function apply(set)
-  local results = {}
+local function startApply(cmd)
   local keys = {}
-  for name in pairs(set) do keys[#keys + 1] = name end
+  for name in pairs(cmd.set) do keys[#keys + 1] = name end
   table.sort(keys)
-  -- Большая пачка не должна замораживать игру одним синхронным onUpdate.
-  for start = 1, #keys, 50 do
-    local finish = math.min(start + 49, #keys)
-    for index = start, finish do
-      local name = keys[index]
-      local on = set[name]
-      local key = string.lower(tostring(name))
-      if key == selfName then
-        results[key] = 'skipped'
+  active = {
+    id = cmd.id,
+    set = cmd.set,
+    keys = keys,
+    index = 1,
+    results = {},
+  }
+end
+
+local function stepApply()
+  if not active then return end
+  local job = active
+  local start = job.index
+  local finish = math.min(start + chunkSize - 1, #job.keys)
+  for index = start, finish do
+    local name = job.keys[index]
+    local on = job.set[name]
+    local key = string.lower(tostring(name))
+    if key == selfName then
+      job.results[key] = 'skipped'
+    else
+      local mod = core_modmanager.getModDB(key)
+      if not mod then
+        job.results[key] = 'missing'
       else
-        local mod = core_modmanager.getModDB(key)
-        if not mod then
-          results[key] = 'missing'
-        else
-          local active = mod.active ~= false
-          if on == true and not active then
-            core_modmanager.activateMod(key)
-          elseif on ~= true and active then
-            core_modmanager.deactivateMod(key)
-          end
-          results[key] = 'ok'
+        local enabled = mod.active ~= false
+        if on == true and not enabled then
+          core_modmanager.activateMod(key)
+        elseif on ~= true and enabled then
+          core_modmanager.deactivateMod(key)
         end
+        job.results[key] = 'ok'
       end
     end
-    if finish < #keys then writeState() end
   end
-  return results
+  job.index = finish + 1
+  if finish < #job.keys then
+    lastAnswer = { busy = true, busyId = job.id, done = finish, total = #job.keys }
+    writeState()
+  else
+    local results = job.results
+    active = nil
+    answer({ ackId = job.id, results = results })
+  end
 end
 
 local function poll()
+  if active then return end
   if not FS:fileExists(cmdFile) then return end
   local cmd = jsonReadFile(cmdFile)
   if type(cmd) ~= 'table' or cmd.id == nil or cmd.id == lastId then return end
@@ -79,12 +98,7 @@ local function poll()
   -- менеджер должен видеть, что команда выполняется, а не что мост умер.
   lastAnswer = { busy = true, busyId = cmd.id }
   writeState()
-  local ok, res = pcall(apply, cmd.set)
-  if ok then
-    answer({ ackId = cmd.id, results = res })
-  else
-    answer({ ackId = cmd.id, error = tostring(res) })
-  end
+  startApply(cmd)
 end
 
 -- выключили в меню модов игры (архив отключён, а расширение осталось загруженным до перезапуска)
@@ -114,6 +128,14 @@ M.onUpdate = function(dtReal)
     if not off then
       local ok, err = pcall(poll)
       if not ok then log('E', 'bmmBridge', tostring(err)) end
+    end
+  end
+  if not off and active then
+    local id = active.id
+    local ok, err = pcall(stepApply)
+    if not ok then
+      active = nil
+      answer({ ackId = id, error = tostring(err) })
     end
   end
   -- выключенный помощник не подаёт признаков жизни: через 6 с менеджер перестаёт им пользоваться

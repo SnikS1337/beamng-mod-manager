@@ -268,9 +268,7 @@ fn extract_with_tar_at(
         return Err(ExtractError::Message(message));
     }
     if contains_reparse(destination) {
-        return Err(ExtractError::Message(
-            "В архиве есть символическая ссылка.".to_string(),
-        ));
+        return Err(ExtractError::Message(SYMLINK_MESSAGE.to_string()));
     }
     budget.used = budget.used.saturating_add(size);
     if budget.used > budget.limit {
@@ -303,11 +301,18 @@ fn check_listing(listing: &TarListing) -> Result<(), ExtractError> {
     let text = String::from_utf8_lossy(&listing.names);
     let mut lines = 0usize;
     for line in text.split('\n') {
-        let name = line.strip_suffix('\r').unwrap_or(line);
-        if name.is_empty() || name == "." || name == "./" {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() || line == "." || line == "./" {
             continue;
         }
         lines += 1;
+        let (kind, name) = verbose_entry(line).unwrap_or(('-', line));
+        if matches!(kind, 'l' | 'h') {
+            return Err(ExtractError::Message(SYMLINK_MESSAGE.to_string()));
+        }
+        if name.is_empty() || name == "." || name == "./" {
+            continue;
+        }
         let Some(name) = normalize_name(name) else {
             return Err(ExtractError::Message(UNSAFE_PATH_MESSAGE.to_string()));
         };
@@ -321,8 +326,40 @@ fn check_listing(listing: &TarListing) -> Result<(), ExtractError> {
     Ok(())
 }
 
+fn verbose_entry(line: &str) -> Option<(char, &str)> {
+    let permissions = line.get(..10)?;
+    let kind = permissions.chars().next()?;
+    if !matches!(kind, '-' | 'd' | 'l' | 'h' | 'b' | 'c' | 'p' | 's')
+        || !permissions[1..]
+            .chars()
+            .all(|value| "rwxstST-".contains(value))
+    {
+        return None;
+    }
+    let mut rest = &line[10..];
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return None;
+        }
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let token = &rest[..end];
+        if token.len() >= 4
+            && token.len() <= 9
+            && token.contains(':')
+            && token
+                .bytes()
+                .all(|value| value.is_ascii_digit() || value == b':')
+        {
+            return Some((kind, rest[end..].trim_start()));
+        }
+        rest = &rest[end..];
+    }
+}
+
 const UNREADABLE_LISTING_MESSAGE: &str =
     "Не удалось прочитать список файлов архива: он повреждён, защищён паролем или в старом формате";
+const SYMLINK_MESSAGE: &str = "В архиве есть символическая ссылка.";
 
 #[derive(Debug, Default)]
 struct TarListing {
@@ -339,7 +376,7 @@ fn list_tar_entries(
 ) -> Result<Option<TarListing>, ExtractError> {
     let full = std::path::absolute(archive).unwrap_or_else(|_| archive.to_path_buf());
     let mut child = Command::new(tar)
-        .arg("-tf")
+        .arg("-tvf")
         .arg(full)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -759,7 +796,7 @@ mod tests {
         fs::write(
             &tar,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"-tf\" ]; then exit 1; fi\ntouch '{}'\n",
+                "#!/bin/sh\nif [ \"$1\" = \"-tvf\" ]; then exit 1; fi\ntouch '{}'\n",
                 marker.display()
             ),
         )
@@ -791,6 +828,49 @@ mod tests {
             "./\n./Audi pack/audi_rs3.zip\n./Audi pack/info.json\n./Audi pack/\n",
         ))
         .unwrap();
+    }
+
+    #[test]
+    fn tar_listing_rejects_links_before_extract() {
+        for line in [
+            "lrwxrwxrwx 0/0               0 1970-01-01 03:00 mods/link.zip -> ../outside.zip\n",
+            "hrw-r--r-- 0/0               0 1970-01-01 03:00 mods/hard.zip\n",
+        ] {
+            let error = check_listing(&listing(line)).unwrap_err();
+            assert_eq!(
+                error,
+                ExtractError::Message("В архиве есть символическая ссылка.".to_string()),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn tar_listing_reads_verbose_regular_names() {
+        assert_eq!(
+            verbose_entry("-rw-r--r-- 0/0               3 1970-01-01 03:00 mods/normal file.zip"),
+            Some(('-', "mods/normal file.zip"))
+        );
+        assert_eq!(
+            verbose_entry("drwxr-xr-x 0/0               0 1970-01-01 03:00 mods/sub/"),
+            Some(('d', "mods/sub/"))
+        );
+        assert_eq!(
+            verbose_entry("-rw-rw-rw-  0 0      0           6  Nov 26 10:41 ./Audi pack/a.zip"),
+            Some(('-', "./Audi pack/a.zip"))
+        );
+        check_listing(&listing(
+            "-rw-r--r-- 0/0               3 1970-01-01 03:00 mods/normal file.zip\ndrwxr-xr-x 0/0               0 1970-01-01 03:00 mods/sub/\n",
+        ))
+        .unwrap();
+        let error = check_listing(&listing(
+            "-rw-r--r-- 0/0               3 1970-01-01 03:00 ../evil.zip\n",
+        ))
+        .unwrap_err();
+        assert_eq!(
+            error,
+            ExtractError::Message(UNSAFE_PATH_MESSAGE.to_string())
+        );
     }
 
     #[test]

@@ -40,6 +40,8 @@
     appUpdateDownload,
     appUpdateRestart,
     appUpdateState,
+    applyAppUpdateProgress,
+    applyAppUpdateSnapshot,
     listenAppUpdateProgress,
     listenAppUpdateState,
     type AppUpdateSnapshot,
@@ -174,7 +176,6 @@
 
   onMount(() => {
     void boot();
-    void loadAppUpdate();
     // Окно закрывается без onDestroy: несохранённую правку дописываем до выхода.
     unlistenClose = beforeClose(async () => {
       if (saveTimer) clearTimeout(saveTimer);
@@ -183,23 +184,35 @@
       await saves.idle().catch(() => {});
       if (dirty) await save(true).catch(() => {});
     });
-    void listenAppUpdateProgress((value) => {
-      updateProgress = value;
+    void listenAppUpdateProgress((value, revision) => {
+      const next = applyAppUpdateProgress(appUpdate, value, revision);
+      if (next !== appUpdate) {
+        appUpdate = next;
+        updateProgress = value;
+      }
     })
       .then((stop) => {
         if (disposed) stop();
         else unlistenUpdate = stop;
       })
       .catch(() => {});
-    void listenAppUpdateState((snapshot) => {
-      appUpdate = snapshot;
-      updateProgress = snapshot.state.progress;
+    void listenAppUpdateState((value) => {
+      const next = applyAppUpdateSnapshot(appUpdate, value);
+      if (next !== appUpdate) {
+        appUpdate = next;
+        updateProgress = next.state.progress;
+      }
     })
       .then((stop) => {
         if (disposed) stop();
-        else unlistenUpdateState = stop;
+        else {
+          unlistenUpdateState = stop;
+          void loadAppUpdate();
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!disposed) void loadAppUpdate();
+      });
     return () => {
       disposed = true;
       unlistenUpdate?.();
@@ -219,7 +232,9 @@
 
   async function loadAppUpdate() {
     try {
-      appUpdate = await appUpdateState();
+      const value = await appUpdateState();
+      if (disposed) return;
+      appUpdate = applyAppUpdateSnapshot(appUpdate, value);
       updateProgress = appUpdate.state.progress;
     } catch (reason) {
       updateError = errorText(reason);
@@ -231,7 +246,7 @@
     updateBusy = true;
     updateError = null;
     try {
-      appUpdate = await appUpdateCheck();
+      appUpdate = applyAppUpdateSnapshot(appUpdate, await appUpdateCheck());
       updateProgress = appUpdate.state.progress;
     } catch (reason) {
       updateError = errorText(reason);
@@ -252,7 +267,7 @@
       updateProgress = 0;
     }
     try {
-      appUpdate = await appUpdateDownload();
+      appUpdate = applyAppUpdateSnapshot(appUpdate, await appUpdateDownload());
       updateProgress = appUpdate.state.progress;
     } catch (reason) {
       updateError = errorText(reason);
@@ -263,8 +278,8 @@
 
   async function cancelAppUpdate() {
     try {
-      appUpdate = await appUpdateCancel();
-      updateProgress = 0;
+      appUpdate = applyAppUpdateSnapshot(appUpdate, await appUpdateCancel());
+      updateProgress = appUpdate.state.progress;
     } catch (reason) {
       updateError = errorText(reason);
     }

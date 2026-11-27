@@ -94,6 +94,7 @@ pub struct IncomingInstallResult {
     pub backup_id: Option<String>,
     pub was_disabled: bool,
     pub same_name: bool,
+    pub installed_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -105,6 +106,7 @@ pub struct IncomingTicketDto {
     pub backup_id: Option<String>,
     pub was_disabled: bool,
     pub same_name: bool,
+    pub installed_token: Option<String>,
 }
 
 #[tauri::command]
@@ -492,6 +494,7 @@ fn install_items(
                 backup_id: None,
                 was_disabled: false,
                 same_name: false,
+                installed_token: None,
             });
             continue;
         }
@@ -514,6 +517,7 @@ fn install_items(
                     backup_id: None,
                     was_disabled: false,
                     same_name: false,
+                    installed_token: None,
                 });
                 continue;
             }
@@ -533,6 +537,7 @@ fn install_items(
                     backup_id: None,
                     was_disabled: false,
                     same_name: false,
+                    installed_token: None,
                 });
                 continue;
             }
@@ -547,6 +552,7 @@ fn install_items(
                     backup_id: None,
                     was_disabled: false,
                     same_name: replaced.eq_ignore_ascii_case(&request.file_name),
+                    installed_token: None,
                 });
                 continue;
             }
@@ -605,6 +611,7 @@ fn install_items(
                 backup_id,
                 was_disabled: !update.was_enabled,
                 same_name: replaced.eq_ignore_ascii_case(&request.file_name),
+                installed_token: update.install.sha256.clone(),
             });
         } else {
             let install = installer.install_from_path(&source, &request.file_name, options);
@@ -617,6 +624,7 @@ fn install_items(
                 backup_id: None,
                 was_disabled: false,
                 same_name: false,
+                installed_token: install.sha256.clone(),
             });
         }
     }
@@ -652,7 +660,7 @@ fn prune_versions(
     held.extend(undo.map(str::to_string));
     bmm_packs::versions::surplus(installer, state.library.as_ref(), &installed, keep)
         .into_iter()
-        .filter(|entry| !held.contains(&entry.id))
+        .filter(|entry| !held.contains(&entry.id) && !state.backup_is_held(&entry.id))
         .filter(|entry| installer.delete_backup(&entry.file_name, &entry.id).success)
         .count()
 }
@@ -686,6 +694,37 @@ fn remember_installed_version(state: &AppState, file_name: &str, version: &str, 
 fn undo_install(state: &AppState, ticket: &IncomingTicketDto) -> Result<(), AppError> {
     let _guard = state.load_guard();
     let installer = installer_for(state)?;
+    let Some(installed_token) = &ticket.installed_token else {
+        return Err(AppError::new(
+            "undo",
+            "Билет отмены устарел — обновите список модов.",
+        ));
+    };
+    let layout = installer.layout();
+    let installed = [
+        layout.mods_dir.join(&ticket.file_name),
+        layout.disabled_dir.join(&ticket.file_name),
+    ]
+    .into_iter()
+    .find(|path| path.is_file());
+    let Some(installed) = installed else {
+        return Err(AppError::new(
+            "undo",
+            "Мод уже обновлён или удалён — эта отмена больше не действует.",
+        ));
+    };
+    let current_token = bmm_packs::incoming::sha256_file(&installed).map_err(|error| {
+        AppError::new(
+            "undo",
+            format!("Не удалось проверить установленный мод: {error}"),
+        )
+    })?;
+    if &current_token != installed_token {
+        return Err(AppError::new(
+            "undo",
+            "Мод уже обновлён — отмените последнее обновление.",
+        ));
+    }
     if let Some(replaced) = &ticket.replaces {
         // Новый файл убираем первым и проверяем, что убрался: иначе «Отменить»
         // говорило «готово», а в папке лежали обе версии мода.
@@ -926,6 +965,7 @@ mod tests {
                 backup_id: Some(backup_id),
                 was_disabled: true,
                 same_name: false,
+                installed_token: results[0].installed_token.clone(),
             },
         )
         .unwrap();
@@ -1057,11 +1097,140 @@ mod tests {
                 backup_id: Some("пропавшая-копия".to_string()),
                 was_disabled: false,
                 same_name: false,
+                installed_token: results[0].installed_token.clone(),
             },
         );
         assert!(error.is_err(), "неудача — это ошибка, а не «готово»");
         assert!(installer.layout().mods_dir.join("car_v2.zip").is_file());
         assert!(!installer.layout().mods_dir.join("car_v1.zip").exists());
+    }
+
+    #[test]
+    fn stale_undo_ticket_cannot_roll_back_a_newer_update() {
+        let (temp, state) = setup();
+        let v1 = temp.path().join("v1.zip");
+        let v2 = temp.path().join("v2.zip");
+        let v3 = temp.path().join("v3.zip");
+        make_zip(&v1, b"one");
+        make_zip(&v2, b"two");
+        make_zip(&v3, b"three");
+        let installer = installer_for_test(&state);
+        assert!(
+            installer
+                .install_from_path(&v1, "car_v1.zip", InstallOptions::default())
+                .success
+        );
+
+        checked_source(&v2);
+        let second = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: v2.display().to_string(),
+                file_name: "car_v2.zip".to_string(),
+                replaces: Some("car_v1.zip".to_string()),
+                allow_warnings: true,
+                version: None,
+            }],
+        )
+        .unwrap();
+        assert!(second[0].success, "{:?}", second[0].message);
+
+        checked_source(&v3);
+        let third = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: v3.display().to_string(),
+                file_name: "car_v3.zip".to_string(),
+                replaces: Some("car_v2.zip".to_string()),
+                allow_warnings: true,
+                version: None,
+            }],
+        )
+        .unwrap();
+        assert!(third[0].success, "{:?}", third[0].message);
+
+        let error = undo_install(
+            &state,
+            &IncomingTicketDto {
+                file_name: second[0].file_name.clone(),
+                replaces: second[0].replaces.clone(),
+                backup_id: second[0].backup_id.clone(),
+                was_disabled: second[0].was_disabled,
+                same_name: second[0].same_name,
+                installed_token: second[0].installed_token.clone(),
+            },
+        );
+        assert!(error.is_err(), "билет от v2 не должен откатывать v3");
+        let layout = installer.layout();
+        assert!(layout.mods_dir.join("car_v3.zip").is_file());
+        assert!(!layout.mods_dir.join("car_v1.zip").exists());
+        assert!(!layout.disabled_dir.join("car_v1.zip").exists());
+        assert_eq!(
+            crate::commands::library::load_snapshot(&state)
+                .unwrap()
+                .mods[0]
+                .file_name,
+            "car_v3.zip"
+        );
+    }
+
+    #[test]
+    fn stale_same_name_undo_ticket_keeps_the_latest_archive() {
+        let (temp, state) = setup();
+        let v1 = temp.path().join("v1.zip");
+        let v2 = temp.path().join("v2.zip");
+        let v3 = temp.path().join("v3.zip");
+        make_zip(&v1, b"one");
+        make_zip(&v2, b"two");
+        make_zip(&v3, b"three");
+        let installer = installer_for_test(&state);
+        assert!(
+            installer
+                .install_from_path(&v1, "car.zip", InstallOptions::default())
+                .success
+        );
+        let mut previous = None;
+        let mut second_token = None;
+        let mut third_token = None;
+        for archive in [&v2, &v3] {
+            checked_source(archive);
+            let results = install_items(
+                &state,
+                &[IncomingInstallRequest {
+                    zip_path: archive.display().to_string(),
+                    file_name: "car.zip".to_string(),
+                    replaces: Some("car.zip".to_string()),
+                    allow_warnings: true,
+                    version: None,
+                }],
+            )
+            .unwrap();
+            assert!(results[0].success, "{:?}", results[0].message);
+            if previous.is_none() {
+                second_token = results[0].installed_token.clone();
+            } else {
+                third_token = results[0].installed_token.clone();
+            }
+            previous = results[0].backup_id.clone();
+        }
+
+        let error = undo_install(
+            &state,
+            &IncomingTicketDto {
+                file_name: "car.zip".to_string(),
+                replaces: Some("car.zip".to_string()),
+                backup_id: previous,
+                was_disabled: false,
+                same_name: true,
+                installed_token: second_token,
+            },
+        );
+
+        assert!(error.is_err());
+        assert_eq!(
+            bmm_packs::incoming::sha256_file(&installer.layout().mods_dir.join("car.zip")).unwrap(),
+            third_token.unwrap()
+        );
     }
 
     #[test]
@@ -1103,6 +1272,7 @@ mod tests {
             "backupId": result["backupId"],
             "wasDisabled": result["wasDisabled"],
             "sameName": result["sameName"],
+            "installedToken": result["installedToken"],
         }))
         .unwrap();
         undo_install(&state, &ticket).unwrap();
@@ -1341,6 +1511,7 @@ mod tests {
                 backup_id: None,
                 was_disabled: false,
                 same_name: false,
+                installed_token: results[0].installed_token.clone(),
             },
         )
         .unwrap();
@@ -1411,6 +1582,7 @@ mod tests {
                 backup_id: results[0].backup_id.clone(),
                 was_disabled: false,
                 same_name: false,
+                installed_token: results[0].installed_token.clone(),
             },
         )
         .unwrap();
@@ -1445,6 +1617,7 @@ mod tests {
 
         let mut previous = "hotw_v1.zip".to_string();
         let mut last = None;
+        let mut last_token = None;
         for version in 2..=5 {
             std::thread::sleep(std::time::Duration::from_millis(5));
             let name = format!("hotw_v{version}.zip");
@@ -1467,6 +1640,7 @@ mod tests {
             .unwrap();
             assert!(results[0].success, "{:?}", results[0].message);
             last = results[0].backup_id.clone();
+            last_token = results[0].installed_token.clone();
             previous = name;
         }
 
@@ -1493,6 +1667,7 @@ mod tests {
                 backup_id: last,
                 was_disabled: false,
                 same_name: false,
+                installed_token: last_token,
             },
         )
         .unwrap();
@@ -1562,6 +1737,63 @@ mod tests {
             installer.list_backups("car_v2.zip").len(),
             1,
             "только что сделанная"
+        );
+    }
+
+    #[test]
+    fn copy_held_by_restore_undo_is_not_pruned() {
+        let (temp, state) = setup();
+        let mut settings = state.settings.load().settings;
+        settings.keep_backups = 1;
+        state.settings.save(&settings).unwrap();
+        let installer = installer_for(&state).unwrap();
+        let first = temp.path().join("car_v1.zip");
+        make_zip(&first, b"one");
+        installer.install_from_path(&first, "car_v1.zip", InstallOptions::default());
+        let id = crate::commands::library::load_snapshot(&state)
+            .unwrap()
+            .mods[0]
+            .id
+            .clone();
+        let second = temp.path().join("car_v2.zip");
+        make_zip(&second, b"two");
+        checked_source(&second);
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: second.display().to_string(),
+                file_name: "car_v2.zip".to_string(),
+                replaces: Some("car_v1.zip".to_string()),
+                allow_warnings: true,
+                version: None,
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+        let held = installer.list_backups("car_v1.zip")[0].id.clone();
+        state.hold_backup(&held);
+
+        let third = temp.path().join("car_v3.zip");
+        make_zip(&third, b"three");
+        checked_source(&third);
+        let results = install_items(
+            &state,
+            &[IncomingInstallRequest {
+                zip_path: third.display().to_string(),
+                file_name: "car_v3.zip".to_string(),
+                replaces: Some("car_v2.zip".to_string()),
+                allow_warnings: true,
+                version: None,
+            }],
+        )
+        .unwrap();
+        assert!(results[0].success, "{:?}", results[0].message);
+        assert_eq!(state.library.get_mod(&id).unwrap().file_name, "car_v3.zip");
+        assert!(
+            installer
+                .list_backups("car_v1.zip")
+                .iter()
+                .any(|entry| entry.id == held)
         );
     }
 

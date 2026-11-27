@@ -5,6 +5,7 @@ import { noteLines, noticeFor, notesPreview, releaseNoteItems } from "./appUpdat
 function snapshot(stage: AppUpdateSnapshot["state"]["stage"], progress = 0): AppUpdateSnapshot {
   return {
     currentVersion: "1.2",
+    revision: 1,
     state: {
       stage,
       manifest: {

@@ -302,6 +302,7 @@
             backupId: result.backupId,
             wasDisabled: result.wasDisabled,
             sameName: result.sameName,
+            installedToken: result.installedToken,
           });
         } else {
           failures.push({

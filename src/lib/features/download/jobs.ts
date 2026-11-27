@@ -17,9 +17,18 @@ export function track(
   progress: DownloadProgress,
   now: number,
 ): Record<string, Tracked> {
-  const old = known[progress.path];
+  const key = progress.jobId === null ? progress.path : String(progress.jobId);
+  const old = known[key];
   const changedAt = !old || old.progress.received !== progress.received ? now : old.changedAt;
-  return { ...known, [progress.path]: { progress, changedAt } };
+  return { ...known, [key]: { progress, changedAt } };
+}
+
+export function pruneProgress(
+  known: Record<string, Tracked>,
+  jobs: DownloadJob[],
+): Record<string, Tracked> {
+  const keys = new Set(jobs.flatMap((job) => [String(job.id), job.path]));
+  return Object.fromEntries(Object.entries(known).filter(([key]) => keys.has(key)));
 }
 
 export function downloading(jobs: DownloadJob[]): DownloadJob[] {
@@ -42,7 +51,7 @@ export function viewOf(
   known: Record<string, Tracked>,
   now: number,
 ): ProgressView | null {
-  const tracked = known[job.path];
+  const tracked = known[String(job.id)] ?? known[job.path];
   return tracked ? progressView(tracked.progress, tracked.changedAt, now) : null;
 }
 
@@ -145,7 +154,7 @@ export function modProgress(
     .filter((item) => item.request?.modId === modId)
     .at(-1);
   if (!job) return null;
-  const progress = known[job.path]?.progress;
+  const progress = (known[String(job.id)] ?? known[job.path])?.progress;
   const total = progress?.total && progress.total > 0 ? progress.total : null;
   if (!progress || total === null) return { percent: null };
   return { percent: Math.min(100, Math.floor((progress.received / total) * 100)) };
@@ -167,7 +176,7 @@ export function overallProgress(
   let sized = true;
   let moving = false;
   for (const job of active) {
-    const tracked = known[job.path];
+    const tracked = known[String(job.id)] ?? known[job.path];
     const size = tracked?.progress.total;
     if (!tracked || !size || size <= 0) sized = false;
     else {

@@ -6,6 +6,8 @@
     appUpdateDownload,
     appUpdateRestart,
     appUpdateState,
+    applyAppUpdateProgress,
+    applyAppUpdateSnapshot,
     listenAppUpdateProgress,
     listenAppUpdateState,
     type AppUpdateSnapshot,
@@ -25,22 +27,27 @@
   onMount(() => {
     let disposed = false;
     const stops: (() => void)[] = [];
-    void appUpdateState()
-      .then((value) => {
-        if (!disposed) snapshot = value;
-      })
-      .catch(() => {});
-    void listenAppUpdateState((value) => {
-      if (!disposed) snapshot = value;
-    })
-      .then((stop) => (disposed ? stop() : stops.push(stop)))
-      .catch(() => {});
-    void listenAppUpdateProgress((progress) => {
-      if (disposed || !snapshot) return;
-      snapshot = { ...snapshot, state: { ...snapshot.state, progress } };
-    })
-      .then((stop) => (disposed ? stop() : stops.push(stop)))
-      .catch(() => {});
+    void Promise.allSettled([
+      listenAppUpdateState((value) => {
+        if (!disposed) snapshot = applyAppUpdateSnapshot(snapshot, value);
+      }),
+      listenAppUpdateProgress((progress, revision) => {
+        if (!disposed) snapshot = applyAppUpdateProgress(snapshot, progress, revision);
+      }),
+    ]).then((results) => {
+      for (const result of results) {
+        if (result.status === "fulfilled") stops.push(result.value);
+      }
+      if (disposed) {
+        for (const stop of stops) stop();
+        return;
+      }
+      void appUpdateState()
+        .then((value) => {
+          if (!disposed) snapshot = applyAppUpdateSnapshot(snapshot, value);
+        })
+        .catch(() => {});
+    });
     return () => {
       disposed = true;
       for (const stop of stops) stop();
@@ -52,7 +59,7 @@
     busy = true;
     snapshot = { ...snapshot, state: { ...snapshot.state, stage: "downloading", progress: 0 } };
     try {
-      snapshot = await appUpdateDownload();
+      snapshot = applyAppUpdateSnapshot(snapshot, await appUpdateDownload());
     } catch (reason) {
       const message =
         reason && typeof reason === "object" && "message" in reason

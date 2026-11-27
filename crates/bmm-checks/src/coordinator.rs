@@ -218,8 +218,8 @@ impl UpdateCoordinator {
                 waited = Some(id);
                 waited_scope = running.only.clone();
                 waited_resolutions = running.resolutions;
-                // Дожидаемся конца идущей; после пробуждения решаем, отдавать её
-                // отчёт или (если её отменили) запускать свежую.
+                // Дожидаемся конца идущей и отдаём её отчёт, даже отменённый:
+                // второе нажатие не должно незаметно запускать новую проверку.
                 state.waiters += 1;
                 while state.running.is_some() {
                     state = self
@@ -237,11 +237,10 @@ impl UpdateCoordinator {
             if let Some(id) = waited
                 && waited_scope == only
                 && state.last_completed_run == Some(id)
-                && state.last_cancelled_run != Some(id)
                 && state.resolutions == waited_resolutions
             {
-                // Присоединяться к прерванной (или упавшей) бессмысленно:
-                // запускаем свежую ниже.
+                // Ждущий получает тот же отчёт, включая отменённый: второе нажатие
+                // не запускает проверку заново.
                 return state.last_report.clone().unwrap_or_default();
             }
 
@@ -286,7 +285,7 @@ impl UpdateCoordinator {
                 armed: true,
             };
             let report = self.run_batches(force, only.as_deref(), &cancel, progress);
-            self.finish_run(id, &report);
+            let report = self.finish_run(id, &report);
             guard.armed = false;
             return report;
         }
@@ -326,9 +325,18 @@ impl UpdateCoordinator {
         self.lock().waiters
     }
 
-    fn finish_run(&self, id: u64, report: &UpdateRunReport) {
+    fn finish_run(&self, id: u64, report: &UpdateRunReport) -> UpdateRunReport {
+        let mut effective = report.clone();
         {
             let mut state = self.lock();
+            if state
+                .running
+                .as_ref()
+                .filter(|running| running.id == id)
+                .is_some_and(|running| running.cancel.load(Ordering::Relaxed))
+            {
+                effective.cancelled = true;
+            }
             let mut scoped = false;
             if let Some((forced, resolutions, only)) = state
                 .running
@@ -344,12 +352,12 @@ impl UpdateCoordinator {
                 scoped = only;
             }
             state.last_report = Some(if scoped {
-                with_source_replaced(state.last_report.take(), report)
+                with_source_replaced(state.last_report.take(), &effective)
             } else {
-                report.clone()
+                effective.clone()
             });
             state.last_completed_run = Some(id);
-            if report.cancelled {
+            if effective.cancelled {
                 state.last_cancelled_run = Some(id);
             } else {
                 state.last_finished = Some(self.now());
@@ -357,10 +365,11 @@ impl UpdateCoordinator {
             }
         }
         // «Последняя проверка» в окне — время нажатия, даже если все моды отложены.
-        if !report.cancelled {
+        if !effective.cancelled {
             self.store.set_last_run(self.now());
         }
         self.idle.notify_all();
+        effective
     }
 
     fn run_batches(
@@ -1011,33 +1020,6 @@ mod tests {
     }
 
     #[test]
-    fn cancel_then_new_press_runs_fresh_check() {
-        let (site, gate, started) = Site::gated();
-        site.set_feed(vec![l("m0", "1.0")]);
-        let clock = clock_at(t0());
-        let coordinator = coordinator(
-            store(1),
-            Arc::clone(&site),
-            clock_of(&clock),
-            UpdateCoordinatorOptions::default(),
-        );
-
-        let first = spawn_check(Arc::clone(&coordinator), false);
-        wait_started(&started);
-        coordinator.cancel();
-        let second = spawn_check(Arc::clone(&coordinator), false);
-        wait_for_waiter(&coordinator);
-        gate.open();
-
-        let first = first.join().unwrap();
-        let second = second.join().unwrap();
-        assert!(first.cancelled, "старая прервана");
-        assert!(!second.cancelled, "новая доведена до конца");
-        assert_eq!(second.up_to_date, 1);
-        assert!(!coordinator.is_running());
-    }
-
-    #[test]
     fn force_during_normal_check_joins_without_cache_reset() {
         let (site, gate, started) = Site::gated();
         site.set_feed(vec![l("m0", "1.0")]);
@@ -1306,6 +1288,63 @@ mod tests {
         assert!(!next.reused, "отменённая проверка не считается недавней");
         assert!(!next.cancelled);
         assert_eq!(next.up_to_date, 1);
+    }
+
+    #[test]
+    fn cancel_at_finish_is_not_lost() {
+        let coordinator = coordinator(
+            store(1),
+            Site::new(),
+            clock_of(&clock_at(t0())),
+            UpdateCoordinatorOptions::default(),
+        );
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut state = coordinator.lock();
+            state.running = Some(Running {
+                id: 7,
+                forced: true,
+                only: None,
+                cancel: Arc::clone(&cancel),
+                resolutions: 0,
+            });
+        }
+        coordinator.cancel();
+
+        let effective = coordinator.finish_run(7, &UpdateRunReport::default());
+
+        let state = coordinator.lock();
+        assert!(effective.cancelled);
+        assert!(state.last_report.as_ref().unwrap().cancelled);
+        assert_eq!(state.last_cancelled_run, Some(7));
+        assert!(state.last_finished.is_none());
+    }
+
+    #[test]
+    fn waiter_receives_cancelled_report_without_starting_a_new_run() {
+        let (site, gate, started) = Site::gated();
+        site.set_feed(vec![l("m0", "1.0")]);
+        let clock = clock_at(t0());
+        let coordinator = coordinator(
+            store(1),
+            Arc::clone(&site),
+            clock_of(&clock),
+            UpdateCoordinatorOptions::default(),
+        );
+        let first = spawn_check(Arc::clone(&coordinator), false);
+        wait_started(&started);
+        let second = spawn_check(Arc::clone(&coordinator), false);
+        wait_for_waiter(&coordinator);
+        coordinator.cancel();
+        gate.open();
+        let first = first.join().unwrap();
+        let second = second.join().unwrap();
+        assert!(first.cancelled);
+        assert!(second.cancelled, "ждущий получает тот же отменённый отчёт");
+        assert_eq!(
+            second.requests, first.requests,
+            "новая проверка не запускается"
+        );
     }
 
     #[test]

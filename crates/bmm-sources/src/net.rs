@@ -306,6 +306,8 @@ fn total_size(
     None
 }
 
+const PEEK_TIMEOUT: Duration = Duration::from_secs(15);
+
 pub struct HttpPageFetcher {
     client: Client,
     /// Без перехода по редиректам: ссылку «Скачать» проходим сами, по одному шагу,
@@ -581,8 +583,8 @@ impl HttpPageFetcher {
             .map_err(|error| FetchError::Message(error.to_string()))?;
         let peek_client = Client::builder()
             .user_agent(user_agent)
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(PEEK_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .cookie_store(true)
             .build()
@@ -1963,6 +1965,11 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peek_timeout_is_shorter_than_search_deadline() {
+        assert!(PEEK_TIMEOUT < crate::search::SearchOptions::default().per_source_timeout);
+    }
 
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};

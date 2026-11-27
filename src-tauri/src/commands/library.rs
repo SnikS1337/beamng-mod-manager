@@ -537,9 +537,80 @@ pub fn preview_url(key: &str, extension: &str) -> String {
 mod snapshot;
 pub(crate) use snapshot::{load_snapshot, resolve_folder};
 
+fn reconcile_live_pending(
+    state: &AppState,
+    mods_dir: &Path,
+    disks: &[DiskMod],
+    db: &bmm_game::db::GameDbReadResult,
+) -> bool {
+    let Some(sent) = state.bridge_sent_id() else {
+        return false;
+    };
+    let bridge = bmm_game::bridge::GameBridge::with_system_clock(mods_dir);
+    let answer = bridge
+        .read_answer()
+        .filter(|answer| answer.ack_id.as_deref() == Some(sent.as_str()));
+    let command = bridge.read_command().filter(|command| {
+        command.get("id").and_then(serde_json::Value::as_str) == Some(sent.as_str())
+    });
+    let pending = crate::state::lock(&state.pending).clone();
+    if pending.is_empty() {
+        state.forget_bridge_sent(&sent);
+        return true;
+    }
+
+    let mut applied = Vec::new();
+    for (file_name, wanted) in &pending {
+        let key = bmm_game::db::key_of(file_name);
+        let acknowledged = answer.as_ref().and_then(|answer| answer.result(&key)) == Some("ok")
+            && command
+                .as_ref()
+                .and_then(|command| command.get("set"))
+                .and_then(|set| set.get(&key))
+                .and_then(serde_json::Value::as_bool)
+                == Some(*wanted);
+        let actual = if db.unreadable {
+            None
+        } else {
+            disks
+                .iter()
+                .find(|disk| disk.file_name.eq_ignore_ascii_case(file_name))
+                .filter(|disk| disk.sub_folder.is_none())
+                .and_then(|disk| match db.find(file_name) {
+                    None => Some(disk.enabled),
+                    Some(entry) if entry.is_at(None) => Some(disk.enabled && entry.active),
+                    Some(_) => None,
+                })
+        };
+        if acknowledged || actual == Some(*wanted) {
+            applied.push(file_name.clone());
+        }
+    }
+
+    let mut changed = !applied.is_empty();
+    if changed {
+        let mut queue = crate::state::lock(&state.pending);
+        for file_name in &applied {
+            if let Some(wanted) = pending.get(file_name)
+                && queue.get(file_name) == Some(wanted)
+            {
+                queue.remove(file_name);
+            }
+        }
+        drop(queue);
+        let _ = state.save_pending();
+    }
+    if crate::state::lock(&state.pending).is_empty() {
+        state.forget_bridge_sent(&sent);
+        changed = true;
+    }
+    changed
+}
+
 fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
     let pending = crate::state::lock(&state.pending).clone();
     if pending.is_empty() {
+        state.forget_bridge_sent_all();
         return;
     }
     let installer = ModInstaller::new(layout.clone(), system_clock(), Arc::new(|| 3));
@@ -590,6 +661,7 @@ fn apply_pending(state: &AppState, db: &GameModDb, layout: &ModLayout) {
         }
         drop(queue);
         let _ = state.save_pending();
+        state.forget_bridge_sent_all();
     }
 }
 
@@ -676,6 +748,16 @@ pub(crate) fn toggle_mod(
     id: &str,
     enabled: bool,
 ) -> Result<ToggleResult, AppError> {
+    toggle_mod_inner(state, id, enabled, process::is_running(), live_deadline(1))
+}
+
+fn toggle_mod_inner(
+    state: &AppState,
+    id: &str,
+    enabled: bool,
+    game_running: bool,
+    wait: Duration,
+) -> Result<ToggleResult, AppError> {
     let _guard = state.load_guard();
     let settings = state.settings.load().settings;
     let (mods_dir, error) = resolve_folder(&settings);
@@ -716,8 +798,9 @@ pub(crate) fn toggle_mod(
         })
         .ok_or_else(|| AppError::new("missing", "Файл мода не найден."))?;
 
-    if process::is_running() {
-        if let Some(result) = try_live_toggle(state, &mods_dir, &installed, &disk, enabled) {
+    if game_running {
+        drop(_guard);
+        if let Some(result) = try_live_toggle_within(state, &mods_dir, &disk, enabled, wait) {
             return Ok(result);
         }
         return Ok(queue_toggle(state, &installed.file_name, enabled));
@@ -854,6 +937,16 @@ pub(crate) fn toggle_many(
     ids: &[String],
     enabled: bool,
 ) -> Result<BulkToggleResult, AppError> {
+    toggle_many_inner(state, ids, enabled, process::is_running(), live_deadline)
+}
+
+fn toggle_many_inner(
+    state: &AppState,
+    ids: &[String],
+    enabled: bool,
+    game_running: bool,
+    wait: impl Fn(usize) -> Duration,
+) -> Result<BulkToggleResult, AppError> {
     let _guard = state.load_guard();
     let settings = state.settings.load().settings;
     let (mods_dir, error) = resolve_folder(&settings);
@@ -866,11 +959,14 @@ pub(crate) fn toggle_many(
     let mut changed = Vec::new();
     let mut queued = Vec::new();
     let mut failed = Vec::new();
-    if process::is_running() {
+    if game_running {
         // Игра запущена: переключает помощник внутри неё, одной командой на всю пачку.
         // Раньше пачка сразу откладывалась «до закрытия игры», хотя одиночный
         // переключатель в это же время работал на ходу.
-        return Ok(toggle_live_many(state, &mods_dir, ids, enabled));
+        drop(_guard);
+        return Ok(toggle_live_many_within(
+            state, &mods_dir, ids, enabled, wait,
+        ));
     }
 
     let layout = ModLayout::in_app_folder(&mods_dir, state.paths.root());
@@ -1014,12 +1110,19 @@ fn queue_toggle(state: &AppState, file_name: &str, enabled: bool) -> ToggleResul
 
 /// Что ответил помощник внутри игры на команду.
 enum LiveReply {
-    /// Ответ по каждому моду: ключ → «ok», «missing»…
-    Answered(bmm_game::bridge::BridgeAnswer),
+    /// Ответ и точный состав команды: новый pending, пришедший во время ожидания,
+    /// нельзя подтверждать старым ack.
+    Answered(
+        bmm_game::bridge::BridgeAnswer,
+        Vec<(String, bool)>,
+        HashMap<String, bool>,
+    ),
     /// Команда у игры, но она ещё занята ею (большой мод грузится несколько секунд).
-    Sent,
-    /// Помощника нет или он молчит: менять придётся после закрытия игры.
-    Dead,
+    Sent(String),
+    /// Помощника нет ещё до сохранения намерения: вызывающий код отложит его сам.
+    DeadBeforeSend,
+    /// Команда уже сохранена в pending, но помощник не ответил или отключился.
+    DeadAfterSend,
 }
 
 /// Сколько ждать ответа: активация мода на сотни мегабайт занимает секунды,
@@ -1030,55 +1133,160 @@ fn live_deadline(count: usize) -> Duration {
     Duration::from_secs(12) + Duration::from_secs(3) * extra
 }
 
-fn live_send(mods_dir: &Path, wanted: &[(&str, bool)], wait: Duration) -> LiveReply {
+fn live_send(
+    state: &AppState,
+    mods_dir: &Path,
+    wanted: &[(&str, bool)],
+    wait: Duration,
+) -> LiveReply {
     let bridge = bmm_game::bridge::GameBridge::with_system_clock(mods_dir);
     if !bridge.is_alive() {
-        return LiveReply::Dead;
+        return LiveReply::DeadBeforeSend;
     }
-    let Some(id) = bridge.send(wanted) else {
-        return LiveReply::Dead;
+    let pending_entries: Vec<(String, bool)> = {
+        let _guard = state.load_guard();
+        let mut pending = crate::state::lock(&state.pending);
+        for (file, enabled) in wanted {
+            pending.insert((*file).to_string(), *enabled);
+        }
+        let entries = pending
+            .iter()
+            .map(|(file, enabled)| (file.clone(), *enabled))
+            .collect();
+        drop(pending);
+        let _ = state.save_pending();
+        entries
     };
+    let pending_before: HashMap<String, bool> = pending_entries
+        .iter()
+        .map(|(file, enabled)| (file.to_lowercase(), *enabled))
+        .collect();
+    let mut names_by_key: HashMap<String, String> = pending_entries
+        .iter()
+        .map(|(file, _)| (bmm_game::db::key_of(file), file.clone()))
+        .collect();
+    for installed in state.library.mods() {
+        names_by_key
+            .entry(bmm_game::db::key_of(&installed.file_name))
+            .or_insert(installed.file_name);
+    }
+    let send: Vec<(&str, bool)> = pending_entries
+        .iter()
+        .map(|(file, enabled)| (file.as_str(), *enabled))
+        .collect();
+    let Some(command) = bridge.send_command(&send) else {
+        return LiveReply::DeadAfterSend;
+    };
+    let id = command.id;
+    state.remember_bridge_sent(&id);
+    let sent: Vec<(String, bool)> = command
+        .set
+        .into_iter()
+        .map(|(key, enabled)| {
+            let file = names_by_key.get(&key).cloned().unwrap_or(key.clone());
+            (file, enabled)
+        })
+        .collect();
     let deadline = Instant::now() + wait;
     loop {
         if let Some(answer) = bridge.read_answer()
             && answer.ack_id.as_deref() == Some(id.as_str())
         {
-            return LiveReply::Answered(answer);
+            return LiveReply::Answered(answer, sent, pending_before);
         }
         if Instant::now() >= deadline {
             // Мост жив или занят этой командой — изменение уже у игры, не врём
             // «применится, когда закроете игру».
             return if bridge.is_busy_for(&id) || bridge.is_alive() {
-                LiveReply::Sent
+                LiveReply::Sent(id)
             } else {
-                LiveReply::Dead
+                LiveReply::DeadAfterSend
             };
         }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
-fn try_live_toggle(
+fn pending_targets(state: &AppState) -> HashMap<String, bool> {
+    crate::state::lock(&state.pending)
+        .iter()
+        .map(|(file, enabled)| (file.to_lowercase(), *enabled))
+        .collect()
+}
+
+fn apply_live_answer(
+    state: &AppState,
+    answer: &bmm_game::bridge::BridgeAnswer,
+    sent: &[(String, bool)],
+    pending_before: &HashMap<String, bool>,
+) -> Vec<String> {
+    let pending = pending_targets(state);
+    let mut installed: HashMap<String, bmm_domain::library::InstalledMod> = state
+        .library
+        .mods()
+        .into_iter()
+        .map(|item| (item.file_name.to_lowercase(), item))
+        .collect();
+    let _batch = state.library.batch();
+    let mut applied = Vec::new();
+    for (file, enabled) in sent {
+        let key = bmm_game::db::key_of(file);
+        if answer.result(&key) != Some("ok")
+            || pending_before.get(&file.to_lowercase()) != pending.get(&file.to_lowercase())
+        {
+            continue;
+        }
+        if let Some(item) = installed.get_mut(&file.to_lowercase()) {
+            item.enabled = *enabled;
+            state.library.upsert_mod(item.clone());
+        }
+        applied.push(file.clone());
+    }
+    clear_pending_many(state, &applied);
+    applied
+}
+
+fn finish_live_answer(state: &AppState, id: &str) {
+    if crate::state::lock(&state.pending).is_empty() {
+        state.forget_bridge_sent_all();
+    } else {
+        state.remember_bridge_sent(id);
+    }
+}
+
+fn try_live_toggle_within(
     state: &AppState,
     mods_dir: &Path,
-    installed: &bmm_domain::library::InstalledMod,
     disk: &DiskMod,
     enabled: bool,
+    wait: Duration,
 ) -> Option<ToggleResult> {
-    match live_send(
-        mods_dir,
-        &[(disk.file_name.as_str(), enabled)],
-        live_deadline(1),
-    ) {
-        LiveReply::Answered(answer) => {
-            let key = bmm_game::db::key_of(&disk.file_name);
-            if answer.result(&key) != Some("ok") {
-                return None;
+    let _live = crate::state::lock(&state.live_lock);
+    let reply = live_send(state, mods_dir, &[(disk.file_name.as_str(), enabled)], wait);
+    let _guard = state.load_guard();
+    match reply {
+        LiveReply::Answered(answer, sent, pending_before) => {
+            let applied = apply_live_answer(state, &answer, &sent, &pending_before);
+            if let Some(id) = answer.ack_id.as_deref() {
+                finish_live_answer(state, id);
             }
-            let mut updated = installed.clone();
-            updated.enabled = enabled;
-            state.library.upsert_mod(updated);
-            clear_pending(state, &disk.file_name);
+            if !applied
+                .iter()
+                .any(|file| file.eq_ignore_ascii_case(&disk.file_name))
+            {
+                let key = disk.file_name.to_lowercase();
+                let pending = pending_targets(state);
+                let latest = pending.get(&key).copied().unwrap_or(enabled);
+                return Some(ToggleResult {
+                    outcome: "queued".to_string(),
+                    enabled: latest,
+                    message: Some(if pending_before.get(&key) != pending.get(&key) {
+                        "Игра применит последнее изменение, когда закончит.".to_string()
+                    } else {
+                        "Игра не подтвердила изменение — оно сохранено до закрытия.".to_string()
+                    }),
+                });
+            }
             Some(ToggleResult {
                 outcome: "done".to_string(),
                 enabled,
@@ -1089,32 +1297,45 @@ fn try_live_toggle(
                 }),
             })
         }
-        LiveReply::Sent => {
-            queue_toggle(state, &disk.file_name, enabled);
+        LiveReply::Sent(id) => {
+            state.remember_bridge_sent(&id);
+            let latest = pending_targets(state)
+                .get(&disk.file_name.to_lowercase())
+                .copied()
+                .unwrap_or(enabled);
             Some(ToggleResult {
                 outcome: "queued".to_string(),
-                enabled,
+                enabled: latest,
                 message: Some(
                     "Игра занята: изменение отправлено и применится, когда она закончит."
                         .to_string(),
                 ),
             })
         }
-        LiveReply::Dead => None,
+        LiveReply::DeadAfterSend => {
+            let latest = pending_targets(state)
+                .get(&disk.file_name.to_lowercase())
+                .copied()
+                .unwrap_or(enabled);
+            Some(ToggleResult {
+                outcome: "queued".to_string(),
+                enabled: latest,
+                message: Some("Игра не ответила: изменение сохранено до закрытия.".to_string()),
+            })
+        }
+        LiveReply::DeadBeforeSend => {
+            queue_toggle(state, &disk.file_name, enabled);
+            Some(ToggleResult {
+                outcome: "queued".to_string(),
+                enabled,
+                message: Some("Игра не ответила: изменение сохранено до закрытия.".to_string()),
+            })
+        }
     }
 }
 
 /// Пачка при запущенной игре: одна команда помощнику. Что он подтвердил — переключено;
 /// что игра не знает или помощника нет — отложено до закрытия игры, как у одиночного.
-fn toggle_live_many(
-    state: &AppState,
-    mods_dir: &Path,
-    ids: &[String],
-    enabled: bool,
-) -> BulkToggleResult {
-    toggle_live_many_within(state, mods_dir, ids, enabled, live_deadline)
-}
-
 fn toggle_live_many_within(
     state: &AppState,
     mods_dir: &Path,
@@ -1122,16 +1343,21 @@ fn toggle_live_many_within(
     enabled: bool,
     wait: impl Fn(usize) -> Duration,
 ) -> BulkToggleResult {
+    let _live = crate::state::lock(&state.live_lock);
     let mut changed = Vec::new();
     let mut queued = Vec::new();
-    let mut failed = Vec::new();
-    let mut items = Vec::new();
-    for id in ids {
-        match state.library.get_mod(id) {
-            Some(installed) => items.push((id.clone(), installed)),
-            None => failed.push(id.clone()),
+    let (items, failed) = {
+        let _guard = state.load_guard();
+        let mut items = Vec::new();
+        let mut failed = Vec::new();
+        for id in ids {
+            match state.library.get_mod(id) {
+                Some(installed) => items.push((id.clone(), installed)),
+                None => failed.push(id.clone()),
+            }
         }
-    }
+        (items, failed)
+    };
     if items.is_empty() {
         return BulkToggleResult {
             changed,
@@ -1143,35 +1369,36 @@ fn toggle_live_many_within(
         .iter()
         .map(|(_, installed)| (installed.file_name.as_str(), enabled))
         .collect();
-    let reply = live_send(mods_dir, &wanted, wait(wanted.len()));
+    let reply = live_send(state, mods_dir, &wanted, wait(wanted.len()));
+    let _guard = state.load_guard();
     let _batch = state.library.batch();
     match reply {
-        LiveReply::Answered(answer) => {
-            let mut changed_files = Vec::new();
+        LiveReply::Answered(answer, sent, pending_before) => {
+            let applied = apply_live_answer(state, &answer, &sent, &pending_before);
             for (id, installed) in items {
-                let key = bmm_game::db::key_of(&installed.file_name);
-                if answer.result(&key) == Some("ok") {
-                    changed_files.push(installed.file_name.clone());
-                    let mut updated = installed;
-                    updated.enabled = enabled;
-                    state.library.upsert_mod(updated);
+                if applied
+                    .iter()
+                    .any(|file| file.eq_ignore_ascii_case(&installed.file_name))
+                {
                     changed.push(id);
                 } else {
-                    queue_toggle(state, &installed.file_name, enabled);
                     queued.push(id);
                 }
             }
-            clear_pending_many(state, &changed_files);
+            if let Some(id) = answer.ack_id.as_deref() {
+                finish_live_answer(state, id);
+            }
         }
         // Команда у игры: желаемое состояние остаётся в pending, пока снимок не
         // сверит его с db.json. Так перезапуск или потеря ответа не теряют пачку.
-        LiveReply::Sent => {
-            for (_, installed) in &items {
-                queue_toggle(state, &installed.file_name, enabled);
-            }
+        LiveReply::Sent(id) => {
+            state.remember_bridge_sent(&id);
             queued.extend(items.into_iter().map(|(id, _)| id));
         }
-        LiveReply::Dead => {
+        LiveReply::DeadAfterSend => {
+            queued.extend(items.into_iter().map(|(id, _)| id));
+        }
+        LiveReply::DeadBeforeSend => {
             for (id, installed) in items {
                 queue_toggle(state, &installed.file_name, enabled);
                 queued.push(id);
@@ -1459,6 +1686,24 @@ mod tests {
     use bmm_domain::settings_store::SettingsStore;
     use bmm_packs::cache::PreviewCache;
 
+    fn try_live_toggle(
+        state: &AppState,
+        mods_dir: &Path,
+        disk: &DiskMod,
+        enabled: bool,
+    ) -> Option<ToggleResult> {
+        try_live_toggle_within(state, mods_dir, disk, enabled, live_deadline(1))
+    }
+
+    fn toggle_live_many(
+        state: &AppState,
+        mods_dir: &Path,
+        ids: &[String],
+        enabled: bool,
+    ) -> BulkToggleResult {
+        toggle_live_many_within(state, mods_dir, ids, enabled, live_deadline)
+    }
+
     #[test]
     fn loads_real_folder_and_toggles_active() {
         let temp = tempfile::tempdir().unwrap();
@@ -1490,8 +1735,11 @@ mod tests {
             )),
             previews: PreviewCache::new(temp.path().join("data/previews")),
             load_lock: Mutex::new(()),
+            live_lock: Mutex::new(()),
             previews_by_id: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
+            bridge_sent: Mutex::new(None),
+            held_backups: Arc::new(Mutex::new(std::collections::HashSet::new())),
             preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
             deleted: Mutex::new(HashMap::new()),
             content_cache: Mutex::new(HashMap::new()),
@@ -1850,6 +2098,27 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_applies_offline_pending_before_building_cards() {
+        let temp = tempfile::tempdir().unwrap();
+        let mods = temp.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        let state = test_state(&temp, &mods);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        std::fs::create_dir_all(&layout.disabled_dir).unwrap();
+        std::fs::write(layout.disabled_dir.join("mod.zip"), b"zip").unwrap();
+        crate::state::lock(&state.pending).insert("mod.zip".to_string(), true);
+
+        let snapshot = load_snapshot(&state).unwrap();
+        assert!(layout.mods_dir.join("mod.zip").is_file());
+        assert!(!layout.disabled_dir.join("mod.zip").exists());
+        assert!(crate::state::lock(&state.pending).is_empty());
+        assert!(
+            snapshot.mods[0].enabled,
+            "карточка должна показать уже применённое состояние"
+        );
+    }
+
+    #[test]
     fn toggle_moves_files_the_game_has_not_seen() {
         let temp = tempfile::tempdir().unwrap();
         let mods = temp.path().join("mods");
@@ -2164,8 +2433,7 @@ mod tests {
             }
         });
 
-        let result =
-            try_live_toggle(&state, &mods, &installed, &disk, false).expect("мост должен ответить");
+        let result = try_live_toggle(&state, &mods, &disk, false).expect("мост должен ответить");
         game.join().unwrap();
         assert_eq!(result.outcome, "done");
         assert!(!result.enabled);
@@ -2208,6 +2476,39 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         })
+    }
+
+    fn change_pending_during_command(
+        mods: &Path,
+        state: Arc<AppState>,
+        file: &str,
+        enabled: bool,
+        keep_alive: bool,
+    ) -> (std::thread::JoinHandle<()>, std::sync::mpsc::Receiver<()>) {
+        let (changed_tx, changed_rx) = std::sync::mpsc::channel();
+        let mods = mods.to_path_buf();
+        let file = file.to_string();
+        let game = std::thread::spawn(move || {
+            let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if bridge.command_path().is_file() {
+                    crate::state::lock(&state.pending).insert(file.to_string(), enabled);
+                    if !keep_alive {
+                        std::fs::write(
+                            bridge.state_path(),
+                            serde_json::json!({ "alive": 1 }).to_string(),
+                        )
+                        .unwrap();
+                    }
+                    let _ = changed_tx.send(());
+                    return;
+                }
+                assert!(Instant::now() < deadline, "команда не появилась");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        (game, changed_rx)
     }
 
     #[test]
@@ -2260,6 +2561,24 @@ mod tests {
         assert_eq!(pending.get("c.zip"), Some(&false));
         // Файлы на ходу не двигаем: игра держит их открытыми.
         assert!(mods.join("a.zip").is_file());
+    }
+
+    #[test]
+    fn immediate_partial_answer_remembers_the_unfinished_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let game = fake_game(&mods, serde_json::json!({ "a": "ok", "b": "missing" }));
+        let result = toggle_live_many(&state, &mods, &ids[..2], false);
+        let command = game.join().unwrap().expect("команда должна дойти до игры");
+        let id = command["id"].as_str().unwrap().to_string();
+
+        assert_eq!(result.changed, vec![ids[0].clone()]);
+        assert_eq!(result.queued, vec![ids[1].clone()]);
+        assert_eq!(
+            crate::state::lock(&state.pending).get("b.zip"),
+            Some(&false)
+        );
+        assert_eq!(state.bridge_sent_id().as_deref(), Some(id.as_str()));
     }
 
     #[test]
@@ -2335,6 +2654,595 @@ mod tests {
         );
         let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
         assert!(bridge.command_path().is_file(), "команда у игры");
+    }
+
+    #[test]
+    fn sent_batch_is_remembered_and_reconciled_from_late_ack() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        mark_alive(&mods, serde_json::json!({}));
+        let result =
+            toggle_live_many_within(&state, &mods, &ids, false, |_| Duration::from_millis(150));
+        assert!(result.changed.is_empty());
+        assert_eq!(result.queued, ids);
+
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        let command: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(bridge.command_path()).unwrap()).unwrap();
+        let id = command["id"].as_str().unwrap().to_string();
+        assert_eq!(state.bridge_sent_id().as_deref(), Some(id.as_str()));
+
+        let remembered = state.bridge_sent_id();
+        *crate::state::lock(&state.bridge_sent) = None;
+        state.load_bridge_sent();
+        assert_eq!(
+            state.bridge_sent_id(),
+            remembered,
+            "sent_id переживает запуск"
+        );
+
+        std::fs::write(
+            bridge.state_path(),
+            serde_json::json!({
+                "alive": chrono::Utc::now().timestamp(),
+                "ackId": id,
+                "results": { "a": "ok", "b": "ok", "c": "ok" },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let disks = scan::scan_mods(&layout).mods;
+        let db = GameModDb::new(&mods);
+        assert!(reconcile_live_pending(
+            &state,
+            &mods,
+            &disks,
+            &db.read_stable()
+        ));
+        assert!(crate::state::lock(&state.pending).is_empty());
+        assert_eq!(state.bridge_sent_id(), None);
+    }
+
+    #[test]
+    fn old_ack_does_not_confirm_a_newer_pending_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_mods, state, ids) = three_mods(&temp);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), false);
+        let answer = bmm_game::bridge::BridgeAnswer {
+            ack_id: Some("old".to_string()),
+            results: HashMap::from([("a".to_string(), "ok".to_string())]),
+            error: None,
+        };
+        let pending_before = HashMap::from([("a.zip".to_string(), false)]);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), true);
+
+        let applied = apply_live_answer(
+            &state,
+            &answer,
+            &[("a.zip".to_string(), false)],
+            &pending_before,
+        );
+
+        assert!(applied.is_empty());
+        assert_eq!(crate::state::lock(&state.pending).get("a.zip"), Some(&true));
+        assert!(state.library.get_mod(&ids[0]).unwrap().enabled);
+    }
+
+    #[test]
+    fn partial_answer_keeps_sent_id_until_the_rest_is_reconciled() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        mark_alive(&mods, serde_json::json!({}));
+        let result =
+            toggle_live_many_within(&state, &mods, &ids, false, |_| Duration::from_millis(150));
+        assert_eq!(result.queued, ids);
+
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        let command: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(bridge.command_path()).unwrap()).unwrap();
+        let id = command["id"].as_str().unwrap().to_string();
+        std::fs::write(
+            bridge.state_path(),
+            serde_json::json!({
+                "alive": chrono::Utc::now().timestamp(),
+                "ackId": id,
+                "results": { "a": "ok" },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let db = GameModDb::new(&mods);
+        assert!(reconcile_live_pending(
+            &state,
+            &mods,
+            &scan::scan_mods(&layout).mods,
+            &db.read_stable()
+        ));
+        let pending = crate::state::lock(&state.pending).clone();
+        assert_eq!(pending.len(), 2, "{pending:?}");
+        assert_eq!(state.bridge_sent_id().as_deref(), Some(id.as_str()));
+
+        let installer = ModInstaller::new(layout, system_clock(), Arc::new(|| 3));
+        assert!(installer.disable("b.zip").success);
+        assert!(installer.disable("c.zip").success);
+        let disks = scan::scan_mods(installer.layout()).mods;
+        assert!(reconcile_live_pending(
+            &state,
+            &mods,
+            &disks,
+            &db.read_stable()
+        ));
+        assert!(crate::state::lock(&state.pending).is_empty());
+        assert_eq!(state.bridge_sent_id(), None);
+    }
+
+    #[test]
+    fn late_ack_does_not_confirm_a_changed_pending_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        mark_alive(&mods, serde_json::json!({}));
+        let result = toggle_live_many_within(&state, &mods, &[ids[0].clone()], false, |_| {
+            Duration::from_millis(150)
+        });
+        assert_eq!(result.queued, vec![ids[0].clone()]);
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        let command: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(bridge.command_path()).unwrap()).unwrap();
+        let id = command["id"].as_str().unwrap().to_string();
+
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let installer = ModInstaller::new(layout.clone(), system_clock(), Arc::new(|| 3));
+        assert!(installer.disable("a.zip").success);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), true);
+        std::fs::write(
+            bridge.state_path(),
+            serde_json::json!({
+                "alive": chrono::Utc::now().timestamp(),
+                "ackId": id,
+                "results": { "a": "ok" },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let db = GameModDb::new(&mods);
+        reconcile_live_pending(
+            &state,
+            &mods,
+            &scan::scan_mods(&layout).mods,
+            &db.read_stable(),
+        );
+
+        assert_eq!(crate::state::lock(&state.pending).get("a.zip"), Some(&true));
+        assert_eq!(state.bridge_sent_id().as_deref(), Some(id.as_str()));
+    }
+
+    #[test]
+    fn unreadable_db_does_not_confirm_a_pending_enable() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, _ids) = three_mods(&temp);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), true);
+        state.remember_bridge_sent("waiting");
+        std::fs::write(mods.join("db.json"), "{ битый").unwrap();
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let db = GameModDb::new(&mods);
+        let read = db.read_stable();
+        assert!(read.unreadable);
+
+        reconcile_live_pending(&state, &mods, &scan::scan_mods(&layout).mods, &read);
+
+        assert_eq!(crate::state::lock(&state.pending).get("a.zip"), Some(&true));
+        assert_eq!(state.bridge_sent_id().as_deref(), Some("waiting"));
+    }
+
+    #[test]
+    fn db_entry_for_another_location_does_not_confirm_a_pending_enable() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, _ids) = three_mods(&temp);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), true);
+        state.remember_bridge_sent("waiting");
+        std::fs::write(
+            mods.join("db.json"),
+            r#"{"header":{"version":1.1},"mods":{"a":{"filename":"a.zip","active":true,"fullpath":"mods/repo/a.zip","modType":"vehicle"}}}"#,
+        )
+        .unwrap();
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let db = GameModDb::new(&mods);
+        let read = db.read_stable();
+        assert!(!read.unreadable);
+
+        reconcile_live_pending(&state, &mods, &scan::scan_mods(&layout).mods, &read);
+
+        assert_eq!(crate::state::lock(&state.pending).get("a.zip"), Some(&true));
+        assert_eq!(state.bridge_sent_id().as_deref(), Some("waiting"));
+    }
+
+    #[test]
+    fn new_live_command_merges_manager_pending() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), false);
+        let game = fake_game(&mods, serde_json::json!({ "b": "ok" }));
+        let result = toggle_live_many(&state, &mods, &[ids[1].clone()], true);
+        let command = game.join().unwrap().expect("команда должна дойти до игры");
+        assert_eq!(command["set"]["a"], false);
+        assert_eq!(command["set"]["b"], true);
+        assert_eq!(result.changed, vec![ids[1].clone()]);
+        assert_eq!(
+            crate::state::lock(&state.pending).get("a.zip"),
+            Some(&false),
+            "неподтверждённая цель остаётся в очереди"
+        );
+    }
+
+    #[test]
+    fn cleared_pending_target_is_not_forwarded_from_an_old_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        std::fs::create_dir_all(bridge.command_path().parent().unwrap()).unwrap();
+        std::fs::write(
+            bridge.command_path(),
+            serde_json::json!({
+                "id": "old",
+                "time": chrono::Utc::now().timestamp(),
+                "set": { "a": false },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(bridge.state_path().parent().unwrap()).unwrap();
+        std::fs::write(
+            bridge.state_path(),
+            format!(r#"{{"alive":{}}}"#, chrono::Utc::now().timestamp()),
+        )
+        .unwrap();
+        let mods_for_game = mods.clone();
+        let game = std::thread::spawn(move || {
+            let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods_for_game);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok(text) = std::fs::read_to_string(bridge.command_path())
+                    && let Ok(command) = serde_json::from_str::<serde_json::Value>(&text)
+                    && command.get("id").and_then(|value| value.as_str()) != Some("old")
+                {
+                    std::fs::write(
+                        bridge.state_path(),
+                        serde_json::json!({
+                            "alive": chrono::Utc::now().timestamp(),
+                            "ackId": command["id"],
+                            "results": { "b": "ok" },
+                        })
+                        .to_string(),
+                    )
+                    .unwrap();
+                    return Some(command);
+                }
+                assert!(Instant::now() < deadline, "новая команда не появилась");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        let result = toggle_live_many(&state, &mods, &[ids[1].clone()], true);
+        let command = game.join().unwrap().expect("команда должна дойти до игры");
+
+        assert_eq!(command["set"], serde_json::json!({ "b": true }));
+        assert!(command["set"].get("a").is_none());
+        assert_eq!(result.changed, vec![ids[1].clone()]);
+        assert!(crate::state::lock(&state.pending).is_empty());
+    }
+
+    #[test]
+    fn answer_applies_to_every_merged_pending_mod() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), false);
+        let game = fake_game(&mods, serde_json::json!({ "a": "ok", "b": "ok" }));
+
+        let result = toggle_live_many(&state, &mods, &[ids[1].clone()], true);
+        let command = game.join().unwrap().expect("команда должна дойти до игры");
+
+        assert_eq!(command["set"], serde_json::json!({ "a": false, "b": true }));
+        assert_eq!(result.changed, vec![ids[1].clone()]);
+        assert!(result.queued.is_empty());
+        assert!(crate::state::lock(&state.pending).is_empty());
+        assert!(!state.library.get_mod(&ids[0]).unwrap().enabled);
+        assert!(state.library.get_mod(&ids[1]).unwrap().enabled);
+    }
+
+    #[test]
+    fn immediate_answer_covers_pending_entries_outside_the_clicked_batch() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        crate::state::lock(&state.pending).insert("a.zip".to_string(), false);
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        std::fs::create_dir_all(bridge.command_path().parent().unwrap()).unwrap();
+        std::fs::write(
+            bridge.command_path(),
+            serde_json::json!({
+                "id": "old",
+                "time": chrono::Utc::now().timestamp(),
+                "set": { "a": false },
+            })
+            .to_string(),
+        )
+        .unwrap();
+        mark_alive(&mods, serde_json::json!({}));
+        let mods_for_game = mods.clone();
+        let game = std::thread::spawn(move || {
+            let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods_for_game);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok(text) = std::fs::read_to_string(bridge.command_path())
+                    && let Ok(command) = serde_json::from_str::<serde_json::Value>(&text)
+                    && command.get("id").and_then(serde_json::Value::as_str) != Some("old")
+                {
+                    let id = command["id"].as_str().unwrap();
+                    std::fs::write(
+                        bridge.state_path(),
+                        serde_json::json!({
+                            "alive": chrono::Utc::now().timestamp(),
+                            "ackId": id,
+                            "results": { "a": "ok", "b": "ok" },
+                        })
+                        .to_string(),
+                    )
+                    .unwrap();
+                    return Some(command);
+                }
+                assert!(Instant::now() < deadline, "новая команда не появилась");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        let result = toggle_live_many(&state, &mods, &[ids[1].clone()], true);
+        let command = game.join().unwrap().expect("команда должна дойти до игры");
+
+        assert_eq!(command["set"], serde_json::json!({ "a": false, "b": true }));
+        assert_eq!(result.changed, vec![ids[1].clone()]);
+        assert!(result.queued.is_empty());
+        assert!(!state.library.get_mod(&ids[0]).unwrap().enabled);
+        assert!(state.library.get_mod(&ids[1]).unwrap().enabled);
+        assert!(crate::state::lock(&state.pending).is_empty());
+    }
+
+    #[test]
+    fn live_intent_is_saved_before_the_command_is_sent() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let state = Arc::new(state);
+        mark_alive(&mods, serde_json::json!({}));
+        let (command_tx, command_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let mods_for_game = mods.clone();
+        let game = std::thread::spawn(move || {
+            let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods_for_game);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok(text) = std::fs::read_to_string(bridge.command_path())
+                    && let Ok(command) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(id) = command.get("id").and_then(serde_json::Value::as_str)
+                {
+                    let _ = command_tx.send(id.to_string());
+                    release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                    std::fs::write(
+                        bridge.state_path(),
+                        serde_json::json!({
+                            "alive": chrono::Utc::now().timestamp(),
+                            "ackId": id,
+                            "results": { "a": "ok", "b": "ok" },
+                        })
+                        .to_string(),
+                    )
+                    .unwrap();
+                    return;
+                }
+                assert!(Instant::now() < deadline, "команда не появилась");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let worker_state = state.clone();
+        let worker_ids = ids[..2].to_vec();
+        let worker = std::thread::spawn(move || {
+            toggle_live_many_within(&worker_state, &mods, &worker_ids, false, |_| {
+                Duration::from_secs(5)
+            })
+        });
+
+        command_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let pending = crate::state::lock(&state.pending).clone();
+        assert_eq!(pending.get("a.zip"), Some(&false));
+        assert_eq!(pending.get("b.zip"), Some(&false));
+        let saved = std::fs::read_to_string(state.paths.root().join("pending.json")).unwrap();
+        assert!(saved.contains("a.zip") && saved.contains("b.zip"));
+        release_tx.send(()).unwrap();
+        let result = worker.join().unwrap();
+        game.join().unwrap();
+        assert_eq!(result.changed, ids[..2]);
+    }
+
+    #[test]
+    fn newer_pending_toggle_is_not_overwritten_after_an_old_answer() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let state = Arc::new(state);
+        mark_alive(&mods, serde_json::json!({}));
+        let mods_for_game = mods.clone();
+        let state_for_game = Arc::clone(&state);
+        let game = std::thread::spawn(move || {
+            let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods_for_game);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok(text) = std::fs::read_to_string(bridge.command_path())
+                    && let Ok(command) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(id) = command.get("id").and_then(serde_json::Value::as_str)
+                {
+                    crate::state::lock(&state_for_game.pending).insert("a.zip".to_string(), true);
+                    std::fs::write(
+                        bridge.state_path(),
+                        serde_json::json!({
+                            "alive": chrono::Utc::now().timestamp(),
+                            "ackId": id,
+                            "results": { "a": "ok" },
+                        })
+                        .to_string(),
+                    )
+                    .unwrap();
+                    return;
+                }
+                assert!(Instant::now() < deadline, "команда не появилась");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let disk = scan::scan_mods(&layout)
+            .mods
+            .into_iter()
+            .find(|disk| disk.file_name == "a.zip")
+            .unwrap();
+
+        let result = try_live_toggle_within(&state, &mods, &disk, false, Duration::from_secs(1));
+        game.join().unwrap();
+
+        let result = result.expect("новое pending-намерение не должно теряться");
+        assert_eq!(result.outcome, "queued");
+        assert!(result.enabled);
+        assert_eq!(crate::state::lock(&state.pending).get("a.zip"), Some(&true));
+        assert!(state.library.get_mod(&ids[0]).unwrap().enabled);
+    }
+
+    #[test]
+    fn single_timeout_does_not_overwrite_a_newer_pending_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let state = Arc::new(state);
+        mark_alive(&mods, serde_json::json!({}));
+        let (game, changed) =
+            change_pending_during_command(&mods, Arc::clone(&state), "a.zip", true, true);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let disk = scan::scan_mods(&layout)
+            .mods
+            .into_iter()
+            .find(|disk| disk.file_name == "a.zip")
+            .unwrap();
+        let worker_state = Arc::clone(&state);
+        let worker_mods = mods.clone();
+        let worker = std::thread::spawn(move || {
+            try_live_toggle_within(
+                &worker_state,
+                &worker_mods,
+                &disk,
+                false,
+                Duration::from_millis(150),
+            )
+        });
+
+        changed.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = worker.join().unwrap().expect("pending уже сохранён");
+        game.join().unwrap();
+
+        assert_eq!(result.outcome, "queued");
+        assert!(result.enabled);
+        assert_eq!(crate::state::lock(&state.pending).get("a.zip"), Some(&true));
+        assert!(state.library.get_mod(&ids[0]).unwrap().enabled);
+    }
+
+    #[test]
+    fn bulk_timeout_does_not_overwrite_a_newer_pending_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let state = Arc::new(state);
+        mark_alive(&mods, serde_json::json!({}));
+        let (game, changed) =
+            change_pending_during_command(&mods, Arc::clone(&state), "a.zip", true, true);
+        let worker_state = Arc::clone(&state);
+        let worker_mods = mods.clone();
+        let worker_ids = ids[..2].to_vec();
+        let worker = std::thread::spawn(move || {
+            toggle_live_many_within(&worker_state, &worker_mods, &worker_ids, false, |_| {
+                Duration::from_millis(150)
+            })
+        });
+
+        changed.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = worker.join().unwrap();
+        game.join().unwrap();
+
+        assert_eq!(result.queued, ids[..2]);
+        let pending = crate::state::lock(&state.pending).clone();
+        assert_eq!(pending.get("a.zip"), Some(&true));
+        assert_eq!(pending.get("b.zip"), Some(&false));
+    }
+
+    #[test]
+    fn dead_after_send_keeps_the_saved_pending_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        let state = Arc::new(state);
+        mark_alive(&mods, serde_json::json!({}));
+        let (game, changed) =
+            change_pending_during_command(&mods, Arc::clone(&state), "a.zip", true, false);
+        let layout = ModLayout::in_app_folder(&mods, state.paths.root());
+        let disk = scan::scan_mods(&layout)
+            .mods
+            .into_iter()
+            .find(|disk| disk.file_name == "a.zip")
+            .unwrap();
+        let worker_state = Arc::clone(&state);
+        let worker_mods = mods.clone();
+        let worker = std::thread::spawn(move || {
+            try_live_toggle_within(
+                &worker_state,
+                &worker_mods,
+                &disk,
+                false,
+                Duration::from_millis(150),
+            )
+        });
+
+        changed.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = worker.join().unwrap().expect("pending уже сохранён");
+        game.join().unwrap();
+
+        assert_eq!(result.outcome, "queued");
+        assert!(result.enabled);
+        assert_eq!(crate::state::lock(&state.pending).get("a.zip"), Some(&true));
+        assert!(state.library.get_mod(&ids[0]).unwrap().enabled);
+    }
+
+    #[test]
+    fn library_load_does_not_wait_for_live_bridge() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mods, state, ids) = three_mods(&temp);
+        mark_alive(&mods, serde_json::json!({}));
+        let state = Arc::new(state);
+        let worker_state = Arc::clone(&state);
+        let worker_ids = ids.clone();
+        let worker = std::thread::spawn(move || {
+            toggle_many_inner(&worker_state, &worker_ids, false, true, |_| {
+                Duration::from_millis(500)
+            })
+        });
+        let bridge = bmm_game::bridge::GameBridge::with_system_clock(&mods);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !bridge.command_path().is_file() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            bridge.command_path().is_file(),
+            "команда должна уйти в игру"
+        );
+        let started = Instant::now();
+        let snapshot = load_snapshot(&state).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(snapshot.mods.len(), 3);
+        let result = worker.join().unwrap().unwrap();
+        assert_eq!(result.queued, ids);
     }
 
     #[test]

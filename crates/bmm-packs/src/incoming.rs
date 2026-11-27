@@ -900,7 +900,7 @@ pub(crate) fn identity_keys(keys: &HashSet<String>) -> HashSet<String> {
         .collect()
 }
 
-fn sha256_file(path: &Path) -> std::io::Result<String> {
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 81920];

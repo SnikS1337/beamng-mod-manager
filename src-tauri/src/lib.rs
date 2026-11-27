@@ -260,6 +260,7 @@ pub fn run() {
         sources: source_list,
         page_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         page_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        check_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }));
     let app_update =
         bmm_app_release::UpdateDownloader::reqwest(bmm_app_release::DEFAULT_USER_AGENT)
@@ -274,6 +275,8 @@ pub fn run() {
                 prepared: None,
                 cancel: bmm_app_release::CancelToken::new(),
                 attempt: 0,
+                check_attempt: 0,
+                revision: 0,
                 update_dir: paths.update_dir(),
                 // Там же, где у 0.3.x: папку обновления чистят после каждого обновления.
                 skipped_path: paths.root().join("update-skip.txt"),
@@ -289,8 +292,11 @@ pub fn run() {
         previews: PreviewCache::new(paths.previews()),
         paths,
         load_lock: Mutex::new(()),
+        live_lock: Mutex::new(()),
         previews_by_id: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
+        bridge_sent: Mutex::new(None),
+        held_backups: Arc::new(Mutex::new(std::collections::HashSet::new())),
         preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
         deleted: Mutex::new(HashMap::new()),
         content_cache: Mutex::new(HashMap::new()),
@@ -302,6 +308,7 @@ pub fn run() {
         browse: Mutex::new(None),
     });
     state.load_pending();
+    state.load_bridge_sent();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -372,6 +379,7 @@ pub fn run() {
             commands::versions::mod_restore_deleted,
             commands::versions::mod_versions,
             commands::versions::mod_restore_version,
+            commands::versions::mod_commit_restore_undo,
             commands::versions::mod_delete_version,
             commands::incoming::incoming_inspect,
             commands::incoming::incoming_install,
@@ -615,9 +623,17 @@ mod tests {
         assert!(app_origin("http://tauri.localhost"));
         assert!(app_origin("https://tauri.localhost"));
         assert!(app_origin("tauri://localhost"));
-        // Отладка: dev-сервер Vite.
-        assert!(app_origin("http://localhost:1420"));
-        assert!(app_origin("http://127.0.0.1:5173"));
+        // Отладка: dev-сервер Vite. В release те же адреса не являются приложением.
+        #[cfg(debug_assertions)]
+        {
+            assert!(app_origin("http://localhost:1420"));
+            assert!(app_origin("http://127.0.0.1:5173"));
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            assert!(!app_origin("http://localhost:1420"));
+            assert!(!app_origin("http://127.0.0.1:5173"));
+        }
         // Чужие сайты из окна загрузки и подделки под наш адрес — нет.
         for origin in [
             "https://www.modland.net",

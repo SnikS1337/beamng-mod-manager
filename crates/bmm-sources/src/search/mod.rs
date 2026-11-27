@@ -9,7 +9,7 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 use bmm_domain::matches::{ManualMatch, MatchDecisions};
@@ -140,6 +140,38 @@ impl RunKind {
 struct SourceRun {
     report: SourceReport,
     listings: Vec<Listing>,
+}
+
+struct SearchReaper {
+    sender: mpsc::Sender<std::thread::JoinHandle<()>>,
+}
+
+impl SearchReaper {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel::<std::thread::JoinHandle<()>>();
+        let _ = std::thread::Builder::new()
+            .name("bmm-search-join".to_string())
+            .spawn(move || {
+                for worker in receiver {
+                    let _ = worker.join();
+                }
+            });
+        Self { sender }
+    }
+
+    fn join(&self, workers: Vec<std::thread::JoinHandle<()>>) {
+        for worker in workers {
+            let _ = self.sender.send(worker);
+        }
+    }
+}
+
+static SEARCH_REAPER: OnceLock<SearchReaper> = OnceLock::new();
+
+fn join_search_workers(workers: Vec<std::thread::JoinHandle<()>>) {
+    if !workers.is_empty() {
+        SEARCH_REAPER.get_or_init(SearchReaper::new).join(workers);
+    }
 }
 
 impl SearchService {
@@ -303,6 +335,7 @@ impl SearchService {
         let (sender, receiver) = mpsc::channel::<(usize, SourceRun)>();
         let deadline = Instant::now() + self.options.per_source_timeout;
         let mut done = 0usize;
+        let mut workers = Vec::new();
         for (index, source) in self.sources.iter().enumerate() {
             let sender = sender.clone();
             let worker_source = Arc::clone(source);
@@ -325,13 +358,16 @@ impl SearchService {
                     };
                     let _ = sender.send((index, run));
                 });
-            if spawned.is_err() {
-                slots[index] = Some(runner.stopped(
-                    source.as_ref(),
-                    SourceStatus::Unavailable,
-                    "не удалось запустить поиск",
-                ));
-                done += 1;
+            match spawned {
+                Ok(worker) => workers.push(worker),
+                Err(_) => {
+                    slots[index] = Some(runner.stopped(
+                        source.as_ref(),
+                        SourceStatus::Unavailable,
+                        "не удалось запустить поиск",
+                    ));
+                    done += 1;
+                }
             }
         }
         drop(sender);
@@ -419,6 +455,7 @@ impl SearchService {
                 }
             }
         }
+        join_search_workers(workers);
         self.finish(slots, query, order)
     }
 
@@ -1977,6 +2014,38 @@ mod tests {
         assert_eq!(report.status, SourceStatus::Unavailable);
         assert!(report.note.is_some());
         assert_eq!(report.reach, Some(Reach::Stalled));
+    }
+
+    #[test]
+    fn search_workers_are_joined_off_the_search_thread() {
+        let (sender, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            let _ = sender.send(7);
+        });
+        join_search_workers(vec![worker]);
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(1)), Ok(7));
+    }
+
+    #[test]
+    fn one_reaper_drains_multiple_worker_batches() {
+        let reaper = SearchReaper::new();
+        let (sender, receiver) = mpsc::channel();
+        for value in 0..3 {
+            let sender = sender.clone();
+            let worker = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(10));
+                let _ = sender.send(value);
+            });
+            reaper.join(vec![worker]);
+        }
+        drop(sender);
+        let mut values = Vec::new();
+        while let Ok(value) = receiver.recv_timeout(Duration::from_secs(1)) {
+            values.push(value);
+        }
+        values.sort();
+        assert_eq!(values, vec![0, 1, 2]);
     }
 
     #[test]

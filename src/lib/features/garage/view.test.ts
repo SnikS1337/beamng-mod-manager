@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   QUERY_PAUSE_MS,
   queryStep,
   applyLoaded,
   loadViewMode,
   matchesType,
+  notifyLibraryChanged,
   saveViewMode,
   typeCounts,
   typeLabel,
@@ -188,5 +189,37 @@ describe("поиск по гаражу", () => {
   it("пауза короче, чем человек ждёт ответа, но длиннее промежутка между буквами", () => {
     expect(QUERY_PAUSE_MS).toBeGreaterThanOrEqual(80);
     expect(QUERY_PAUSE_MS).toBeLessThanOrEqual(250);
+  });
+});
+
+describe("изменение библиотеки из тоста", () => {
+  it("передаёт плавность в detail события", () => {
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    try {
+      let smooth: unknown;
+      target.addEventListener("bmm:library-changed", (event) => {
+        smooth = (event as CustomEvent<{ smooth?: boolean }>).detail?.smooth;
+      });
+      notifyLibraryChanged({ smooth: true });
+      expect(smooth).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("уведомляет текущий экземпляр гаража после undo или commit", () => {
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    try {
+      let changes = 0;
+      target.addEventListener("bmm:library-changed", () => {
+        changes += 1;
+      });
+      notifyLibraryChanged();
+      expect(changes).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

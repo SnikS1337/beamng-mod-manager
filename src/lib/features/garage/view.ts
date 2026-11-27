@@ -124,6 +124,19 @@ export function shouldRollVersion(previous: string | undefined, next: string, an
   return animated && previous !== undefined && previous !== next;
 }
 
+export interface LibraryChangedDetail {
+  fileNames?: string[];
+  smooth?: boolean;
+  refreshVersions?: boolean;
+}
+
+/** Глобальный тост переживает страницу: обновлять должен текущий экземпляр гаража. */
+export function notifyLibraryChanged(detail: LibraryChangedDetail = {}): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("bmm:library-changed", { detail }));
+  }
+}
+
 /**
  * Куда прокрутить список строк одинаковой высоты, чтобы строка `index` стала видна.
  * `null` — она уже на экране. В режиме списка стрелки раньше меняли выбор, но

@@ -19,6 +19,12 @@ pub const MOD_KEY: &str = "bmm_bridge";
 pub const ALIVE_WINDOW_SECS: i64 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentCommand {
+    pub id: String,
+    pub set: HashMap<String, bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BridgeAnswer {
     pub ack_id: Option<String>,
     pub results: HashMap<String, String>,
@@ -95,31 +101,14 @@ impl GameBridge {
     }
 
     pub fn send(&self, wanted: &[(&str, bool)]) -> Option<String> {
+        self.send_command(wanted).map(|command| command.id)
+    }
+
+    pub fn send_command(&self, wanted: &[(&str, bool)]) -> Option<SentCommand> {
         let moment = (self.now)();
         let serial = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let id = format!("{}-{serial}", moment.timestamp_millis());
         let mut set = Map::new();
-        // Неподтверждённая команда остаётся частью следующей: вторая команда не
-        // должна затирать первую, пока игра не ответила на неё.
-        if let Ok(bytes) = fs::read(self.command_path())
-            && let Ok(previous) = serde_json::from_slice::<Value>(&bytes)
-            && let Some(previous_id) = previous.get("id").and_then(Value::as_str)
-            && let Some(previous_time) = previous.get("time").and_then(Value::as_i64)
-            && moment.timestamp() - previous_time <= 60
-            && self
-                .read_state()
-                .and_then(|state| {
-                    state
-                        .get("ackId")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .as_deref()
-                != Some(previous_id)
-            && let Some(previous_set) = previous.get("set").and_then(Value::as_object)
-        {
-            set = previous_set.clone();
-        }
         for (file, enabled) in wanted {
             let key = crate::db::key_of(file);
             if key.is_empty() || key == MOD_KEY {
@@ -139,12 +128,23 @@ impl GameBridge {
         let path = self.command_path();
         for attempt in 0..3 {
             match atomic::write_atomic(&path, &bytes) {
-                Ok(()) => return Some(id),
+                Ok(()) => {
+                    let set = set
+                        .into_iter()
+                        .filter_map(|(key, value)| value.as_bool().map(|enabled| (key, enabled)))
+                        .collect();
+                    return Some(SentCommand { id, set });
+                }
                 Err(_) if attempt < 2 => std::thread::sleep(Duration::from_millis(20)),
                 Err(_) => return None,
             }
         }
         None
+    }
+
+    pub fn read_command(&self) -> Option<Value> {
+        let bytes = fs::read(self.command_path()).ok()?;
+        serde_json::from_slice(&bytes).ok()
     }
 
     pub fn read_answer(&self) -> Option<BridgeAnswer> {
@@ -314,14 +314,54 @@ mod tests {
     }
 
     #[test]
-    fn new_command_merges_unanswered_changes_and_new_values_win() {
+    fn new_values_win_in_the_same_command() {
         let (_temp, _mods, bridge) = setup();
-        bridge.send(&[("a.zip", false)]).unwrap();
-        bridge.send(&[("b.zip", true), ("a.zip", true)]).unwrap();
+        let sent = bridge
+            .send_command(&[("a.zip", false), ("b.zip", true), ("a.zip", true)])
+            .unwrap();
         let command: Value =
             serde_json::from_str(&fs::read_to_string(bridge.command_path()).unwrap()).unwrap();
+
+        assert_eq!(sent.set.get("a"), Some(&true));
+        assert_eq!(sent.set.get("b"), Some(&true));
         assert_eq!(command["set"]["a"], true);
         assert_eq!(command["set"]["b"], true);
+    }
+
+    #[test]
+    fn send_reports_the_actual_command() {
+        let (_temp, _mods, bridge) = setup();
+        let sent = bridge
+            .send_command(&[("b.zip", true), ("a.zip", true)])
+            .unwrap();
+
+        assert_eq!(sent.set.get("a"), Some(&true));
+        assert_eq!(sent.set.get("b"), Some(&true));
+        let command: Value =
+            serde_json::from_str(&fs::read_to_string(bridge.command_path()).unwrap()).unwrap();
+        assert_eq!(command["id"], sent.id);
+        assert_eq!(command["set"]["a"], true);
+        assert_eq!(command["set"]["b"], true);
+    }
+
+    #[test]
+    fn previous_command_values_are_not_forwarded() {
+        let (_temp, _mods, bridge) = setup();
+        fs::create_dir_all(bridge.command_path().parent().unwrap()).unwrap();
+        fs::write(
+            bridge.command_path(),
+            r#"{"id":"old","time":1760000000,"set":{"a":"yes","b":false}}"#,
+        )
+        .unwrap();
+        let sent = bridge.send_command(&[("c.zip", true)]).unwrap();
+        let command: Value =
+            serde_json::from_str(&fs::read_to_string(bridge.command_path()).unwrap()).unwrap();
+
+        assert_eq!(sent.set.len(), 1);
+        assert_eq!(sent.set.get("c"), Some(&true));
+        assert!(command["set"].get("a").is_none());
+        assert!(command["set"].get("b").is_none());
+        assert_eq!(command["set"]["c"], true);
     }
 
     #[test]
@@ -353,6 +393,34 @@ mod tests {
         assert_eq!(answer.result("a"), Some("failed"));
         fs::write(bridge.state_path(), "{ битый").unwrap();
         assert!(bridge.read_answer().is_none());
+    }
+
+    #[test]
+    fn large_batches_are_finished_across_updates() {
+        let script = include_str!("../resources/bmmBridge.lua");
+        assert!(
+            script.contains("local active"),
+            "пачка должна жить между кадрами"
+        );
+        assert!(
+            script.contains("local function stepApply"),
+            "нужен отдельный шаг пачки"
+        );
+        assert!(
+            script.contains("pcall(stepApply)"),
+            "шаг должен вызываться из onUpdate"
+        );
+        let update = script.split("if not off and active then").nth(1).unwrap();
+        let captured = update.find("local id = active.id").unwrap();
+        let stepped = update.find("pcall(stepApply)").unwrap();
+        assert!(
+            captured < stepped,
+            "id нужно сохранить до шага: финальный answer может очистить active"
+        );
+        assert!(
+            !script.contains("for start = 1, #keys, 50 do"),
+            "весь цикл пачки нельзя выполнять в одном onUpdate"
+        );
     }
 
     #[test]

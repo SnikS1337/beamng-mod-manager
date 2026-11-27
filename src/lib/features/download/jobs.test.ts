@@ -7,6 +7,7 @@ import {
   jobRows,
   modProgress,
   overallProgress,
+  pruneProgress,
   restarted,
   track,
   viewOf,
@@ -24,12 +25,15 @@ function request(name: string): DownloadRequest {
   };
 }
 
+let nextJobId = 1;
+
 function job(name: string, state: DownloadJob["state"] = "downloading", error: string | null = null): DownloadJob {
-  return { path: `C:/Downloads/${name}.zip`, fileName: `${name}.zip`, request: request(name), state, error };
+  return { id: nextJobId++, path: `C:/Downloads/${name}.zip`, fileName: `${name}.zip`, request: request(name), state, error };
 }
 
-const progress = (path: string, received: number, total: number | null = 1000) => ({
+const progress = (path: string, received: number, total: number | null = 1000, jobId: number | null = null) => ({
   path,
+  jobId,
   received,
   total,
   speed: null,
@@ -46,6 +50,28 @@ describe("несколько загрузок сразу", () => {
     // Те же байты — время движения не сдвигается: стоящая загрузка видна.
     known = track(known, progress("b.zip", 900), 5000);
     expect(known["b.zip"].changedAt).toBe(1100);
+  });
+
+  it("поздний прогресс старой загрузки не перезаписывает новую с тем же путём", () => {
+    const first = job("same");
+    const second = { ...job("same"), id: first.id + 1 };
+    let known = track({}, { ...progress(first.path, 900), jobId: first.id }, 0);
+    known = track(known, { ...progress(second.path, 100), jobId: second.id }, 1);
+    known = track(known, { ...progress(first.path, 800), jobId: first.id }, 2);
+
+    expect(viewOf(second, known, 2)?.percent).toBe(10);
+  });
+
+  it("убирает прогресс старых поколений после повторной загрузки", () => {
+    const old = job("same");
+    const current = { ...job("same"), id: old.id + 1 };
+    let known = track({}, { ...progress(old.path, 900), jobId: old.id }, 0);
+    known = track(known, { ...progress(current.path, 100), jobId: current.id }, 1);
+
+    const pruned = pruneProgress(known, [current]);
+
+    expect(Object.keys(pruned)).toEqual([String(current.id)]);
+    expect(viewOf(current, pruned, 1)?.percent).toBe(10);
   });
 
   it("в главной полоске — загрузка открытой страницы", () => {

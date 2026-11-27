@@ -132,10 +132,13 @@ pub struct DeletedMod {
     pub role: Option<String>,
 }
 
+type BackupGuard = dyn Fn(&str) -> bool + Send + Sync;
+
 pub struct ModInstaller {
     layout: ModLayout,
     now: Clock,
     keep_backups: Arc<dyn Fn() -> usize + Send + Sync>,
+    backup_guard: Option<Arc<BackupGuard>>,
     gate: Mutex<()>,
 }
 
@@ -149,8 +152,14 @@ impl ModInstaller {
             layout,
             now,
             keep_backups,
+            backup_guard: None,
             gate: Mutex::new(()),
         }
+    }
+
+    pub fn with_backup_guard(mut self, guard: Arc<BackupGuard>) -> Self {
+        self.backup_guard = Some(guard);
+        self
     }
 
     pub fn layout(&self) -> &ModLayout {
@@ -476,6 +485,13 @@ impl ModInstaller {
         let Some(path) = self.find_backup(&name, backup_id) else {
             return OpResult::fail("Такой копии нет.");
         };
+        if self
+            .backup_guard
+            .as_ref()
+            .is_some_and(|guard| guard(backup_id))
+        {
+            return OpResult::fail("Эта копия ещё нужна для «Отменить».");
+        }
         if let Err(error) = fs::remove_file(&path) {
             return OpResult::fail(io_message(&error));
         }
@@ -552,7 +568,10 @@ impl ModInstaller {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return OpResult::fail("Недопустимое имя файла.");
         };
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(last) = self.backups(&name).last().cloned() else {
             return OpResult::fail("Копий нет.");
         };
@@ -563,7 +582,10 @@ impl ModInstaller {
         let Some(name) = safe_file_name(Some(file_name)) else {
             return OpResult::fail("Недопустимое имя файла.");
         };
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match self.find_backup(&name, backup_id) {
             Some(path) => self.restore_from(&name, &path),
             None => OpResult::fail("Такой копии нет."),
@@ -586,7 +608,10 @@ impl ModInstaller {
             return self.restore_backup(&old, backup_id);
         }
 
-        let _guard = self.gate.lock().unwrap();
+        let _guard = self
+            .gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(source) = self.find_backup(&old, backup_id) else {
             return OpResult::fail("Такой копии нет.");
         };
@@ -824,6 +849,13 @@ impl ModInstaller {
             return;
         }
         for old in all.iter().take(all.len() - keep) {
+            let held = old
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|id| self.backup_guard.as_ref().is_some_and(|guard| guard(id)));
+            if held {
+                continue;
+            }
             let _ = fs::remove_file(old);
             let _ = fs::remove_file(disabled_marker(old));
         }
@@ -1721,6 +1753,80 @@ mod tests {
             remaining[0].size_bytes,
             fs::metadata(&large).unwrap().len(),
             "текущая версия ушла в копии"
+        );
+    }
+
+    #[test]
+    fn restore_methods_survive_a_poisoned_gate() {
+        let temp = tempfile::tempdir().unwrap();
+        let installer = installer(&temp);
+        std::thread::scope(|scope| {
+            let crashed = scope.spawn(|| {
+                let _guard = installer.gate.lock().unwrap();
+                panic!("восстановление упало под замком");
+            });
+            assert!(crashed.join().is_err());
+        });
+        assert!(installer.gate.is_poisoned());
+        assert!(!installer.restore_backup("car.zip", "нет").success);
+        assert!(
+            !installer
+                .restore_version("car.zip", "old.zip", "нет")
+                .success
+        );
+        assert!(!installer.restore_latest_backup("car.zip").success);
+    }
+
+    #[test]
+    fn rotation_keeps_backup_held_by_undo() {
+        let temp = tempfile::tempdir().unwrap();
+        let held = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let guard = Arc::clone(&held);
+        let installer = ModInstaller::new(
+            ModLayout::in_app_folder(temp.path().join("mods"), temp.path().join("data")),
+            Arc::new(|| Utc::now().fixed_offset()),
+            Arc::new(|| 1),
+        )
+        .with_backup_guard(Arc::new(move |id| guard.lock().unwrap().contains(id)));
+        let first = source_zip_sized(&temp, "first", 10);
+        let second = source_zip_sized(&temp, "second", 20);
+        let third = source_zip_sized(&temp, "third", 30);
+        assert!(
+            installer
+                .install_from_path(&first, "car.zip", InstallOptions::default())
+                .success
+        );
+        assert!(
+            installer
+                .install_from_path(
+                    &second,
+                    "car.zip",
+                    InstallOptions {
+                        replace_existing: true,
+                        ..InstallOptions::default()
+                    }
+                )
+                .success
+        );
+        let held_id = installer.list_backups("car.zip")[0].id.clone();
+        held.lock().unwrap().insert(held_id.clone());
+        assert!(
+            installer
+                .install_from_path(
+                    &third,
+                    "car.zip",
+                    InstallOptions {
+                        replace_existing: true,
+                        ..InstallOptions::default()
+                    }
+                )
+                .success
+        );
+        assert!(
+            installer
+                .list_backups("car.zip")
+                .iter()
+                .any(|entry| entry.id == held_id)
         );
     }
 

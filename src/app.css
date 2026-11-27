@@ -894,7 +894,7 @@ html.flow-list::view-transition-new(mods) {
 }
 
 /* Карточки не залезают на фильтры и на панель — обрезаются по краю сетки. */
-::view-transition-group-children(mods) {
+::view-transition-group(mods) {
   overflow: clip;
 }
 

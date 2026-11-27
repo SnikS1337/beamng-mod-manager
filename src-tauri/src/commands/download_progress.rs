@@ -96,38 +96,40 @@ impl StopReason {
     }
 }
 
-/// Почему программа сама оборвала загрузку — по файлу: загрузок может быть несколько
-/// сразу, и причина одной не должна достаться другой.
+type StopKey = (std::path::PathBuf, Option<u64>);
+
+/// Почему программа сама оборвала загрузку — по файлу и попытке: загрузок может быть
+/// несколько сразу, и причина одной не должна достаться другой.
 static STOPPED: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, StopReason>>,
+    std::sync::Mutex<std::collections::HashMap<StopKey, StopReason>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-/// Причина, по которой программа сама оборвала загрузку этого файла (одноразово).
-pub(crate) fn take_stop_reason(path: &std::path::Path) -> Option<StopReason> {
+/// Причина, по которой программа сама оборвала эту загрузку (одноразово).
+pub(crate) fn take_stop_reason(path: &std::path::Path, job_id: Option<u64>) -> Option<StopReason> {
     STOPPED
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .remove(path)
+        .remove(&(path.to_path_buf(), job_id))
 }
 
 /// Причина от WebView2 — если программа сама уже не назвала свою (зависла, велик):
 /// её отмена тоже приходит как обрыв.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn note_interrupt(path: std::path::PathBuf, reason: StopReason) {
+fn note_interrupt(path: std::path::PathBuf, job_id: Option<u64>, reason: StopReason) {
     let mut stopped = STOPPED.lock().unwrap_or_else(|error| error.into_inner());
     if stopped.len() >= 64 {
         stopped.clear();
     }
-    stopped.entry(path).or_insert(reason);
+    stopped.entry((path, job_id)).or_insert(reason);
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
-fn note_stop(path: std::path::PathBuf, reason: StopReason) {
+fn note_stop(path: std::path::PathBuf, job_id: Option<u64>, reason: StopReason) {
     let mut stopped = STOPPED.lock().unwrap_or_else(|error| error.into_inner());
     if stopped.len() >= 64 {
         stopped.clear();
     }
-    stopped.insert(path, reason);
+    stopped.insert((path, job_id), reason);
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -142,6 +144,7 @@ pub(crate) struct DownloadProgress {
     pub total: Option<u64>,
     /// Байт в секунду за последние секунды; `None`, пока считать не из чего.
     pub speed: Option<u64>,
+    pub job_id: Option<u64>,
 }
 
 /// Считает скорость и решает, пора ли сообщать панели.
@@ -204,6 +207,7 @@ impl ProgressMeter {
         self.last_sent = Some(now);
         Some(DownloadProgress {
             path: String::new(),
+            job_id: None,
             received,
             total: total.filter(|total| *total > 0),
             speed: self.speed(),
@@ -230,13 +234,16 @@ pub(crate) use platform::{attach, cancel_all};
 #[cfg(windows)]
 mod platform {
     use std::cell::RefCell;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
+    use tauri::Manager;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED,
-        ICoreWebView2_4, ICoreWebView2DownloadOperation,
+        COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
+        COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED, ICoreWebView2_4, ICoreWebView2DownloadOperation,
     };
     use webview2_com::{
         BytesReceivedChangedEventHandler, DownloadStartingEventHandler, StateChangedEventHandler,
@@ -244,8 +251,65 @@ mod platform {
     use windows_core::Interface;
 
     use super::{ProgressMeter, StopReason, note_interrupt, note_stop};
+    use crate::commands::download_window::{DownloadRegistration, take_download_registration};
 
-    type Active = Vec<(ICoreWebView2DownloadOperation, Arc<Mutex<ProgressMeter>>)>;
+    struct OperationContext {
+        session_id: u64,
+        nav_id: u64,
+        job_id: Option<u64>,
+        terminal_handler: bool,
+        bytes_handler: bool,
+    }
+
+    struct ActiveOperation {
+        operation: ICoreWebView2DownloadOperation,
+        meter: Arc<Mutex<ProgressMeter>>,
+        path: String,
+        site_label: String,
+        session_id: u64,
+        nav_id: u64,
+        job_id: Option<u64>,
+        terminal_handler: bool,
+        bytes_handler: bool,
+        last_size: u64,
+        moved_at: Instant,
+        cancel_requested: bool,
+        cancel_reason: Option<StopReason>,
+    }
+
+    impl ActiveOperation {
+        fn new(
+            operation: ICoreWebView2DownloadOperation,
+            meter: Arc<Mutex<ProgressMeter>>,
+            path: String,
+            site_label: String,
+            context: OperationContext,
+        ) -> Self {
+            let last_size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+            Self {
+                operation,
+                meter,
+                path,
+                site_label,
+                session_id: context.session_id,
+                nav_id: context.nav_id,
+                job_id: context.job_id,
+                terminal_handler: context.terminal_handler,
+                bytes_handler: context.bytes_handler,
+                last_size,
+                moved_at: Instant::now(),
+                cancel_requested: false,
+                cancel_reason: None,
+            }
+        }
+
+        fn request_cancel(&mut self, reason: Option<StopReason>) {
+            self.cancel_requested = true;
+            self.cancel_reason = reason;
+        }
+    }
+
+    type Active = Vec<ActiveOperation>;
     thread_local! {
         // COM-объекты загрузок живут на потоке webview: сторож и отмена заходят туда же.
         static ACTIVE: RefCell<Active> = const { RefCell::new(Vec::new()) };
@@ -285,118 +349,308 @@ mod platform {
         }
     }
 
-    fn stop(operation: &ICoreWebView2DownloadOperation, reason: Option<StopReason>) {
+    fn stop(
+        operation: &ICoreWebView2DownloadOperation,
+        path: &str,
+        job_id: Option<u64>,
+        reason: Option<StopReason>,
+    ) -> bool {
         if let Some(reason) = reason {
-            note_stop(PathBuf::from(file_of(operation)), reason);
+            note_stop(PathBuf::from(path), job_id, reason);
         }
         // SAFETY: обычный вызов COM на потоке webview.
-        let _ = unsafe { operation.Cancel() };
+        unsafe { operation.Cancel() }.is_ok()
+    }
+
+    fn request_cancel(
+        path: &str,
+        session_id: u64,
+        nav_id: u64,
+        job_id: Option<u64>,
+        reason: Option<StopReason>,
+    ) {
+        ACTIVE.with(|active| {
+            for entry in active.borrow_mut().iter_mut() {
+                if entry.path == path
+                    && entry.session_id == session_id
+                    && entry.nav_id == nav_id
+                    && entry.job_id == job_id
+                {
+                    entry.request_cancel(reason);
+                }
+            }
+        });
+    }
+
+    fn clear_site_operations(app: &tauri::AppHandle, label: &str) {
+        let (sender, receiver) = mpsc::channel();
+        let label = label.to_string();
+        let queued = app.run_on_main_thread(move || {
+            ACTIVE.with(|active| {
+                active
+                    .borrow_mut()
+                    .retain(|entry| entry.site_label != label);
+            });
+            let _ = sender.send(());
+        });
+        if queued.is_ok() {
+            let _ = receiver.recv_timeout(Duration::from_secs(1));
+        }
     }
 
     /// Оборвать все идущие загрузки окна: человек сам решил закрыть его или программу.
     pub(crate) fn cancel_all(site: &tauri::Webview) {
-        let _ = site.with_webview(|_| {
+        let label = site.label().to_string();
+        let _ = site.with_webview(move |_| {
             ACTIVE.with(|active| {
-                for (operation, _) in active.borrow_mut().drain(..) {
-                    if in_progress(&operation) {
-                        stop(&operation, None);
+                let mut active = active.borrow_mut();
+                let operations = std::mem::take(&mut *active);
+                for mut entry in operations {
+                    if entry.site_label != label {
+                        active.push(entry);
+                        continue;
+                    }
+                    if !in_progress(&entry.operation) {
+                        continue;
+                    }
+                    entry.request_cancel(None);
+                    if !stop(&entry.operation, &entry.path, entry.job_id, None) {
+                        active.push(entry);
                     }
                 }
             });
         });
     }
 
-    pub(crate) fn attach(site: &tauri::Webview, app: tauri::AppHandle) {
-        let _ = site.with_webview(move |platform| {
+    pub(crate) fn attach(
+        site: &tauri::Webview,
+        app: tauri::AppHandle,
+        session_id: u64,
+        nav_id: u64,
+    ) -> bool {
+        let attached = Arc::new(AtomicBool::new(false));
+        let attached_result = Arc::clone(&attached);
+        let watchdog_app = app.clone();
+        let site_label = site.label().to_string();
+        let watchdog_label = site_label.clone();
+        let dispatched = site.with_webview(move |platform| {
             // SAFETY: вызовы COM на потоке webview, куда нас и вызывает Tauri.
-            let attached = (|| -> windows_core::Result<()> {
-                let webview = unsafe { platform.controller().CoreWebView2()? };
-                let webview: ICoreWebView2_4 = webview.cast()?;
-                let mut token = Default::default();
-                unsafe {
-                    webview.add_DownloadStarting(
-                        &DownloadStartingEventHandler::create(Box::new(move |_, args| {
-                            let Some(args) = args else { return Ok(()) };
-                            let operation = args.DownloadOperation()?;
-                            let meter = Arc::new(Mutex::new(ProgressMeter::new()));
-                            if let Some((received, total)) = read(&operation)
-                                && ProgressMeter::too_big(received, total)
-                            {
-                                stop(&operation, Some(StopReason::TooBig));
-                                return Ok(());
-                            }
-                            ACTIVE.with(|active| {
-                                active
-                                    .borrow_mut()
-                                    .push((operation.clone(), Arc::clone(&meter)))
-                            });
-                            // Обрыв: запоминаем причину от WebView2, чтобы панель сказала
-                            // правду, а не «сайт не отдал файл».
-                            let mut state_token = Default::default();
-                            operation.add_StateChanged(
-                                &StateChangedEventHandler::create(Box::new(|operation, _| {
-                                    let Some(operation) = operation else {
-                                        return Ok(());
-                                    };
-                                    let mut state = Default::default();
-                                    let mut reason = Default::default();
-                                    // Уже внутри unsafe-блока подписки. Оба вызова пишут
-                                    // одно значение по переданному указателю.
-                                    let interrupted = operation.State(&mut state).is_ok()
-                                        && state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED
-                                        && operation.InterruptReason(&mut reason).is_ok();
-                                    if interrupted
-                                        && let Some(reason) = StopReason::from_interrupt(reason.0)
-                                    {
-                                        note_interrupt(PathBuf::from(file_of(&operation)), reason);
+            attached_result.store(
+                (|| -> windows_core::Result<()> {
+                    let webview = unsafe { platform.controller().CoreWebView2()? };
+                    let webview: ICoreWebView2_4 = webview.cast()?;
+                    let mut token = Default::default();
+                    unsafe {
+                        webview.add_DownloadStarting(
+                            &DownloadStartingEventHandler::create(Box::new(move |_, args| {
+                                let Some(args) = args else { return Ok(()) };
+                                let operation = args.DownloadOperation()?;
+                                let (result_path, job_id) = match take_download_registration(nav_id)
+                                {
+                                    Some(DownloadRegistration::Accepted(path, job_id)) => {
+                                        (path.to_string_lossy().into_owned(), Some(job_id))
                                     }
-                                    Ok(())
-                                })),
-                                &mut state_token,
-                            )?;
-                            let app = app.clone();
-                            let mut token = Default::default();
-                            operation.add_BytesReceivedChanged(
-                                &BytesReceivedChangedEventHandler::create(Box::new(
-                                    move |operation, _| {
-                                        let Some(operation) = operation else {
-                                            return Ok(());
-                                        };
-                                        let Some((received, total)) = read(&operation) else {
-                                            return Ok(());
-                                        };
-                                        if ProgressMeter::too_big(received, total) {
-                                            stop(&operation, Some(StopReason::TooBig));
-                                            return Ok(());
-                                        }
-                                        let message = meter
-                                            .lock()
-                                            .unwrap_or_else(|error| error.into_inner())
-                                            .update(received, total, Instant::now());
-                                        if let Some(message) = message {
-                                            let message = super::DownloadProgress {
-                                                path: file_of(&operation),
-                                                ..message
+                                    Some(DownloadRegistration::Rejected) => return Ok(()),
+                                    None => (file_of(&operation), None),
+                                };
+                                let meter = Arc::new(Mutex::new(ProgressMeter::new()));
+                                let terminal_path = result_path.clone();
+                                let state_app = app.clone();
+                                let mut state_token = Default::default();
+                                if operation.add_StateChanged(
+                                    &StateChangedEventHandler::create(Box::new(
+                                        move |operation, _| {
+                                            let Some(operation) = operation else {
+                                                return Ok(());
                                             };
-                                            crate::commands::download_window::emit_progress(
-                                                &app, message,
-                                            );
-                                        }
-                                        Ok(())
-                                    },
-                                )),
-                                &mut token,
-                            )?;
-                            Ok(())
-                        })),
-                        &mut token,
-                    )?;
-                }
-                Ok(())
-            })();
-            // Без хода загрузки окно всё равно работает: панель покажет «Файл скачивается».
-            let _ = attached;
+                                            let mut state = Default::default();
+                                            // SAFETY: State и InterruptReason пишут значения по указателям.
+                                            if operation.State(&mut state).is_err() {
+                                                crate::commands::download_window::finished_failed(
+                                                    &state_app,
+                                                    PathBuf::from(&terminal_path),
+                                                    session_id,
+                                                    nav_id,
+                                                    job_id,
+                                                );
+                                                return Ok(());
+                                            }
+                                            if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED {
+                                                crate::commands::download_window::finished_ok(
+                                                    &state_app,
+                                                    Some(Path::new(&terminal_path)),
+                                                    session_id,
+                                                    nav_id,
+                                                    job_id,
+                                                );
+                                                return Ok(());
+                                            }
+                                            if state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED {
+                                                let path = PathBuf::from(&terminal_path);
+                                                let mut reason = Default::default();
+                                                let has_reason =
+                                                    operation.InterruptReason(&mut reason).is_ok();
+                                                if has_reason
+                                                    && let Some(reason) =
+                                                        StopReason::from_interrupt(reason.0)
+                                                {
+                                                    note_interrupt(path.clone(), job_id, reason);
+                                                }
+                                                crate::commands::download_window::finished_failed(
+                                                    &state_app, path, session_id, nav_id, job_id,
+                                                );
+                                            }
+                                            Ok(())
+                                        },
+                                    )),
+                                    &mut state_token,
+                                )
+                                .is_err()
+                                {
+                                    if let Some(job_id) = job_id {
+                                        crate::commands::download_window::disable_native_terminal(
+                                            Path::new(&result_path),
+                                            session_id,
+                                            nav_id,
+                                            job_id,
+                                        );
+                                    }
+                                    let cancelled = stop(&operation, &result_path, job_id, None);
+                                    if cancelled {
+                                        crate::commands::download_window::finished_failed(
+                                            &app,
+                                            PathBuf::from(&result_path),
+                                            session_id,
+                                            nav_id,
+                                            job_id,
+                                        );
+                                    } else {
+                                        let mut entry = ActiveOperation::new(
+                                            operation,
+                                            meter,
+                                            result_path,
+                                            site_label.clone(),
+                                            OperationContext {
+                                                session_id,
+                                                nav_id,
+                                                job_id,
+                                                terminal_handler: false,
+                                                bytes_handler: false,
+                                            },
+                                        );
+                                        entry.request_cancel(None);
+                                        ACTIVE.with(|active| active.borrow_mut().push(entry));
+                                    }
+                                    return Ok(());
+                                }
+                                if let Some((received, total)) = read(&operation)
+                                    && ProgressMeter::too_big(received, total)
+                                {
+                                    if !stop(
+                                        &operation,
+                                        &result_path,
+                                        job_id,
+                                        Some(StopReason::TooBig),
+                                    ) {
+                                        let mut entry = ActiveOperation::new(
+                                            operation.clone(),
+                                            Arc::clone(&meter),
+                                            result_path.clone(),
+                                            site_label.clone(),
+                                            OperationContext {
+                                                session_id,
+                                                nav_id,
+                                                job_id,
+                                                terminal_handler: true,
+                                                bytes_handler: false,
+                                            },
+                                        );
+                                        entry.request_cancel(Some(StopReason::TooBig));
+                                        ACTIVE.with(|active| active.borrow_mut().push(entry));
+                                    }
+                                    return Ok(());
+                                }
+                                let progress_path = result_path.clone();
+                                let bytes_meter = Arc::clone(&meter);
+                                let app = app.clone();
+                                let mut token = Default::default();
+                                let bytes_handler = operation
+                                    .add_BytesReceivedChanged(
+                                        &BytesReceivedChangedEventHandler::create(Box::new(
+                                            move |operation, _| {
+                                                let Some(operation) = operation else {
+                                                    return Ok(());
+                                                };
+                                                let Some((received, total)) = read(&operation)
+                                                else {
+                                                    return Ok(());
+                                                };
+                                                let path = progress_path.clone();
+                                                if ProgressMeter::too_big(received, total) {
+                                                    request_cancel(
+                                                        &path,
+                                                        session_id,
+                                                        nav_id,
+                                                        job_id,
+                                                        Some(StopReason::TooBig),
+                                                    );
+                                                    let _ = stop(
+                                                        &operation,
+                                                        &path,
+                                                        job_id,
+                                                        Some(StopReason::TooBig),
+                                                    );
+                                                    return Ok(());
+                                                }
+                                                let message = bytes_meter
+                                                    .lock()
+                                                    .unwrap_or_else(|error| error.into_inner())
+                                                    .update(received, total, Instant::now());
+                                                if let Some(message) = message {
+                                                    let message = super::DownloadProgress {
+                                                        path: progress_path.clone(),
+                                                        job_id,
+                                                        ..message
+                                                    };
+                                                    crate::commands::download_window::emit_progress(
+                                                        &app, message, session_id, nav_id, job_id,
+                                                    );
+                                                }
+                                                Ok(())
+                                            },
+                                        )),
+                                        &mut token,
+                                    )
+                                    .is_ok();
+                                ACTIVE.with(|active| {
+                                    active.borrow_mut().push(ActiveOperation::new(
+                                        operation.clone(),
+                                        Arc::clone(&meter),
+                                        result_path,
+                                        site_label.clone(),
+                                        OperationContext {
+                                            session_id,
+                                            nav_id,
+                                            job_id,
+                                            terminal_handler: true,
+                                            bytes_handler,
+                                        },
+                                    ));
+                                });
+                                Ok(())
+                            })),
+                            &mut token,
+                        )?;
+                    }
+                    Ok(())
+                })()
+                .is_ok(),
+                Ordering::Relaxed,
+            );
         });
+        if dispatched.is_err() || !attached.load(Ordering::Relaxed) {
+            return false;
+        }
 
         // Сторож зависших загрузок: раз в полминуты заходит на поток webview и обрывает
         // загрузки, по которым давно не было байт. Окно закрыли — сторож уходит.
@@ -404,35 +658,126 @@ mod platform {
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_secs(30));
-                let checked = site.with_webview(|_| {
+                if watchdog_app.get_webview(&watchdog_label).is_none() {
+                    clear_site_operations(&watchdog_app, &watchdog_label);
+                    break;
+                }
+                let checked_label = watchdog_label.clone();
+                let checked_app = watchdog_app.clone();
+                let checked = site.with_webview(move |_| {
                     ACTIVE.with(|active| {
                         let now = Instant::now();
-                        active.borrow_mut().retain(|(operation, meter)| {
-                            if !in_progress(operation) {
+                        active.borrow_mut().retain_mut(|entry| {
+                            if entry.site_label != checked_label {
+                                return true;
+                            }
+                            if !in_progress(&entry.operation) {
+                                if !entry.terminal_handler {
+                                    crate::commands::download_window::finished_failed(
+                                        &checked_app,
+                                        PathBuf::from(&entry.path),
+                                        entry.session_id,
+                                        entry.nav_id,
+                                        entry.job_id,
+                                    );
+                                }
                                 return false;
                             }
-                            let stalled = meter
-                                .lock()
-                                .unwrap_or_else(|error| error.into_inner())
-                                .stalled(now);
+                            if !entry.bytes_handler {
+                                let size = std::fs::metadata(&entry.path)
+                                    .map(|meta| meta.len())
+                                    .unwrap_or(entry.last_size);
+                                if size != entry.last_size {
+                                    entry.last_size = size;
+                                    entry.moved_at = now;
+                                }
+                                if size > super::MAX_DOWNLOAD_BYTES {
+                                    entry.request_cancel(Some(StopReason::TooBig));
+                                } else if now.saturating_duration_since(entry.moved_at)
+                                    >= super::STALL_LIMIT
+                                {
+                                    entry.request_cancel(Some(StopReason::Stalled));
+                                }
+                                crate::commands::download_window::emit_progress(
+                                    &checked_app,
+                                    super::DownloadProgress {
+                                        path: entry.path.clone(),
+                                        job_id: entry.job_id,
+                                        received: size,
+                                        total: None,
+                                        speed: None,
+                                    },
+                                    entry.session_id,
+                                    entry.nav_id,
+                                    entry.job_id,
+                                );
+                            }
+                            if entry.cancel_requested {
+                                if stop(
+                                    &entry.operation,
+                                    &entry.path,
+                                    entry.job_id,
+                                    entry.cancel_reason,
+                                ) {
+                                    if !entry.terminal_handler {
+                                        crate::commands::download_window::finished_failed(
+                                            &checked_app,
+                                            PathBuf::from(&entry.path),
+                                            entry.session_id,
+                                            entry.nav_id,
+                                            entry.job_id,
+                                        );
+                                    }
+                                    crate::commands::download_window::cleanup_failed_download(
+                                        Path::new(&entry.path),
+                                    );
+                                    return false;
+                                }
+                                return true;
+                            }
+                            let stalled = entry.bytes_handler
+                                && entry
+                                    .meter
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .stalled(now);
                             if stalled {
-                                stop(operation, Some(StopReason::Stalled));
-                                return false;
+                                entry.request_cancel(Some(StopReason::Stalled));
+                                if stop(
+                                    &entry.operation,
+                                    &entry.path,
+                                    entry.job_id,
+                                    Some(StopReason::Stalled),
+                                ) {
+                                    crate::commands::download_window::cleanup_failed_download(
+                                        Path::new(&entry.path),
+                                    );
+                                    return false;
+                                }
                             }
                             true
                         });
                     });
                 });
                 if checked.is_err() {
+                    clear_site_operations(&watchdog_app, &watchdog_label);
                     break;
                 }
             }
         });
+        true
     }
 }
 
 #[cfg(not(windows))]
-pub(crate) fn attach(_site: &tauri::Webview, _app: tauri::AppHandle) {}
+pub(crate) fn attach(
+    _site: &tauri::Webview,
+    _app: tauri::AppHandle,
+    _session_id: u64,
+    _nav_id: u64,
+) -> bool {
+    true
+}
 
 #[cfg(not(windows))]
 pub(crate) fn cancel_all(_site: &tauri::Webview) {}
@@ -440,6 +785,159 @@ pub(crate) fn cancel_all(_site: &tauri::Webview) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn completed_state_uses_the_captured_path() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        let attach = &attach[..attach.find("// Сторож зависших").unwrap()];
+        assert!(attach.contains("COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED"));
+        assert!(attach.contains("download_window::finished_ok"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn progress_uses_the_original_job_path() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        let attach = &attach[..attach.find("// Сторож зависших").unwrap()];
+        assert!(attach.contains("path: progress_path.clone()"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn watchdog_cleanup_runs_on_the_main_thread() {
+        let source = include_str!("download_progress.rs");
+        let cleanup = source.split("fn clear_site_operations").nth(1).unwrap();
+        let cleanup = &cleanup[..cleanup.find("/// Оборвать все").unwrap()];
+        assert!(cleanup.contains("run_on_main_thread"));
+        assert!(cleanup.contains("ACTIVE.with"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stop_reason_uses_the_saved_operation_path() {
+        let source = include_str!("download_progress.rs");
+        let stop = source.split("fn stop(").nth(1).unwrap();
+        let stop = &stop[..stop.find("fn request_cancel").unwrap()];
+        assert!(stop.contains("PathBuf::from(path)"));
+        assert!(!stop.contains("file_of(operation)"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_state_read_failure_finishes_the_captured_path() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        let attach = &attach[..attach.find("// Сторож зависших").unwrap()];
+        assert!(attach.contains("take_download_registration(nav_id)"));
+        assert!(attach.contains("DownloadRegistration::Accepted"));
+        assert!(attach.contains("operation.State(&mut state).is_err()"));
+        assert!(attach.contains("terminal_path"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn watchdog_stops_when_the_site_is_gone() {
+        let source = include_str!("download_progress.rs");
+        let watchdog = source.split("// Сторож зависших").nth(1).unwrap();
+        assert!(watchdog.contains("get_webview"));
+        assert!(watchdog.contains("clear_site_operations"));
+        assert!(watchdog.contains("break"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_handler_failure_finishes_the_exact_operation() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        let attach = &attach[..attach.find("// Сторож зависших").unwrap()];
+        assert!(attach.contains("operation.add_StateChanged"));
+        assert!(attach.contains(".is_err()"));
+        assert!(attach.contains("let cancelled = stop(&operation, &result_path, job_id, None);"));
+        assert!(attach.contains("finished_failed"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_cancel_is_retried_by_the_watchdog() {
+        let source = include_str!("download_progress.rs");
+        let stop = source.split("fn stop(").nth(1).unwrap();
+        let stop = &stop[..stop.find("/// Оборвать все").unwrap()];
+        assert!(stop.contains("-> bool"));
+        assert!(stop.contains("Cancel() }.is_ok()"));
+        let watchdog = source.split("// Сторож зависших").nth(1).unwrap();
+        assert!(watchdog.contains("cancel_requested"));
+        assert!(watchdog.contains("StopReason::Stalled"));
+        assert!(source.contains("struct ActiveOperation"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn active_operation_is_added_after_the_bytes_handler() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        let attach = &attach[..attach.find("// Сторож зависших").unwrap()];
+        let normal_push = attach.rfind("ActiveOperation::new(").unwrap();
+        let bytes_handler = attach.find("add_BytesReceivedChanged").unwrap();
+        assert!(bytes_handler < normal_push);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bytes_cancel_matches_the_operation_identity() {
+        let source = include_str!("download_progress.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("entry.session_id == session_id"));
+        assert!(production.contains("entry.nav_id == nav_id"));
+        assert!(production.contains("entry.job_id == job_id"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bytes_subscription_failure_still_gets_file_monitoring() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        assert!(attach.contains("let bytes_handler ="));
+        assert!(attach.contains("add_BytesReceivedChanged"));
+        let watchdog = source.split("// Сторож зависших").nth(1).unwrap();
+        assert!(watchdog.contains("if !entry.bytes_handler"));
+        assert!(watchdog.contains("MAX_DOWNLOAD_BYTES"));
+        assert!(watchdog.contains("STALL_LIMIT"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_terminal_subscription_keeps_ownership_until_cancel_succeeds() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        let attach = &attach[..attach.find("// Сторож зависших").unwrap()];
+        let handler = attach.find("add_StateChanged").unwrap();
+        let failed = handler + attach[handler..].find(".is_err()").unwrap();
+        let end = failed
+            + attach[failed..]
+                .find("if let Some((received, total))")
+                .unwrap();
+        let fallback = &attach[failed..end];
+        assert!(fallback.contains("if cancelled"));
+        assert!(fallback.contains("false,"));
+        assert!(fallback.contains("finished_failed"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn oversized_download_is_observed_until_it_is_interrupted() {
+        let source = include_str!("download_progress.rs");
+        let attach = source.split("pub(crate) fn attach").nth(1).unwrap();
+        let attach = &attach[..attach.find("// Сторож зависших").unwrap()];
+        let state_handler = attach.find("add_StateChanged").unwrap();
+        let size_check = attach.find("ProgressMeter::too_big").unwrap();
+        assert!(
+            state_handler < size_check,
+            "отмена слишком большого файла должна иметь terminal handler"
+        );
+    }
 
     fn at(start: Instant, ms: u64) -> Instant {
         start + Duration::from_millis(ms)
@@ -592,11 +1090,11 @@ mod tests {
         // Программа сама оборвала зависшую загрузку; WebView2 потом сообщает обрыв
         // по-своему — причина остаётся нашей.
         let path = std::path::PathBuf::from("own-reason.zip");
-        note_stop(path.clone(), StopReason::Stalled);
-        note_interrupt(path.clone(), StopReason::Network);
-        assert_eq!(take_stop_reason(&path), Some(StopReason::Stalled));
-        note_interrupt(path.clone(), StopReason::FileGone);
-        assert_eq!(take_stop_reason(&path), Some(StopReason::FileGone));
+        note_stop(path.clone(), Some(1), StopReason::Stalled);
+        note_interrupt(path.clone(), Some(1), StopReason::Network);
+        assert_eq!(take_stop_reason(&path, Some(1)), Some(StopReason::Stalled));
+        note_interrupt(path.clone(), Some(1), StopReason::FileGone);
+        assert_eq!(take_stop_reason(&path, Some(1)), Some(StopReason::FileGone));
     }
 
     #[test]
@@ -604,9 +1102,20 @@ mod tests {
         // Две загрузки сразу: причина обрыва одной не должна достаться другой.
         let first = std::path::PathBuf::from("first-stopped.zip");
         let second = std::path::PathBuf::from("second-running.zip");
-        note_stop(first.clone(), StopReason::Stalled);
-        assert_eq!(take_stop_reason(&second), None);
-        assert_eq!(take_stop_reason(&first), Some(StopReason::Stalled));
-        assert_eq!(take_stop_reason(&first), None);
+        note_stop(first.clone(), Some(1), StopReason::Stalled);
+        assert_eq!(take_stop_reason(&second, Some(2)), None);
+        assert_eq!(take_stop_reason(&first, Some(1)), Some(StopReason::Stalled));
+        assert_eq!(take_stop_reason(&first, Some(1)), None);
+    }
+
+    #[test]
+    fn stop_reason_is_scoped_to_job_generation() {
+        let path = std::path::PathBuf::from("same-path.zip");
+        note_stop(path.clone(), Some(1), StopReason::Stalled);
+        note_stop(path.clone(), Some(2), StopReason::TooBig);
+
+        assert_eq!(take_stop_reason(&path, Some(1)), Some(StopReason::Stalled));
+        assert_eq!(take_stop_reason(&path, Some(2)), Some(StopReason::TooBig));
+        assert_eq!(take_stop_reason(&path, None), None);
     }
 }

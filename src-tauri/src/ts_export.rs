@@ -62,6 +62,7 @@ fn declarations(cfg: &Config) -> Vec<String> {
         PageVerificationDto, SiteDownDto, UpdateAlternativeDto, UpdateFindingDto,
         UpdateProgressDto, UpdateSiteDto, UpdateSourceDto, UpdatesEventDto, UpdatesSnapshotDto,
     };
+    use crate::commands::versions::RestoreUndoTicketDto;
     use crate::error::AppError;
 
     vec![
@@ -96,6 +97,7 @@ fn declarations(cfg: &Config) -> Vec<String> {
         LibrarySnapshot::decl(cfg),
         DeletedTicketDto::decl(cfg),
         VersionRowDto::decl(cfg),
+        RestoreUndoTicketDto::decl(cfg),
         ArchiveDto::decl(cfg),
         BindingDto::decl(cfg),
         ModDetails::decl(cfg),

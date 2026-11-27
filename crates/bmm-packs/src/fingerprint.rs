@@ -3,8 +3,8 @@
 //! Обычный архив мода ставится прямо из папки загрузок, без копии. Между «Архив
 //! проверен» и «Обновить» файл могли удалить, переименовать или подменить другим
 //! с тем же именем — тогда поставилось бы то, что никто не проверял. Копировать
-//! архивы на гигабайты ради этого дорого; отпечаток — размер и начало с концом
-//! файла (в конце ZIP лежит его оглавление) — ловит подмену дёшево.
+//! архивы на гигабайты ради этого дорого; отпечаток — размер, начало, середина и
+//! конец файла (в конце ZIP лежит его оглавление) — ловит подмену дёшево.
 
 use std::fs::File;
 use std::hash::Hasher;
@@ -50,6 +50,12 @@ impl Fingerprint {
             file.seek(SeekFrom::Start((len - EDGE).max(EDGE)))?;
             let tail = read_up_to(&mut file, &mut buffer)?;
             hasher.write(&buffer[..tail]);
+        }
+        if len > EDGE * 3 {
+            let middle_start = len / 2 - EDGE / 2;
+            file.seek(SeekFrom::Start(middle_start))?;
+            let middle = read_up_to(&mut file, &mut buffer)?;
+            hasher.write(&buffer[..middle]);
         }
         Ok(Self {
             len,
@@ -181,6 +187,22 @@ mod tests {
         let checked = Fingerprint::of(&path).unwrap();
         let last = bytes.len() - 1;
         bytes[last] = 8;
+        write(&path, &bytes);
+        let file = File::options().write(true).open(&path).unwrap();
+        file.set_modified(checked.modified.unwrap()).unwrap();
+        drop(file);
+        assert_eq!(verdict(Some(&checked), &path), Verdict::Changed);
+    }
+
+    #[test]
+    fn change_in_the_middle_of_a_big_archive_is_caught() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("big.zip");
+        let mut bytes = vec![7u8; (EDGE * 5) as usize];
+        write(&path, &bytes);
+        let checked = Fingerprint::of(&path).unwrap();
+        let middle = (EDGE * 2) as usize;
+        bytes[middle] = 8;
         write(&path, &bytes);
         let file = File::options().write(true).open(&path).unwrap();
         file.set_modified(checked.modified.unwrap()).unwrap();

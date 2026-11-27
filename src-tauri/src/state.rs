@@ -58,6 +58,7 @@ pub struct UpdateRuntime {
     pub sources: Arc<Vec<Arc<dyn ModSource>>>,
     pub page_cancel: Arc<AtomicBool>,
     pub page_busy: Arc<AtomicBool>,
+    pub check_cancel: Arc<AtomicBool>,
 }
 
 pub struct AppUpdateRuntime {
@@ -67,6 +68,10 @@ pub struct AppUpdateRuntime {
     pub cancel: CancelToken,
     /// Номер попытки скачивания: старый поток не должен затирать новое состояние.
     pub attempt: u64,
+    /// Номер проверки: старый сетевой ответ не должен затирать новую проверку.
+    pub check_attempt: u64,
+    /// Монотонный номер снимка: окно отбрасывает запоздалые ответы и события.
+    pub revision: u64,
     pub update_dir: PathBuf,
     pub skipped_path: PathBuf,
     pub manifest_url: url::Url,
@@ -90,8 +95,11 @@ pub struct AppState {
     pub library: Arc<JsonLibraryStore>,
     pub previews: PreviewCache,
     pub load_lock: Mutex<()>,
+    pub live_lock: Mutex<()>,
     pub previews_by_id: Mutex<HashMap<String, PreviewTarget>>,
     pub pending: Mutex<HashMap<String, bool>>,
+    pub bridge_sent: Mutex<Option<String>>,
+    pub held_backups: Arc<Mutex<HashSet<String>>>,
     pub preview_gate: Arc<Semaphore>,
     pub deleted: Mutex<HashMap<String, DeletedTicket>>,
     pub content_cache: Mutex<HashMap<PathBuf, CachedContent>>,
@@ -136,6 +144,74 @@ impl AppState {
         };
         *crate::state::lock(&self.pending) = map;
     }
+
+    pub fn bridge_sent_id(&self) -> Option<String> {
+        crate::state::lock(&self.bridge_sent).clone()
+    }
+
+    pub fn remember_bridge_sent(&self, id: &str) {
+        *crate::state::lock(&self.bridge_sent) = Some(id.to_string());
+        let _ = self.save_bridge_sent();
+    }
+
+    pub fn forget_bridge_sent(&self, id: &str) {
+        let changed = {
+            let mut sent = crate::state::lock(&self.bridge_sent);
+            if sent.as_deref() != Some(id) {
+                return;
+            }
+            sent.take().is_some()
+        };
+        if changed {
+            let _ = self.save_bridge_sent();
+        }
+    }
+
+    pub fn forget_bridge_sent_all(&self) {
+        let changed = crate::state::lock(&self.bridge_sent).take().is_some();
+        if changed {
+            let _ = self.save_bridge_sent();
+        }
+    }
+
+    pub fn save_bridge_sent(&self) -> std::io::Result<()> {
+        let path = self.paths.root().join("bridge-sent.json");
+        let sent = crate::state::lock(&self.bridge_sent).clone();
+        let json = serde_json::to_string(&sent).map_err(std::io::Error::other)?;
+        bmm_domain::atomic::write_atomic(&path, json.as_bytes())
+    }
+
+    pub fn load_bridge_sent(&self) {
+        let path = self.paths.root().join("bridge-sent.json");
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(sent) = serde_json::from_str::<Option<String>>(&text) else {
+            return;
+        };
+        *crate::state::lock(&self.bridge_sent) = sent;
+    }
+
+    pub fn hold_backup(&self, id: &str) {
+        crate::state::lock(&self.held_backups).insert(id.to_string());
+    }
+
+    pub fn release_backup(&self, id: &str) {
+        crate::state::lock(&self.held_backups).remove(id);
+    }
+
+    pub fn backup_is_held(&self, id: &str) -> bool {
+        crate::state::lock(&self.held_backups).contains(id)
+    }
+
+    pub fn backup_guard(&self) -> Arc<dyn Fn(&str) -> bool + Send + Sync> {
+        let held = Arc::clone(&self.held_backups);
+        Arc::new(move |id| {
+            held.lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains(id)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -158,6 +234,27 @@ mod tests {
 
     /// Упавший поток не должен ронять всю программу при следующем обращении к
     /// общему состоянию: в рабочем коде — только `crate::state::lock`.
+    #[test]
+    fn backup_hold_lasts_until_explicit_release() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_support::state_at(temp.path());
+        let held = Arc::clone(&state.held_backups);
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            panic!("упали, держа замок hold");
+        })
+        .join();
+        assert!(state.held_backups.is_poisoned());
+
+        state.hold_backup("copy.zip");
+        assert!(state.backup_is_held("copy.zip"));
+        let guard = state.backup_guard();
+        assert!(guard("copy.zip"));
+        state.release_backup("copy.zip");
+        assert!(!state.backup_is_held("copy.zip"));
+        assert!(!guard("copy.zip"));
+    }
+
     #[test]
     fn production_code_does_not_unwrap_locks() {
         let unwraps_lock = |body: &str| {

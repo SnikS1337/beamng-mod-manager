@@ -61,11 +61,11 @@ total: number | null,
 /**
  * Байт в секунду за последние секунды; `None`, пока считать не из чего.
  */
-speed: number | null, };
+speed: number | null, jobId: number | null, };
 
 export type DownloadJobState = "downloading" | "done" | "failed";
 
-export type DownloadJob = { path: string, fileName: string, request: DownloadRequest | null, state: DownloadJobState, error: string | null, };
+export type DownloadJob = { path: string, fileName: string, request: DownloadRequest | null, state: DownloadJobState, error: string | null, id: number, };
 
 export type DownloadReady = { path: string, };
 
@@ -73,7 +73,7 @@ export type AppUpdateManifest = { version: string, url: string, size: number, sh
 
 export type AppUpdateState = { stage: AppUpdateStage, manifest: AppUpdateManifest | null, progress: number, error: string | null, checkedAt: string | null, };
 
-export type AppUpdateSnapshot = { currentVersion: string, state: AppUpdateState, };
+export type AppUpdateSnapshot = { currentVersion: string, revision: number, state: AppUpdateState, };
 
 export type IncomingFindingDto = { severity: FindingSeverity, code: string, message: string, entry: string | null, };
 
@@ -99,9 +99,9 @@ export type IncomingInstallResult = { success: boolean, message: string | null,
 /**
  * Установлено, но запись библиотеки обновилась не полностью.
  */
-warning: string | null, fileName: string, replaces: string | null, backupId: string | null, wasDisabled: boolean, sameName: boolean, };
+warning: string | null, fileName: string, replaces: string | null, backupId: string | null, wasDisabled: boolean, sameName: boolean, installedToken: string | null, };
 
-export type IncomingTicket = { fileName: string, replaces: string | null, backupId: string | null, wasDisabled: boolean, sameName: boolean, };
+export type IncomingTicket = { fileName: string, replaces: string | null, backupId: string | null, wasDisabled: boolean, sameName: boolean, installedToken: string | null, };
 
 export type SearchOffer = { kind: SearchOfferKind, host: string, url: string, fileId: string | null, sizeBytes: number | null, };
 
@@ -167,6 +167,8 @@ export type LibrarySnapshot = { mods: Array<ModCardDto>, counts: FilterCounts, f
 export type DeletedTicket = { id: string, fileName: string, backupId: string, wasInDisabled: boolean, name: string, };
 
 export type VersionRow = { backupId: string, fileName: string, version: string | null, savedAt: string | null, sizeBytes: number, };
+
+export type RestoreUndoTicket = { backupId: string, installedToken: string, };
 
 export type ArchiveDto = { vehicles: Array<string>, levels: Array<string>, hasScripts: boolean, luaFiles: number, files: number, unpackedBytes: number, warnings: Array<string>, unreadable: boolean, title: string | null, };
 

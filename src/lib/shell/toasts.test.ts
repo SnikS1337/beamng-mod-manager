@@ -76,6 +76,18 @@ describe("тосты", () => {
     expect(toasts.current?.message).toBe("Файл занят игрой");
   });
 
+  it("ошибка автоматического commit показывается тостом", async () => {
+    toasts.show("Мод удалён", {
+      commit: async () => {
+        throw new Error("Не удалось закрепить удаление");
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(toasts.current?.message).toBe("Не удалось закрепить удаление");
+  });
+
   it("действие с отменой висит дольше", () => {
     toasts.show("Мод удалён", { undo: vi.fn() });
     vi.advanceTimersByTime(5000);

@@ -27,6 +27,7 @@ fn lock_runtime(runtime: &Mutex<AppUpdateRuntime>) -> MutexGuard<'_, AppUpdateRu
 #[ts(rename = "AppUpdateSnapshot")]
 pub struct AppUpdateDto {
     pub current_version: String,
+    pub revision: u64,
     pub state: AppUpdateStateDto,
 }
 
@@ -92,6 +93,7 @@ impl AppUpdateStateDto {
 #[serde(rename_all = "camelCase")]
 struct AppUpdateProgress {
     progress: f64,
+    revision: u64,
 }
 
 /// Итог проверки уходит в окно: автопроверка не возвращает результат командой.
@@ -165,19 +167,21 @@ pub(crate) fn auto_check(app: &AppHandle, state: &Arc<AppState>) {
 
 fn check_update(runtime: &Mutex<AppUpdateRuntime>) -> AppUpdateDto {
     // Сеть не держим под замком: иначе состояние и «Отменить» ждут до 30 секунд.
-    let (local, manifest_url, downloader, skipped_path, cancel) = {
+    let (local, manifest_url, downloader, skipped_path, cancel, check_attempt) = {
         let mut guard = lock_runtime(runtime);
         // Пока идёт скачивание или другая проверка, эту не начинаем.
         if matches!(
             guard.state.stage,
             UpdateStage::Downloading | UpdateStage::Checking
         ) {
-            return dto(guard.state.clone());
+            return dto(guard.state.clone(), guard.revision);
         }
         // Свой токен, а не reset() старого: старый держит отменённая загрузка, и
         // reset() «оживлял» её — она докачивала и ставила «готово к перезапуску»
         // вопреки отмене.
         guard.cancel = bmm_app_release::CancelToken::new();
+        guard.check_attempt = guard.check_attempt.wrapping_add(1);
+        guard.revision = guard.revision.wrapping_add(1);
         guard.state.stage = UpdateStage::Checking;
         guard.state.error = None;
         (
@@ -186,6 +190,7 @@ fn check_update(runtime: &Mutex<AppUpdateRuntime>) -> AppUpdateDto {
             guard.downloader.clone(),
             guard.skipped_path.clone(),
             guard.cancel.clone(),
+            guard.check_attempt,
         )
     };
     let skipped = read_skipped(&skipped_path);
@@ -199,20 +204,23 @@ fn check_update(runtime: &Mutex<AppUpdateRuntime>) -> AppUpdateDto {
 
     let mut guard = lock_runtime(runtime);
     // Пока шла сеть, состояние могли сменить: отмена, скачивание или новая проверка.
-    if guard.state.stage != UpdateStage::Checking {
-        return dto(guard.state.clone());
+    if guard.check_attempt != check_attempt || guard.state.stage != UpdateStage::Checking {
+        return dto(guard.state.clone(), guard.revision);
     }
     if cancel.is_cancelled() {
+        guard.revision = guard.revision.wrapping_add(1);
         guard.state = UpdateState::failed("Проверка обновления отменена.");
-        return dto(guard.state.clone());
+        return dto(guard.state.clone(), guard.revision);
     }
+    guard.revision = guard.revision.wrapping_add(1);
     guard.state = next;
-    dto(guard.state.clone())
+    dto(guard.state.clone(), guard.revision)
 }
 
-fn dto(state: UpdateState) -> AppUpdateDto {
+fn dto(state: UpdateState, revision: u64) -> AppUpdateDto {
     AppUpdateDto {
         current_version: current_version().display(),
+        revision,
         state: AppUpdateStateDto::from_state(state),
     }
 }
@@ -233,8 +241,8 @@ pub async fn app_update_state(
         .app_update
         .clone()
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
-    let state = lock_runtime(&runtime).state.clone();
-    Ok(dto(state))
+    let guard = lock_runtime(&runtime);
+    Ok(dto(guard.state.clone(), guard.revision))
 }
 
 #[tauri::command]
@@ -264,11 +272,19 @@ pub async fn app_update_download(
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let app_for_progress = app.clone();
-        let mut progress = |value: f64| {
-            let _ =
-                app_for_progress.emit("app-update://event", AppUpdateProgress { progress: value });
+        let mut progress = |value: f64, revision: u64| {
+            let _ = app_for_progress.emit(
+                "app-update://event",
+                AppUpdateProgress {
+                    progress: value,
+                    revision,
+                },
+            );
         };
-        run_download(&runtime, &mut progress)
+        let app_for_state = app.clone();
+        run_download(&runtime, &mut progress, move |snapshot| {
+            let _ = app_for_state.emit(STATE_EVENT, snapshot);
+        })
     })
     .await
     .map_err(|error| AppError::new("task", error.to_string()))
@@ -276,45 +292,61 @@ pub async fn app_update_download(
 
 /// Скачивание и подготовка обновления. Блокировку состояния не держим на время сети:
 /// иначе «Отменить» и чтение состояния ждали бы конца загрузки.
-fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)) -> AppUpdateDto {
-    let (manifest, downloader, update_dir, cancel, attempt) = {
+fn run_download(
+    runtime: &Mutex<AppUpdateRuntime>,
+    progress: &mut dyn FnMut(f64, u64),
+    mut on_state: impl FnMut(AppUpdateDto),
+) -> AppUpdateDto {
+    let (manifest, downloader, update_dir, cancel, attempt, revision, snapshot) = {
         let mut guard = lock_runtime(runtime);
         if matches!(
             guard.state.stage,
             UpdateStage::Downloading | UpdateStage::Checking
         ) {
-            return dto(guard.state.clone());
+            return dto(guard.state.clone(), guard.revision);
         }
         let Some(manifest) = guard.state.manifest.clone() else {
+            guard.revision = guard.revision.wrapping_add(1);
             guard.state = UpdateState::failed("Сначала проверьте обновление.");
-            return dto(guard.state.clone());
+            let snapshot = dto(guard.state.clone(), guard.revision);
+            drop(guard);
+            on_state(snapshot.clone());
+            return snapshot;
         };
         // Новая попытка получает свой токен отмены: старый поток не «оживёт»
         // от reset() и не станет писать в тот же файл.
         guard.attempt = guard.attempt.wrapping_add(1);
         let attempt = guard.attempt;
         guard.cancel = bmm_app_release::CancelToken::new();
+        guard.revision = guard.revision.wrapping_add(1);
+        let revision = guard.revision;
         guard.state.stage = UpdateStage::Downloading;
         guard.state.progress = 0.0;
         guard.state.error = None;
+        let snapshot = dto(guard.state.clone(), revision);
         (
             manifest,
             guard.downloader.clone(),
             guard.update_dir.clone(),
             guard.cancel.clone(),
             attempt,
+            revision,
+            snapshot,
         )
     };
+    on_state(snapshot);
 
+    let mut on_progress = |value| progress(value, revision);
     let downloaded = downloader.download_into_named(
         &manifest,
         &update_dir,
         &format!("update-{attempt}.{}", manifest.format.extension()),
-        progress,
+        &mut on_progress,
         &cancel,
     );
     if cancel.is_cancelled() {
-        return dto(lock_runtime(runtime).state.clone());
+        let guard = lock_runtime(runtime);
+        return dto(guard.state.clone(), guard.revision);
     }
     let prepared = match downloaded {
         Ok(downloaded) => match std::env::current_exe() {
@@ -337,8 +369,9 @@ fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)
     // Отмену могли нажать, пока шла подготовка файлов. Её состояние важнее результата.
     // Номер попытки отсекает старый поток, который проснулся после новой загрузки.
     if cancel.is_cancelled() || guard.attempt != attempt {
-        return dto(guard.state.clone());
+        return dto(guard.state.clone(), guard.revision);
     }
+    guard.revision = guard.revision.wrapping_add(1);
     match prepared {
         Ok(prepared) => {
             guard.prepared = Some(prepared);
@@ -352,11 +385,15 @@ fn run_download(runtime: &Mutex<AppUpdateRuntime>, progress: &mut dyn FnMut(f64)
             guard.state.error = Some(error);
         }
     }
-    dto(guard.state.clone())
+    let snapshot = dto(guard.state.clone(), guard.revision);
+    drop(guard);
+    on_state(snapshot.clone());
+    snapshot
 }
 
 #[tauri::command]
 pub async fn app_update_cancel(
+    app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<AppUpdateDto, AppError> {
     let runtime = state
@@ -365,15 +402,19 @@ pub async fn app_update_cancel(
         .ok_or_else(|| AppError::new("update", "Обновление программы недоступно."))?;
     let mut guard = lock_runtime(&runtime);
     let Some(message) = cancel_message(guard.state.stage) else {
-        return Ok(dto(guard.state.clone()));
+        return Ok(dto(guard.state.clone(), guard.revision));
     };
     guard.cancel.cancel();
     // Отменённая попытка больше не наша: её итог, если поток проснётся, не пишем.
     guard.attempt = guard.attempt.wrapping_add(1);
+    guard.revision = guard.revision.wrapping_add(1);
     guard.prepared = None;
     guard.state.stage = UpdateStage::Failed;
     guard.state.error = Some(message.to_string());
-    Ok(dto(guard.state.clone()))
+    let snapshot = dto(guard.state.clone(), guard.revision);
+    drop(guard);
+    let _ = app.emit(STATE_EVENT, snapshot.clone());
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1025,6 +1066,33 @@ mod tests {
         }
     }
 
+    struct TwoCheckTransport {
+        calls: AtomicUsize,
+        started: std::sync::mpsc::Sender<usize>,
+        releases: Mutex<Vec<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl HttpTransport for TwoCheckTransport {
+        fn send(&self, _url: &url::Url) -> Result<HttpResponse, TransportError> {
+            let index = self.calls.fetch_add(1, Ordering::SeqCst);
+            let _ = self.started.send(index);
+            let releases = self.releases.lock().unwrap();
+            let _ = releases[index].recv();
+            drop(releases);
+            let version = if index == 0 { "9.9.9" } else { "8.8.8" };
+            let body = format!(
+                r#"{{"version":"{version}","url":"https://github.com/x/y/releases/download/v{version}/a.exe","size":5000000,"sha256":"{}"}}"#,
+                "a".repeat(64)
+            );
+            Ok(HttpResponse {
+                status: 200,
+                content_length: Some(body.len() as u64),
+                location: None,
+                body: Box::new(std::io::Cursor::new(body.into_bytes())),
+            })
+        }
+    }
+
     fn runtime_with(
         temp: &tempfile::TempDir,
         downloader: UpdateDownloader,
@@ -1036,6 +1104,8 @@ mod tests {
             prepared: None,
             cancel: CancelToken::new(),
             attempt: 0,
+            check_attempt: 0,
+            revision: 0,
             update_dir: temp.path().join("update"),
             skipped_path: temp.path().join("update-skip.txt"),
             manifest_url: "https://github.com/x/y".parse().unwrap(),
@@ -1044,7 +1114,7 @@ mod tests {
 
     fn update_runtime(
         temp: &tempfile::TempDir,
-        transport: Arc<SlowTransport>,
+        transport: Arc<dyn HttpTransport + Send + Sync>,
     ) -> Arc<Mutex<AppUpdateRuntime>> {
         Arc::new(Mutex::new(AppUpdateRuntime {
             downloader: UpdateDownloader::new(transport),
@@ -1058,10 +1128,65 @@ mod tests {
             prepared: None,
             cancel: CancelToken::new(),
             attempt: 0,
+            check_attempt: 0,
+            revision: 0,
             update_dir: temp.path().join("update"),
             skipped_path: temp.path().join("update-skip.txt"),
             manifest_url: "https://github.com/x/y".parse().unwrap(),
         }))
+    }
+
+    #[test]
+    fn download_announces_its_revision_before_the_network_starts() {
+        let temp = tempfile::tempdir().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let runtime = update_runtime(
+            &temp,
+            Arc::new(BlockingTransport {
+                started: started_tx,
+                release: Mutex::new(release_rx),
+            }),
+        );
+        let (snapshot_tx, snapshot_rx) = std::sync::mpsc::channel();
+        let worker = {
+            let runtime = runtime.clone();
+            thread::spawn(move || {
+                run_download(&runtime, &mut |_, _| {}, |snapshot| {
+                    let _ = snapshot_tx.send(snapshot);
+                })
+            })
+        };
+
+        let snapshot = snapshot_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(snapshot.state.stage, "downloading");
+        assert_eq!(snapshot.revision, 1);
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        release_tx.send(()).unwrap();
+        let _ = worker.join().unwrap();
+    }
+
+    #[test]
+    fn download_publishes_its_terminal_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = update_runtime(
+            &temp,
+            Arc::new(SlowTransport {
+                calls: Arc::new(AtomicUsize::new(0)),
+                stop: Arc::new(AtomicBool::new(true)),
+            }),
+        );
+        let (snapshot_tx, snapshot_rx) = std::sync::mpsc::channel();
+        let result = run_download(&runtime, &mut |_, _| {}, |snapshot| {
+            let _ = snapshot_tx.send(snapshot);
+        });
+
+        let snapshots: Vec<_> = snapshot_rx.try_iter().collect();
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].state.stage, "downloading");
+        assert_eq!(snapshots[1].state.stage, result.state.stage);
+        assert_eq!(snapshots[1].state.stage, "failed");
+        assert!(snapshots[1].revision > snapshots[0].revision);
     }
 
     #[test]
@@ -1078,7 +1203,7 @@ mod tests {
         );
         let worker = {
             let runtime = runtime.clone();
-            thread::spawn(move || run_download(&runtime, &mut |_| {}))
+            thread::spawn(move || run_download(&runtime, &mut |_, _| {}, |_| {}))
         };
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
@@ -1281,6 +1406,55 @@ mod tests {
     }
 
     #[test]
+    fn old_check_response_does_not_overwrite_a_new_check() {
+        let temp = tempfile::tempdir().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_a_tx, release_a_rx) = std::sync::mpsc::channel();
+        let (release_b_tx, release_b_rx) = std::sync::mpsc::channel();
+        let runtime = runtime_with(
+            &temp,
+            UpdateDownloader::new(Arc::new(TwoCheckTransport {
+                calls: AtomicUsize::new(0),
+                started: started_tx,
+                releases: Mutex::new(vec![release_a_rx, release_b_rx]),
+            })),
+            UpdateState::idle(),
+        );
+        let first = {
+            let runtime = runtime.clone();
+            thread::spawn(move || check_update(&runtime))
+        };
+        assert_eq!(started_rx.recv_timeout(Duration::from_secs(2)).unwrap(), 0);
+        {
+            let mut guard = lock_runtime(&runtime);
+            guard.cancel.cancel();
+            guard.state.stage = UpdateStage::Failed;
+            guard.state.error = Some("Проверка обновления отменена.".to_string());
+        }
+        let second = {
+            let runtime = runtime.clone();
+            thread::spawn(move || check_update(&runtime))
+        };
+        assert_eq!(started_rx.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
+
+        release_a_tx.send(()).unwrap();
+        let _ = first.join().unwrap();
+        release_b_tx.send(()).unwrap();
+        let _ = second.join().unwrap();
+        let guard = lock_runtime(&runtime);
+        assert_eq!(guard.state.stage, UpdateStage::Available);
+        assert_eq!(
+            guard
+                .state
+                .manifest
+                .as_ref()
+                .map(|manifest| manifest.version.display().to_string()),
+            Some("8.8.8".to_string()),
+            "итог новой проверки не затирается старым ответом"
+        );
+    }
+
+    #[test]
     fn update_banner_and_rust_agree_on_fields_and_stages() {
         // Плашка обновления читает этот снимок; лишнее или пропавшее поле — пустая плашка.
         let manifest = format!(
@@ -1288,11 +1462,12 @@ mod tests {
             "a".repeat(64)
         );
         let state = bmm_app_release::check_json(&current_version(), &manifest, None);
-        let value = serde_json::to_value(dto(state)).unwrap();
+        let value = serde_json::to_value(dto(state, 7)).unwrap();
         let manifest = &value["state"]["manifest"];
         // Версия — строкой «9.9.9», а не разобранным числом: окно её только печатает.
         assert_eq!(manifest["version"], "9.9.9");
         assert_eq!(value["state"]["stage"], "available");
+        assert_eq!(value["revision"], 7);
 
         let stages = crate::test_support::ts_union("unions.ts", "AppUpdateStage");
         for stage in [

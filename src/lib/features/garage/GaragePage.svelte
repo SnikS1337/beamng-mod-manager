@@ -40,6 +40,7 @@
     listenLibraryTitles,
     listenLibraryRefresh,
     modBindPage,
+    modCommitRestoreUndo,
     modFixPackaging,
     modDelete,
     modDetails,
@@ -48,11 +49,11 @@
     modRestoreVersion,
     modToggle,
     modsToggle,
-    modVersions,
     modUndelete,
     type LibrarySnapshot,
     type ModCardDto,
     type ModDetails,
+    type RestoreUndoTicket,
     type VersionRow,
   } from "#lib/ipc/library.js";
   import { expectDownload, isArchivePath } from "#lib/ipc/incoming.js";
@@ -71,9 +72,11 @@
     loadViewMode,
     matchesType,
     nextReveal,
+    notifyLibraryChanged,
     saveViewMode,
     typeCounts,
     typeTag,
+    type LibraryChangedDetail,
     type RevealRequest,
     type TypeGroup,
     type ViewMode,
@@ -211,8 +214,9 @@
     void load();
     const detachArrival = arrival.attach();
     const onLibraryChanged = (event: Event) => {
-      const detail = (event as CustomEvent<{ fileNames?: string[] }>).detail;
-      void refreshAndSelect(detail?.fileNames ?? []);
+      const detail = (event as CustomEvent<LibraryChangedDetail | undefined>).detail;
+      if (detail?.refreshVersions) versionsKey += 1;
+      void refreshAndSelect(detail?.fileNames ?? [], detail?.smooth ?? false);
     };
     window.addEventListener("bmm:library-changed", onLibraryChanged);
     // Проверка обновлений закончилась (в фоне или в разделе) — метки «Есть обновление» и
@@ -395,8 +399,7 @@
       showToast(`Больше не следим за страницей «${trimName(card.name)}»`, {
         undo: async () => {
           await updatesRefollow(card.id, source);
-          updatesBadge.refresh();
-          await load(true);
+          notifyLibraryChanged();
         },
       });
     } catch (reason) {
@@ -490,9 +493,7 @@
         undo: async () => {
           try {
             await updatesUndoDecline(card.id);
-            updatesBadge.refresh();
-            await load(true);
-            await refreshDetails(card.id);
+            notifyLibraryChanged();
           } catch (reason) {
             showToast(errorText(reason));
           }
@@ -600,8 +601,15 @@
           undo:
             result.outcome === "queued"
               ? undefined
-              : () => {
-                  void applyToggle(liveCard(snapshot?.mods, mod), !target, false);
+              : async () => {
+                  const undone = await modToggle(card.id, !target);
+                  if (undone.outcome === "error" || undone.outcome === "failed") {
+                    throw new Error(undone.message ?? "Не удалось отменить переключение");
+                  }
+                  notifyLibraryChanged({ smooth: true });
+                  if (undone.outcome === "queued") {
+                    showToast(undone.message ?? "Игра применит отмену позже");
+                  }
                 },
         });
       }
@@ -643,11 +651,11 @@
       showToast(`Удалён «${trimName(ticket.name)}»`, {
         undo: async () => {
           await modUndelete(card.id);
-          await load(true, true);
+          notifyLibraryChanged({ smooth: true });
         },
         commit: async () => {
           await modForgetDeleted(card.id);
-          await load(true);
+          notifyLibraryChanged();
         },
       });
     } catch (reason) {
@@ -677,8 +685,16 @@
         undo:
           result.changed.length > 0 && result.queued.length === 0
             ? async () => {
-                await modsToggle(result.changed, !target).catch(() => {});
-                await load(true);
+                const undone = await modsToggle(result.changed, !target);
+                notifyLibraryChanged({ smooth: true });
+                const parts: string[] = [];
+                if (undone.queued.length > 0) {
+                  parts.push(`Игра применит отмену позже: ${undone.queued.length}`);
+                }
+                if (undone.failed.length > 0) {
+                  parts.push(`Не удалось отменить: ${undone.failed.length}`);
+                }
+                if (parts.length > 0) showToast(parts.join(" · "));
               }
             : undefined,
       });
@@ -718,14 +734,30 @@
       duration: bulkUndoMs(removed.length),
       undo: removed.length
         ? async () => {
-            for (const mod of removed) await modUndelete(mod.id).catch(() => {});
-            await load(true, true);
+            let failure: { reason: unknown } | null = null;
+            for (const mod of removed) {
+              try {
+                await modUndelete(mod.id);
+              } catch (reason) {
+                failure ??= { reason };
+              }
+            }
+            notifyLibraryChanged({ smooth: true });
+            if (failure) throw failure.reason;
           }
         : undefined,
       commit: removed.length
         ? async () => {
-            for (const mod of removed) await modForgetDeleted(mod.id).catch(() => {});
-            await load(true);
+            let failure: { reason: unknown } | null = null;
+            for (const mod of removed) {
+              try {
+                await modForgetDeleted(mod.id);
+              } catch (reason) {
+                failure ??= { reason };
+              }
+            }
+            notifyLibraryChanged();
+            if (failure) throw failure.reason;
           }
         : undefined,
     });
@@ -775,9 +807,10 @@
   async function restoreVersion(version: VersionRow) {
     const card = selected;
     if (!card || card.deleted) return;
-    const previousFile = card.fileName;
+    let ticket: RestoreUndoTicket | null = null;
     try {
-      await modRestoreVersion(card.id, version.backupId);
+      ticket = await modRestoreVersion(card.id, version.backupId);
+      const undoTicket = ticket;
       await load(true);
       versionsKey += 1;
       showToast(
@@ -785,18 +818,26 @@
           ? `Возвращена версия ${version.version}`
           : "Возвращена прошлая копия",
         {
-          undo: async () => {
-            const rows = await modVersions(card.id);
-            const previous = rows.find((row) => row.fileName === previousFile);
-            if (previous) {
-              await modRestoreVersion(card.id, previous.backupId);
-              await load(true);
-              versionsKey += 1;
-            }
-          },
+          undo: undoTicket
+            ? async () => {
+                try {
+                  const undone = await modRestoreVersion(
+                    card.id,
+                    undoTicket.backupId,
+                    undoTicket.installedToken,
+                  );
+                  if (undone) await modCommitRestoreUndo(undone.backupId);
+                } finally {
+                  await modCommitRestoreUndo(undoTicket.backupId);
+                }
+                notifyLibraryChanged({ smooth: true, refreshVersions: true });
+              }
+            : undefined,
+          commit: undoTicket ? () => modCommitRestoreUndo(undoTicket.backupId) : undefined,
         },
       );
     } catch (reason) {
+      if (ticket) await modCommitRestoreUndo(ticket.backupId).catch(() => {});
       showToast(errorText(reason));
     }
   }
@@ -816,9 +857,9 @@
     await toasts.undo();
   }
 
-  async function refreshAndSelect(fileNames: string[]) {
+  async function refreshAndSelect(fileNames: string[], smooth = false) {
     try {
-      await load(true);
+      await load(true, smooth);
       if (!snapshot) return;
       const last = fileNames.at(-1);
       if (!last) return;

@@ -64,6 +64,7 @@ export async function incomingInstall(
     backupId: request.replaces ? `0000000001_20261022-120000-000_${request.replaces}` : null,
     wasDisabled: false,
     sameName: request.replaces?.toLowerCase() === request.fileName.toLowerCase(),
+    installedToken: `demo-${request.fileName}`,
   }));
 }
 

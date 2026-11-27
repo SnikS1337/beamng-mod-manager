@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { libraryLoad, modDelete, modPreview, modUndelete } from "./library";
+import { libraryLoad, modDelete, modPreview, modToggle, modUndelete, modVersions } from "./library";
 
 describe("демо: превью", () => {
   it("кеш ограничен и повторяет недавний запрос", async () => {
@@ -26,6 +26,40 @@ describe("демо: превью", () => {
     expect(modPreview("lru-3", "lru-key-1")).not.toBe(second);
     await Promise.all([first, second]);
   });
+});
+
+describe("демо: переключение и отмена", () => {
+  it("toggle и Undo меняют одну и ту же карточку", async () => {
+    const snapshot = await libraryLoad();
+    const card = snapshot.mods.find((mod) => mod.id === "mock-1")!;
+    const before = card.enabled;
+    const counts = { ...snapshot.counts };
+    try {
+      expect(await modToggle(card.id, !before)).toEqual({
+        outcome: "done",
+        enabled: !before,
+        message: null,
+      });
+      expect(card.enabled).toBe(!before);
+      expect(snapshot.counts).toEqual({ ...counts, enabled: counts.enabled - 1 });
+      expect((await libraryLoad()).mods.find((mod) => mod.id === card.id)?.enabled).toBe(!before);
+
+      await modToggle(card.id, before);
+      expect(card.enabled).toBe(before);
+      expect(snapshot.counts).toEqual(counts);
+    } finally {
+      await modToggle(card.id, before);
+    }
+  });
+});
+
+it("демо: список версий содержит текущий файл для Undo", async () => {
+  const snapshot = await libraryLoad();
+  const card = snapshot.mods.find((mod) => mod.id === "mock-1")!;
+
+  const rows = await modVersions(card.id);
+
+  expect(rows.some((row) => row.fileName === card.fileName)).toBe(true);
 });
 
 // Демо-версия должна вести себя как программа: отменённое удаление возвращает

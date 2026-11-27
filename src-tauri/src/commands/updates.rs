@@ -436,6 +436,7 @@ pub async fn updates_cancel(state: tauri::State<'_, Arc<AppState>>) -> Result<()
     if let Some(runtime) = &state.update {
         runtime.coordinator.cancel();
         runtime.page_cancel.store(true, Ordering::SeqCst);
+        runtime.check_cancel.store(true, Ordering::SeqCst);
     }
     Ok(())
 }
@@ -501,15 +502,17 @@ fn check_mod_once(state: &AppState, mod_id: &str) -> Result<UpdatesSnapshotDto, 
             "Проверка обновлений уже идёт. Дождитесь её окончания.",
         ));
     };
-    check_binding(state, runtime, &binding)?;
+    runtime.check_cancel.store(false, Ordering::SeqCst);
+    check_binding_with_cancel(state, runtime, &binding, &runtime.check_cancel)?;
     Ok(build_snapshot(state))
 }
 
 /// Открывает страницу мода и записывает, что на ней. Координатор должен быть занят.
-fn check_binding(
+fn check_binding_with_cancel(
     state: &AppState,
     runtime: &crate::state::UpdateRuntime,
     binding: &ModBinding,
+    cancel: &AtomicBool,
 ) -> Result<(), AppError> {
     let store = state.library.as_ref();
     let mod_id = binding.mod_id.as_str();
@@ -523,7 +526,7 @@ fn check_binding(
         .find(|tracked| tracked.mod_id == mod_id && tracked.source == binding.source)
         .ok_or_else(|| AppError::new("updates", "Мод не готов к проверке."))?;
     let listing = source
-        .listing(&binding.url, &AtomicBool::new(false))
+        .listing(&binding.url, cancel)
         .map_err(|error| AppError::new("updates", error.message))?
         .ok_or_else(|| {
             AppError::new(
@@ -539,7 +542,7 @@ fn check_binding(
     let previous = store
         .get_check(mod_id, &binding.source)
         .and_then(|check| check.last_file);
-    let probe = source.probe_file(&listing, previous.as_ref(), true, &AtomicBool::new(false));
+    let probe = source.probe_file(&listing, previous.as_ref(), true, cancel);
     if let Some(mut file) = probe.file {
         file.offer = bmm_sources::files::offer_url(&listing).map(|url| url.to_string());
         file.seen_at = Some(Utc::now().fixed_offset());
@@ -557,13 +560,13 @@ pub async fn updates_find_fallback(
     mod_id: String,
 ) -> Result<UpdatesSnapshotDto, AppError> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || find_fallback_once(&app, &state, &mod_id))
+    tauri::async_runtime::spawn_blocking(move || find_fallback_once(Some(&app), &state, &mod_id))
         .await
         .map_err(|error| AppError::new("task", error.to_string()))?
 }
 
 fn find_fallback_once(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     state: &AppState,
     mod_id: &str,
 ) -> Result<UpdatesSnapshotDto, AppError> {
@@ -589,20 +592,14 @@ fn find_fallback_once(
             "Сейчас идёт поиск страниц. Попробуйте, когда он закончится.",
         ));
     };
+    runtime.page_cancel.store(false, Ordering::SeqCst);
     let known: Vec<String> = store
         .bindings()
         .into_iter()
         .filter(|binding| binding.mod_id == mod_id)
         .map(|binding| binding.source)
         .collect();
-    let report = run_fallback_search(
-        Some(app),
-        state,
-        0,
-        &AtomicBool::new(false),
-        &down,
-        Some(mod_id),
-    );
+    let report = run_fallback_search(app, state, 0, &runtime.page_cancel, &down, Some(mod_id));
     if report.followed > 0
         && let Some(_hold) = runtime.coordinator.hold()
     {
@@ -611,7 +608,7 @@ fn find_fallback_once(
             binding.mod_id == mod_id && binding.confirmed && !known.contains(&binding.source)
         }) {
             // Не открылась и эта — обновление на ней покажет следующая проверка.
-            let _ = check_binding(state, runtime, &binding);
+            let _ = check_binding_with_cancel(state, runtime, &binding, &runtime.page_cancel);
         }
     }
     Ok(build_snapshot(state))
@@ -1107,17 +1104,23 @@ mod tests {
     use super::auto::{contained, source_dto};
     use super::pages::{forget_lost, refollow, unfollow};
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Mutex, mpsc};
 
     use chrono::TimeZone;
+    use url::Url;
 
+    use bmm_checks::coordinator::UpdateCoordinator;
     use bmm_domain::clock::system_clock;
     use bmm_domain::library::{CheckState, InstalledMod, JsonLibraryStore};
+    use bmm_domain::models::Listing;
     use bmm_domain::paths::AppPaths;
     use bmm_domain::settings::AppSettings;
     use bmm_domain::settings_store::SettingsStore;
     use bmm_packs::cache::PreviewCache;
+    use bmm_sources::sources::{ModSource, SourceError};
+
+    use crate::state::UpdateRuntime;
 
     fn state() -> (tempfile::TempDir, AppState) {
         let temp = tempfile::tempdir().unwrap();
@@ -1136,8 +1139,11 @@ mod tests {
             library,
             previews: PreviewCache::new(data.join("previews")),
             load_lock: Mutex::new(()),
+            live_lock: Mutex::new(()),
             previews_by_id: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
+            bridge_sent: Mutex::new(None),
+            held_backups: Arc::new(Mutex::new(std::collections::HashSet::new())),
             preview_gate: Arc::new(tokio::sync::Semaphore::new(4)),
             deleted: Mutex::new(HashMap::new()),
             content_cache: Mutex::new(HashMap::new()),
@@ -1151,12 +1157,168 @@ mod tests {
         (temp, state)
     }
 
+    struct BlockingSource {
+        started: mpsc::Sender<()>,
+    }
+
+    impl ModSource for BlockingSource {
+        fn id(&self) -> &'static str {
+            "slow"
+        }
+        fn display_name(&self) -> &'static str {
+            "Slow"
+        }
+        fn supports_search(&self) -> bool {
+            true
+        }
+        fn home(&self) -> Url {
+            Url::parse("https://slow.example.org/").unwrap()
+        }
+        fn owns(&self, _url: &Url) -> bool {
+            true
+        }
+        fn is_mod_page(&self, _url: &Url) -> bool {
+            true
+        }
+        fn feed_covers(&self, _url: &Url) -> bool {
+            true
+        }
+        fn search(&self, _query: &str, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+        fn feed_page(&self, _page: u32, _cancel: &AtomicBool) -> Result<Vec<Listing>, SourceError> {
+            Ok(Vec::new())
+        }
+        fn listing(&self, _url: &Url, cancel: &AtomicBool) -> Result<Option<Listing>, SourceError> {
+            let _ = self.started.send(());
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !cancel.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(SourceError::cancelled())
+        }
+    }
+
+    #[test]
+    fn single_check_uses_the_shared_cancel_flag() {
+        let (_temp, state) = state();
+        state.library.upsert_mod(InstalledMod {
+            id: "m".to_string(),
+            name: "Mod".to_string(),
+            file_name: "m.zip".to_string(),
+            version: None,
+            size_bytes: Some(1),
+            installed_at_utc: chrono::Utc::now().fixed_offset(),
+            enabled: true,
+        });
+        let binding = ModBinding {
+            mod_id: "m".to_string(),
+            source: "slow".to_string(),
+            source_id: "m".to_string(),
+            url: Url::parse("https://slow.example.org/m").unwrap(),
+            confirmed: true,
+        };
+        state.library.upsert_binding(binding.clone()).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let sources: Arc<Vec<Arc<dyn ModSource>>> =
+            Arc::new(vec![Arc::new(BlockingSource { started: sender })]);
+        let store: Arc<dyn LibraryStore + Send + Sync> = state.library.clone();
+        let factory_sources = Arc::clone(&sources);
+        let runtime = Arc::new(UpdateRuntime {
+            coordinator: Arc::new(UpdateCoordinator::new(
+                store,
+                Arc::new(move || factory_sources.to_vec()),
+                system_clock(),
+            )),
+            enabled: Arc::new(Mutex::new(HashSet::from(["slow".to_string()]))),
+            sources,
+            page_cancel: Arc::new(AtomicBool::new(false)),
+            page_busy: Arc::new(AtomicBool::new(false)),
+            check_cancel: Arc::new(AtomicBool::new(false)),
+        });
+        let state = Arc::new(state);
+        let worker_state = Arc::clone(&state);
+        let worker_runtime = Arc::clone(&runtime);
+        let cancel = runtime.check_cancel.clone();
+        let worker = std::thread::spawn(move || {
+            check_binding_with_cancel(&worker_state, &worker_runtime, &binding, &cancel)
+        });
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        let started = Instant::now();
+        runtime.check_cancel.store(true, Ordering::SeqCst);
+        let result = worker.join().unwrap();
+        assert!(result.is_err());
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
     fn instant() -> chrono::DateTime<chrono::FixedOffset> {
         chrono::Utc
             .timestamp_opt(1_760_000_000, 0)
             .single()
             .unwrap()
             .fixed_offset()
+    }
+
+    #[test]
+    fn fallback_search_resets_and_uses_the_registered_cancel_flag() {
+        let (_temp, mut state) = state();
+        state.library.upsert_mod(InstalledMod {
+            id: "m".to_string(),
+            name: "Mod".to_string(),
+            file_name: "m.zip".to_string(),
+            version: Some("1.0".to_string()),
+            size_bytes: Some(1),
+            installed_at_utc: instant(),
+            enabled: true,
+        });
+        state
+            .library
+            .upsert_binding(ModBinding {
+                mod_id: "m".to_string(),
+                source: "slow".to_string(),
+                source_id: "m".to_string(),
+                url: Url::parse("https://slow.example.org/m").unwrap(),
+                confirmed: true,
+            })
+            .unwrap();
+        state.library.save_check(CheckState {
+            last_file: None,
+            mod_id: "m".to_string(),
+            source: "slow".to_string(),
+            last_checked_utc: instant(),
+            last_changed_utc: Some(instant()),
+            last_version: Some("2.0".to_string()),
+            last_size: Some(2),
+            miss_count: 0,
+            last_game_version: None,
+            last_title: None,
+        });
+        let sources: Arc<Vec<Arc<dyn ModSource>>> = Arc::new(Vec::new());
+        let factory_sources = Arc::clone(&sources);
+        let runtime = Arc::new(UpdateRuntime {
+            coordinator: Arc::new(UpdateCoordinator::new(
+                state.library.clone(),
+                Arc::new(move || factory_sources.to_vec()),
+                system_clock(),
+            )),
+            enabled: Arc::new(Mutex::new(HashSet::new())),
+            sources,
+            page_cancel: Arc::new(AtomicBool::new(true)),
+            page_busy: Arc::new(AtomicBool::new(false)),
+            check_cancel: Arc::new(AtomicBool::new(false)),
+        });
+        state.update = Some(Arc::clone(&runtime));
+
+        find_fallback_once(None, &state, "m").unwrap();
+
+        assert!(
+            !runtime.page_cancel.load(Ordering::SeqCst),
+            "новый поиск не должен наследовать старую отмену"
+        );
     }
 
     #[test]

@@ -57,6 +57,7 @@
     jobForPage,
     jobName,
     jobRows,
+    pruneProgress,
     restarted,
     track,
     viewOf,
@@ -414,6 +415,7 @@
             backupId: result.backupId,
             wasDisabled: result.wasDisabled,
             sameName: result.sameName,
+            installedToken: result.installedToken,
           });
         } else {
           failures.push(
@@ -517,6 +519,7 @@
             backupId: result.backupId,
             wasDisabled: result.wasDisabled,
             sameName: result.sameName,
+            installedToken: result.installedToken,
           });
         } else {
           failures.push({
@@ -674,11 +677,9 @@
       const fresh = restarted(jobs, value);
       if (fresh.length > 0) {
         for (const path of fresh) taken.delete(path);
-        const left = { ...tracked };
-        for (const path of fresh) delete left[path];
-        tracked = left;
         seenFailures = new Set([...seenFailures].filter((path) => !fresh.includes(path)));
       }
+      tracked = pruneProgress(tracked, value);
       jobs = value;
       // Обрыв загрузки открытой страницы показан в шагах — если на экране не архив.
       if (!busy) {
