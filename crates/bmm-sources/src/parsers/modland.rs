@@ -31,6 +31,9 @@ static H1_TITLE: LazyLock<Regex> = LazyLock::new(|| {
 static DOWNLOAD_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?s)<div[^>]*class="[^"]*\bdl\b[^"]*"[^>]*>(?<body>.*?)</div>"#).unwrap()
 });
+static FILES_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<div[^>]*id="files"[^>]*>(?<body>.*?)<!-- end Files -->"#).unwrap()
+});
 static EXTERNAL_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?is)External Download Links:(?<body>.*?)(?:Uploaded by|</body>|$)").unwrap()
 });
@@ -138,7 +141,28 @@ pub fn parse_detail(html: &str, basis: &Listing) -> Listing {
                 continue;
             };
             let href = decode(href.as_str());
-            let Ok(url) = url::Url::parse(&href) else {
+            let Some(url) = join_url(BASE, &href) else {
+                continue;
+            };
+            collect_offer(
+                &url,
+                saw_external,
+                &mut offers,
+                &mut download_urls,
+                &mut seen,
+            );
+        }
+    }
+    for block in FILES_BLOCK.captures_iter(html) {
+        let Some(body) = block.name("body") else {
+            continue;
+        };
+        for anchor in ANCHOR.captures_iter(body.as_str()) {
+            let Some(href) = anchor.name("h") else {
+                continue;
+            };
+            let href = decode(href.as_str());
+            let Some(url) = join_url(BASE, &href) else {
                 continue;
             };
             collect_offer(
@@ -234,6 +258,23 @@ fn collect_offer(
         return;
     }
     let host = url.host_str().unwrap_or("").to_lowercase();
+    if (host == "modland.net" || host.ends_with(".modland.net"))
+        && url.path().starts_with("/download/")
+    {
+        let file_id = url
+            .path_segments()
+            .and_then(|mut segments| segments.rfind(|part| !part.is_empty()))
+            .map(str::to_string);
+        offers.push(Offer {
+            kind: OfferKind::Direct,
+            host: "modland".to_string(),
+            url: url.clone(),
+            host_file_id: file_id,
+            size_bytes: None,
+        });
+        download_urls.push(url.clone());
+        return;
+    }
     if saw_external && hosts::host_matches(url, PAID_HOSTS) {
         offers.push(Offer {
             kind: OfferKind::PaidLink,
@@ -388,6 +429,43 @@ mod tests {
             "{:?}",
             detail.offers
         );
+    }
+
+    #[test]
+    fn detail_reads_direct_downloads_from_files_accordion() {
+        let url = url::Url::parse("https://www.modland.net/beamng.drive-mods/cars/a.html").unwrap();
+        let basis = Listing::new(SOURCE_ID, url, "a", "Rolls Royce Pack");
+        let detail = parse_detail(
+            r#"<h1 class="post-title">Rolls Royce Pack</h1>
+               <div class="accordion mb-3" id="files">
+                 <div class="collapse show"><a href="/download/526253">Rolls Royce Cars Pack.rar direct download · 1.13 GB</a></div>
+               </div>
+               <!-- end Files -->"#,
+            &basis,
+        );
+
+        assert_eq!(detail.offers.len(), 1);
+        assert_eq!(detail.offers[0].kind, OfferKind::Direct);
+        assert_eq!(detail.offers[0].host, "modland");
+        assert_eq!(
+            detail.offers[0].url.as_str(),
+            "https://www.modland.net/download/526253"
+        );
+    }
+
+    #[test]
+    fn detail_reads_legacy_internal_direct_link() {
+        let url = url::Url::parse("https://www.modland.net/beamng.drive-mods/cars/a.html").unwrap();
+        let basis = Listing::new(SOURCE_ID, url, "a", "Car");
+        let detail = parse_detail(
+            r#"<h1 class="post-title">Car</h1>
+               <div class="dl"><a href="https://www.modland.net/download/abc">Car.zip direct download</a></div>"#,
+            &basis,
+        );
+
+        assert_eq!(detail.offers.len(), 1);
+        assert_eq!(detail.offers[0].kind, OfferKind::Direct);
+        assert_eq!(detail.offers[0].url.path(), "/download/abc");
     }
 
     #[test]

@@ -25,7 +25,7 @@ pub const SECTION: &str = "beamng-drive-mods";
 static ITEM_START: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<div class="game-div">"#).unwrap());
 static ITEM_TITLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?s)<h4>\s*<a href="(?<h>[^"]+)"[^>]*>(?<t>.*?)</a>\s*</h4>"#).unwrap()
+    Regex::new(r#"(?s)<h4\b[^>]*>\s*<a href="(?<h>[^"]+)"[^>]*>(?<t>.*?)</a>\s*</h4>"#).unwrap()
 });
 static ITEM_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?s)class="main-img"[^>]*background-image:\s*url\(\s*['"]?(?<u>[^'"\)]+)"#)
@@ -303,6 +303,15 @@ mod tests {
             list[0].preview_url
         );
         assert!(list.iter().all(|item| item.source == SOURCE_ID));
+    }
+
+    #[test]
+    fn list_accepts_attributes_on_the_title_heading() {
+        let list = parse_list(
+            r#"<div class="game-div"><h4 class="top-download-col-img-text"><a href="/beamng-drive-mods/test-mod">Test Mod v1.0</a></h4></div>"#,
+        );
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].title, "Test Mod v1.0");
     }
 
     #[test]

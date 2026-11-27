@@ -54,6 +54,22 @@ UPDATE_TS=1 cargo test -p bmm-desktop export_ts_types
 чтобы каждый `invoke()` окна попадал в зарегистрированную команду с теми же
 аргументами.
 
+## Фикстуры сайтов
+
+Обычный CI работает только с сохранёнными страницами. Ручная live-проверка ленты и первой карточки каждого сайта:
+
+```bash
+cargo test -p bmm-sources live_site_layouts -- --ignored --nocapture
+```
+
+Чтобы сохранить новые датированные fixtures после успешного парсинга:
+
+```bash
+UPDATE_SITE_FIXTURES=1 cargo test -p bmm-sources live_site_layouts -- --ignored --nocapture
+```
+
+Старые fixtures не удаляются. Ответ `403` от Cloudflare помечается как ограничение доступа и не считается регрессом; для такого сайта страницу можно сохранить вручную в браузере по правилам `fixtures/README.md`.
+
 ## Если хост ARM64
 
 Если Rust установлен как `aarch64-pc-windows-msvc`, а MSVC ARM64-тулсета нет,
